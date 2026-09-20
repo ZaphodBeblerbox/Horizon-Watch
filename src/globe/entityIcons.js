@@ -490,6 +490,97 @@ export function getShapeMarkerDataUri(opts = {}) {
     return uri
 }
 
+// ── facility glyphs ──────────────────────────────────────────────────────
+//
+// Hospitals, police stations, fire stations and military sites were all
+// drawn as the same coloured square, which told a reader "a facility is
+// here" and nothing else — the thing they actually need at a glance is
+// WHICH KIND. Purpose-drawn, the same precedent as the vessel hull and
+// aircraft airframe silhouettes: a ship is not a shape-coded
+// abstraction, and neither is a hospital.
+//
+// Deliberately NOT MIL-STD-2525. That symbology encodes AFFILIATION —
+// friendly, hostile, unknown — in the frame, and this app's own rebuild
+// spec cancelled affiliation-frame geometry for a good reason: on open
+// sources we usually cannot establish affiliation, and a red "hostile"
+// frame around an unverified barracks asserts something nobody checked.
+// These say what a thing IS, never whose side it is on.
+const FACILITY_GLYPH = {
+    // A cross. Universally read, and not confusable with anything else here.
+    hospital: (px) => {
+        const c = px / 2, a = px * 0.30, b = px * 0.12
+        return `<rect x="${c - b}" y="${c - a}" width="${b * 2}" height="${a * 2}" rx="${b * 0.4}"/>`
+             + `<rect x="${c - a}" y="${c - b}" width="${a * 2}" height="${b * 2}" rx="${b * 0.4}"/>`
+    },
+    // A shield: the police/security form everywhere, and distinct in
+    // outline from the cross and the star at small sizes.
+    police: (px) => {
+        const c = px / 2, r = px * 0.32
+        return `<path d="M ${c} ${c - r} L ${c + r * 0.85} ${c - r * 0.45} `
+             + `L ${c + r * 0.85} ${c + r * 0.15} Q ${c + r * 0.85} ${c + r * 0.8} ${c} ${c + r} `
+             + `Q ${c - r * 0.85} ${c + r * 0.8} ${c - r * 0.85} ${c + r * 0.15} `
+             + `L ${c - r * 0.85} ${c - r * 0.45} Z"/>`
+    },
+    // A flame, for fire stations.
+    fire: (px) => {
+        const c = px / 2, r = px * 0.32
+        return `<path d="M ${c} ${c - r} Q ${c + r * 0.75} ${c - r * 0.1} ${c + r * 0.45} ${c + r * 0.55} `
+             + `Q ${c + r * 0.2} ${c + r} ${c} ${c + r} `
+             + `Q ${c - r * 0.2} ${c + r} ${c - r * 0.45} ${c + r * 0.55} `
+             + `Q ${c - r * 0.75} ${c - r * 0.1} ${c} ${c - r} Z"/>`
+    },
+    // Crossed swords, the oldest military map convention there is — and
+    // one that says "military" without saying whose.
+    military: (px) => {
+        const c = px / 2, r = px * 0.33, w = px * 0.085
+        return `<rect x="${c - w / 2}" y="${c - r}" width="${w}" height="${r * 2}" `
+             + `transform="rotate(45 ${c} ${c})"/>`
+             + `<rect x="${c - w / 2}" y="${c - r}" width="${w}" height="${r * 2}" `
+             + `transform="rotate(-45 ${c} ${c})"/>`
+    },
+    // A bunker: a squat dome on a base line.
+    bunker: (px) => {
+        const c = px / 2, r = px * 0.32
+        return `<path d="M ${c - r} ${c + r * 0.45} L ${c - r} ${c + r * 0.1} `
+             + `Q ${c} ${c - r * 0.75} ${c + r} ${c + r * 0.1} `
+             + `L ${c + r} ${c + r * 0.45} Z"/>`
+    },
+}
+
+/** Which glyph an OSM facility kind uses. */
+export function facilityGlyphKey(kind) {
+    const k = String(kind || "").toLowerCase()
+    if (k === "hospital" || k === "clinic" || k === "doctors") return "hospital"
+    if (k === "police") return "police"
+    if (k === "fire_station") return "fire"
+    if (k === "bunker") return "bunker"
+    return "military"
+}
+
+const _facCache = new Map()
+
+/** A crisp facility glyph, supersampled like every other marker here. */
+export function getFacilityMarkerDataUri({ kind = "military", color = TEXT_MUTED,
+                                           size = 16 } = {}) {
+    const key = `fac:${kind}:${color}:${size}`
+    if (_facCache.has(key)) return _facCache.get(key)
+    const px = size * MARKER_SUPERSAMPLE
+    const draw = FACILITY_GLYPH[facilityGlyphKey(kind)] || FACILITY_GLYPH.military
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" `
+        + `viewBox="0 0 ${px} ${px}">`
+        // A dark disc behind the glyph so it stays legible over bright
+        // terrain, the same trick the labels use.
+        + `<circle cx="${px / 2}" cy="${px / 2}" r="${px * 0.44}" `
+        + `fill="#0B0F1A" fill-opacity="0.72" stroke="${color}" `
+        + `stroke-width="${1.2 * MARKER_SUPERSAMPLE}"/>`
+        + `<g fill="${color}" stroke="${color}" stroke-width="${0.5 * MARKER_SUPERSAMPLE}" `
+        + `stroke-linejoin="round">${draw(px)}</g>`
+        + `</svg>`
+    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+    _facCache.set(key, uri)
+    return uri
+}
+
 /** Which shape a source's markers use. One place, so the map stays legible. */
 export const SHAPE_FOR_SOURCE = {
     geoconfirmed: "square",     // human-verified, geolocated ground truth

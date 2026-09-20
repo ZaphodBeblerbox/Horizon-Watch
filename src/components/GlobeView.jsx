@@ -884,7 +884,7 @@ export default function GlobeView({
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
-                <GlobeFacilitiesLayer types={facilityTypes} />
+                <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds} />
                 {warmapTheatres.map((t) => (
                     <GlobeWarMapLayer key={t.key ?? t} theatre={t.key ?? t}
                                       revid={t.revid ?? null} enabled />

@@ -3630,6 +3630,47 @@ def api_frontline_theatres():
     return {"theatres": out}
 
 
+@app.get("/api/facilities/in-viewport")
+async def api_facilities_in_viewport(min_lat: float, max_lat: float,
+                                     min_lon: float, max_lon: float,
+                                     categories: str | None = None):
+    """Facilities inside whatever the map is currently showing.
+
+    The first cut only knew about the fifteen strategic zones, so panning
+    to Germany showed nothing and the layer looked broken. Infrastructure
+    is a property of the ground, not of whether we happen to watch it.
+
+    Refused above a span this big: a continental query is millions of
+    nodes, Overpass will take a minute and then fail, and the answer
+    would be unreadable anyway. The layer only draws below 900km camera
+    distance for the same reason.
+    """
+    span = abs(max_lat - min_lat) * abs(max_lon - min_lon)
+    if span > 60:
+        return {"facilities": [], "count": 0, "refused":
+                "viewport too large — zoom in to load facilities",
+                "span_deg2": round(span, 1)}
+
+    import infra_entities as _ie
+    cats = [c.strip() for c in (categories or "").split(",") if c.strip()] or None
+    loop = asyncio.get_event_loop()
+
+    def _work():
+        got = _ie.fetch_zone((min_lat, min_lon, max_lat, max_lon),
+                             zone_id=None, categories=cats)
+        if got.get("available"):
+            # Persist what we just fetched: a facility seen once is worth
+            # keeping, and the ontology should not depend on a zone
+            # happening to exist.
+            try:
+                _ie.persist(_ie.to_ontology_rows(got["facilities"]))
+            except Exception as ex:                         # noqa: BLE001
+                print(f"[facilities] viewport persist: {type(ex).__name__}: {ex}")
+        return got
+
+    return await loop.run_in_executor(_frontline_executor, _work)
+
+
 @app.get("/api/facilities")
 def api_facilities(category: str | None = None, zone_id: str | None = None,
                    limit: int = 4000):
