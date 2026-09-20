@@ -131,16 +131,40 @@ def test_one_area_per_faction_not_one_per_point():
 # but a confidently mislabelled belligerent on a control map is the worst
 # output this system can produce.
 
-def test_every_offered_theatre_declares_a_legend():
-    for key, spec in w.THEATRES.items():
-        assert spec.get("legend"), f"{key} is offered with no legend"
-
-
-def test_theatres_without_a_legend_are_offered_as_unavailable_with_a_reason():
+def test_every_war_is_offered_even_without_a_legend():
+    """POLICY REVERSED, deliberately. These wars were withheld to avoid
+    showing an unnamed colour, which hid real geography — how fragmented
+    a war is and where its boundaries run is legible without knowing the
+    sides' names. They are offered; the sides are labelled unidentified."""
     rows = {t["key"]: t for t in w.theatres()}
-    for key in w.UNNAMED_THEATRES:
-        assert rows[key]["available"] is False, key
-        assert "legend" in rows[key]["reason"]
+    for key in ("myanmar", "libya", "somalia", "mali"):
+        assert rows[key]["available"] is True, key
+        assert rows[key]["legend_known"] is False, key
+        assert rows[key]["reason"], f"{key} must say why its sides are unnamed"
+
+
+def test_a_war_with_a_legend_is_marked_as_having_one():
+    rows = {t["key"]: t for t in w.theatres()}
+    assert rows["yemen"]["legend_known"] is True
+    assert rows["yemen"]["reason"] is None
+
+
+def test_an_unnamed_side_is_worded_never_left_blank(monkeypatch):
+    """A null faction renders as an empty line. The reader must be TOLD
+    the side is unknown, which is a different thing from being shown
+    nothing — and must never be told a guess."""
+    monkeypatch.setattr(w, "fetch_legend", lambda t: {})
+    monkeypatch.setattr(w, "_get", lambda p: {"query": {"pages": {"1": {"revisions": [{
+        "timestamp": "2026-09-17T00:00:00Z",
+        "slots": {"main": {"*":
+            '{ lat = "20.0", long = "96.0", mark = "Location dot red.svg" },'}}}]}}}})
+    w._CACHE.clear()
+    d = w.fetch("myanmar", force=True)
+    p = d["points"][0]
+    assert p["faction_known"] is False
+    assert "unidentified" in p["faction"]
+    assert d["legend_available"] is False
+    assert d["legend_note"]
 
 
 def test_no_colour_reaches_the_map_without_a_name(monkeypatch):

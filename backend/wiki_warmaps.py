@@ -30,6 +30,7 @@ carries the page and its last-edit timestamp so a reader can judge both.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import time
@@ -38,7 +39,7 @@ import urllib.request
 
 _UA = "HorizonWatch/2.0 (+https://github.com/ZaphodBeblerbox/Horizon-Watch)"
 _API = "https://en.wikipedia.org/w/api.php"
-_TIMEOUT = 40
+_TIMEOUT = 20
 _CACHE: dict = {}
 _CACHE_TTL = 6 * 3600          # these are edited daily at most
 
@@ -95,6 +96,25 @@ THEATRES: dict[str, dict] = {
                    "orange": "contested / mixed control",
                    "purple": "contested / mixed control"},
     },
+    # These four publish no legend in their module /doc and none in their
+    # article. They are OFFERED ANYWAY, because who holds which town is
+    # useful on its own: the shape of the war — how fragmented it is,
+    # where the boundaries run, which side is consolidating — is legible
+    # without knowing the sides' names. What must never happen is a
+    # GUESSED name, so their colours are labelled as unidentified and the
+    # panel says the legend is unavailable for this war.
+    "myanmar": {"label": "Myanmar",
+                "module": "Module:Myanmar Civil War detailed map",
+                "legend": {}},
+    "libya": {"label": "Libya",
+              "module": "Module:Libyan Civil War detailed map",
+              "legend": {}},
+    "somalia": {"label": "Somalia",
+                "module": "Module:Somali Civil War detailed map",
+                "legend": {}},
+    "mali": {"label": "Mali / Sahel",
+             "module": "Module:Mali War detailed map",
+             "legend": {}},
     "lebanon": {
         "label": "Lebanon",
         "module": "Module:Lebanese insurgency detailed map",
@@ -110,32 +130,8 @@ THEATRES: dict[str, dict] = {
     },
 }
 
-# ── theatres whose factions cannot be named ──────────────────────────────
-#
-# Asked to make sure there are no unnamed factions on the map. The
-# guarantee is kept by NOT OFFERING a war whose colours cannot all be
-# named, rather than by inventing names for them — an "unnamed faction
-# (grey)" is merely unhelpful, but a confidently mislabelled belligerent
-# on a control map is the worst output this system can produce.
-#
-# These four publish no legend in their module /doc and none in their
-# article's infobox, and their icon palettes are not shared with a war
-# that does. They are listed with that reason, the same way Gaza is
-# listed as having no open control source at all.
-UNNAMED_THEATRES: dict[str, dict] = {
-    "myanmar": {"label": "Myanmar",
-                "module": "Module:Myanmar Civil War detailed map"},
-    "libya": {"label": "Libya",
-              "module": "Module:Libyan Civil War detailed map"},
-    "somalia": {"label": "Somalia",
-                "module": "Module:Somali Civil War detailed map"},
-    "mali": {"label": "Mali / Sahel",
-             "module": "Module:Mali War detailed map"},
-}
-
-NO_LEGEND_REASON = ("faction legend is not published for this war — the map "
-                    "exists but its colours cannot be named, and a guessed "
-                    "belligerent is worse than none")
+NO_LEGEND_NOTE = ("no faction legend is published for this war — the "
+                  "control structure is real, the sides are unidentified")
 
 # One Lua table row: { lat = "14.799", long = "42.949", mark = "...", label = "..." }
 _MARK = re.compile(
@@ -240,8 +236,13 @@ def fetch(theatre: str, force: bool = False) -> dict:
                      for c in legend}
     colours = sorted({p["colour"] for p in points})
     for p in points:
-        # Named only where the module's own documentation says so.
+        # Named only where a legend says so. Everything else is labelled
+        # as unidentified IN WORDS rather than left null, so a reader is
+        # told the side is unknown instead of being shown a blank.
         p["faction"] = legend.get(p["colour"])
+        p["faction_known"] = p["faction"] is not None
+        if not p["faction"]:
+            p["faction"] = f"unidentified side ({p['colour']})"
 
     data = {
         "available": bool(points),
@@ -257,6 +258,8 @@ def fetch(theatre: str, force: bool = False) -> dict:
         "source_url": f"https://en.wikipedia.org/wiki/{urllib.parse.quote(spec['module'])}",
         "last_edited": edited,
         # What a reader has to hold in mind to use this honestly.
+        "legend_available": bool(legend),
+        "legend_note": None if legend else NO_LEGEND_NOTE,
         "caveat": ("settlement-level control points, not a continuous front "
                    "line; community-edited on Wikipedia, so as current and as "
                    "contested as its last editor"),
@@ -420,19 +423,19 @@ def fetch_legend(theatre: str) -> dict:
 
 
 def theatres() -> list[dict]:
-    """Every war this module knows, named ones first.
+    """Every war this module can draw.
 
-    A theatre with an incomplete legend is reported as unavailable with
-    its reason rather than omitted, so the UI can say why a war a reader
-    knows about is missing.
+    All of them are available: a war with no published legend still shows
+    a real control structure, and refusing it hid useful geography to
+    avoid an unnamed colour. `legend_known` lets the UI say which sides
+    it can name without withholding the map.
     """
-    out = [{"key": k, "label": v["label"], "module": v["module"],
-            "available": True, "legend": v.get("legend") or {}}
-           for k, v in THEATRES.items()]
-    out += [{"key": k, "label": v["label"], "module": v["module"],
-             "available": False, "reason": NO_LEGEND_REASON, "legend": {}}
-            for k, v in UNNAMED_THEATRES.items()]
-    return out
+    return [{"key": k, "label": v["label"], "module": v["module"],
+             "available": True,
+             "legend": v.get("legend") or {},
+             "legend_known": bool(v.get("legend")),
+             "reason": None if v.get("legend") else NO_LEGEND_NOTE}
+            for k, v in THEATRES.items()]
 
 
 # ── points into areas ────────────────────────────────────────────────────
@@ -577,6 +580,10 @@ def polygons(theatre: str, force: bool = False) -> dict:
             "properties": {
                 "faction": faction,
                 "colour": colour,
+                # Whether anyone published who this is, as opposed to the
+                # boundary being derived — two separate uncertainties that
+                # a reader must not have to disentangle from one word.
+                "faction_known": bool(data.get("legend", {}).get(colour)),
                 "derived": True,
                 "how": ("nearest-control-point areas, dissolved by faction — "
                         "the boundary is computed, not asserted by anyone"),
@@ -589,3 +596,205 @@ def polygons(theatre: str, force: bool = False) -> dict:
         "polygon_count": len(features),
         "polygon_error": None,
     }
+
+
+# ── what changed, and who took it ────────────────────────────────────────
+#
+# Asked for troop movement and frontline change across every theatre.
+# These maps are wikis, which means they have REVISION HISTORY — and a
+# control map's history is exactly a record of ground changing hands.
+#
+# TWO SIGNALS, AND THEY CHECK EACH OTHER:
+#
+#   the diff     parse the marks now and as of N days ago, match them by
+#                coordinate, and report every town whose colour changed.
+#                This is authoritative: it is what the map actually says.
+#
+#   the comment  editors write what they did and cite it — "Dhubab and
+#                Perim taken by Houthis per reliable source: <url>",
+#                "Mokha to Houthis per reliable source: nytimes.com".
+#                This is the narrative and the source, which the diff
+#                cannot supply.
+#
+# NEITHER IS A TROOP MOVEMENT. A town changing colour is a change in what
+# an editor believes is true, published on the day they published it. It
+# is the best open record of a moving front that exists, and it is not a
+# unit tracked across the ground, so nothing here calls it one.
+
+# Coordinates are matched at ~100m. Editors nudge a mark by a few metres
+# when they retouch it, and a tighter match would report those as a town
+# being lost and an identical town captured next door.
+_MATCH_DP = 3
+
+
+def _now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _key(p: dict) -> tuple:
+    return (round(p["lat"], _MATCH_DP), round(p["lon"], _MATCH_DP))
+
+
+def _revision_at(module: str, before_iso: str | None) -> tuple[str | None, dict]:
+    """(wikitext, meta) for the newest revision at or before a timestamp."""
+    params = {"action": "query", "prop": "revisions",
+              "rvprop": "content|timestamp|ids", "rvslots": "main",
+              "rvlimit": 1, "format": "json", "titles": module}
+    if before_iso:
+        params["rvstart"] = before_iso
+        params["rvdir"] = "older"
+    d = _get(params)
+    page = list(d["query"]["pages"].values())[0]
+    revs = page.get("revisions") or []
+    if not revs:
+        return None, {}
+    r = revs[0]
+    return r["slots"]["main"]["*"], {"revid": r.get("revid"),
+                                     "timestamp": r.get("timestamp")}
+
+
+def _edit_log(module: str, since_iso: str, limit: int = 40) -> list[dict]:
+    """Editors' own descriptions of what changed, with their citations."""
+    try:
+        d = _get({"action": "query", "prop": "revisions",
+                  "rvprop": "timestamp|comment|ids|user", "rvlimit": limit,
+                  "rvdir": "older", "format": "json", "titles": module})
+    except Exception:                                       # noqa: BLE001
+        return []
+    page = list(d["query"]["pages"].values())[0]
+    out = []
+    for r in page.get("revisions") or []:
+        ts = r.get("timestamp") or ""
+        if ts < since_iso:
+            break
+        note = (r.get("comment") or "").strip()
+        if not note or note.lower() in ("edit", "undo", "rv", "revert"):
+            continue
+        url = None
+        m = re.search(r"https?://\S+", note)
+        if m:
+            url = m.group(0).rstrip(".,;)")
+            note = note[:m.start()].strip(" :–-")
+        out.append({"at": ts, "note": note[:200], "source_url": url,
+                    "editor": r.get("user")})
+    return out
+
+
+_WARM_ORDER: list[str] = []
+
+
+def warm_next(days: int = 30) -> str | None:
+    """Compute ONE theatre's changes, round-robin. Returns which.
+
+    Warming all eight in a single call is roughly two dozen Wikipedia
+    round-trips at a 40s timeout apiece, and in the server it simply
+    never finished — the loop logged that it had started and then sat in
+    the executor indefinitely, which looks exactly like a hang. One
+    theatre per cycle bounds the work to a few seconds and fills every
+    cache within a few minutes.
+    """
+    global _WARM_ORDER
+    if not _WARM_ORDER:
+        _WARM_ORDER = list(THEATRES)
+    key = _WARM_ORDER.pop(0)
+    try:
+        changes(key, days=days)
+        return key
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[warmaps] warm {key}: {type(ex).__name__}: {ex}")
+        return None
+
+
+def changes(theatre: str, days: int = 30, cached_only: bool = False) -> dict:
+    """Ground that changed hands in this theatre, over `days`.
+
+    Never raises: a history lookup failing must not take the live map
+    with it.
+    """
+    spec = THEATRES.get(theatre)
+    if not spec:
+        return {"available": False, "error": f"unknown theatre: {theatre}",
+                "changes": []}
+
+    days = max(1, min(int(days), 365))
+    # Cached: this is two full revision fetches plus a legend lookup per
+    # theatre, and the notification tray asks for every theatre every 45
+    # seconds. Uncached that was 13.5s of Wikipedia round-trips per poll,
+    # for data that changes at most a few times a day.
+    ckey = f"changes:{theatre}:{days}"
+    hit = _CACHE.get(ckey)
+    if hit and time.time() - hit["ts"] < _CACHE_TTL:
+        return hit["data"]
+    if cached_only:
+        # The caller cannot afford to wait. Say so rather than returning
+        # an empty result that reads as "nothing changed here".
+        return {"available": False, "theatre": theatre, "changes": [],
+                "pending": True, "error": "not computed yet"}
+
+    since = (_now() - datetime.timedelta(days=days))
+    since_iso = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    try:
+        now_text, now_meta = _revision_at(spec["module"], None)
+        then_text, then_meta = _revision_at(spec["module"], since_iso)
+    except Exception as e:                                  # noqa: BLE001
+        return {"available": False, "error": f"{type(e).__name__}: {e}",
+                "theatre": theatre, "changes": []}
+
+    if not now_text or not then_text:
+        return {"available": False, "theatre": theatre, "changes": [],
+                "error": "no revision available for that window"}
+
+    legend = {**(spec.get("legend") or {}), **fetch_legend(theatre)}
+
+    def named(colour):
+        return legend.get(colour) or f"unidentified side ({colour})"
+
+    now_pts = {_key(p): p for p in parse_marks(now_text)}
+    then_pts = {_key(p): p for p in parse_marks(then_text)}
+
+    out = []
+    for k, p in now_pts.items():
+        was = then_pts.get(k)
+        if was is None:
+            out.append({"kind": "appeared", "lat": p["lat"], "lon": p["lon"],
+                        "place": p.get("label"),
+                        "from": None, "to": named(p["colour"]),
+                        "to_colour": p["colour"]})
+        elif was["colour"] != p["colour"]:
+            out.append({"kind": "changed_hands", "lat": p["lat"], "lon": p["lon"],
+                        "place": p.get("label"),
+                        "from": named(was["colour"]), "to": named(p["colour"]),
+                        "from_colour": was["colour"], "to_colour": p["colour"]})
+    for k, p in then_pts.items():
+        if k not in now_pts:
+            out.append({"kind": "removed", "lat": p["lat"], "lon": p["lon"],
+                        "place": p.get("label"),
+                        "from": named(p["colour"]), "to": None,
+                        "from_colour": p["colour"]})
+
+    # A town changing hands is the finding; a mark merely appearing is
+    # usually an editor adding detail, so the two are counted apart.
+    changed = [c for c in out if c["kind"] == "changed_hands"]
+
+    data = {
+        "available": True,
+        "theatre": theatre,
+        "label": spec["label"],
+        "window_days": days,
+        "from_revision": then_meta,
+        "to_revision": now_meta,
+        "changes": out,
+        "changed_hands": len(changed),
+        "appeared": sum(1 for c in out if c["kind"] == "appeared"),
+        "removed": sum(1 for c in out if c["kind"] == "removed"),
+        "edit_log": _edit_log(spec["module"], since_iso),
+        "legend_available": bool(legend),
+        "caveat": ("a town changing colour is a change in what an editor "
+                   "believes, published when they published it — the best "
+                   "open record of a moving front, and not a tracked unit"),
+        "source": SOURCE,
+        "error": None,
+    }
+    _CACHE[ckey] = {"ts": time.time(), "data": data}
+    return data

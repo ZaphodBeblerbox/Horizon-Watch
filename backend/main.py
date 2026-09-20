@@ -814,6 +814,11 @@ _news_executor = ThreadPoolExecutor(max_workers=1)
 # starving those unrelated requests. Isolating it here means it can't do
 # that regardless of how long any future sync takes.
 _geoconfirmed_executor = ThreadPoolExecutor(max_workers=1)
+# Frontline change warming gets its own worker, the same way news and
+# GeoConfirmed do. The shared 4-worker pool is saturated by long-lived
+# AIS/ADS-B/GDELT work, and a warm queued behind those never ran at all —
+# the loop started, logged, and then waited forever for a thread.
+_frontline_executor = ThreadPoolExecutor(max_workers=1)
 # Zone scans: satellite fetch + ONNX inference, minutes at a time.
 _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="zone-scan")
 # Briefing drafting gets its OWN pool. A researched narrative draft occupies a
@@ -3512,6 +3517,26 @@ async def aviation_photo(icao24: str):
     return data
 
 
+@app.get("/api/frontlines/changes")
+async def api_frontline_changes(days: int = 30):
+    """Ukrainian territory that changed hands, measured between snapshots."""
+    import frontlines as _fl
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _fl.changes, days)
+
+
+@app.get("/api/warmap/{theatre}/changes")
+async def api_warmap_changes(theatre: str, days: int = 30):
+    """Towns that changed hands in one war, from the map's own history.
+
+    A wiki keeps revisions, and a control map's revisions are a record of
+    ground changing hands — with the editor's own note and citation.
+    """
+    import wiki_warmaps as _wm
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _wm.changes, theatre, days)
+
+
 @app.get("/api/warmap/{theatre}/polygons")
 async def api_warmap_polygons(theatre: str, force: bool = False):
     """Faction AREAS for one war, derived from its control points.
@@ -3563,13 +3588,14 @@ def api_frontline_theatres():
         if w["key"] in have:
             continue
         out = [t for t in out if t["key"] != w["key"]]
-        # Respect the module's own availability. A war whose factions
-        # cannot be named is offered as unavailable WITH ITS REASON, not
-        # silently enabled — hardcoding True here put Myanmar, Libya,
-        # Somalia and Mali back on the map with unnamed factions, which is
-        # exactly what the refusal exists to prevent.
+        # Every war is offered. A missing faction legend is reported
+        # alongside the map rather than used to withhold it: the control
+        # structure is real even when the sides are unidentified, and
+        # hiding Myanmar to avoid an unnamed colour lost more than it
+        # protected.
         out.append({"key": w["key"], "label": w["label"],
                     "available": bool(w.get("available")),
+                    "legend_known": bool(w.get("legend_known")),
                     "reason": w.get("reason"),
                     "kind": "points", "source": _wm.SOURCE,
                     "source_url": f"https://en.wikipedia.org/wiki/{w['module'].replace(' ', '_')}",
@@ -12276,6 +12302,7 @@ async def startup_event():
     asyncio.create_task(_usgs_loop())
     asyncio.create_task(_gdacs_loop())
     asyncio.create_task(_gdelt_loop())
+    asyncio.create_task(_frontline_change_loop())
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
@@ -12645,6 +12672,32 @@ async def _gdacs_loop():
 # A FusionEvent only actually forms once >=2 distinct domains converge at the
 # same geo key within fusion's rolling window — that correlation logic lives
 # entirely in fusion_engine.py and is untouched here.
+async def _frontline_change_loop():
+    """Keep the frontline-change caches warm.
+
+    Computing them costs sixteen Wikipedia round-trips plus two
+    DeepStateMap snapshots, and the notification tray polls every 45
+    seconds. Warmed here so no request ever pays for it, and on a slow
+    cycle because control maps are redrawn a few times a day at most.
+    """
+    await asyncio.sleep(90)              # let startup settle first
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            import wiki_warmaps as _wm
+            import frontlines as _fl
+            done = await loop.run_in_executor(_frontline_executor, _wm.warm_next, 30)
+            await loop.run_in_executor(_frontline_executor, _fl.changes, 30)
+            print(f"[frontlines] change cache warmed: {done or 'ukraine only'}")
+        except Exception as ex:                             # noqa: BLE001
+            # A failed warm must never stop the loop; the caches simply
+            # stay cold and the tray omits frontline cards until next pass.
+            print(f"[frontlines] warm failed: {type(ex).__name__}: {ex}")
+        # One theatre per pass, so all eight are current within ten
+        # minutes and no single cycle is long enough to look like a hang.
+        await asyncio.sleep(75)
+
+
 async def _gdelt_loop():
     global _GDELT_SEEN_IDS
     await asyncio.sleep(45)  # staggered startup
@@ -23310,6 +23363,7 @@ def api_get_notifications(
         extra += _ln.gdelt_items(hours=hours)
         extra += _ln.geoconfirmed_items(hours=hours)
         extra += _ln.derived_items()
+        extra += _ln.frontline_items(days=30)
         try:
             from routers import risk_index as _ri
             rows = _ri.get_all_country_risk().get("countries") or []

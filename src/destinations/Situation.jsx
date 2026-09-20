@@ -830,9 +830,15 @@ export default function Situation({ onOpenDossier }) {
                                       opacity: contextOn.frontlines && t.available ? 1 : 0.4 }}>
                             <span style={{ flex: 1, font: "400 11px var(--font)", color: "var(--txt-3)" }}>
                                 {t.label}
-                                {!t.available && (
+                                {/* Two different absences, said differently. No
+                                    open source means there is no map; no legend
+                                    means there is a map whose sides we cannot
+                                    name — and the second is still worth drawing. */}
+                                {!t.available ? (
                                     <span style={{ color: "var(--txt-4)" }}> · no open source</span>
-                                )}
+                                ) : t.legend_known === false ? (
+                                    <span style={{ color: "var(--txt-4)" }}> · factions unavailable</span>
+                                ) : null}
                             </span>
                             <button
                                 onClick={t.available && contextOn.frontlines

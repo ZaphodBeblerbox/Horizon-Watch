@@ -182,3 +182,128 @@ def fetch(force: bool = False) -> dict:
     }
     _CACHE["latest"] = {"ts": time.time(), "data": data}
     return data
+
+
+# ── ground that changed hands ────────────────────────────────────────────
+#
+# DeepStateMap keeps every snapshot it has ever published — 1,763 of them
+# at the time of writing — so territorial change is not something to
+# estimate. It can be MEASURED: take the occupied polygons as they were N
+# days ago, take them as they are now, and subtract.
+#
+# That is strictly better than drawing arrows from the attack_direction
+# points. An arrow is an assertion about intent; a polygon difference is
+# the ground itself, and it comes with an area in square kilometres.
+
+def _snapshot_nearest(target_epoch: float, timeout: int = _TIMEOUT):
+    """(id, datetime) of the published snapshot closest to a moment."""
+    hist = _get(f"{_BASE}/history/public", timeout=timeout)
+    if not isinstance(hist, list) or not hist:
+        return None, None
+    import datetime as _dt
+
+    def when(h):
+        raw = h.get("updatedAt") or ""
+        try:
+            return _dt.datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        except Exception:                                   # noqa: BLE001
+            return None
+
+    dated = [(h, when(h)) for h in hist]
+    dated = [(h, t) for h, t in dated if t is not None]
+    if not dated:
+        return None, None
+    best = min(dated, key=lambda p: abs(p[1] - target_epoch))
+    return best[0].get("id"), best[0].get("updatedAt")
+
+
+def _occupied_union(snapshot_id: int):
+    """One geometry for everything Russian-controlled in a snapshot."""
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+    raw = _get(f"{_BASE}/history/{snapshot_id}/geojson")
+    polys = []
+    for f in raw.get("features") or []:
+        if _status_of(f) != "occupied":
+            continue
+        if (f.get("geometry") or {}).get("type") != "Polygon":
+            continue
+        try:
+            g = shape(f["geometry"])
+            if g.is_valid and not g.is_empty:
+                polys.append(g)
+        except Exception:                                   # noqa: BLE001
+            continue
+    return unary_union(polys) if polys else None
+
+
+def changes(days: int = 30) -> dict:
+    """Territory gained and lost over a window. Never raises."""
+    import time as _t
+    days = max(1, min(int(days), 365))
+    key = f"changes:{days}"
+    hit = _CACHE.get(key)
+    if hit and _t.time() - hit["ts"] < _CACHE_TTL:
+        return hit["data"]
+
+    try:
+        now_id, now_at = latest_snapshot_id()
+        then_id, then_at = _snapshot_nearest(_t.time() - days * 86400)
+        if now_id is None or then_id is None or now_id == then_id:
+            raise RuntimeError("no comparable snapshot in that window")
+        now_g = _occupied_union(now_id)
+        then_g = _occupied_union(then_id)
+        if now_g is None or then_g is None:
+            raise RuntimeError("a snapshot carried no occupied territory")
+
+        from shapely.geometry import mapping
+        gained = now_g.difference(then_g)      # newly occupied
+        lost = then_g.difference(now_g)        # given up or retaken
+    except Exception as e:                                  # noqa: BLE001
+        stale = hit["data"] if hit else None
+        if stale:
+            return {**stale, "stale": True, "error": f"{type(e).__name__}: {e}"}
+        return {"available": False, "error": f"{type(e).__name__}: {e}",
+                "theatre": THEATRE, "features": []}
+
+    # Degrees square to km square, at this latitude. Approximate and
+    # labelled as such — the point is the order of magnitude, not a
+    # cadastral figure.
+    import math
+    KM2_PER_DEG2 = 111.32 * 111.32 * math.cos(math.radians(48.0))
+
+    features = []
+    for geom, kind, meaning in (
+        (gained, "gained", "occupied since the earlier snapshot"),
+        (lost, "lost", "no longer occupied — retaken or withdrawn from"),
+    ):
+        if geom.is_empty:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": mapping(geom.simplify(0.005, preserve_topology=True)),
+            "properties": {"change": kind, "meaning": meaning,
+                           "area_km2": round(geom.area * KM2_PER_DEG2, 1)},
+        })
+
+    data = {
+        "available": bool(features),
+        "theatre": THEATRE,
+        "window_days": days,
+        "from_snapshot": {"id": then_id, "at": then_at},
+        "to_snapshot": {"id": now_id, "at": now_at},
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "gained_km2": next((f["properties"]["area_km2"] for f in features
+                            if f["properties"]["change"] == "gained"), 0.0),
+        "lost_km2": next((f["properties"]["area_km2"] for f in features
+                          if f["properties"]["change"] == "lost"), 0.0),
+        "source": SOURCE,
+        "source_url": SOURCE_URL,
+        "caveat": ("measured between two published snapshots — it is the "
+                   "difference between two maps, so it inherits whatever "
+                   "either map got wrong"),
+        "stale": False,
+        "error": None,
+    }
+    _CACHE[key] = {"ts": _t.time(), "data": data}
+    return data

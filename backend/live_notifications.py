@@ -31,6 +31,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 from pathlib import Path
 
 # Goldstein is -10 (use of force) to +10 (cooperation). A pin has to be
@@ -203,6 +204,85 @@ def derived_items(limit: int = 20) -> list[dict]:
     except Exception as ex:                                 # noqa: BLE001
         print(f"[live-notif] derived: {type(ex).__name__}: {ex}")
     return out
+
+
+def frontline_items(days: int = 7, limit: int = 12) -> list[dict]:
+    """Ground that changed hands, across every theatre we can see.
+
+    THE MOST CONSEQUENTIAL THING ON THIS MAP, and until now the only feed
+    with no way to interrupt anyone. A town changing sides outranks a
+    machine-coded wire story about the same region by a wide margin, so
+    these are severity-high by default and critical when an airport,
+    port or crossing changes hands — those are the ones that alter what
+    is possible next, not merely what happened.
+    """
+    out = []
+
+    # Ukraine: measured area, not a list of towns.
+    try:
+        import frontlines as _fl
+        d = _fl.changes(days=days)
+        if d.get("available") and (d.get("gained_km2") or d.get("lost_km2")):
+            g, l = d.get("gained_km2") or 0, d.get("lost_km2") or 0
+            net = g - l
+            out.append({
+                "id": f"frontline-ukraine-{d['from_snapshot']['id']}-{d['to_snapshot']['id']}",
+                "title": (f"Ukraine front moved: {g:.0f} km² occupied, "
+                          f"{l:.0f} km² retaken in {days}d"),
+                "sev": "high" if abs(net) >= 50 else "moderate",
+                "reason": (f"measured between DeepStateMap snapshots "
+                           f"{str(d['from_snapshot']['at'])[:10]} and "
+                           f"{str(d['to_snapshot']['at'])[:10]}"),
+                "notify": True,
+                "kind": "escalate",
+                "source": "DeepStateMap",
+                "lat": None, "lon": None,
+                "region": "Ukraine",
+                "created_at": _now().isoformat(),
+            })
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[live-notif] frontline ukraine: {type(ex).__name__}: {ex}")
+
+    # The wiki theatres: named towns, which is the more actionable form.
+    try:
+        import wiki_warmaps as _wm
+        for key in _wm.THEATRES:
+            try:
+                # Cached only: the tray must never wait on sixteen
+                # Wikipedia round-trips. A background warm fills this.
+                d = _wm.changes(key, days=days, cached_only=True)
+            except Exception:                               # noqa: BLE001
+                continue
+            if not d.get("available"):
+                continue
+            for c in d["changes"]:
+                if c["kind"] != "changed_hands" or not c.get("place"):
+                    continue
+                place = c["place"]
+                strategic = bool(re.search(
+                    r"\b(airport|airfield|air ?base|port|harbou?r|crossing|"
+                    r"bridge|refinery|terminal|dam|power)\b", place, re.I))
+                out.append({
+                    "id": f"frontline-{key}-{c['lat']:.3f}-{c['lon']:.3f}-{c['to_colour']}",
+                    "title": f"{place} changed hands — now {c['to']}",
+                    # A crossing or an airfield changes what is possible
+                    # next; a village changes what happened.
+                    "sev": "critical" if strategic else "high",
+                    "reason": f"{c['from']} → {c['to']} · {d['label']} · "
+                              f"per the war map's own revision history",
+                    "notify": True,
+                    "kind": "confirm",
+                    "source": _wm.SOURCE,
+                    "lat": c["lat"], "lon": c["lon"],
+                    "region": d["label"],
+                    "created_at": _now().isoformat(),
+                })
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[live-notif] frontline warmaps: {type(ex).__name__}: {ex}")
+
+    # Strategic sites first, then everything else.
+    out.sort(key=lambda o: 0 if o["sev"] == "critical" else 1)
+    return out[:limit]
 
 
 def _load_bands() -> dict:

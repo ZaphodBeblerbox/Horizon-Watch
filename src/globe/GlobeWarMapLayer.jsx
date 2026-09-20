@@ -76,7 +76,9 @@ export default function GlobeWarMapLayer({ theatre = null, enabled = false }) {
                     ds.entities.values.forEach((entity) => {
                         const raw = entity.properties?.getValue?.(_TIME) || {}
                         const hex = COLOUR_HEX[raw.colour] || COLOUR_HEX.grey
-                        const held = raw.faction || `unnamed faction (${raw.colour})`
+                        // The backend already words an unidentified side;
+                        // this must not invent a second phrasing for it.
+                        const held = raw.faction || `unidentified side (${raw.colour})`
                         if (entity.polygon) {
                             entity.polygon.material =
                                 Color.fromCssColorString(hex).withAlpha(FILL_ALPHA)
