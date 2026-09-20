@@ -132,6 +132,20 @@ _IDX_NUM_MENTIONS = 31
 _IDX_AVGTONE = 34
 _IDX_NUM_SOURCES = 32
 _IDX_NUM_ARTICLES = 33
+# ActionGeo_Type — HOW PRECISELY GDELT PLACED THIS EVENT.
+#   1 = country centroid   2 = US state   3 = US city
+#   4 = world city         5 = world state
+# It was never captured, so nothing downstream could tell a city-level
+# coordinate from a country centroid. That distinction is the whole
+# difference between a usable pin and the "213 articles on the US centroid"
+# failure that got the old news layer removed.
+_IDX_ACTION_GEO_TYPE_NEW = 51
+_IDX_ACTION_GEO_TYPE_OLD = 50
+
+# Geo types precise enough to draw. A country or state centroid is not a
+# place anything happened; it is the middle of a polygon.
+PINNABLE_GEO_TYPES: frozenset[str] = frozenset({"3", "4"})
+
 _IDX_ACTION_GEO_FULLNAME_NEW = 52
 _IDX_ACTION_GEO_COUNTRYCODE_NEW = 53
 _IDX_ACTION_GEO_LAT_NEW = 56
@@ -484,6 +498,8 @@ def _normalize_row(row: list[str], source_url: str, row_index: int) -> dict[str,
     mentions = _safe_int(row[_IDX_NUM_MENTIONS], 0)
     sources = _safe_int(row[_IDX_NUM_SOURCES], 0)
     articles = _safe_int(row[_IDX_NUM_ARTICLES], 0)
+    action_geo_type = (_first_field(row, _IDX_ACTION_GEO_TYPE_NEW,
+                                    _IDX_ACTION_GEO_TYPE_OLD) or "").strip()
     location = (_first_field(row, _IDX_ACTION_GEO_FULLNAME_NEW, _IDX_ACTION_GEO_FULLNAME_OLD) or "").strip()
     country_code = (_first_field(row, _IDX_ACTION_GEO_COUNTRYCODE_NEW, _IDX_ACTION_GEO_COUNTRYCODE_OLD) or "").strip().upper()
     source_article = (_first_field(row, _IDX_SOURCE_URL_NEW, _IDX_SOURCE_URL_OLD) or "").strip()
@@ -538,6 +554,14 @@ def _normalize_row(row: list[str], source_url: str, row_index: int) -> dict[str,
         "num_mentions": mentions,
         "num_sources":  sources,
         "num_articles": articles,
+        "action_geo_type": action_geo_type,
+        # Whether this event may be drawn as a point at all. Verbal events
+        # are excluded regardless of geo type: GDELT places them at a
+        # location NAMED IN THE ARTICLE, so "Guterres disapproves of the US"
+        # was placed in Tehran because the piece was about Iran. That is not
+        # a location, it is a coincidence of vocabulary.
+        "pinnable": (action_geo_type in PINNABLE_GEO_TYPES
+                     and event_root_code not in VERBAL_ROOT_CODES),
         "action_geo_country_code": country_code,
         "action_geo_full_name":    location,
     }
@@ -625,6 +649,131 @@ def _passes_filter(ev: dict[str, Any]) -> bool:
     if int(ev.get("mentions") or ev.get("num_mentions") or 0) < min_mentions:
         return False
     return True
+
+
+# ── What a map pin must be able to say ────────────────────────────────────
+#
+# A GDELT event becomes a pin only if it can present three things: a real
+# TITLE a person can read, a LOCATION precise enough to mean something, and
+# a SOURCE they can check. Anything short of that is a coloured dot asserting
+# that a machine believes something happened near here, which is how the
+# previous news layer lost the reader's trust.
+
+# A URL that is a tag, category, index or search page is not an article. It
+# cannot be cited as the source of one event, because it is a rotating list.
+_NON_ARTICLE_URL_MARKERS = ("/tag/", "/tags/", "/category/", "/categories/",
+                            "/search", "/index?", "?more=", "/topics/",
+                            "/author/", "/rss", "/feed")
+
+# Below this a "headline" is a fragment, not a sentence. Measured: real
+# article titles in this feed run 40-90 characters.
+MIN_HEADLINE_CHARS = 28
+
+
+def is_article_url(url: str) -> bool:
+    u = (url or "").strip().lower()
+    if not u.startswith("http"):
+        return False
+    return not any(m in u for m in _NON_ARTICLE_URL_MARKERS)
+
+
+def has_readable_title(headline: str) -> bool:
+    h = (headline or "").strip()
+    if len(h) < MIN_HEADLINE_CHARS:
+        return False
+    # A title that is one unbroken token is a slug or an error page.
+    return len(h.split()) >= 4
+
+
+def map_point(ev: dict) -> dict | None:
+    """The pin, or nothing.
+
+    Returns a flat record shaped for the map — title, context, location,
+    source — or None when this event cannot honestly be drawn. Returning
+    None rather than a degraded pin is the point: a map is read at a glance
+    and a weak pin is indistinguishable from a strong one.
+    """
+    if not ev.get("pinnable"):
+        return None
+    if not is_article_url(ev.get("source_url")):
+        return None
+    title = (ev.get("headline") or "").strip()
+    if not has_readable_title(title):
+        return None
+    lat, lon = ev.get("lat"), ev.get("lon")
+    if lat is None or lon is None:
+        return None
+
+    # The context line says what KIND of event GDELT coded and how strongly,
+    # in words rather than a CAMEO number, so the reader is never asked to
+    # know the codebook.
+    actors = " → ".join([a for a in (ev.get("actor1"), ev.get("actor2")) if a])
+    bits = [b for b in (ev.get("event_type"), actors) if b]
+    if ev.get("mentions"):
+        bits.append(f"{ev['mentions']} mentions")
+
+    return {
+        "id": ev.get("id") or ev.get("event_id"),
+        "source": "GDELT",
+        "title": title,
+        "context": " · ".join(bits),
+        "location_name": ev.get("location") or ev.get("location_name") or "",
+        "lat": lat, "lon": lon,
+        "date": ev.get("event_date") or ev.get("date"),
+        "source_url": ev.get("source_url"),
+        "event_type": ev.get("event_type"),
+        "goldstein": ev.get("goldstein"),
+        "tone": ev.get("avg_tone"),
+        "mentions": ev.get("mentions"),
+        # Said plainly so the map can render it differently from a
+        # GeoConfirmed square: this is a machine reading a wire story, not a
+        # human who found the building in the video.
+        "confidence": "machine-coded",
+        "geo_precision": "city",
+    }
+
+
+def map_points(events: list) -> list:
+    """Every event that can honestly be drawn, one pin per story per place.
+
+    GDELT codes one article into several events — a single report of a
+    shooting yields "Fight" and "Coerce" at identical coordinates, which
+    would stack two pins on one spot and read as two incidents. They are
+    one story, so they become one pin that names both codings.
+    """
+    best: dict = {}
+    for ev in events or []:
+        p = map_point(ev)
+        if p is None:
+            continue
+        # Same article, same place — the same event seen twice by the coder.
+        key = (p["source_url"], round(p["lat"], 3), round(p["lon"], 3))
+        prev = best.get(key)
+        if prev is None:
+            p["event_types"] = [p["event_type"]] if p["event_type"] else []
+            best[key] = p
+            continue
+        if p["event_type"] and p["event_type"] not in prev["event_types"]:
+            prev["event_types"].append(p["event_type"])
+        # Keep the most conflictual coding as the headline interpretation:
+        # "Fight" is the fact, "Coerce" is the framing.
+        if (p.get("goldstein") or 0) < (prev.get("goldstein") or 0):
+            prev["event_type"] = p["event_type"]
+            prev["goldstein"] = p["goldstein"]
+        prev["mentions"] = max(prev.get("mentions") or 0, p.get("mentions") or 0)
+
+    out = []
+    for p in best.values():
+        types = [t for t in p.get("event_types", []) if t]
+        actors = p["context"].split(" · ")[1] if " · " in p["context"] else ""
+        bits = [" / ".join(types) if types else p.get("event_type") or ""]
+        if actors and actors != p.get("event_type"):
+            bits.append(actors)
+        if p.get("mentions"):
+            bits.append(f"{p['mentions']} mentions")
+        p["context"] = " · ".join([b for b in bits if b])
+        out.append(p)
+    return out
 
 
 # ── Actor name cleaning ───────────────────────────────────────────────────────
@@ -716,8 +865,19 @@ def _readable_fallback(ev: dict[str, Any]) -> str:
 def _clean_html_title(raw: str) -> str:
     """Unescape HTML entities and strip trailing site-name suffixes."""
     title = _html_module.unescape(raw).strip()
-    # Strip " - Site Name" / " | Site Name" / " — Site Name" patterns
-    title = re.sub(r'\s*[|\-\u2013\u2014]\s*[^|\-\u2013\u2014]{3,60}$', '', title).strip()
+    # Strip a trailing " - Site Name" / " | Site Name" / " — Site Name".
+    #
+    # The separator must have WHITESPACE BEFORE IT. Without that requirement
+    # any hyphenated word near the end of a headline was treated as a site
+    # name and everything after it discarded:
+    #
+    #   "Mecca Alliance will be 'game-changer' for regional security"
+    #     -> "Mecca Alliance will be 'game"
+    #
+    # 10 of 47 cached headlines were truncated this way, several mid-word.
+    # A headline is the whole reason a map pin is readable, so a title that
+    # stops mid-sentence is worse than showing the raw one.
+    title = re.sub(r'\s+[|\u2013\u2014-]\s*[^|\u2013\u2014]{3,60}$', '', title).strip()
     return title
 
 
