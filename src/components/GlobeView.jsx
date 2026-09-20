@@ -129,6 +129,7 @@ export default function GlobeView({
     warmapTheatres = [],
     frontlinesAt = null,
     facilityTypes = [],
+    onFacilityStatus = null,
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
     firesEnabled = false,
@@ -884,7 +885,8 @@ export default function GlobeView({
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
-                <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds} />
+                <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds}
+                                      onStatus={onFacilityStatus} />
                 {warmapTheatres.map((t) => (
                     <GlobeWarMapLayer key={t.key ?? t} theatre={t.key ?? t}
                                       revid={t.revid ?? null} enabled />

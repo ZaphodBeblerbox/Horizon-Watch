@@ -24,6 +24,7 @@ import GlobeView from "../components/GlobeView.jsx"
 import { GDELT_EVENT_TYPES } from "../globe/GlobeGdeltLayer.jsx"
 import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
+import LiveTape from "../components/LiveTape.jsx"
 import MapMeta from "../components/MapMeta.jsx"
 import MapTip from "../components/MapTip.jsx"
 import { LAYER_GROUPS } from "../components/layerRailConfig.js"
@@ -47,7 +48,12 @@ import ImagerySidebar from "../components/ImagerySidebar.jsx"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 
 const API = API_BASE
-const REFRESH_MS = 60000
+// How often the surface pool, fusions and health are re-read. This
+// drives "newest critical" and the signal counts, so it is the number
+// that decides whether the page feels live or looks like a snapshot
+// somebody took a minute ago. Twenty seconds is well inside the rate at
+// which the backend loops publish, and these are small cached reads.
+const REFRESH_MS = 20000
 
 const SEVERITY_TIER_ORDER = ["critical", "significant", "elevated", "low"]
 const SEVERITY_FLOORS = [
@@ -380,6 +386,9 @@ export default function Situation({ onOpenDossier }) {
     // Every other war scrubs too, through the wiki's own revisions.
     // Keyed by theatre: {stops: [{revid, at}], idx: number|null}.
     const [warTimelines, setWarTimelines] = useState({})
+    // What the facilities layer is doing, so a 20-second Overpass query
+    // reads as "loading" rather than as a layer that does not work.
+    const [facStatus, setFacStatus] = useState(null)
     useEffect(() => {
         if (!contextOn.frontlines) return
         fetch(`${API_BASE}/api/frontlines/timeline?limit=200`, { credentials: "include" })
@@ -1009,7 +1018,10 @@ export default function Situation({ onOpenDossier }) {
                                 onClick={() => setInfraOn((p) => ({ ...p, [l.key]: !p[l.key] }))}>
                             <i className="sw" style={{ background: l.color }} />
                             <span className="n">{l.label}<em>{l.note}</em></span>
-                            <span className="c" />
+                            <span className="c">
+                                {FACILITY_ROW_TYPE[l.key] && infraOn[l.key] && facStatus
+                                    ? facStatus.text : ""}
+                            </span>
                             <span className="eye">
                                 <svg className="icon sm"><use href={infraOn[l.key] ? "#i-eye" : "#i-eye-off"} /></svg>
                             </span>
@@ -1118,6 +1130,13 @@ export default function Situation({ onOpenDossier }) {
                             as of {timeAgoLabel(surfaceUpdatedAt, nowMs)}
                         </span>
                     )}
+                    {/* The tape. Everything left of it is a summary of a
+                        window; this is the only thing on the page that
+                        says what just happened. */}
+                    <div style={{ flex: 1, minWidth: 0,
+                                  borderLeft: "1px solid var(--line)" }}>
+                        <LiveTape />
+                    </div>
 
                     {/* The annotation toolbar that used to sit in this band has
                         moved onto the map itself, as PARALLAX §10.1's vertical
@@ -1213,6 +1232,7 @@ export default function Situation({ onOpenDossier }) {
                         riskEnabled={contextOn.risk}
                         frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
                         frontlinesAt={frontlinesAt}
+                        onFacilityStatus={setFacStatus}
                         facilityTypes={Object.entries(FACILITY_ROW_TYPE)
                             .filter(([k]) => infraOn[k])
                             .map(([, v]) => v)}

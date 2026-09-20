@@ -3630,6 +3630,18 @@ def api_frontline_theatres():
     return {"theatres": out}
 
 
+@app.get("/api/ais/coverage")
+def api_ais_coverage(force: bool = False):
+    """Where this system can actually see ships, and where it cannot.
+
+    Terrestrial AIS is a map of antennas, not of shipping. Publishing the
+    gap is the difference between "the Gulf of Aden is quiet" and "we
+    cannot see the Gulf of Aden".
+    """
+    import ais_coverage as _ac
+    return _ac.measure(force=force)
+
+
 @app.get("/api/facilities/in-viewport")
 async def api_facilities_in_viewport(min_lat: float, max_lat: float,
                                      min_lon: float, max_lon: float,

@@ -431,3 +431,16 @@ textarea::placeholder {
     0%, 100% { opacity: 1; }
     50%       { opacity: 0.3; }
 }
+
+/* The live tape's heartbeat. The only element on the page that moves
+   without news, and it earns that by being the one thing that says the
+   feed is still up. Slow and low-contrast on purpose: a fast blink
+   reads as an alarm, and this is not one. */
+@keyframes live-dot-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+}
+.live-dot { animation: live-dot-pulse 2.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+    .live-dot { animation: none; opacity: 0.85; }
+}

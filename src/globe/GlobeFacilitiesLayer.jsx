@@ -43,7 +43,8 @@ const TYPE_TO_CATEGORY = {
     "Security Facility": "security",
 }
 
-export default function GlobeFacilitiesLayer({ types = [], viewBounds = null }) {
+export default function GlobeFacilitiesLayer({ types = [], viewBounds = null,
+                                              onStatus = null }) {
     // An empty list means every row is off, which is different from "no
     // filter" — nothing should draw.
     const enabled = Array.isArray(types) && types.length > 0
@@ -60,17 +61,43 @@ export default function GlobeFacilitiesLayer({ types = [], viewBounds = null }) 
     useEffect(() => {
         if (!enabled || !viewBounds || viewBounds.south == null) {
             setRows([])
+            onStatus?.(null)
             return
         }
         let cancelled = false
         const { south, north, west, east } = viewBounds
+        // REFUSED IS A STATE THE READER HAS TO SEE. Over ~60 deg² the
+        // backend declines, and silently drawing nothing is
+        // indistinguishable from a broken layer.
+        const span = Math.abs(north - south) * Math.abs(east - west)
+        if (span > 60) {
+            onStatus?.({ state: "zoom", text: "zoom in to load" })
+            return
+        }
         const run = () => {
+            // A COLD OVERPASS QUERY IS ABOUT TWENTY SECONDS, and the
+            // first version cleared the map the instant you started
+            // panning — so the whole of that wait looked like a layer
+            // that does not work. The previous view stays drawn until
+            // the new one lands, which is also just true: those
+            // buildings are still there.
+            onStatus?.({ state: "loading", text: "loading…" })
             const q = `min_lat=${south.toFixed(3)}&max_lat=${north.toFixed(3)}`
                     + `&min_lon=${west.toFixed(3)}&max_lon=${east.toFixed(3)}`
             fetch(`${API_BASE}/api/facilities/in-viewport?${q}`, { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : null))
-                .then((d) => { if (!cancelled) setRows(safeArray(d?.facilities)) })
-                .catch(() => {})
+                .then((d) => {
+                    if (cancelled) return
+                    if (d?.refused) {
+                        onStatus?.({ state: "zoom", text: "zoom in to load" })
+                        return
+                    }
+                    const got = safeArray(d?.facilities)
+                    setRows(got)
+                    onStatus?.({ state: "ok", text: `${got.length} in view`,
+                                 count: got.length })
+                })
+                .catch(() => { if (!cancelled) onStatus?.({ state: "error", text: "unavailable" }) })
         }
         clearTimeout(timerRef.current)
         // Overpass is a shared free service and panning fires constantly.

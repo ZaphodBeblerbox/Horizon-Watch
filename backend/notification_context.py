@@ -1198,6 +1198,24 @@ def __reset_arrivals() -> None:
         _arrival.clear()
 
 
+def _coverage_note(lat, lon) -> str:
+    """How well we see this water, appended to an AIS-derived reason.
+
+    Our AIS is terrestrial and clusters where volunteers run receivers,
+    so counting vessels ranks northern Europe as the busiest place on
+    earth and reports Hormuz — where we hold zero positions — as quiet.
+    A finding made in a blind region has to say so on its own face.
+    """
+    try:
+        import ais_coverage as _ac
+        c = _ac.coverage_for(lat, lon)
+    except Exception:                                       # noqa: BLE001
+        return ""
+    if not c or not c.get("blind"):
+        return ""
+    return f" (AIS coverage here is near zero — {c['region']})"
+
+
 def notification_relevance(alert: dict) -> dict:
     """The same decision for any alert dict or row. {"notify", "sev", "reason"}."""
     a = alert or {}
@@ -1221,7 +1239,8 @@ def notification_relevance(alert: dict) -> dict:
             if subject and not is_new_arrival(f"ais:{subject}", place_key(v["place"])):
                 return {"notify": False, "sev": v["sev"],
                         "reason": "already reported in " + place_key(v["place"])}
-        return {"notify": v["notify"], "sev": v["sev"], "reason": v["reason"]}
+        return {"notify": v["notify"], "sev": v["sev"],
+                "reason": v["reason"] + _coverage_note(lat, lon)}
 
     if k in _ALWAYS_NOTIFY:
         return {"notify": True,

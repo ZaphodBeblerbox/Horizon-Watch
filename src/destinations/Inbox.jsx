@@ -87,7 +87,10 @@ export default function Inbox() {
             setLoaded(true)
         })
     }, [])
-    useEffect(() => { load(); const iv = setInterval(load, 120_000); return () => clearInterval(iv) }, [load])
+    // Two minutes was long enough that the inbox was reliably showing
+    // something other than what the map was showing. It is the working
+    // record and it has to keep up with the feed that fills it.
+    useEffect(() => { load(); const iv = setInterval(load, 30_000); return () => clearInterval(iv) }, [load])
 
     const allRows = useMemo(
         () => buildWatchQueueRows(mergeNotificationItems(items, fusions)).map((r) => toInboxRow(r, statuses)),

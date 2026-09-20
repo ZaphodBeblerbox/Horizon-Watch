@@ -524,7 +524,9 @@ export default function App() {
             .then(d => { if (!cancelled && Array.isArray(d)) setNotifFeed(d) })
             .catch(() => {})
         load()
-        const t = setInterval(load, 45000)
+        // The tray is the surface people judge "is anything happening"
+        // by, so it polls faster than anything else here.
+        const t = setInterval(load, 20000)
         return () => { cancelled = true; clearInterval(t) }
     }, [profile])
 
