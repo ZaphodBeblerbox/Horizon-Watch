@@ -10970,6 +10970,15 @@ async def _sentinel_zone_scheduler_loop():
             except Exception as _fe:
                 print(f"[firms] trigger pass failed: {_fe}")
 
+            # ── Corroboration: agreement is a stronger reason than any
+            # single feed. FIRMS above acts on one sensor; this acts when
+            # two independent ways of looking put something in the same
+            # place within hours.
+            try:
+                await _corroboration_trigger_pass()
+            except Exception as _ce2:
+                print(f"[corroborate] trigger pass failed: {_ce2}")
+
         except Exception as _sched_e:
             print(f"[sentinel-scheduler] loop error: {_sched_e}")
             await _asyncio_sched.sleep(60)
@@ -10979,6 +10988,98 @@ async def _sentinel_zone_scheduler_loop():
 # refinery does not re-task imagery every single night for ever.
 _FIRMS_RECENT: list[dict] = []
 _FIRMS_RECENT_MAX = 500
+
+
+# Places a corroborated cluster has already caused us to look, so the same
+# agreement does not re-task imagery on every pass of the scheduler.
+_CORROBORATION_ACTED: list[dict] = []
+_CORROBORATION_ACTED_MAX = 300
+CORROBORATION_SUPPRESS_HOURS = 48
+CORROBORATION_SUPPRESS_KM = 3.0
+
+
+async def _corroboration_trigger_pass() -> None:
+    """Agreement between independent sources is a reason to point a camera.
+
+    THE TIP-AND-CUE LOOP, CLOSED. FIRMS already tasks imagery on a credible
+    fire, which is one sensor acting alone. This is the stronger signal:
+    two genuinely different ways of looking — thermal and radar, or an
+    instrument and a human watching a video — putting something at the same
+    coordinate within hours. That is a better reason to spend a scan than
+    any single feed, and until now nothing acted on it.
+
+    Scoped to the analyst's own watch zones, which is both the relevance
+    test and the quota guard: the world produces corroborated clusters all
+    day and almost none of them are anyone's concern.
+    """
+    import corroborate as _co
+    from database import WatchZone, get_db as _gdbc
+
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now - timedelta(hours=CORROBORATION_SUPPRESS_HOURS)
+    global _CORROBORATION_ACTED
+    _CORROBORATION_ACTED = [p for p in _CORROBORATION_ACTED if p.get("at", now) >= cutoff]
+
+    with _gdbc() as _db:
+        zones = _db.query(WatchZone).filter(WatchZone.enabled == True).all()  # noqa: E712
+        zone_data = [{
+            "id": z.id, "system_id": z.system_id, "name": z.name,
+            "bbox_min_lon": z.bbox_min_lon, "bbox_min_lat": z.bbox_min_lat,
+            "bbox_max_lon": z.bbox_max_lon, "bbox_max_lat": z.bbox_max_lat,
+            "ml_tasks": z.ml_tasks, "scan_interval_hours": z.scan_interval_hours,
+            "alert_threshold": z.alert_threshold,
+            "sensor_preference": getattr(z, "sensor_preference", None) or "sentinel2_optical",
+        } for z in zones
+            if None not in (z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat)]
+
+    if not zone_data:
+        return
+
+    clusters = _co.corroborated_only(_co.cluster(_gather_observations(hours=72)))
+    if not clusters:
+        return
+
+    for zd in zone_data:
+        inside = [c for c in clusters
+                  if zd["bbox_min_lat"] <= c["lat"] <= zd["bbox_max_lat"]
+                  and zd["bbox_min_lon"] <= c["lon"] <= zd["bbox_max_lon"]]
+        if not inside:
+            continue
+        # Strongest first: independence, then confidence.
+        top = inside[0]
+
+        # Already looked here recently. A cluster persists for as long as
+        # its members do, so without this the same agreement re-tasks a
+        # scan on every fifteen-minute tick for two days.
+        if any(_co.haversine_km(top["lat"], top["lon"], p["lat"], p["lon"])
+               <= CORROBORATION_SUPPRESS_KM for p in _CORROBORATION_ACTED):
+            continue
+
+        print(f"[corroborate] {len(inside)} corroborated finding(s) in "
+              f"{zd['system_id']} — strongest: {top['headline']}; tasking imagery")
+        _CORROBORATION_ACTED.append({"lat": top["lat"], "lon": top["lon"], "at": now})
+        del _CORROBORATION_ACTED[:-_CORROBORATION_ACTED_MAX]
+
+        try:
+            write_alert({
+                "source": "CORROBORATED",
+                "alert_type": "Multi-source agreement",
+                # The headline already names what agreed and how far apart,
+                # which is what makes this actionable without opening it.
+                "title": f"{top['headline']} — {zd['name']}",
+                "severity": "high" if top["independent_modalities"] >= 3 else "medium",
+                "lat": top["lat"], "lon": top["lon"],
+                "entity_type": "corroborated_finding", "region": None,
+                "raw_json": {"zone_id": zd["system_id"], "cluster": top,
+                             "also_in_zone": len(inside)},
+            })
+        except Exception as e:                              # noqa: BLE001
+            print(f"[corroborate] alert failed for {zd['system_id']}: {e}")
+
+        _launch_zone_scan_background(zd, "corroborated")
 
 
 async def _firms_trigger_pass() -> None:
