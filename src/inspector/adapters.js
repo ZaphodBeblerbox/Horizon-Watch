@@ -676,6 +676,71 @@ export function adaptFusionMember(data = {}) {
     }
 }
 
+// ── country risk index ───────────────────────────────────────────────────
+//
+// Registered by the choropleth with its full decomposition and never
+// routable, so clicking a shaded country did nothing at all. The score is
+// the least useful thing in the payload: "Afghanistan 70" is unarguable
+// and unactionable. WHAT MADE IT 70, and HOW MUCH EVIDENCE IS UNDER IT,
+// are the two things a reader needs, and both are already computed.
+
+const RISK_COMPONENT_LABEL = {
+    vol:  "Event volume vs baseline",
+    tone: "Media tone",
+    gold: "Conflictual coding (Goldstein)",
+    conf: "Confirmed incidents",
+}
+
+export function adaptCountryRisk(data = {}) {
+    const contrib = data.contributions || {}
+    const comps = data.components || {}
+    const point = pointOf(data)
+
+    // Descending, because the question is "what is driving this".
+    const ranked = Object.entries(contrib)
+        .filter(([, v]) => typeof v === "number")
+        .sort((a, b) => b[1] - a[1])
+
+    // How much observation the score rests on. A band-4 country scored
+    // from two wire stories is a different claim from one scored from
+    // six hundred, and the number is right here in the payload.
+    const counts = Object.values(comps)
+        .map(c => c && (c.n_events ?? c.recent_count ?? c.count))
+        .filter(n => typeof n === "number")
+    const evidence = counts.length ? Math.max(...counts) : null
+
+    const attributes = compact([
+        attr("Risk score", data.score != null
+            ? `${data.score} (band ${data.band ?? "—"} of 5)` : null),
+        attr("Window", data.window_days ? `${data.window_days} days` : null),
+        ...ranked.map(([k, v]) =>
+            attr(RISK_COMPONENT_LABEL[k] || humanizeKey(k),
+                 `${v} of ${data.score ?? "?"} points`)),
+        attr("Observations behind it", evidence != null
+            ? `${evidence} event(s) in the window` : null),
+        // Said plainly rather than left for the reader to work out from a
+        // count they would have to go looking for.
+        evidence != null && evidence < 10
+            ? attr("Caution", `this score rests on ${evidence} observation(s) — `
+                            + "treat the band as a prompt to look, not a finding")
+            : null,
+    ])
+
+    return {
+        identity: {
+            title: data.name || data.country || data.iso3 || "Country risk",
+            subtitle: data.band != null ? `band ${data.band}` : null,
+            entityType: "country_risk",
+            subtype: null,
+            sanctionsStatus: null,
+        },
+        attributes,
+        provenance: { feed: "Horizon-Watch risk index (GDELT + confirmed incidents)",
+                      ingestedAt: null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -693,6 +758,7 @@ const ADAPTERS = {
     gdelt_event: adaptGdeltEvent,
     thermal_anomaly: adaptThermalAnomaly,
     fusion_member: adaptFusionMember,
+    country_risk: adaptCountryRisk,
 }
 
 /**

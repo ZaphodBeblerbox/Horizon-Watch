@@ -27,6 +27,15 @@ export const INSPECTOR_TYPES = new Set([
     // the old fusion_events; "surge" was not, so a click on a surge fell
     // through to the raw-html popup, which had no html and so did nothing.
     "surge",
+    // Every type that registers through setEntity has to be listed here or
+    // the click goes to the raw-html popup instead of the inspector — the
+    // exact failure the "surge" line above records, repeated. These three
+    // arrived with the GDELT/FIRMS/thread work and were not added.
+    "gdelt_event", "thermal_anomaly", "fusion_member",
+    // Found by the registration-site test below, not by a bug report:
+    // the choropleth has been registering full risk decompositions
+    // that no click could ever reach.
+    "country_risk",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
@@ -431,7 +440,15 @@ export default function GlobePopup({
 
             {/* Floating popup — the 2 entity kinds NOT covered by InspectorPanel
                 (see INSPECTOR_TYPES comment above) */}
-            {popup && !INSPECTOR_TYPES.has(popup.type) && (
+            {/* AN EMPTY POPUP IS WORSE THAN NO POPUP. A stored entity whose
+                type is missing from INSPECTOR_TYPES lands here with no
+                `html` at all, and this used to render its border, its
+                background and its close button around nothing — which on
+                screen is a thin grey horizontal bar that appears from
+                nowhere when you click a point. It read as a rendering
+                glitch rather than as the routing bug it was, and it hid
+                the real fault for as long as it existed. */}
+            {popup && !INSPECTOR_TYPES.has(popup.type) && popup.html && (
                 <div
                     style={{
                         position:      "absolute",

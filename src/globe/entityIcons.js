@@ -241,13 +241,23 @@ export function getEntityMarkerDataUri(opts = {}) {
 export const MARKER_MAX_CAMERA_M = 60_000_000
 
 export const MARK_SIZE = {
-    geoconfirmed: 20,
-    detection: 18,
+    // The three event marks are drawn at ONE size, by request, so no shape
+    // out-reads another. Note they will not look identical even so: a
+    // square fills its box, a diamond is that square rotated (about 70% of
+    // the area) and a triangle less again. That is inherent to the shapes,
+    // not a size bug — matching the numbers is what was asked for and what
+    // keeps them comparable.
+    geoconfirmed: 16,
+    gdelt: 16,
+    alert: 16,
     ucdp: 16,
-    gdelt: 15,
+    // These two stay smaller. A detection is read inside an image, not
+    // against the globe, and a thermal reading is the weakest claim here —
+    // the news diamond was cut to 14 in the same pass that found it was
+    // the largest mark on the map.
+    detection: 18,
     news: 14,
     fire: 13,
-    alert: 16,
 }
 
 // replacing the previous mix of a Newspaper lucide icon (events) and the
