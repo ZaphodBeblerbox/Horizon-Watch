@@ -253,7 +253,15 @@ def blobs_to_detections(t, mask, bounds: dict, *,
             # Image rows run north-to-south; latitude runs the other way.
             "centroid_lat": round(north - (cy + 0.5) * dlat, 6),
             "centroid_lon": round(west + (cx + 0.5) * dlon, 6),
-            "bbox": [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())],
+            "bbox_px": [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())],
+            # Normalised [x, y, w, h] as a fraction of the scene, which is
+            # what every overlay in this app draws with. Without it a change
+            # region could be located on a map but never shown on the image
+            # it was found in.
+            "bbox": [round(float(xs.min()) / max(1, w), 6),
+                     round(float(ys.min()) / max(1, h), 6),
+                     round(float(xs.max() - xs.min() + 1) / max(1, w), 6),
+                     round(float(ys.max() - ys.min() + 1) / max(1, h), 6)],
             "t_peak": round(peak, 2),
             "t_mean": round(float(vals.mean()), 2),
             # NOT a probability. It is how far past the threshold the region

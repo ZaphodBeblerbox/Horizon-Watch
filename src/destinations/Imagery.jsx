@@ -412,7 +412,9 @@ export default function Imagery({ onOpenGenerate }) {
 
         const started = await fetch(`${API_BASE}/api/imagery/change-detect`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            credentials: "include", body: JSON.stringify({ bounds, depth: 5, px: 384 }),
+            credentials: "include",
+            body: JSON.stringify({ bounds, depth: 5, px: 384,
+                                   system_id: selectedAoi.system_id }),
         }).then((r) => r.json()).catch(() => null)
         if (!started || started.error) { toast(started?.error || "Could not start", {}); return }
         setChangeResult(null); setChangeJob(started.job_id)
@@ -521,7 +523,35 @@ export default function Imagery({ onOpenGenerate }) {
         window.addEventListener("pointerup", onUp)
     }
 
-    const changes = (scene?.changes || []).filter((c) => c.conf >= confFloor && kinds[c.type] !== false && !(c.type === "removed" && !kinds.removed))
+    const sceneChanges = (scene?.changes || []).filter((c) => c.conf >= confFloor && kinds[c.type] !== false && !(c.type === "removed" && !kinds.removed))
+
+    // Radar change regions, drawn in the same overlay as optical detections.
+    //
+    // They were computed and then had nowhere to go: a change region could
+    // be located on a map but never shown on the image it was found in,
+    // which is the one place "something appeared here" is legible. Mapped
+    // into the same shape the overlay already understands rather than
+    // given a second rendering path that would drift from it.
+    const changeRegions = (changeResult?.detections || []).map((d, i) => ({
+        id: `chg-${i}-${d.centroid_lat.toFixed(5)}`,
+        label: d.change_direction === "appeared"
+            ? "structure appeared" : "structure removed",
+        // Reuses the existing colour vocabulary: "new" is the warm outline,
+        // "removed" the critical one.
+        type: d.change_direction === "appeared" ? "new" : "removed",
+        // NOT a confidence — PWTT has no calibrated probability. `strength`
+        // is how far past the threshold the region sits, and it is exposed
+        // under conf only because the overlay reads that field.
+        conf: d.strength,
+        bbox: d.bbox,
+        lat: d.centroid_lat, lon: d.centroid_lon,
+        reviewed_status: "pending",
+        radar: true,
+        area_m2: d.area_m2,
+        t_peak: d.t_peak,
+    }))
+
+    const changes = [...sceneChanges, ...changeRegions]
     const visibleChanges = changes.filter((c) => !(c.suppressed && c.reviewed_status === "pending"))
 
     // One source for the map, the list and the image overlay. Deriving the
@@ -834,7 +864,21 @@ export default function Imagery({ onOpenGenerate }) {
                         <div key={c.id} role="button" onClick={() => focusDetection(c)}
                             style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: selectedDet?.id === c.id ? "var(--bg-2)" : "transparent" }}>
                             <div style={{ display: "flex", justifyContent: "space-between" }}>
-                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>{readable(c.label)} · {c.type}</span>
+                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>
+                                    {readable(c.label)} · {c.type}
+                                    {c.radar ? (
+                                        // Say where it came from. A radar
+                                        // change and an optical detection
+                                        // are different kinds of claim and
+                                        // must not read the same.
+                                        <span style={{ font: "400 9px var(--mono)",
+                                                       color: "var(--txt-4)", marginLeft: 4 }}>
+                                            SAR {c.area_m2 >= 10000
+                                                ? `${(c.area_m2 / 10000).toFixed(1)}ha`
+                                                : `${Math.round(c.area_m2)}m²`}
+                                        </span>
+                                    ) : null}
+                                </span>
                                 <span style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{Math.round(c.conf * 100)}%</span>
                             </div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>

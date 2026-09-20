@@ -14289,9 +14289,62 @@ def gdelt_map_points(limit: int = 500):
 _PWTT_RESULTS: dict = {}
 
 
+def _persist_change_scan(zone_id: int, out: dict, dates_after: list) -> str:
+    """Write radar change regions as a scan and its detections."""
+    import datetime as _dtq
+    import uuid as _uidq
+
+    from database import SentinelScan, SentinelDetection, get_db as _gdbq
+
+    scan_id = str(_uidq.uuid4())
+    when = None
+    if dates_after:
+        try:
+            when = _dtq.datetime.fromisoformat(dates_after[0])
+        except Exception:
+            when = None
+    with _gdbq() as db:
+        db.add(SentinelScan(
+            scan_id=scan_id, zone_id=zone_id, triggered_by="change-detect",
+            status="completed", created_at=_dtq.datetime.utcnow(),
+            completed_at=_dtq.datetime.utcnow(), image_timestamp_utc=when,
+            instrument="SAR",
+            result_summary=_json.dumps({
+                "total_detections": len(out["detections"]),
+                "method": "PWTT", "m_per_px": out.get("m_per_px"),
+                "stack_before": out.get("stack_before"),
+                "stack_after": out.get("stack_after"),
+                "threshold": out.get("threshold"),
+            }),
+        ))
+        for d in out["detections"]:
+            db.add(SentinelDetection(
+                detection_id=f"CHG-{_uidq.uuid4().hex[:12]}",
+                scan_id=scan_id, zone_id=zone_id, instrument="SAR",
+                object_type="structural_change",
+                # `strength` is not a probability and the column is named
+                # confidence, so the distinction is preserved in attributes
+                # rather than lost in the rename.
+                confidence=d["strength"],
+                centroid_lat=d["centroid_lat"], centroid_lon=d["centroid_lon"],
+                area_m2=d.get("area_m2"),
+                severity="medium" if abs(d["t_peak"]) >= 4 else "info",
+                alert_tier="silent",
+                attributes=_json.dumps({
+                    "change_direction": d["change_direction"],
+                    "t_peak": d["t_peak"], "t_mean": d["t_mean"],
+                    "pixels": d["pixels"], "method": d["method"],
+                    "strength_not_probability": True,
+                    "bbox": d.get("bbox"),
+                }),
+            ))
+        db.commit()
+    return scan_id
+
+
 async def _run_pwtt_job(job_id: str, bounds: dict, pre_end: str, post_end: str,
                         depth: int, threshold: float, direction: str,
-                        px: int) -> None:
+                        px: int, zone_id: int | None = None) -> None:
     """Fetch both Sentinel-1 stacks and run the change detector."""
     import pwtt as _pwtt
 
@@ -14311,24 +14364,45 @@ async def _run_pwtt_job(job_id: str, bounds: dict, pre_end: str, post_end: str,
         # single-day window that misses a pass returns an all-NaN raster.
         # Every one of eight guessed dates came back 0% valid. The catalogue
         # knows the real acquisition dates, so it is asked.
-        search = await _satellite_search_sentinel1_impl(
-            [bounds["west"], bounds["south"], bounds["east"], bounds["north"]],
-            days_back=400)
-        all_dates = sorted({(i.get("datetime") or "")[:10]
-                            for i in (search.get("items") or []) if i.get("datetime")},
-                           reverse=True)
-        if not all_dates:
+        # ONE CATALOGUE QUERY PER WINDOW.
+        #
+        # A single search returns the newest 100 scenes, which reaches back
+        # only a few months — so asking once and filtering gave the older
+        # window NOTHING to try whenever the baseline was more than a season
+        # back. Observed: a 300-day gap produced "before: 0 failures" and a
+        # generic error, because no date was ever attempted.
+        bbox_l = [bounds["west"], bounds["south"], bounds["east"], bounds["north"]]
+        want = depth * 3     # extra candidates: partial swaths get rejected
+
+        async def _dates_for(end_iso, span_days=120):
+            import datetime as _dd
+            end = _dd.date.fromisoformat(end_iso)
+            start = end - _dd.timedelta(days=span_days)
+            r = await _satellite_search_sentinel1_impl(
+                bbox_l, date_range=f"{start.isoformat()}T00:00:00Z/"
+                                   f"{end.isoformat()}T23:59:59Z")
+            return sorted({(i.get("datetime") or "")[:10]
+                           for i in (r.get("items") or []) if i.get("datetime")},
+                          reverse=True)[:want], r.get("error")
+
+        post_dates, post_err = await _dates_for(post_end)
+        pre_dates, pre_err = await _dates_for(pre_end)
+
+        if not post_dates or not pre_dates:
+            # Name WHICH window is empty. "One or both" sends the reader
+            # looking in the wrong place.
+            missing = []
+            if not pre_dates:
+                missing.append(f"before {pre_end}")
+            if not post_dates:
+                missing.append(f"after {post_end}")
             _PWTT_RESULTS[job_id] = {
                 "status": "error",
-                "error": f"no Sentinel-1 acquisitions catalogued for this area "
-                         f"({search.get('error') or 'empty result'})"}
+                "error": (f"no Sentinel-1 acquisitions catalogued for the "
+                          f"{' and '.join(missing)} window(s) over this area"),
+                "catalogue_errors": [e for e in (pre_err, post_err) if e],
+                "recoverable": True}
             return
-
-        # Extra candidates per side, because a partial swath is rejected at
-        # fetch time and the stack still has to reach its depth.
-        want = depth * 2
-        post_dates = [d for d in all_dates if d <= post_end][:want]
-        pre_dates = [d for d in all_dates if d <= pre_end][:want]
 
         before, pre_used, pre_fail = await _pwtt.fetch_stack(
             _fetch_sentinel1_raw_bands_geotiff, bounds, pre_dates,
@@ -14364,6 +14438,22 @@ async def _run_pwtt_job(job_id: str, bounds: dict, pre_end: str, post_end: str,
             "failures": {"before": pre_fail, "after": post_fail},
             "m_per_px": round(width_m / max(1, w), 1),
         })
+
+        # PERSIST THE REGIONS as detections on their own scan row.
+        #
+        # A change region that exists only in a job result cannot be
+        # corroborated, cannot be compared against the next pass, and is
+        # gone on restart — which would make the one detector that can see
+        # through cloud the only one whose findings do not last.
+        if zone_id is not None and out.get("detections"):
+            try:
+                out["scan_id"] = await _imagery_rt.run_cpu(
+                    _persist_change_scan, zone_id, out, post_used,
+                    label=f"persist-chg:{job_id[:8]}")
+            except Exception as _pe:                        # noqa: BLE001
+                out["persist_error"] = f"{type(_pe).__name__}: {_pe}"
+                print(f"[pwtt] {job_id}: regions computed but NOT saved: {_pe}")
+
         _PWTT_RESULTS[job_id] = out
     except _pwtt.NotEnoughData as e:
         # Not a crash. The honest answer when the archive is thin.
@@ -14424,9 +14514,16 @@ async def imagery_change_detect(request: Request):
                              f"requests — comparing the {depth * 6} days before {post_end} "
                              f"against the same span before {pre_end}")}
 
+    zone_id = None
+    if body.get("system_id"):
+        from database import WatchZone as _WZc, get_db as _gdbc2
+        with _gdbc2() as _dbc:
+            _z = _dbc.query(_WZc).filter(_WZc.system_id == body["system_id"]).first()
+            zone_id = _z.id if _z else None
+
     job_id = f"chg-{uuid.uuid4().hex[:12]}"
     asyncio.create_task(_run_pwtt_job(job_id, bounds, pre_end, post_end,
-                                      depth, threshold, direction, px))
+                                      depth, threshold, direction, px, zone_id))
     return {"job_id": job_id, "status": "running",
             "api_requests": depth * 2,
             "pre_end": pre_end, "post_end": post_end,
