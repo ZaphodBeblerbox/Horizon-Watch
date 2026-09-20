@@ -40,9 +40,36 @@ _USER_AGENT = "AkiliDashboard/1.0 (gdelt-ingestor)"
 _PERSIST_PATH = Path(__file__).resolve().parent / "data" / "gdelt_events_cache.json"
 
 # ── GDELT relevance filter ─────────────────────────────────────────────────────
-# Only high-signal event types: protest, force, coerce, assault, fight, mass violence
-RELEVANT_ROOT_CODES: frozenset[str] = frozenset({"14", "15", "17", "18", "19", "20"})
+# Kinetic events: protest, force posture, coerce, assault, fight, mass violence.
+KINETIC_ROOT_CODES: frozenset[str] = frozenset({"14", "15", "17", "18", "19", "20"})
+
+# VERBAL CONFLICT — the half that used to be thrown away.
+#
+# This filter kept only the kinetic codes, so every statement, threat and
+# rejection was discarded before it was ever stored. The consequence was
+# concrete and observed: through September 2026 Western leaders shifted
+# markedly in how they spoke about Russia, and this system could not have
+# noticed, because CAMEO 11/12/13 never survived ingest.
+#
+# Rhetoric is the earliest signal there is. It precedes force posture, which
+# precedes force. A system that only ingests violence can only ever report
+# violence that has already happened.
+#
+#   10 Demand           11 Disapprove       12 Reject
+#   13 Threaten         16 Reduce relations
+VERBAL_ROOT_CODES: frozenset[str] = frozenset({"10", "11", "12", "13", "16"})
+
+RELEVANT_ROOT_CODES: frozenset[str] = KINETIC_ROOT_CODES | VERBAL_ROOT_CODES
 GDELT_MIN_SOURCES   = 2        # must appear in at least 2 source documents
+# Speech is cheap, so a statement needs corroboration — but it has to be
+# measured with the field that actually carries it. NumSources counts
+# distinct documents WITHIN one 15-minute file and is 1 for roughly 87% of
+# verbal rows (measured: 113 of 130 in a real file, maximum 3). Gating
+# verbal events on sources therefore excluded every single one of them and
+# the unfilter changed nothing. NumMentions is the field that varies, so
+# that is what corroboration means here.
+GDELT_VERBAL_MIN_SOURCES = int(os.getenv("GDELT_VERBAL_MIN_SOURCES", "1"))
+GDELT_VERBAL_MIN_MENTIONS = int(os.getenv("GDELT_VERBAL_MIN_MENTIONS", "3"))
 GDELT_MIN_MENTIONS  = 1        # at least 1 mention
 GDELT_GOLDSTEIN_NEG = -3.0     # conflictual threshold (below = relevant)
 GDELT_GOLDSTEIN_POS = 7.0      # high-cooperation threshold (above = relevant)
@@ -576,12 +603,26 @@ def _passes_filter(ev: dict[str, Any]) -> bool:
     root = str(ev.get("event_root_code") or "").strip().zfill(2)
     if root not in RELEVANT_ROOT_CODES:
         return False
+
     g = float(ev.get("goldstein") if ev.get("goldstein") is not None else 0.0)
-    if not (g < GDELT_GOLDSTEIN_NEG or g > GDELT_GOLDSTEIN_POS):
+    if root in VERBAL_ROOT_CODES:
+        # The Goldstein magnitude test cannot be applied to speech. CAMEO
+        # scores rhetoric gently by design — "Disapprove" is -2.0, well
+        # inside the -3.0 conflictual threshold — so admitting the verbal
+        # codes while keeping that test would have changed nothing. What
+        # makes a statement matter is not its score but the fact that it
+        # departs from how these two actors normally speak, and that is a
+        # question about a trend, not about one event. Noise is controlled
+        # by the corroboration minimums below instead.
+        pass
+    elif not (g < GDELT_GOLDSTEIN_NEG or g > GDELT_GOLDSTEIN_POS):
         return False
-    if int(ev.get("sources") or ev.get("num_sources") or 0) < GDELT_MIN_SOURCES:
+    min_sources = GDELT_VERBAL_MIN_SOURCES if root in VERBAL_ROOT_CODES else GDELT_MIN_SOURCES
+    if int(ev.get("sources") or ev.get("num_sources") or 0) < min_sources:
         return False
-    if int(ev.get("mentions") or ev.get("num_mentions") or 0) < GDELT_MIN_MENTIONS:
+    min_mentions = (GDELT_VERBAL_MIN_MENTIONS if root in VERBAL_ROOT_CODES
+                    else GDELT_MIN_MENTIONS)
+    if int(ev.get("mentions") or ev.get("num_mentions") or 0) < min_mentions:
         return False
     return True
 

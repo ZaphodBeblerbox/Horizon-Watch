@@ -222,7 +222,11 @@ const _newsCache = new Map()
 export function getNewsMarkerDataUri({ color = TEXT_MUTED } = {}) {
     const key = `news:${color}`
     if (_newsCache.has(key)) return _newsCache.get(key)
-    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(newsDiamondSvg(color, NEWS_MARKER_SIZE))}`
+    // Same diamond, rendered at MARKER_SUPERSAMPLE and downsampled by the
+    // GPU. It was built at exactly the billboard size, which on a HiDPI
+    // screen is half the available pixels — hence the soft blob.
+    const uri = getShapeMarkerDataUri({ shape: "diamond", color,
+                                        size: NEWS_MARKER_SIZE, strokeWidth: 1 })
     _newsCache.set(key, uri)
     return uri
 }
@@ -261,7 +265,11 @@ export function getGeoConfirmedMarkerDataUri({ color, invertColor = false, size 
     const realColor = color || GEOCONFIRMED_DOT_FALLBACK
     const key = `geoconfirmed:${realColor}:${invertColor}:${size}`
     if (_geoconfirmedCache.has(key)) return _geoconfirmedCache.get(key)
-    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(geoconfirmedDotSvg(realColor, size, invertColor))}`
+    // A SQUARE, not a dot: GeoConfirmed is human-verified, geolocated ground
+    // truth, and it should be distinguishable at a glance from reporting
+    // (diamond) and from a derived warning (triangle). Supersampled.
+    const uri = getShapeMarkerDataUri({ shape: "square", color: realColor,
+                                        size, invert: invertColor })
     _geoconfirmedCache.set(key, uri)
     return uri
 }
@@ -359,4 +367,80 @@ export function drawGraphNode(ctx, cx, cy, r, canonType) {
         ctx.lineWidth = 1.5
         ctx.stroke()
     }
+}
+
+// ── Crisp shape markers ───────────────────────────────────────────────────
+//
+// WHY THIS EXISTS. Every marker above builds its SVG at exactly the size the
+// billboard is drawn at — a 30px SVG shown at 30px. On any HiDPI display
+// that is half the pixels the screen can show, so Cesium upscales the
+// rasterised bitmap and the result is the soft, muddy blob the markers have
+// always been. Rendering the SVG at a multiple of the display size and
+// letting the GPU downsample is the fix; it costs nothing at runtime because
+// every marker is cached by its key.
+//
+// SHAPE CARRIES MEANING. A map where everything is a dot makes the reader
+// consult a legend for every pin. Shape is the fastest visual channel there
+// is, so each kind of thing gets its own, and colour is then free to mean
+// severity or faction rather than type.
+//
+// Vessels and aircraft keep their purpose-drawn hull/airframe silhouettes —
+// a ship is not a shape-coded abstraction, it has a heading and a form, and
+// those glyphs already say so.
+
+/** Rendered at this multiple of display size, then downsampled by the GPU. */
+export const MARKER_SUPERSAMPLE = 3
+
+export const MARKER_SHAPES = {
+    // verified ground event — a square reads as "confirmed, surveyed"
+    square: (cx, cy, r) =>
+        `<rect x="${cx - r}" y="${cy - r}" width="${r * 2}" height="${r * 2}" rx="${r * 0.15}"`,
+    // reporting / news — diamond, the existing news language
+    diamond: (cx, cy, r) =>
+        `<path d="M ${cx} ${cy - r} L ${cx + r} ${cy} L ${cx} ${cy + r} L ${cx - r} ${cy} Z"`,
+    // warning / derived alert — triangle, the universal caution form
+    triangle: (cx, cy, r) =>
+        `<path d="M ${cx} ${cy - r} L ${cx + r * 0.92} ${cy + r * 0.72} L ${cx - r * 0.92} ${cy + r * 0.72} Z"`,
+    // observation / sensor reading — circle
+    circle: (cx, cy, r) => `<circle cx="${cx}" cy="${cy}" r="${r}"`,
+}
+
+function shapeMarkerSvg({ shape = "circle", color = TEXT_MUTED, size = 24,
+                          invert = false, stroke = "#070B14", strokeWidth = 1.5 }) {
+    const px = size * MARKER_SUPERSAMPLE
+    const cx = px / 2, cy = px / 2, r = px * 0.36
+    const draw = MARKER_SHAPES[shape] || MARKER_SHAPES.circle
+    const fill = invert ? "#0B0F1A" : color
+    const edge = invert ? color : stroke
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">`
+        + `${draw(cx, cy, r)} fill="${fill}" stroke="${edge}" `
+        + `stroke-width="${strokeWidth * MARKER_SUPERSAMPLE}" stroke-linejoin="round"/>`
+        + `</svg>`
+}
+
+const _shapeCache = new Map()
+
+/** A crisp marker of a given shape. Cached; the key covers every pixel input. */
+export function getShapeMarkerDataUri(opts = {}) {
+    const { shape = "circle", color = TEXT_MUTED, size = 24,
+            invert = false, strokeWidth = 1.5 } = opts
+    const key = `shape:${shape}:${color}:${size}:${invert}:${strokeWidth}`
+    if (_shapeCache.has(key)) return _shapeCache.get(key)
+    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+        shapeMarkerSvg({ shape, color, size, invert, strokeWidth }))}`
+    _shapeCache.set(key, uri)
+    return uri
+}
+
+/** Which shape a source's markers use. One place, so the map stays legible. */
+export const SHAPE_FOR_SOURCE = {
+    geoconfirmed: "square",     // human-verified, geolocated ground truth
+    news: "diamond",            // reporting
+    gdelt: "diamond",           // reporting
+    alert: "triangle",          // derived warning
+    fusion: "triangle",
+    fire: "circle",             // a sensor reading
+    firms: "circle",
+    detection: "square",        // imagery detection
+    ucdp: "square",
 }
