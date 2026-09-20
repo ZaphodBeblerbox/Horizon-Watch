@@ -25,8 +25,12 @@ import { safeArray } from "../utils/safeArray.js"
 import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-// Context, not findings: visible below this camera distance only.
-const MAX_CAMERA_M = 900_000
+// Visible to regional zoom. The first cut capped this at 900km, which
+// meant the layer was invisible at every zoom a person actually starts
+// from and read as "facilities don't render". They are still context
+// rather than findings, so they stop short of world view where they
+// would bury the events this map exists to show.
+const MAX_CAMERA_M = 6_000_000
 
 const STYLE = {
     "Military Facility": { colour: "#C084FC", label: "Military" },
@@ -34,7 +38,10 @@ const STYLE = {
     "Security Facility": { colour: "#3D8BFF", label: "Police & fire" },
 }
 
-export default function GlobeFacilitiesLayer({ enabled = false, categories = null }) {
+export default function GlobeFacilitiesLayer({ types = [] }) {
+    // An empty list means every row is off, which is different from "no
+    // filter" — nothing should draw.
+    const enabled = Array.isArray(types) && types.length > 0
     const [rows, setRows] = useState([])
 
     useEffect(() => {
@@ -72,9 +79,7 @@ export default function GlobeFacilitiesLayer({ enabled = false, categories = nul
     }, [rows])
 
     if (!enabled || !rows.length) return null
-    const shown = categories
-        ? rows.filter((f) => categories.includes(f.entity_type))
-        : rows
+    const shown = rows.filter((f) => types.includes(f.entity_type))
 
     return (
         <>

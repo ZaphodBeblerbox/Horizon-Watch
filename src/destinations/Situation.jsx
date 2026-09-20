@@ -94,7 +94,23 @@ const INFRA_LAYERS = [
     { key: "cables", label: "Submarine cables", note: "Indicative trunk routes, not survey data", color: "var(--acc-hi)" },
     { key: "power", label: "Power grid", note: "OpenInfraMap raster, community-maintained", color: "var(--amber)" },
     { key: "nautical", label: "Nautical chart", note: "OpenSeaMap raster overlay", color: "var(--green)" },
+    // Facilities live here rather than under Context layers: they are
+    // infrastructure, and they belong beside ports and airfields, which
+    // is where someone looking for "what is on the ground" will look.
+    // One row per kind so the three can be asked for separately —
+    // "where are the hospitals" and "where are the barracks" are
+    // different questions asked at different moments.
+    { key: "facMilitary", label: "Military sites", note: "OSM — bases, barracks, bunkers", color: "#C084FC" },
+    { key: "facMedical", label: "Hospitals & clinics", note: "OSM — crowd-mapped, uneven coverage", color: "#3DDC97" },
+    { key: "facSecurity", label: "Police & fire", note: "OSM — crowd-mapped, uneven coverage", color: "#3D8BFF" },
 ]
+
+// Which ontology entity_type each facility row draws.
+export const FACILITY_ROW_TYPE = {
+    facMilitary: "Military Facility",
+    facMedical: "Medical Facility",
+    facSecurity: "Security Facility",
+}
 
 const SPEC_TO_TOOL = { select: "select", measure: "measure", pin: "marker", poly: "area" }
 const TOOL_TO_SPEC = { select: "select", measure: "measure", marker: "pin", area: "poly", route: "select" }
@@ -354,13 +370,16 @@ export default function Situation({ onOpenDossier }) {
     // would bury the rest of the map.
     const [theatresOn, setTheatresOn] = useState({ ukraine: true })
     const [frontlineTheatres, setFrontlineTheatres] = useState([])
-    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, facilities: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     // The Ukraine time slider. `null` means live; any other value is a
     // published snapshot date. Index rather than date so the control is
     // evenly spaced in SNAPSHOTS, which is what exists, rather than in
     // days, which would put long gaps where nobody drew a map.
     const [snapshots, setSnapshots] = useState([])
     const [snapIdx, setSnapIdx] = useState(null)
+    // Every other war scrubs too, through the wiki's own revisions.
+    // Keyed by theatre: {stops: [{revid, at}], idx: number|null}.
+    const [warTimelines, setWarTimelines] = useState({})
     useEffect(() => {
         if (!contextOn.frontlines) return
         fetch(`${API_BASE}/api/frontlines/timeline?limit=200`, { credentials: "include" })
@@ -368,6 +387,22 @@ export default function Situation({ onOpenDossier }) {
             .then((d) => setSnapshots(safeArray(d?.snapshots)))
             .catch(() => {})
     }, [contextOn.frontlines])
+    // Load a wiki theatre's revision list the first time it is switched on.
+    useEffect(() => {
+        if (!contextOn.frontlines) return
+        for (const t of frontlineTheatres) {
+            if (t.kind !== "points" || !theatresOn[t.key]) continue
+            if (warTimelines[t.key]) continue
+            fetch(`${API_BASE}/api/warmap/${encodeURIComponent(t.key)}/timeline?limit=120`,
+                  { credentials: "include" })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((d) => setWarTimelines((prev) => ({
+                    ...prev, [t.key]: { stops: safeArray(d?.revisions), idx: null },
+                })))
+                .catch(() => {})
+        }
+    }, [contextOn.frontlines, frontlineTheatres, theatresOn, warTimelines])
+
     const frontlinesAt = (snapIdx == null || !snapshots.length)
         ? null
         : String(snapshots[Math.min(snapIdx, snapshots.length - 1)]?.at || "").slice(0, 10)
@@ -392,6 +427,7 @@ export default function Situation({ onOpenDossier }) {
     const [infraOn, setInfraOn] = useState({
         cables: false, chokepoints: true, ports: true, airfields: true,
         power: false, nautical: false,
+        facMilitary: false, facMedical: false, facSecurity: false,
     })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false })
     const [exportOpen, setExportOpen] = useState(false)
@@ -806,9 +842,6 @@ export default function Situation({ onOpenDossier }) {
                     <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Context layers</div>
                     {[
                         ["risk", "Country risk index"],
-                        // Bases, hospitals, police. Context rather than
-                        // findings, so off by default and near-zoom only.
-                        ["facilities", "Bases, hospitals, police"],
                         ["graticule", "Graticule 10°"],
                         ["flows", "Trade & energy flows"],
                         ["aois", "Areas of interest"],
@@ -875,9 +908,9 @@ export default function Situation({ onOpenDossier }) {
                                 <svg className="icon sm"><use href={theatresOn[t.key] && t.available ? "#i-eye" : "#i-eye-off"} /></svg>
                             </button>
                         </div>
-                        {/* Only Ukraine has a published snapshot history to
-                            scrub through; the wiki theatres have revisions
-                            but not a map per day. */}
+                        {/* Ukraine scrubs published snapshots; every other
+                            war scrubs the wiki's own revisions. Same control,
+                            two histories. */}
                         {t.key === "ukraine" && contextOn.frontlines && theatresOn.ukraine
                             && snapshots.length > 1 && (
                             <div style={{ padding: "2px 12px 8px 27px" }}>
@@ -904,6 +937,37 @@ export default function Situation({ onOpenDossier }) {
                                 </div>
                             </div>
                         )}
+                        {t.kind === "points" && contextOn.frontlines && theatresOn[t.key]
+                            && (warTimelines[t.key]?.stops?.length || 0) > 1 && (() => {
+                            const tl = warTimelines[t.key]
+                            const last = tl.stops.length - 1
+                            const cur = tl.idx == null ? last : tl.idx
+                            const setIdx = (v) => setWarTimelines((prev) => ({
+                                ...prev, [t.key]: { ...prev[t.key], idx: v },
+                            }))
+                            return (
+                                <div style={{ padding: "2px 12px 8px 27px" }}>
+                                    <input
+                                        type="range" min={0} max={last} value={cur}
+                                        onChange={(e) => setIdx(Number(e.target.value))}
+                                        style={{ width: "100%", accentColor: "var(--acc-hi)" }}
+                                        aria-label={`${t.label} frontline date`} />
+                                    <div style={{ display: "flex", justifyContent: "space-between",
+                                                  font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
+                                        <span>{String(tl.stops[0]?.at || "").slice(0, 10)}</span>
+                                        <span style={{ color: tl.idx == null ? "var(--txt-3)" : "var(--acc-hi)" }}>
+                                            {String(tl.stops[cur]?.at || "").slice(0, 10)}
+                                        </span>
+                                        <span role="button" tabIndex={0}
+                                              onClick={() => setIdx(null)}
+                                              style={{ cursor: "pointer",
+                                                       color: tl.idx == null ? "var(--txt-4)" : "var(--acc-hi)" }}>
+                                            {tl.idx == null ? "now" : "back to now"}
+                                        </span>
+                                    </div>
+                                </div>
+                            )
+                        })()}
                         </Fragment>
                     ))}
                     <div
@@ -1149,11 +1213,19 @@ export default function Situation({ onOpenDossier }) {
                         riskEnabled={contextOn.risk}
                         frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
                         frontlinesAt={frontlinesAt}
-                        facilitiesEnabled={contextOn.facilities}
+                        facilityTypes={Object.entries(FACILITY_ROW_TYPE)
+                            .filter(([k]) => infraOn[k])
+                            .map(([, v]) => v)}
                         warmapTheatres={contextOn.frontlines
                             ? frontlineTheatres
                                 .filter((t) => t.kind === "points" && theatresOn[t.key])
-                                .map((t) => t.key)
+                                .map((t) => {
+                                    const tl = warTimelines[t.key]
+                                    const stop = (tl && tl.idx != null)
+                                        ? tl.stops[Math.min(tl.idx, tl.stops.length - 1)]
+                                        : null
+                                    return { key: t.key, revid: stop?.revid ?? null }
+                                })
                             : []}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={infraOn.power}
                         nauticalEnabled={infraOn.nautical}

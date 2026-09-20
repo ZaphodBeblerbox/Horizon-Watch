@@ -3537,6 +3537,33 @@ async def api_warmap_changes(theatre: str, days: int = 30):
     return await loop.run_in_executor(_executor, _wm.changes, theatre, days)
 
 
+@app.get("/api/warmap/{theatre}/timeline")
+async def api_warmap_timeline(theatre: str, limit: int = 120):
+    """The revisions this war's slider may stop on.
+
+    A wiki has no daily snapshot, but a revision IS the map as it stood
+    at that moment — so every theatre can be scrubbed, not just Ukraine.
+    """
+    import wiki_warmaps as _wm
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_frontline_executor, _wm.timeline, theatre, limit)
+
+
+@app.get("/api/warmap/{theatre}/polygons/at/{revid}")
+async def api_warmap_polygons_at(theatre: str, revid: int):
+    """Faction areas as they stood at one revision."""
+    import wiki_warmaps as _wm
+
+    def _work():
+        snap = _wm.at_revision(theatre, revid)
+        if not snap.get("available"):
+            return {**snap, "geojson": {"type": "FeatureCollection", "features": []}}
+        return _wm.polygons_from(snap)
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_frontline_executor, _work)
+
+
 @app.get("/api/warmap/{theatre}/polygons")
 async def api_warmap_polygons(theatre: str, force: bool = False):
     """Faction AREAS for one war, derived from its control points.

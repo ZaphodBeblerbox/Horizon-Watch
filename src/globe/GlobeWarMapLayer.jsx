@@ -38,7 +38,7 @@ const COLOUR_HEX = {
 // Matched to the Ukraine layer's weight so the two read as one map.
 const FILL_ALPHA = 0.32
 
-export default function GlobeWarMapLayer({ theatre = null, enabled = false }) {
+export default function GlobeWarMapLayer({ theatre = null, enabled = false, revid = null }) {
     const { viewer } = useCesium()
     const dsRef = useRef(null)
     const idsRef = useRef([])
@@ -59,8 +59,13 @@ export default function GlobeWarMapLayer({ theatre = null, enabled = false }) {
         if (!enabled || !theatre) { clear(); return }
 
         const load = () => {
-            fetch(`${API_BASE}/api/warmap/${encodeURIComponent(theatre)}/polygons`,
-                  { credentials: "include" })
+            // A revision id scrubs the same derivation back in time; the
+            // live path and the historical one share polygons_from() so a
+            // past front is never drawn by a slightly different routine.
+            const url = revid
+                ? `${API_BASE}/api/warmap/${encodeURIComponent(theatre)}/polygons/at/${revid}`
+                : `${API_BASE}/api/warmap/${encodeURIComponent(theatre)}/polygons`
+            fetch(url, { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : null))
                 .then(async (d) => {
                     if (cancelled || !d?.geojson?.features?.length) return
@@ -98,6 +103,9 @@ export default function GlobeWarMapLayer({ theatre = null, enabled = false }) {
                                 basis: "community-edited Wikipedia war map, "
                                      + "control points interpolated into areas",
                                 last_edited: d.last_edited,
+                                viewing: revid
+                                    ? `historical — ${String(d.last_edited).slice(0, 10)}`
+                                    : "current",
                                 caveat: d.caveat,
                                 source: d.source,
                                 source_url: d.source_url,
@@ -115,7 +123,7 @@ export default function GlobeWarMapLayer({ theatre = null, enabled = false }) {
         load()
         const h = setInterval(load, REFRESH_MS)
         return () => { cancelled = true; clearInterval(h); clear() }
-    }, [viewer, enabled, theatre])
+    }, [viewer, enabled, theatre, revid])
 
     return null
 }

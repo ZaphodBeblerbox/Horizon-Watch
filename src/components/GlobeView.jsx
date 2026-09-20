@@ -128,7 +128,7 @@ export default function GlobeView({
     frontlinesEnabled = false,
     warmapTheatres = [],
     frontlinesAt = null,
-    facilitiesEnabled = false,
+    facilityTypes = [],
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
     firesEnabled = false,
@@ -884,9 +884,10 @@ export default function GlobeView({
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
-                <GlobeFacilitiesLayer enabled={facilitiesEnabled} />
-                {warmapTheatres.map((k) => (
-                    <GlobeWarMapLayer key={k} theatre={k} enabled />
+                <GlobeFacilitiesLayer types={facilityTypes} />
+                {warmapTheatres.map((t) => (
+                    <GlobeWarMapLayer key={t.key ?? t} theatre={t.key ?? t}
+                                      revid={t.revid ?? null} enabled />
                 ))}
                 <GlobeFiresLayer enabled={firesEnabled} />
                 {/* §A8 — surge and fusion, evaluated at the same playhead the

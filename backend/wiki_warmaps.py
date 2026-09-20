@@ -474,8 +474,18 @@ MIN_CELL_AREA_DEG2 = 1e-6
 
 
 def polygons(theatre: str, force: bool = False) -> dict:
-    """Faction areas derived from a theatre's control points."""
-    data = fetch(theatre, force=force)
+    """Faction areas derived from a theatre's CURRENT control points."""
+    return polygons_from(fetch(theatre, force=force))
+
+
+def polygons_from(data: dict) -> dict:
+    """Faction areas from any control-point snapshot, current or past.
+
+    Split out so the time slider derives its areas through exactly the
+    same code as the live map — a historical front drawn by a second,
+    slightly different routine would be a difference the reader could
+    not see and could not account for.
+    """
     if not data.get("available"):
         return {**data, "geojson": {"type": "FeatureCollection", "features": []}}
 
@@ -797,4 +807,116 @@ def changes(theatre: str, days: int = 30, cached_only: bool = False) -> dict:
         "error": None,
     }
     _CACHE[ckey] = {"ts": time.time(), "data": data}
+    return data
+
+
+# ── scrubbing a wiki war back through time ───────────────────────────────
+#
+# The Ukraine slider works because DeepStateMap publishes a snapshot per
+# day. These maps have no snapshots — but a wiki has REVISIONS, and for a
+# control map a revision is the same thing: the map as it stood at that
+# moment. So every theatre can be scrubbed, using the history that was
+# already being read for change detection.
+#
+# Revisions are not evenly spaced in time. A war map gets thirty edits in
+# a week of fighting and none for a month, so the slider is indexed by
+# REVISION rather than by date — the same choice the Ukraine slider makes
+# about snapshots, and for the same reason: every stop must be a map
+# somebody actually drew.
+
+def timeline(theatre: str, limit: int = 120) -> dict:
+    """The revisions a theatre's slider may stop on, oldest first."""
+    spec = THEATRES.get(theatre)
+    if not spec:
+        return {"available": False, "error": f"unknown theatre: {theatre}",
+                "revisions": []}
+    key = f"timeline:{theatre}:{limit}"
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit["ts"] < _CACHE_TTL:
+        return hit["data"]
+
+    revs, cont = [], None
+    try:
+        # Walk back through history in pages until there is enough to
+        # thin, or the wiki runs out.
+        for _ in range(6):
+            params = {"action": "query", "prop": "revisions",
+                      "rvprop": "ids|timestamp", "rvlimit": 500,
+                      "rvdir": "older", "format": "json",
+                      "titles": spec["module"]}
+            if cont:
+                params["rvcontinue"] = cont
+            d = _get(params)
+            page = list(d["query"]["pages"].values())[0]
+            for r in page.get("revisions") or []:
+                revs.append({"revid": r["revid"], "at": r["timestamp"]})
+            cont = (d.get("continue") or {}).get("rvcontinue")
+            if not cont:
+                break
+    except Exception as e:                                  # noqa: BLE001
+        if not revs:
+            return {"available": False, "error": f"{type(e).__name__}: {e}",
+                    "revisions": [], "theatre": theatre}
+
+    revs.sort(key=lambda r: r["at"])
+    if len(revs) > limit:
+        step = len(revs) / float(limit)
+        thinned = [revs[int(i * step)] for i in range(limit)]
+        thinned[-1] = revs[-1]
+        revs = thinned
+
+    data = {"available": bool(revs), "theatre": theatre,
+            "label": spec["label"], "revisions": revs, "count": len(revs),
+            "source": SOURCE,
+            "note": ("indexed by revision, not by date — a war map gets "
+                     "thirty edits in a week of fighting and none for a "
+                     "month, and every stop is a map somebody drew")}
+    _CACHE[key] = {"ts": time.time(), "data": data}
+    return data
+
+
+def at_revision(theatre: str, revid: int) -> dict:
+    """This theatre's control points as of one revision."""
+    spec = THEATRES.get(theatre)
+    if not spec:
+        return {"available": False, "error": f"unknown theatre: {theatre}",
+                "points": []}
+    key = f"rev:{theatre}:{revid}"
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit["ts"] < _CACHE_TTL:
+        return hit["data"]
+    try:
+        d = _get({"action": "query", "prop": "revisions",
+                  "rvprop": "content|timestamp", "rvslots": "main",
+                  "revids": int(revid), "format": "json"})
+        page = list(d["query"]["pages"].values())[0]
+        rev = page["revisions"][0]
+        text = rev["slots"]["main"]["*"]
+        edited = rev.get("timestamp")
+    except Exception as e:                                  # noqa: BLE001
+        return {"available": False, "error": f"{type(e).__name__}: {e}",
+                "theatre": theatre, "points": []}
+
+    legend = {**(spec.get("legend") or {}), **fetch_legend(theatre)}
+    points = parse_marks(text)
+    for p in points:
+        p["faction"] = legend.get(p["colour"])
+        p["faction_known"] = p["faction"] is not None
+        if not p["faction"]:
+            p["faction"] = f"unidentified side ({p['colour']})"
+
+    data = {"available": bool(points), "theatre": theatre,
+            "label": spec["label"], "points": points, "count": len(points),
+            "revid": int(revid), "last_edited": edited,
+            "legend": legend, "legend_available": bool(legend),
+            "legend_note": None if legend else NO_LEGEND_NOTE,
+            "colours": sorted({p["colour"] for p in points}),
+            "unlabelled_colours": [c for c in sorted({p["colour"] for p in points})
+                                   if c not in legend],
+            "caveat": ("the map as one editor left it at that moment, not a "
+                       "survey of that day"),
+            "source": SOURCE,
+            "source_url": f"https://en.wikipedia.org/wiki/{urllib.parse.quote(spec['module'])}",
+            "stale": False, "error": None}
+    _CACHE[key] = {"ts": time.time(), "data": data}
     return data

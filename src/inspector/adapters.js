@@ -834,6 +834,9 @@ export function adaptWarmapArea(data = {}) {
         attributes: compact([
             attr("Held by", m.held_by),
             attr("Theatre", m.theatre),
+            // Which map this is. A front from 2016 drawn in today's
+            // colours is otherwise indistinguishable from now.
+            attr("Viewing", m.viewing),
             // Stated before anything else about the shape, because a
             // derived boundary looks identical to a surveyed one.
             attr("Boundary", m.boundary),
