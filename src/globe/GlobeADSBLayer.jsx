@@ -29,7 +29,9 @@ function drCalc(lat, lon, track, gs, dt) {
     return [φ2 * 180 / Math.PI, λ2 * 180 / Math.PI]
 }
 
-const DESKTOP_ADSB_CAP = 150
+// See GlobeAISLayer: the old 150 capped the sky far below what the
+// feed and the backend already provide. Labels stop at 1,500km.
+const DESKTOP_ADSB_CAP = 6000
 
 export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos }) {
     // §7's shading is a neutral overlay burned into the glyph image, and a

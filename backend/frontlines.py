@@ -187,7 +187,10 @@ def fetch(force: bool = False, at: str | None = None) -> dict:
         elif geom == "Point" and st == "attack_direction":
             axes.append({"geometry": f.get("geometry"),
                          "name": _english_name(f)})
+    # Bearings are derived below, once the occupied areas are known.
     areas = [{"status": ft["properties"]["status"]} for ft in features]
+
+    axes = _bearings_for(axes, features)
 
     data = {
         "available": bool(areas),
@@ -374,3 +377,67 @@ def changes(days: int = 30) -> dict:
     }
     _CACHE[key] = {"ts": _t.time(), "data": data}
     return data
+
+
+# ── which way an attack axis points ──────────────────────────────────────
+#
+# DeepStateMap marks 61 axes of attack. In THEIR map each is a rotated
+# arrow icon; the GeoJSON export carries only a Point and a style hash,
+# so the bearing an editor drew does not survive the export. There is no
+# direction in the data.
+#
+# The direction is therefore DERIVED, and every axis says so. An attack
+# advances out of held ground, so the bearing is taken from the nearest
+# occupied area's centroid through the marker and onward. That is a
+# reasonable reading of a real arrangement of facts and it is not what
+# any editor asserted, which is exactly what "illustrative" has to mean
+# here — the position is theirs, the arrow is ours.
+
+def _centroid(ring: list) -> tuple | None:
+    pts = [p for p in ring if isinstance(p, (list, tuple)) and len(p) >= 2]
+    if not pts:
+        return None
+    return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+
+
+def _bearings_for(axes: list, features: list) -> list:
+    """Give each attack marker a derived bearing, or leave it without one."""
+    import math
+
+    occupied = []
+    for f in features:
+        if (f.get("properties") or {}).get("status") != "occupied":
+            continue
+        try:
+            c = _centroid((f.get("geometry") or {}).get("coordinates", [[]])[0])
+        except Exception:                                   # noqa: BLE001
+            c = None
+        if c:
+            occupied.append(c)
+
+    out = []
+    for a in axes:
+        coords = (a.get("geometry") or {}).get("coordinates") or []
+        if len(coords) < 2:
+            continue
+        lon, lat = float(coords[0]), float(coords[1])
+        nearest, best = None, None
+        for (olon, olat) in occupied:
+            d = (olon - lon) ** 2 + (olat - lat) ** 2
+            if best is None or d < best:
+                nearest, best = (olon, olat), d
+        entry = {**a, "lat": lat, "lon": lon,
+                 "bearing_deg": None, "bearing_basis": None}
+        if nearest and best and best > 1e-9:
+            # Forward bearing FROM held ground THROUGH the marker.
+            dlon = math.radians(lon - nearest[0])
+            la1, la2 = math.radians(nearest[1]), math.radians(lat)
+            y = math.sin(dlon) * math.cos(la2)
+            x = math.cos(la1) * math.sin(la2) - math.sin(la1) * math.cos(la2) * math.cos(dlon)
+            entry["bearing_deg"] = round((math.degrees(math.atan2(y, x)) + 360) % 360, 1)
+            entry["bearing_basis"] = (
+                "ILLUSTRATIVE — derived from the nearest occupied area, not "
+                "published. DeepStateMap draws the arrow as a rotated icon "
+                "and the GeoJSON export carries no bearing.")
+        out.append(entry)
+    return out

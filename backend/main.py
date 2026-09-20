@@ -9367,7 +9367,14 @@ async def api_ais_vessels(bbox: str = Query(None, description="south,west,north,
 
     # Only return vessels with a known position
     vessels = [v for v in vessels if v.get("lat") is not None and v.get("lon") is not None]
-    vessels = sorted(vessels, key=lambda v: v.get("last_update", 0), reverse=True)[:500]
+    # A HEMISPHERE'S WORTH, not five hundred. The cap was applied AFTER
+    # the bbox filter, so zooming into one sea still returned the newest
+    # 500 vessels worldwide and then threw most of them away — the map
+    # showed a sparse scatter that looked like poor coverage rather than
+    # a truncated list. With a bbox the caller has already said what it
+    # wants; the cap only exists to stop an unbounded global request.
+    _cap = 6000 if bbox else 2500
+    vessels = sorted(vessels, key=lambda v: v.get("last_update", 0), reverse=True)[:_cap]
 
     # A SHIP WE HAVE ALREADY IDENTIFIED STAYS IDENTIFIED. AIS sends
     # position thirty times more often than identity, and this dict is
@@ -22075,7 +22082,7 @@ async def _forge_detection_cycle():
             for _r in adsb_forge_rules:
                 emergency_codes.update(_r.get("params", {}).get("squawk_codes", []))
             try:
-                for ac in list(_GLOBAL_ADSB_CACHE.values())[:500]:
+                for ac in list(_GLOBAL_ADSB_CACHE.values())[:6000]:
                     hits = _adsb_detector.check_aircraft(
                         ac, military_callsigns=forge_prefixes if forge_prefixes else None
                     )

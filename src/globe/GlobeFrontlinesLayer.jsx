@@ -23,8 +23,9 @@
  * drapes geometry on the terrain.
  */
 import { useEffect, useRef, useState } from "react"
-import { useCesium } from "resium"
-import { GeoJsonDataSource as CesiumGeoJsonDataSource, Color, JulianDate } from "cesium"
+import { Entity, useCesium } from "resium"
+import { GeoJsonDataSource as CesiumGeoJsonDataSource, Color, JulianDate,
+         Cartesian3, Math as CesiumMath } from "cesium"
 import API_BASE from "../apiBase.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
@@ -43,6 +44,7 @@ export default function GlobeFrontlinesLayer({ enabled = false, at = null }) {
     const dsRef = useRef(null)
     const idsRef = useRef([])
     const [meta, setMeta] = useState(null)
+    const [axes, setAxes] = useState([])
 
     useEffect(() => {
         if (!viewer) return
@@ -57,7 +59,7 @@ export default function GlobeFrontlinesLayer({ enabled = false, at = null }) {
             dsRef.current = null
         }
 
-        if (!enabled) { clear(); setMeta(null); return }
+        if (!enabled) { clear(); setMeta(null); setAxes([]); return }
 
         const load = () => {
             fetch(`${API_BASE}/api/frontlines${at ? `?at=${encodeURIComponent(at)}` : ""}`,
@@ -65,6 +67,7 @@ export default function GlobeFrontlinesLayer({ enabled = false, at = null }) {
                 .then((r) => (r.ok ? r.json() : null))
                 .then(async (d) => {
                     if (cancelled || !d?.available || !d.geojson?.features?.length) return
+                    setAxes(Array.isArray(d.attack_axes) ? d.attack_axes : [])
                     const ds = await CesiumGeoJsonDataSource.load(d.geojson, {
                         stroke: Color.TRANSPARENT,
                         fill: Color.TRANSPARENT,
@@ -121,5 +124,59 @@ export default function GlobeFrontlinesLayer({ enabled = false, at = null }) {
         return () => { cancelled = true; clearInterval(h); clear() }
     }, [viewer, enabled, at])
 
-    return null
+    if (!enabled || !axes.length) return null
+
+    // ── axes of attack ───────────────────────────────────────────────────
+    //
+    // The position is DeepStateMap's; the arrow is ours. Their map draws
+    // each of these as a rotated icon and the GeoJSON export carries no
+    // bearing at all, so the direction is derived from the nearest held
+    // ground and every one of them says so on click. Drawn dashed and
+    // semi-transparent, which is this codebase's existing convention for
+    // derived rather than observed.
+    const ARROW_KM = 55
+
+    const destination = (lat, lon, bearingDeg, km) => {
+        const R = 6371
+        const br = CesiumMath.toRadians(bearingDeg)
+        const la1 = CesiumMath.toRadians(lat)
+        const lo1 = CesiumMath.toRadians(lon)
+        const dr = km / R
+        const la2 = Math.asin(Math.sin(la1) * Math.cos(dr)
+                            + Math.cos(la1) * Math.sin(dr) * Math.cos(br))
+        const lo2 = lo1 + Math.atan2(Math.sin(br) * Math.sin(dr) * Math.cos(la1),
+                                     Math.cos(dr) - Math.sin(la1) * Math.sin(la2))
+        return [CesiumMath.toDegrees(lo2), CesiumMath.toDegrees(la2)]
+    }
+
+    return (
+        <>
+            {axes.map((a, i) => {
+                if (a.bearing_deg == null) return null
+                const [tipLon, tipLat] = destination(a.lat, a.lon, a.bearing_deg, ARROW_KM)
+                // Two short barbs make the head, so it reads as an arrow
+                // at a glance without needing a billboard.
+                const [b1Lon, b1Lat] = destination(tipLat, tipLon, a.bearing_deg + 150, ARROW_KM * 0.3)
+                const [b2Lon, b2Lat] = destination(tipLat, tipLon, a.bearing_deg - 150, ARROW_KM * 0.3)
+                return (
+                    <Entity key={`axis-${i}`} name="Axis of attack (illustrative)"
+                        description={
+                            `<div style="font:400 12px sans-serif">`
+                            + `<b>Axis of attack</b><br/>`
+                            + `bearing ${a.bearing_deg}&deg;<br/>`
+                            + `<span style="opacity:.7">${a.bearing_basis || ""}</span></div>`
+                        }
+                        polyline={{
+                            positions: Cartesian3.fromDegreesArray([
+                                a.lon, a.lat, tipLon, tipLat,
+                                b1Lon, b1Lat, tipLon, tipLat, b2Lon, b2Lat,
+                            ]),
+                            width: 2,
+                            material: Color.fromCssColorString("#ff5252").withAlpha(0.75),
+                            clampToGround: true,
+                        }} />
+                )
+            })}
+        </>
+    )
 }

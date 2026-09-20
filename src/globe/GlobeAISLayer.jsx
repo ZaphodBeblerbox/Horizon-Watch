@@ -15,7 +15,11 @@ import useCameraHeading from "./useCameraHeading.js"
 
 const BILLBOARD_SIZE = 26
 
-const DESKTOP_AIS_CAP = 200
+// A HEMISPHERE'S WORTH. This was 200, which meant the backend's cap
+// was irrelevant: looking at an ocean showed two hundred ships and an
+// empty sea. Only the billboard is drawn at range — labels stop at
+// 500km — so the cost of the rest is a batched quad each.
+const DESKTOP_AIS_CAP = 6000
 const aisLat = (v) => v.lat
 const aisLon = (v) => v.lon ?? v.lng
 
