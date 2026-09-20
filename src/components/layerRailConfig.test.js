@@ -12,6 +12,12 @@ describe("LAYER_GROUPS", () => {
             "derivedAlerts", "precisionEvents", "unifiedEvents",
             "chokepoints", "cables", "cctvFeeds", "airports", "ports",
             "aisHeatmap", "adsbHeatmap",
+            // Added deliberately, not inherited from the old panel: GDELT
+            // cannot share the News switch with GeoConfirmed, because one is
+            // a machine that read a wire story and the other is a human who
+            // found the building in the video. Listed here so the guard keeps
+            // doing its job — it exists to catch keys that appear by accident.
+            "gdeltEvents",
         ]
         const actualKeys = LAYER_GROUPS.flatMap(g => g.layers.map(l => l.key))
         expect(new Set(actualKeys)).toEqual(new Set(expectedKeys))

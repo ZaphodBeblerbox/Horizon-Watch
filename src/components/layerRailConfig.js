@@ -35,6 +35,11 @@ export const LAYER_GROUPS = [
         layers: [
             { key: "unifiedEvents", label: "Intelligence Events", hint: "All news & city events", defaultOn: true, hasRelevanceFilter: true },
             { key: "precisionEvents", label: "Precision Intelligence", hint: "Conflict · maritime · aviation · score ≥ 8", defaultOn: true },
+            // Its own row, not folded into the others: a GDELT pin is a
+            // machine that read a wire story, a GeoConfirmed pin is a human
+            // who found the building in the video. The reader has to be able
+            // to turn one off without the other.
+            { key: "gdeltEvents", label: "GDELT Events", hint: "Machine-coded from news wire · city-level · cites its article" },
         ],
     },
     {

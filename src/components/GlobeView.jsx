@@ -17,6 +17,7 @@ import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobeDerivedAlertsLayer  from "../globe/GlobeDerivedAlertsLayer.jsx"
 import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
+import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
@@ -116,6 +117,9 @@ export default function GlobeView({
     // heatmap — see the PARALLAX addendum, which replaces both with the
     // §A5/§A6 derived marks.
     geoConfirmedEnabled = false,
+    // GDELT machine-coded news events — separate from geoConfirmedEnabled
+    // on purpose, see GlobeGdeltLayer.jsx.
+    gdeltEnabled = false,
     // PARALLAX addendum §A8 — the derived surge/fusion marks.
     derivedAlertsEnabled = false,
     // PARALLAX §13 — the gaps, not the coverage.
@@ -866,6 +870,7 @@ export default function GlobeView({
                     endDate={geoConfirmedEndDate}
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
+                <GlobeGdeltLayer enabled={gdeltEnabled} />
                 {/* §A8 — surge and fusion, evaluated at the same playhead the
                     archive pins use (§A7). */}
                 <GlobeCoverageLayer enabled={coverageEnabled} />

@@ -17,7 +17,7 @@
  * that SAME filtered list — never independently recomputed, so they can't
  * disagree.
  */
-import { useEffect, useMemo, useState, useRef, useCallback } from "react"
+import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react"
 import API_BASE from "../apiBase.js"
 import GlobeView from "../components/GlobeView.jsx"
 import MapAnnobar from "../components/MapAnnobar.jsx"
@@ -169,6 +169,37 @@ function DomainRow({ group, count, on, onToggle }) {
     )
 }
 
+// A layer that lives UNDER a domain rather than beside it.
+//
+// The Layers panel is group-level by design — one row per domain — but
+// GDELT cannot share the News switch with GeoConfirmed. One is a machine
+// that read a wire story, the other is a human who found the building in
+// the video, and a reader has to be able to trust the second without
+// accepting the first. Indented, dimmer, and disabled while its parent
+// domain is off, so the hierarchy is legible rather than implied.
+function SubLayerRow({ label, hint, on, parentOn, onToggle }) {
+    return (
+        <div style={{ display: "flex", alignItems: "center", gap: 8,
+                      padding: "3px 12px 3px 27px", opacity: parentOn ? 1 : 0.4 }}
+             title={parentOn ? hint : `${hint} — turn on the parent domain first`}>
+            <span className="swatch" style={{ background: "var(--sev-high)", width: 6, height: 6,
+                                              transform: "rotate(45deg)", flexShrink: 0 }} />
+            <span style={{ flex: 1, font: "400 11px var(--font)", color: "var(--txt-3)" }}>{label}</span>
+            <button
+                onClick={parentOn ? onToggle : undefined}
+                disabled={!parentOn}
+                title={on ? "Hide" : "Show"}
+                style={{ width: 18, height: 18, display: "flex", alignItems: "center",
+                         justifyContent: "center", background: "none", border: "none",
+                         cursor: parentOn ? "pointer" : "default",
+                         color: on && parentOn ? "var(--txt-2)" : "var(--txt-4)" }}
+            >
+                <svg className="icon sm"><use href={on ? "#i-eye" : "#i-eye-off"} /></svg>
+            </button>
+        </div>
+    )
+}
+
 // Views group (§5.2, Sessions & Views full round) — a real filter preset
 // living INSIDE the active session, deliberately the literal first group
 // in the Layers panel, above Event domains. Applying a view changes ONLY
@@ -302,6 +333,9 @@ export default function Situation({ onOpenDossier }) {
     // layer toggles, and keep their own sensible defaults since they don't
     // clutter an empty map on their own.
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
+    // Default OFF. Machine-coded pins are opt-in: the reader should choose
+    // to accept them, not discover them mixed in with verified events.
+    const [gdeltOn, setGdeltOn] = useState(false)
     const [contextOn, setContextOn] = useState({ risk: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     /**
      * PARALLAX layers addendum §L5 — Global infrastructure is its OWN group.
@@ -685,7 +719,16 @@ export default function Situation({ onOpenDossier }) {
                 <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Event domains</div>
                     {LAYER_GROUPS.map((g) => (
-                        <DomainRow key={g.key} group={g} count={domainCounts[g.key]} on={groupsOn[g.key]} onToggle={() => setGroupsOn((p) => ({ ...p, [g.key]: !p[g.key] }))} />
+                        <Fragment key={g.key}>
+                            <DomainRow group={g} count={domainCounts[g.key]} on={groupsOn[g.key]} onToggle={() => setGroupsOn((p) => ({ ...p, [g.key]: !p[g.key] }))} />
+                            {g.key === "news" && (
+                                <SubLayerRow
+                                    label="GDELT Events"
+                                    hint="Machine-coded from news wire · city-level only · every pin cites its article"
+                                    on={gdeltOn} parentOn={groupsOn.news}
+                                    onToggle={() => setGdeltOn((v) => !v)} />
+                            )}
+                        </Fragment>
                     ))}
                 </div>
 
@@ -934,6 +977,7 @@ export default function Situation({ onOpenDossier }) {
                     <GlobeView
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
                         geoConfirmedEnabled={groupsOn.news}
+                        gdeltEnabled={groupsOn.news && gdeltOn}
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
                         derivedAlertsEnabled={groupsOn.alerts}

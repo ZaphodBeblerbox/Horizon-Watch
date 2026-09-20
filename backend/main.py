@@ -14104,6 +14104,36 @@ def imagery_scan_tiled_result(job_id: str):
     return out
 
 
+@app.get("/api/gdelt/map-points")
+def gdelt_map_points(limit: int = 500):
+    """GDELT events that can honestly be drawn on a map.
+
+    Deliberately a different endpoint from the raw event feed. Only events
+    that carry a readable title, a city-level coordinate and a real article
+    survive gdelt_events.map_points() — roughly one in forty — because a
+    coloured dot asserting that a machine believes something happened near
+    here is how the previous news layer lost the reader.
+    """
+    import gdelt_events as _g
+    try:
+        events = _g.EVENTS_CACHE.get("events", []) or []
+        points = _g.map_points(events)
+    except Exception as e:                                  # noqa: BLE001
+        return JSONResponse({"error": f"{type(e).__name__}: {e}",
+                             "points": [], "count": 0}, status_code=500)
+    points = points[: max(1, min(int(limit), 2000))]
+    return {
+        "points": points,
+        "count": len(points),
+        "considered": len(events),
+        "updated_at": _g.EVENTS_CACHE.get("updated_at"),
+        # Stated in the payload so a client cannot present these at the same
+        # weight as a human-verified GeoConfirmed placemark.
+        "provenance": "machine-coded from news wire text (GDELT); "
+                      "location is the city named in the article",
+    }
+
+
 @app.get("/api/imagery/progress")
 def imagery_progress(job_id: str | None = None):
     """Live progress for imagery scans.
