@@ -384,6 +384,7 @@ export default function Situation({ onOpenDossier }) {
     // Controlled airspace volumes. Off by default and only drawn close
     // in — 31 volumes over one German state is a wash at wider zoom.
     const [airspaceOn, setAirspaceOn] = useState(false)
+    const [airspaceStatus, setAirspaceStatus] = useState(null)
     // The Ukraine time slider. `null` means live; any other value is a
     // published snapshot date. Index rather than date so the control is
     // evenly spaced in SNAPSHOTS, which is what exists, rather than in
@@ -884,8 +885,11 @@ export default function Situation({ onOpenDossier }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
                         <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
                             Controlled airspace
-                            <span style={{ display: "block", font: "400 10px var(--font)", color: "var(--txt-4)" }}>
-                                floor to ceiling · zoom in to draw
+                            <span style={{ display: "block", font: "400 10px var(--font)",
+                                           color: airspaceStatus?.state === "error" ? "var(--amber)" : "var(--txt-4)" }}>
+                                {airspaceOn
+                                    ? `floor to ceiling · ${airspaceStatus?.text || "zoom in to draw"}`
+                                    : "floor to ceiling · openAIP volumes"}
                             </span>
                         </span>
                         <button
@@ -1289,6 +1293,7 @@ export default function Situation({ onOpenDossier }) {
                         frontlinesAt={frontlinesAt}
                         gfwKinds={Object.keys(gfwOn).filter((k) => gfwOn[k])}
                         airspaceEnabled={airspaceOn}
+                        onAirspaceStatus={setAirspaceStatus}
                         onFacilityStatus={setFacStatus}
                         facilityTypes={Object.entries(FACILITY_ROW_TYPE)
                             .filter(([k]) => infraOn[k])

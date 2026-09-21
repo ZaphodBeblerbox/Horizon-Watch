@@ -1,27 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { Entity } from "resium"
 import {
-    Cartesian3, Cartesian2, Color, HeightReference,
+    Cartesian2, Color,
     CallbackProperty, Transforms, HeadingPitchRoll, ColorBlendMode,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType } from "./iconUtils.js"
-import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { getShapeMarkerDataUri } from "./entityIcons.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
-import { safeCartesian, billboardRotation, vesselHeading, bearingBetween } from "./markerOrientation.js"
+import { safeCartesian, vesselHeading, bearingBetween } from "./markerOrientation.js"
 import { familyFor as hullFor, modelUrl as hullUrl,
          headingRadiansFromDegrees as hullHeadingFrom } from "./vesselModels.js"
-import useCameraHeading from "./useCameraHeading.js"
 
-const BILLBOARD_SIZE = 26
 
 // A HEMISPHERE'S WORTH. This was 200, which meant the backend's cap
 // was irrelevant: looking at an ocean showed two hundred ships and an
 // empty sea. Only the billboard is drawn at range — labels stop at
 // 500km — so the cost of the rest is a batched quad each.
-const DESKTOP_AIS_CAP = 6000
+// Same number as HULL_BUDGET, for the reason given in GlobeADSBLayer:
+// vessels past the budget draw nothing now, so carrying 5,400 of them
+// through the entity store and the render was cost for no pixels.
+const DESKTOP_AIS_CAP = 600
 
 /**
  * How many vessels are drawn as hulls rather than glyphs.
@@ -35,13 +34,6 @@ const aisLat = (v) => v.lat
 const aisLon = (v) => v.lon ?? v.lng
 
 export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) {
-    // §7's shading is a neutral overlay burned into the glyph image, and a
-    // data URI cannot read a CSS variable — so the theme has to reach the
-    // renderer as a value, and the glyph must be rebuilt when it turns.
-    const [theme, setTheme] = useState(getRenderedTheme)
-    useEffect(() => subscribeRenderedTheme(setTheme), [])
-    const cameraHeading = useCameraHeading()
-
     // COURSE RECOVERED FROM MOVEMENT. 44% of vessels report no usable
     // heading and this feed has no course-over-ground, so those hulls
     // had nothing to point along. A vessel that has moved between two
@@ -144,17 +136,6 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                 // side in backend/main.py's _check_sanctions_on_update()).
                 const mmsiStr = v.mmsi != null ? String(v.mmsi) : null
                 const sanctioned = !!(mmsiStr && sanctionedMmsis?.confirmed?.has(mmsiStr))
-                // Only reached beyond the hull budget, which the viewport
-                // limit makes unlikely. A square rather than a circle:
-                // dots among 3D hulls read as a rendering fault.
-                const icon = getShapeMarkerDataUri({
-                    shape: "square",
-                    color: sanctioned ? "#FF453A" : "#8E9BAA",
-                    size: BILLBOARD_SIZE * 0.5,
-                })
-
-                const hdg = vesselHeading(v) ?? 0
-
                 // A HULL LIES ON THE WATER; A BILLBOARD CANNOT. A
                 // billboard always faces the viewer, so a ship drawn as
                 // one is a picture of a ship held up to the camera, and
@@ -176,7 +157,14 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                 const headingSource = reportedHdg !== null ? "reported"
                     : derivedHdg !== null ? "derived from movement" : "not reported"
                 const usableHdg = reportedHdg ?? derivedHdg
+                // NO HULL, NO MARKER. The flat square that stood in past
+                // the hull budget was the "squares on the map": the
+                // visibility cap is 6000 and the budget 600, so ~5,400
+                // vessels were drawn as placeholders. A placeholder among
+                // 3D hulls reads as a rendering fault, so the overflow is
+                // no longer drawn and the count is reported instead.
                 const hull = hullMmsis.has(mmsiStr) ? hullFor(v) : null
+                if (!hull) return null
                 const hullAngle = hull
                     ? hullHeadingFrom(usableHdg ?? 0) : null
 
@@ -191,10 +179,10 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                         id={`ais-${v.mmsi}`}
                         key={v.mmsi}
                         position={position}
-                        orientation={hull ? new CallbackProperty(() =>
+                        orientation={new CallbackProperty(() =>
                             Transforms.headingPitchRollQuaternion(
-                                position, new HeadingPitchRoll(hullAngle, 0, 0)), false) : undefined}
-                        model={hull ? {
+                                position, new HeadingPitchRoll(hullAngle, 0, 0)), false)}
+                        model={{
                             uri: hullUrl(hull),
                             // Nominal metres for the TYPE — AIS gives us
                             // no length or beam — but never smaller than
@@ -204,32 +192,6 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                             color: sanctioned ? Color.fromCssColorString("#FF453A") : undefined,
                             colorBlendMode: ColorBlendMode.MIX,
                             colorBlendAmount: sanctioned ? 0.75 : 0,
-                        } : undefined}
-                        billboard={hull ? undefined : {
-                            image:           icon,
-                            width:           BILLBOARD_SIZE,
-                            height:          BILLBOARD_SIZE,
-                            // A TRUE BEARING AT ANY CAMERA ANGLE. Billboard
-                            // rotation is applied in SCREEN space, so a bare
-                            // -heading is only correct while north points up
-                            // the screen; rotate the globe and every hull
-                            // keeps its screen angle while the world turns
-                            // under it. Subtracting the camera's own heading
-                            // each frame pins the bow to the real bearing,
-                            // and because the billboard still faces the
-                            // viewer it stays lying flat on the water rather
-                            // than standing up out of it.
-                            rotation: new CallbackProperty(
-                                () => billboardRotation(hdg, cameraHeading.current), false),
-                            alignedAxis:     Cartesian3.ZERO,
-                            heightReference: HeightReference.CLAMP_TO_GROUND,
-                            // Stage 1 fidelity — no scaleByDistance on the
-                            // glyph itself: marker size must stay constant
-                            // regardless of camera distance (was shrinking
-                            // to 35% at 3,000km out).
-                            // Visible out to a hemisphere view. Capping below that meant
-                            // zooming out to look at a whole ocean emptied it.
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 60_000_000),
                         }}
                         label={isMobile ? undefined : {
                             text:       v.name || "",

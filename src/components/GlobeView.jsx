@@ -137,6 +137,7 @@ export default function GlobeView({
     airspaceEnabled = false,
     facilityTypes = [],
     onFacilityStatus = null,
+    onAirspaceStatus = null,
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
     firesEnabled = false,
@@ -1024,7 +1025,8 @@ export default function GlobeView({
                     records of something days old, not live contacts. */}
                 <GlobeGfwLayer enabled={gfwKinds.length > 0} kinds={gfwKinds} />
                 {/* Controlled airspace as real volumes — floor to ceiling. */}
-                <GlobeAirspaceLayer enabled={airspaceEnabled} viewBounds={viewBounds} />
+                <GlobeAirspaceLayer enabled={airspaceEnabled} viewBounds={viewBounds}
+                                    onStatus={onAirspaceStatus} />
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />

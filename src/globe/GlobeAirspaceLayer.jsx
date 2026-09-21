@@ -42,26 +42,57 @@ const CLASS_COLOR = {
     unclassified: "#8E9BAA",
 }
 
-export default function GlobeAirspaceLayer({ enabled = false, viewBounds = null }) {
+export default function GlobeAirspaceLayer({ enabled = false, viewBounds = null,
+                                            onStatus = null }) {
     const [data, setData] = useState(null)
 
     const span = viewBounds
         ? Math.max(viewBounds.north - viewBounds.south, viewBounds.east - viewBounds.west)
         : 999
 
+    // THE LAYER HAS TO SAY WHICH SILENCE THIS IS. Four different
+    // conditions drew exactly nothing and looked identical from the
+    // outside: the toggle is off, the camera is too high, the request
+    // is in flight, and the server has no openAIP key. The last one is
+    // how this looked in production for a week — the key lives in a
+    // gitignored .env, so a deploy without it answers
+    // {available:false} forever and the panel just sat there.
     useEffect(() => {
-        if (!enabled || !viewBounds || span > MAX_SPAN_DEG) { setData(null); return }
+        if (!enabled) { setData(null); onStatus?.(null); return }
+        if (!viewBounds || span > MAX_SPAN_DEG) {
+            setData(null)
+            onStatus?.({ state: "zoom", text: "zoom in to draw" })
+            return
+        }
         let cancelled = false
         const q = `west=${viewBounds.west.toFixed(2)}&south=${viewBounds.south.toFixed(2)}`
                 + `&east=${viewBounds.east.toFixed(2)}&north=${viewBounds.north.toFixed(2)}`
+        onStatus?.({ state: "loading", text: "loading…" })
         // Debounced: a pan is one request at the end of it, and openAIP
         // rate-limits hard enough that a second call seconds after the
         // first comes back 429.
         const t = setTimeout(() => {
             fetch(`${API_BASE}/api/airspace?${q}&limit=400`, { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : null))
-                .then((d) => { if (!cancelled && d?.available) setData(d) })
-                .catch(() => {})
+                .then((d) => {
+                    if (cancelled) return
+                    if (!d) { onStatus?.({ state: "error", text: "unavailable" }); return }
+                    if (!d.available) {
+                        // The server already says WHY. Passing it through
+                        // is the difference between "zoom in" and "set
+                        // OPENAIP_KEY on the server".
+                        const why = String(d.error || "unavailable")
+                        onStatus?.({
+                            state: "error",
+                            text: why.includes("OPENAIP_KEY") ? "no API key on server" : why,
+                        })
+                        return
+                    }
+                    setData(d)
+                    const n = safeArray(d.airspaces).length
+                    onStatus?.({ state: "ok", text: n ? `${n} in view` : "none here" })
+                })
+                .catch(() => { if (!cancelled) onStatus?.({ state: "error", text: "unavailable" }) })
         }, 500)
         return () => { cancelled = true; clearTimeout(t) }
     }, [enabled, span, viewBounds?.west, viewBounds?.south, viewBounds?.east, viewBounds?.north])

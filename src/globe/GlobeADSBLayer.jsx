@@ -1,24 +1,20 @@
-import { useEffect, useMemo, useState, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Entity, useCesium } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
     CallbackProperty, Transforms, HeadingPitchRoll, ColorBlendMode,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { acClassify } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { getShapeMarkerDataUri } from "./entityIcons.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
-import { safeCartesian, billboardRotation } from "./markerOrientation.js"
+import { safeCartesian } from "./markerOrientation.js"
 import { deadReckon } from "./deadReckon.js"
 import { familyForDrawing, isSurfaceVehicle, modelUrl, modelHeadingRadians } from "./aircraftModels.js"
-import useCameraHeading from "./useCameraHeading.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
 const adsbLon = (ac) => ac.lon ?? ac.longitude
 
-const BILLBOARD_SIZE = 26
 
 /**
  * How many aircraft are drawn as geometry rather than as a glyph.
@@ -61,17 +57,15 @@ const DROP_LINE_BUDGET = 120
  */
 const DR_RENDER_MS = 100
 
-// See GlobeAISLayer: the old 150 capped the sky far below what the
-// feed and the backend already provide. Labels stop at 1,500km.
-const DESKTOP_ADSB_CAP = 6000
+// THE CAP AND THE MODEL BUDGET ARE THE SAME NUMBER ON PURPOSE. They
+// used to be 6000 and 800: the extra 5,200 aircraft each became an
+// entity in the store and a React component, and then drew a flat
+// placeholder because there was no model left for them. Now that the
+// overflow draws nothing, keeping it in the list was pure cost —
+// thousands of components mounting every refresh to render null.
+const DESKTOP_ADSB_CAP = 800
 
 export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos }) {
-    // §7's shading is a neutral overlay burned into the glyph image, and a
-    // data URI cannot read a CSS variable — so the theme has to reach the
-    // renderer as a value, and the glyph must be rebuilt when it turns.
-    const cameraHeading = useCameraHeading()
-    const [theme, setTheme] = useState(getRenderedTheme)
-    useEffect(() => subscribeRenderedTheme(setTheme), [])
 
     const drBaseRef = useRef({})
     const rawRef    = useRef([])
@@ -254,16 +248,6 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 // now also wired into the globe billboard itself).
                 const watchlisted = !!(icao && watchlistedIcaos?.has(String(icao).toUpperCase()))
                 const classification = acClassify(ac)
-                // The glyph is now only a safety net for a contact beyond
-                // the model budget, which the viewport limit means should
-                // not happen in practice. It is a small chevron rather
-                // than a dot: a circle among 3D airframes read as a
-                // rendering fault rather than as an aircraft.
-                const icon = getShapeMarkerDataUri({
-                    shape: "triangle",
-                    color: watchlisted ? "#FFB020" : "#8E9BAA",
-                    size: BILLBOARD_SIZE * 0.6,
-                })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
                 // GEOMETRY, NOT A PICTURE OF GEOMETRY. A billboard always
@@ -275,7 +259,15 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 // is rolled. Measured against Cesium: hpr.heading 0 points
                 // the nose east — hence the 90° — and the nose's vertical
                 // component is exactly 0 at every heading.
+                // NO MODEL, NO MARKER. The flat glyph that used to stand
+                // in for a contact past the model budget was the "dots and
+                // circles on the map" — thousands of them, because the
+                // visibility cap was 6000 and the model budget 800. A
+                // placeholder among 3D airframes reads as a rendering
+                // fault, not as an aircraft, so the overflow is now simply
+                // not drawn and the count is reported instead.
                 const family = modelled.get(icao) || null
+                if (!family) return null
                 const orientation = family ? new CallbackProperty(() => {
                     const p = position.getValue()
                     return p ? Transforms.headingPitchRollQuaternion(
@@ -289,7 +281,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                         key={icao || `${lat}-${lon}`}
                         position={position}
                         orientation={orientation}
-                        model={family ? {
+                        model={{
                             uri: modelUrl(family),
                             // Real metres, so a widebody is visibly bigger
                             // than a regional jet — but never smaller than
@@ -302,27 +294,6 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                             color: watchlisted ? Color.fromCssColorString("#FFB020") : undefined,
                             colorBlendMode: ColorBlendMode.MIX,
                             colorBlendAmount: watchlisted ? 0.7 : 0,
-                        } : undefined}
-                        billboard={family ? undefined : {
-                            image:           icon,
-                            width:           BILLBOARD_SIZE,
-                            height:          BILLBOARD_SIZE,
-                            // A TRUE TRACK AT ANY CAMERA ANGLE — see
-                            // markerOrientation.js. Billboard rotation is
-                            // applied in screen space, so a bare -track is
-                            // only right while north points up the screen.
-                            // Subtracting the camera heading each frame keeps
-                            // the nose on the real track, and facing the
-                            // viewer keeps the airframe level with the
-                            // horizon instead of standing on a wingtip.
-                            rotation: new CallbackProperty(
-                                () => billboardRotation(track, cameraHeading.current), false),
-                            alignedAxis:     Cartesian3.ZERO,
-                            // Stage 1 fidelity — no scaleByDistance on the
-                            // glyph itself; constant size regardless of
-                            // camera distance.
-                            // Visible out to a hemisphere view, same as vessels.
-                            distanceDisplayCondition: new DistanceDisplayCondition(0, 60_000_000),
                         }}
                         label={isMobile ? undefined : {
                             text:       cs || icao,
