@@ -741,6 +741,8 @@ export default function GlobeView({
 
     // Track camera viewport bounds for event layer scoping
     useEffect(() => {
+        // Below this, the view has not meaningfully moved.
+        const BOUNDS_EPSILON_DEG = 0.01
         let cleanup = null
         let attempts = 0
         const tryAttach = () => {
@@ -759,10 +761,22 @@ export default function GlobeView({
                 const n = CesiumMath.toDegrees(rect.north)
                 // Don't bother with bbox when nearly whole globe is visible
                 if ((n - s) > 160 || (e - w) > 340) {
-                    setViewBounds(null)
+                    setViewBounds((prev) => (prev === null ? prev : null))
                 } else {
-                    const b = { south: s, north: n, west: w, east: e }
-                    setViewBounds(b)
+                    // ONLY WHEN IT ACTUALLY MOVED. A fresh object every
+                    // call is a new reference, and layers keyed on
+                    // viewBounds re-run their effects on each one — the
+                    // aircraft fetch debounces on that effect, so a
+                    // constantly-changing reference resets the debounce
+                    // forever and the request never fires at all.
+                    setViewBounds((prev) => {
+                        if (prev
+                            && Math.abs(prev.south - s) < BOUNDS_EPSILON_DEG
+                            && Math.abs(prev.north - n) < BOUNDS_EPSILON_DEG
+                            && Math.abs(prev.west  - w) < BOUNDS_EPSILON_DEG
+                            && Math.abs(prev.east  - e) < BOUNDS_EPSILON_DEG) return prev
+                        return { south: s, north: n, west: w, east: e }
+                    })
                 }
                 // V3 Phase 1, §5.1 — real Cesium camera position + orientation,
                 // published on every real move so a session-save action can
@@ -779,6 +793,14 @@ export default function GlobeView({
             }
             update()
             viewer.camera.moveEnd.addEventListener(update)
+            // POLLED AS WELL AS EVENT-DRIVEN. moveEnd does not fire for a
+            // programmatic setView, so a camera placed by code — a deep
+            // link, "fly to this contact", a saved view — left the
+            // viewport bounds describing wherever the camera used to be,
+            // and the aircraft layer kept requesting that old box.
+            // Cheap because the comparison above means most polls change
+            // no state at all.
+            const poll = setInterval(update, 500)
             // Real guard in the cleanup itself, not just at attach time —
             // this effect's cleanup can run well after tryAttach(), once the
             // viewer has since been destroyed by an unrelated render error
@@ -786,7 +808,10 @@ export default function GlobeView({
             // Viewer subtree on any child render error); `.camera` on an
             // already-destroyed viewer throws the same class of error as
             // the `.scene` getter does.
-            cleanup = () => { if (!viewer.isDestroyed?.()) viewer.camera.moveEnd.removeEventListener(update) }
+            cleanup = () => {
+                clearInterval(poll)
+                if (!viewer.isDestroyed?.()) viewer.camera.moveEnd.removeEventListener(update)
+            }
         }
         tryAttach()
         return () => { cleanup?.() }
