@@ -88,12 +88,33 @@
                 var already = false
                 try { already = sessionStorage.getItem(FLAG) === "1" } catch (e) { /* private mode */ }
                 if (already) {
-                    console.error("[stale-chunk] " + src + " failed to load even after a reload — a real reload cannot fix this; not retrying again.")
+                    console.error("[stale-chunk] " + src + " failed to load even after clearing caches — this is a broken deploy, not staleness; not retrying again.")
                     return
                 }
-                try { sessionStorage.setItem(FLAG, "1") } catch (e) { /* private mode — reload still proceeds */ }
-                console.warn("[stale-chunk] " + src + " failed to load (likely a stale cached index.html referencing a superseded deploy) — reloading once.")
-                window.location.reload()
+                try { sessionStorage.setItem(FLAG, "1") } catch (e) { /* private mode — recovery still proceeds */ }
+                // A BARE RELOAD CANNOT FIX THIS. If a service worker is
+                // serving a precached index.html, the reload is answered
+                // by that same worker with that same HTML, referencing
+                // the same missing bundle. Production reported exactly
+                // that: "failed to load even after a reload". The caches
+                // and the worker have to go first.
+                console.warn("[stale-chunk] " + src + " failed to load (stale cached shell referencing a superseded deploy) — clearing caches and service workers, then reloading.")
+                var jobs = []
+                try {
+                    if (window.caches) {
+                        jobs.push(caches.keys().then(function (keys) {
+                            return Promise.all(keys.map(function (k) { return caches.delete(k) }))
+                        }))
+                    }
+                } catch (e) { /* storage blocked */ }
+                try {
+                    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                        jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+                            return Promise.all(rs.map(function (r) { return r.unregister() }))
+                        }))
+                    }
+                } catch (e) { /* nothing more to try */ }
+                Promise.all(jobs).catch(function () {}).then(function () { window.location.reload() })
             }, true)
         })()
     </script>

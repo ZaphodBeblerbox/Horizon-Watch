@@ -54,8 +54,33 @@ export default defineConfig({
             registerType: 'prompt',
             injectRegister: false,
             workbox: {
-                // Exclude large Cesium bundles from precache — they'd blow the 2 MiB limit
-                globPatterns: ['**/*.{css,html,ico,png,svg,woff2}'],
+                // HTML IS DELIBERATELY NOT PRECACHED.
+                //
+                // Precaching index.html is what produced the stale-chunk
+                // 404 in production: the worker served an old index.html
+                // from cache, that HTML referenced a hashed bundle the
+                // current deploy no longer has, and because skipWaiting
+                // and clientsClaim are both false below, a long-lived tab
+                // kept that worker — and therefore that HTML — for as
+                // long as it stayed open. Reloading could not help,
+                // because the reload was answered by the same worker with
+                // the same cached HTML.
+                //
+                // The app shell is worth nothing offline anyway: this is a
+                // live intelligence picture, and an offline shell can only
+                // ever show an empty globe. Letting navigation go to the
+                // network means the HTML is always the deploy's own.
+                //
+                // Exclude large Cesium bundles too — they'd blow the limit.
+                globPatterns: ['**/*.{css,ico,png,svg,woff2}'],
+                // AND THEREFORE NO NAVIGATION FALLBACK. vite-plugin-pwa
+                // registers a NavigationRoute bound to index.html through
+                // createHandlerBoundToURL, which resolves its URL FROM THE
+                // PRECACHE. With the shell no longer precached that call
+                // throws at runtime and takes navigation down with it —
+                // strictly worse than the stale shell it replaced. Checked
+                // in the built sw.js, not assumed.
+                navigateFallback: null,
                 globIgnores: ['**/cesium/**', '**/Viewer-*.js', '**/Cesium-*.js'],
                 maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
                 skipWaiting: false,
