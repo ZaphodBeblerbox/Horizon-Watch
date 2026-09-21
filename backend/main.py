@@ -3510,13 +3510,19 @@ def get_adsb(
     if lat is None or lon is None:
         now_ts = time.time()
         out = []
+        newest = float("inf")
         for ac in list(_GLOBAL_ADSB_CACHE.values()):
             if ac.get("lat") is None or ac.get("lon") is None:
                 continue
-            # A position nobody has heard in five minutes is a memory,
-            # not a contact.
-            if now_ts - float(ac.get("last_seen") or 0) > 300:
+            # Ten minutes, matching what the poller keeps. Five was
+            # shorter than the poller's own retention, so when the
+            # upstream rate-limited us the endpoint hid positions the
+            # cache still held and the map went blank rather than going
+            # stale. Age is reported below instead of being hidden.
+            age = now_ts - float(ac.get("last_seen") or 0)
+            if age > 600:
                 continue
+            newest = min(newest, age)
             if not _in_bbox(ac["lat"], ac["lon"], west, south, east, north):
                 continue
             out.append({
@@ -3535,8 +3541,13 @@ def get_adsb(
         total = len(out)
         out = _thin_for_viewport(out, limit)
         print(f"[adsb] viewport → {len(out)} of {total} aircraft")
+        newest_s = None if newest == float("inf") else int(newest)
         return {"aircraft": out, "scope": "viewport" if west is not None else "global",
                 "available": total, "returned": len(out),
+                # So the client can say "positions are 4 minutes old"
+                # instead of quietly drawing them as if they were live.
+                "newest_fix_seconds": newest_s,
+                "stale": bool(newest_s is not None and newest_s > 180),
                 "regions": [r["name"] for r in GLOBAL_ADSB_REGIONS]}
 
     key = f"{round(lat, 2)},{round(lon, 2)},{dist}"
@@ -10212,6 +10223,7 @@ async def _global_adsb_cache_loop():
             continue
         try:
             loop = asyncio.get_event_loop()
+            fetched_total = 0
             for region in GLOBAL_ADSB_REGIONS:
                 url = f"https://api.adsb.lol/v2/lat/{region['lat']}/lon/{region['lon']}/dist/{region['dist']}"
                 def _fetch(u=url):
@@ -10224,6 +10236,7 @@ async def _global_adsb_cache_loop():
                         logger.exception("adsb background poll: region fetch failed")
                         return []
                 aircraft_raw = await loop.run_in_executor(_executor, _fetch)
+                fetched_total += len(aircraft_raw)
                 now_ts = time.time()
                 for ac in aircraft_raw:
                     hex_id = (ac.get("hex") or "").upper()
@@ -10255,7 +10268,24 @@ async def _global_adsb_cache_loop():
                     _record_adsb_history(mapped)
                 except Exception:
                     pass
-                await asyncio.sleep(2)
+                # adsb.lol is free and rate-limited, and these are
+                # 3,000nm queries. Ten of them two seconds apart earned a
+                # 429 across the board; six seconds apart does not.
+                await asyncio.sleep(6)
+            # A CYCLE THAT FETCHED NOTHING IS A FAILURE, NOT AN EMPTY SKY.
+            # adsb.lol rate-limits, and when every region comes back 429
+            # the pruning below used to delete the entire cache — the map
+            # went from 11,808 aircraft to 0 with nothing on screen to say
+            # why, and only a swallowed traceback in the log. Keeping the
+            # last known positions is both more useful and more honest:
+            # they are real observations that are getting old, which the
+            # endpoint already reports through last_seen.
+            if fetched_total == 0:
+                print(f"[ADSB-GLOBAL] all {len(GLOBAL_ADSB_REGIONS)} regions returned "
+                      f"nothing — keeping {len(_GLOBAL_ADSB_CACHE)} known positions")
+                await asyncio.sleep(180)
+                continue
+
             # Prune entries older than 10 minutes
             cutoff = time.time() - 600
             stale = [k for k, v in list(_GLOBAL_ADSB_CACHE.items()) if v.get("last_seen", 0) < cutoff]
