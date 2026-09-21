@@ -3482,6 +3482,61 @@ def _thin_for_viewport(aircraft: list, limit: int) -> list:
         i += 1
     return keep + picked
 
+def _akili_db_path() -> str:
+    return f"{DATA_DIR}/akili.db"
+
+
+@app.get("/api/ontology/vessel-links")
+def api_ontology_vessel_links(mmsi: str = Query(...)):
+    """Which sanctions entities this vessel has been matched to.
+
+    THE BRIDGE THIS READS WAS DEAD AT BOTH ENDS. ftm_resolve.resolve_all
+    was never called by anything, and ftm_resolution was never read by
+    anything, so the join between the ships we track and the entities
+    that are listed existed only as a table definition.
+
+    Fuzzy matches are returned with decided=false. A candidate awaiting
+    review is information; it is not a finding, and naming the wrong
+    tanker in a deliverable is the specific harm here.
+    """
+    try:
+        import ftm_resolve
+        links = ftm_resolve.links_for(_akili_db_path(), "vessel", mmsi)
+        return {"mmsi": str(mmsi), "links": links,
+                "decided": [l for l in links if l["decided"]],
+                "for_review": [l for l in links if not l["decided"]]}
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("vessel links failed")
+        return {"mmsi": str(mmsi), "links": [], "error": str(e)[:200]}
+
+
+@app.get("/api/ontology/resolution-summary")
+def api_ontology_resolution_summary():
+    """How much of the sanctions bridge is actually built."""
+    try:
+        import ftm_resolve
+        return {"available": True, **ftm_resolve.resolution_summary(_akili_db_path())}
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("resolution summary failed")
+        return {"available": False, "error": str(e)[:200]}
+
+
+@app.post("/api/ontology/resolve-vessels")
+def api_ontology_resolve_vessels(limit: int | None = Query(None, ge=1, le=100000)):
+    """Match every vessel we have tracked against the sanctions store.
+
+    17 seconds for the whole fleet of 30,246, so this is cheap enough to
+    run on a schedule as well as on demand.
+    """
+    try:
+        import ftm_resolve
+        return {"available": True,
+                **ftm_resolve.resolve_all(_akili_db_path(), limit=limit)}
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("vessel resolution failed")
+        return {"available": False, "error": str(e)[:200]}
+
+
 @app.get("/api/gfw/events")
 def api_gfw_events(
     kind:  str = Query("encounters"),
@@ -10238,6 +10293,31 @@ def _cluster_center(cluster):
     return (sum(lats) / len(lats), sum(lons) / len(lons))
 
 
+async def _vessel_resolution_loop():
+    """Keep the sanctions bridge current.
+
+    Every vessel we have ever tracked, matched against the sanctions
+    store. The whole fleet takes about 17 seconds, so the interval is
+    set by how often the inputs change — new AIS names arrive
+    continuously, new sanctions listings daily — not by cost.
+    """
+    await asyncio.sleep(90)
+    while True:
+        if HEAVY_FEEDS_PAUSED:
+            await asyncio.sleep(3600)
+            continue
+        try:
+            import ftm_resolve
+            loop_ = asyncio.get_event_loop()
+            stats = await loop_.run_in_executor(
+                _executor, lambda: ftm_resolve.resolve_all(_akili_db_path()))
+            print(f"[ontology] vessel resolution: examined {stats.get('examined')}, "
+                  f"linked {stats.get('linked')}, for review {stats.get('for_review')}")
+        except Exception as e:                               # noqa: BLE001
+            print(f"[ontology] vessel resolution failed: {e}")
+        await asyncio.sleep(6 * 3600)
+
+
 async def _global_adsb_cache_loop():
     """Poll ADS-B globally every 60s to populate _GLOBAL_ADSB_CACHE for anomaly detection."""
     global _GLOBAL_ADSB_CACHE
@@ -12738,6 +12818,10 @@ async def startup_event():
     asyncio.create_task(_gdelt_loop())
     asyncio.create_task(_frontline_change_loop())
     asyncio.create_task(_facilities_ingest_loop())
+    # The sanctions bridge. Registered here because the resolver it runs
+    # was never called by anything — complete machinery that had only
+    # ever produced the 1,014 rows somebody once made by hand.
+    asyncio.create_task(_vessel_resolution_loop())
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())

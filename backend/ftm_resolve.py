@@ -165,9 +165,21 @@ def accept(candidate: dict) -> bool:
 def resolve_all(db_path: str, *, limit: int | None = None) -> dict:
     conn = sqlite3.connect(db_path)
     index = build_index(conn)
+    # EVERY VESSEL WE HAVE SEEN, NAMED OR NOT.
+    #
+    # This used to require a name, which threw away 22,029 of 30,231
+    # distinct vessels — and an MMSI match does not need a name at all.
+    # Measured against the live store: 28 vessels we have tracked carry
+    # an MMSI belonging to a sanctioned vessel, and only 7 were linked,
+    # because the other 21 had never reported a name to us. The cheapest
+    # and most certain link in the product was gated behind the one field
+    # AIS most often omits.
+    #
+    # The name is still selected, because it is what the exact and fuzzy
+    # name methods work on; it is simply no longer a precondition.
     sql = ("SELECT mmsi, name FROM ("
-           " SELECT mmsi, name, MAX(timestamp) FROM vessel_history"
-           " WHERE name IS NOT NULL AND name <> '' GROUP BY mmsi)")
+           " SELECT mmsi, MAX(name) AS name, MAX(timestamp) FROM vessel_history"
+           " GROUP BY mmsi)")
     if limit:
         sql += f" LIMIT {int(limit)}"
     stats = {"examined": 0, "linked": 0, "for_review": 0,
@@ -194,3 +206,78 @@ def resolve_all(db_path: str, *, limit: int | None = None) -> dict:
     stats["seconds"] = round(time.time() - t0, 1)
     conn.close()
     return stats
+
+
+# ── reading the resolutions back ──────────────────────────────────────
+#
+# THE BRIDGE WAS DEAD AT BOTH ENDS. resolve_all() was never called by
+# anything, and ftm_resolution was never read by anything either, so the
+# join between what we track and who is sanctioned existed only as
+# schema. These are the read side.
+
+
+def _thing(conn: sqlite3.Connection, ftm_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT id, schema, caption, country, imo, mmsi, topics_json, datasets_json"
+        " FROM ftm_things WHERE id = ?", (ftm_id,)).fetchone()
+    if not row:
+        return None
+    import json as _json
+
+    def arr(v):
+        try:
+            return _json.loads(v) if v else []
+        except Exception:                                   # noqa: BLE001
+            return []
+
+    return {"ftm_id": row[0], "schema": row[1], "name": row[2], "country": row[3],
+            "imo": row[4], "mmsi": row[5],
+            "topics": arr(row[6]), "datasets": arr(row[7])}
+
+
+def links_for(db_path: str, local_kind: str, local_id: str) -> list[dict]:
+    """Every sanctions entity one of our records has been matched to.
+
+    Fuzzy matches come back too, flagged `decided: false`, because a
+    candidate awaiting review is information — it is just not a finding,
+    and the caller must be able to tell the difference.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT ftm_id, method, score, evidence, decided_by FROM ftm_resolution"
+            " WHERE local_kind = ? AND local_id = ? ORDER BY score DESC",
+            (local_kind, str(local_id))).fetchall()
+        out = []
+        for ftm_id, method, score, evidence, decided_by in rows:
+            thing = _thing(conn, ftm_id)
+            if not thing:
+                continue
+            out.append({**thing, "method": method, "score": score,
+                        "evidence": evidence,
+                        "decided": decided_by is not None,
+                        "decided_by": decided_by})
+        return out
+    finally:
+        conn.close()
+
+
+def resolution_summary(db_path: str) -> dict:
+    """How much of the bridge is actually built, by method."""
+    conn = sqlite3.connect(db_path)
+    try:
+        by_method = dict(conn.execute(
+            "SELECT method, COUNT(*) FROM ftm_resolution GROUP BY method").fetchall())
+        decided = conn.execute(
+            "SELECT COUNT(*) FROM ftm_resolution WHERE decided_by IS NOT NULL").fetchone()[0]
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM ftm_resolution WHERE decided_by IS NULL").fetchone()[0]
+        locals_ = conn.execute(
+            "SELECT COUNT(DISTINCT local_id) FROM ftm_resolution").fetchone()[0]
+        return {"by_method": by_method, "decided": decided,
+                "awaiting_review": pending, "distinct_local_records": locals_,
+                # Named so nobody reads a fuzzy candidate as a finding.
+                "note": "decided links used exact identifiers or an exact name; "
+                        "the rest are candidates for review, not findings."}
+    finally:
+        conn.close()
