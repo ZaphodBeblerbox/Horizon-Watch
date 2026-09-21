@@ -27,6 +27,13 @@ export const KIND = {
     detector: { icon: "i-scan",    name: "Detector" },
     feed:     { icon: "i-feed",    name: "Feed health" },
     system:   { icon: "i-gear",    name: "System" },
+    // A CONNECTION THE SYSTEM FOUND, not an event that happened. Every
+    // other kind here reports something that occurred in the world;
+    // this one reports something the graph worked out — a route between
+    // two parties that no single record states. It is always inferred,
+    // it always carries the chain that produced it, and it is never
+    // raised as an interrupt, because a hypothesis is not an alarm.
+    discovery: { icon: "i-fusion", name: "Connection found" },
 }
 
 /** Display severity vocabulary — the same four the diamond uses everywhere. */

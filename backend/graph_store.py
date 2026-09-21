@@ -37,6 +37,11 @@ import time
 NODE_TYPES = frozenset({
     "person", "org", "faction", "vessel", "aircraft",
     "facility", "country", "corridor", "event",
+    # A weapon SYSTEM TYPE ("T-72"), never an individual vehicle — see
+    # equipment.py. This is the node that was missing between "Ukraine
+    # is allied with the UAE" and "the UAE supplies Sudan": without a
+    # thing that moves, those two facts never meet.
+    "equipment",
 })
 
 SCHEMA = """

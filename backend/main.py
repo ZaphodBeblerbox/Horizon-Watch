@@ -3602,6 +3602,61 @@ def api_graph_search(q: str = Query(...), limit: int = Query(20, ge=1, le=100)):
         return {"available": False, "error": str(e)[:200], "results": []}
 
 
+@app.get("/api/ontology/predict")
+def api_ontology_predict(root: str = Query(...),
+                         limit: int = Query(25, ge=1, le=100),
+                         min_conf: float = Query(0.5, ge=0.0, le=1.0),
+                         types: str = Query("")):
+    """Links this node probably has that the graph has never stated.
+
+    Every result carries the path that produced it: the reason is the
+    deliverable, not the score.
+    """
+    try:
+        import sqlite3
+        import link_predict as lp
+        conn = sqlite3.connect(f"file:{_akili_db_path()}?mode=ro", uri=True)
+        try:
+            tset = tuple(t.strip() for t in types.split(",") if t.strip()) or None
+            return {"available": True,
+                    "predictions": lp.predict(conn, root, limit=limit,
+                                              min_conf=min_conf, types=tset)}
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("link prediction failed")
+        return {"available": False, "error": str(e)[:200], "predictions": []}
+
+
+@app.get("/api/ontology/findings")
+def api_ontology_findings(limit: int = Query(25, ge=1, le=100),
+                          min_conf: float = Query(0.05, ge=0.0, le=1.0)):
+    """Routes the graph implies — the feed a notification is built from.
+
+    NOTE ON min_conf's DEFAULT, which looks alarmingly low. A CAMEO
+    edge's confidence encodes how many reports back it (n/20), not how
+    true it is, so a real bilateral agreement covered twice sits at
+    0.10. Demanding 0.5 here asked for ten reports of the same
+    diplomatic act and silently discarded almost the entire
+    cooperation half of the graph.
+    """
+    try:
+        import sqlite3
+        import link_predict as lp
+        conn = sqlite3.connect(f"file:{_akili_db_path()}?mode=ro", uri=True)
+        try:
+            found = lp.grouped_chains(conn, limit=limit, min_conf=min_conf)
+            return {"available": True, "findings": found,
+                    "caveat": "Inferred routes, not observed transfers. "
+                              "Each step is a reported relationship and "
+                              "should be checked before it is used."}
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("ontology findings failed")
+        return {"available": False, "error": str(e)[:200], "findings": []}
+
+
 @app.get("/api/ontology/graph/stats")
 def api_graph_store_stats():
     """What is actually in the canonical graph."""

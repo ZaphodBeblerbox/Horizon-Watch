@@ -23,6 +23,7 @@ import logging
 import sqlite3
 
 import graph_store as gs
+import equipment as eq
 
 try:
     from vessel_identity import flag_of as _flag_of
@@ -289,6 +290,214 @@ def cameo_relations(events: list, *, cmap: dict | None = None) -> tuple:
     return nodes, edges
 
 
+
+# GeoConfirmed's theatre slugs, where the theatre IS a country. The ones
+# that are not — "world", "cartel", "indpak" — are deliberately absent
+# rather than guessed: a placemark in the "world" theatre is located by
+# its own title, and a cartel placemark spans several states.
+THEATRE_COUNTRY = {
+    "ukraine": "UA", "israel": "IL", "iran": "IR", "syria": "SY",
+    "myanmar": "MM", "yemen": "YE", "drc": "CD", "ven": "VE",
+}
+
+
+def _placemark_country(title: str, theatre: str, cmap: dict | None = None):
+    """Where a placemark is, preferring what its own title says.
+
+    GeoConfirmed titles end "— <place>, <Country>" in 74,165 of 74,809
+    rows, which is a better locator than the theatre: a sabotage report
+    filed under the "world" theatre happened in Germany, and charging it
+    to no country at all loses it.
+    """
+    t = str(title or "")
+    tail = t.rsplit("\u2014", 1)[-1] if "\u2014" in t else t
+    last = tail.split(",")[-1].strip()
+    node = _country_node(last, cmap) if last else None
+    if node:
+        return node
+    iso = THEATRE_COUNTRY.get(str(theatre or "").lower())
+    return _country_node(iso, cmap) if iso else None
+
+
+def equipment_observed(conn: sqlite3.Connection, *, cmap: dict | None = None,
+                       limit: int = 120000) -> tuple:
+    """Weapon system types, where they have been seen, and who flies them.
+
+    THE MISSING MIDDLE. Equipment existed in this system only as words
+    inside a placemark title — 16,115 of 74,809 records name at least
+    one identifiable system — so the graph could never connect a
+    supplier to a battlefield through the thing that was supplied.
+
+    Three kinds of edge come out of it, and they are NOT equally well
+    evidenced, which is why they carry different confidences:
+
+      observed in    0.72  a system named in a report from a country.
+                           Text extraction, so it inherits every way a
+                           title can mislead: "claimed", "reported",
+                           and the possibility that the system named is
+                           the one doing the shooting rather than the
+                           one being shot.
+      operated by    0.80  the unit GeoConfirmed itself attached to the
+                           record, not something we parsed out of prose.
+      originates in  0.90  curated design lineage. High because it is a
+                           stable public fact, but it is a claim about
+                           a DESIGN, never about who supplied a
+                           particular unit — that inference belongs to
+                           the transfer layer and is capped well below
+                           this.
+    """
+    nodes, edges = [], []
+    seen_equip: set = set()
+    obs: dict = {}
+    ops: dict = {}
+
+    rows = conn.execute(
+        "SELECT title, description, theatre_slug, orbat_unit_name"
+        " FROM geoconfirmed_placemarks LIMIT ?", (limit,)).fetchall()
+
+    for title, desc, theatre, unit in rows:
+        text = f"{title or ''} {desc or ''}"
+        systems = eq.extract(text)
+        if not systems:
+            continue
+        cnode = _placemark_country(title, theatre, cmap)
+        for name in systems:
+            eid = gs.node_id("equipment", name)
+            if name not in seen_equip:
+                seen_equip.add(name)
+                kind = eq.kind_of(name)
+                nodes.append({
+                    "id": eid, "type": "equipment", "label": name,
+                    "country": eq.origin_of(name),
+                    "props": {"kind": kind, "family": eq.family_of(kind),
+                              "origin": eq.origin_of(name)},
+                })
+            if cnode:
+                key = (eid, cnode["id"])
+                obs[key] = obs.get(key, 0) + 1
+            if unit and len(str(unit).strip()) > 3:
+                uname = str(unit).strip()
+                key2 = (eid, uname)
+                ops[key2] = ops.get(key2, 0) + 1
+
+    # Countries the systems were seen in.
+    for (eid, cid), n in obs.items():
+        cnode = _country_node(cid.split(":", 1)[1], cmap)
+        if cnode:
+            nodes.append(cnode)
+        edges.append({
+            "src": eid, "dst": cid, "relation": "observed in",
+            "conf": 0.72, "method": "geoconfirmed_equipment_text",
+            "events": n,
+            "basis": f"{eid.split(':', 1)[1]} named in {n} geolocated "
+                     f"report{'s' if n != 1 else ''} from this country",
+        })
+
+    # Units that were recorded operating them.
+    for (eid, uname), n in ops.items():
+        fid = gs.node_id("faction", uname.lower())
+        nodes.append({"id": fid, "type": "faction", "label": uname})
+        edges.append({
+            "src": fid, "dst": eid, "relation": "operates",
+            "conf": 0.80, "method": "geoconfirmed_orbat_unit",
+            "events": n,
+            "basis": f"{uname} attached by GeoConfirmed to {n} "
+                     f"record{'s' if n != 1 else ''} naming this system",
+        })
+
+    # Design lineage, curated and labelled as such.
+    for name in seen_equip:
+        iso = eq.origin_of(name)
+        if not iso:
+            continue
+        cnode = _country_node(iso, cmap)
+        if not cnode:
+            continue
+        nodes.append(cnode)
+        edges.append({
+            "src": gs.node_id("equipment", name), "dst": cnode["id"],
+            "relation": "originates in", "conf": 0.90,
+            "method": "curated_gazetteer",
+            "basis": f"{name} is a {cnode['label']} design "
+                     f"(curated lineage, not the supplier of any observed unit)",
+        })
+
+    return nodes, edges
+
+
+
+def alliances(conn: sqlite3.Connection, *, cmap: dict | None = None) -> tuple:
+    """Formal treaty alliances, country to country.
+
+    THE RELATION THE GRAPH WAS MISSING. Everything in the store described
+    where a thing IS — flagged in, located in, landed in. Nothing
+    described what two countries are to each other, so a two-hop walk
+    could never leave geography, and the alliance half of the operator's
+    question ("Ukraine is aligned with the UAE, the UAE supplies Sudan")
+    had nowhere to live.
+
+    Formal membership only, from wikidata_alliances, which deliberately
+    refuses P530 "diplomatic relation" because almost every pair of UN
+    members has one and it would assert an alliance between all of them.
+    """
+    import wikidata_alliances as wa
+    nodes, edges = [], []
+    try:
+        orgs = wa.fetch_all_alliance_memberships()
+    except Exception:                                        # noqa: BLE001
+        # Wikidata's SPARQL endpoint goes down and rate-limits hard. A
+        # stale alliance list is fine — membership changes yearly — and
+        # a missing one must not take the whole rebuild with it.
+        logger.warning("alliance fetch unavailable; skipping producer")
+        return [], []
+
+    for qid, org in (orgs or {}).items():
+        members = [m for m in org.get("members", []) if m.get("iso_code")]
+        resolved = []
+        for m in members:
+            node = _country_node(m["iso_code"], cmap)
+            if node:
+                resolved.append((node, m))
+        for node, _m in resolved:
+            nodes.append(node)
+        name = org.get("name") or qid
+        for i in range(len(resolved)):
+            for j in range(i + 1, len(resolved)):
+                a, _ = resolved[i]
+                b, _ = resolved[j]
+                if a["id"] == b["id"]:
+                    continue
+                edges.append({
+                    "src": a["id"], "dst": b["id"], "relation": "allied with",
+                    "conf": 0.95, "method": f"wikidata_membership:{qid}",
+                    "basis": f"{a['label']} and {b['label']} are both current "
+                             f"members of {name}",
+                    "source_url": f"https://www.wikidata.org/wiki/{qid}",
+                })
+    return nodes, edges
+
+
+def _cached_gdelt_events() -> list:
+    """GDELT's own on-disk cache, so a rebuild has relations to build from.
+
+    cameo_relations only ran when a caller happened to pass events in,
+    which in practice meant never — so the typed country-to-country
+    relations it produces were absent from the stored graph and every
+    traversal was stuck in geography.
+    """
+    import json
+    from pathlib import Path
+    path = Path(__file__).parent / "data" / "gdelt_events_cache.json"
+    if not path.exists():
+        return []
+    try:
+        blob = json.loads(path.read_text())
+    except Exception:                                        # noqa: BLE001
+        logger.warning("GDELT cache unreadable")
+        return []
+    return blob.get("events") or [] if isinstance(blob, dict) else (blob or [])
+
+
 def rebuild(db_path: str, *, events: list | None = None) -> dict:
     """Run every producer and upsert. Idempotent: same facts, same rows."""
     conn = sqlite3.connect(db_path)
@@ -302,9 +511,12 @@ def rebuild(db_path: str, *, events: list | None = None) -> dict:
             ("cables_and_landfalls", lambda: cables_and_landfalls(conn, cmap=cmap)),
             ("airports_located", lambda: airports_located(conn, cmap=cmap)),
             ("sanctions_bridge", lambda: sanctions_bridge(conn)),
+            ("equipment_observed", lambda: equipment_observed(conn, cmap=cmap)),
+            ("alliances", lambda: alliances(conn, cmap=cmap)),
         ]
-        if events is not None:
-            producers.append(("cameo_relations", lambda: cameo_relations(events, cmap=cmap)))
+        ev = events if events is not None else _cached_gdelt_events()
+        if ev:
+            producers.append(("cameo_relations", lambda: cameo_relations(ev, cmap=cmap)))
 
         for name, fn in producers:
             try:

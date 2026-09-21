@@ -530,6 +530,55 @@ export default function App() {
         return () => { cancelled = true; clearInterval(t) }
     }, [profile])
 
+    // CONNECTIONS THE GRAPH WORKED OUT, as opposed to events that
+    // happened. This is the feed behind "a link has been found between
+    // Ukraine and Sudan": link_predict walks the ontology for routes
+    // that no single record states, and a new one appearing is worth
+    // telling somebody about. Polled slowly — the graph is rebuilt on a
+    // timer, not continuously, and nothing here is time-critical.
+    const [findings, setFindings] = useState([])
+    useEffect(() => {
+        if (!profile) return
+        let cancelled = false
+        const load = () => fetch(`${API}/api/ontology/findings?limit=20`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && d?.available) setFindings(d.findings || []) })
+            .catch(() => {})
+        load()
+        const t = setInterval(load, 300000)
+        return () => { cancelled = true; clearInterval(t) }
+    }, [profile])
+
+    const findingSeenRef = useRef(null)
+    useEffect(() => {
+        if (!findings.length) return
+        const firstLoad = findingSeenRef.current === null
+        if (firstLoad) findingSeenRef.current = new Set()
+        const seen = findingSeenRef.current
+        for (const f of findings) {
+            const id = `finding:${f.origin}|${(f.via || []).join(">")}|${f.dst}`
+            if (seen.has(id)) continue
+            seen.add(id)
+            pushNotification({
+                // Never an interrupt. An inference is a question worth
+                // asking, and interrupting someone with a hypothesis is
+                // how a system teaches people to ignore it.
+                silent: true,
+                id,
+                sev: "low",
+                kind: "discovery",
+                title: f.claim || "Connection found",
+                // The chain IS the notification. A bare claim with no
+                // route is unusable: the reader cannot check it, so
+                // they cannot act on it or dismiss it honestly.
+                sub: [f.chain, `inferred · confidence ${Math.round((f.conf || 0) * 100)}%`]
+                    .filter(Boolean).join(" · "),
+                ref: null,
+                ts: Date.now(),
+            })
+        }
+    }, [findings])
+
     // Only signals that appear AFTER the first load raise anything: on mount
     // the existing backlog is recorded silently, because replaying a hundred
     // historical criticals as cards on every page load is precisely the
