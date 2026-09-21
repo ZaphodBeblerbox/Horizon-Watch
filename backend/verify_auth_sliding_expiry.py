@@ -1,4 +1,14 @@
 """
+RENAMED OUT OF THE test_ NAMESPACE, and that is the point of the rename:
+this is a top-level verification SCRIPT, not a pytest module. It runs its
+checks at import and finishes with sys.exit(), so while it was called
+test_auth_sliding_expiry.py pytest collected it, executed the module
+body, and the sys.exit(0) aborted collection for the WHOLE backend
+suite — "INTERNALERROR> SystemExit: 0", 43 tests collected out of
+several hundred. Nobody could run the backend tests in one pass.
+
+Run it directly: python3 verify_auth_sliding_expiry.py
+
 Verification script for the auth/performance round's real sliding-expiry
 fix: GET /api/auth/me now reissues the session cookie with a fresh
 JWT_SESSION_HOURS window on every real successful check, rather than
