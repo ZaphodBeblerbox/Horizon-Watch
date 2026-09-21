@@ -34,7 +34,7 @@
 
 import { useEffect, useState } from "react"
 import { Cartesian2, Cartesian3 } from "cesium"
-import { pickNiceScale, scaleBarWidthPx } from "./scaleBarMath.js"
+import { pickNiceScaleMetres, scaleBarWidthPxMetres, formatScale } from "./scaleBarMath.js"
 
 export default function ScaleBar({ viewer, style, targetPixelWidth = 100 }) {
     const [scale, setScale] = useState(null) // { km, widthPx } | null (hidden)
@@ -69,14 +69,14 @@ export default function ScaleBar({ viewer, style, targetPixelWidth = 100 }) {
 
             const meters = Cartesian3.distance(p1, p2)
             const metersPerPixel = meters / targetPixelWidth
-            const km = pickNiceScale(metersPerPixel, targetPixelWidth)
+            const metres = pickNiceScaleMetres(metersPerPixel, targetPixelWidth)
 
-            if (km == null) {
+            if (metres == null) {
                 setScale(null)
                 return
             }
 
-            setScale({ km, widthPx: scaleBarWidthPx(km, metersPerPixel) })
+            setScale({ metres, widthPx: scaleBarWidthPxMetres(metres, metersPerPixel) })
         }
 
         measure()
@@ -119,7 +119,7 @@ export default function ScaleBar({ viewer, style, targetPixelWidth = 100 }) {
                     textShadow: TEXT_SHADOW,
                 }}
             >
-                {scale.km.toLocaleString()} km
+                {formatScale(scale.metres)}
             </span>
         </div>
     )

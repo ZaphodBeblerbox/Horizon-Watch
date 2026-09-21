@@ -12,6 +12,23 @@ export const NICE_SCALE_KM = [
 ]
 
 /**
+ * The same ladder in METRES, continued below a kilometre.
+ *
+ * The bar used to bottom out at 1 km and then stop moving, so every view
+ * from a city block to a ship's deck was labelled "1 km" — which is not
+ * a rounding error, it is the wrong number, and it is worst exactly
+ * where the imagery is most detailed and the measurement matters most.
+ * The original reasoning was that this is a strategic globe rather than
+ * a street map, but the globe now carries 3D buildings, vessel hulls
+ * with real beam and detections drawn as polygons, all of which are
+ * read at tens of metres.
+ */
+export const NICE_SCALE_M = [
+    1, 2, 5, 10, 20, 50, 100, 200, 500,
+    ...NICE_SCALE_KM.map((km) => km * 1000),
+]
+
+/**
  * Pick the largest "nice" round km value (from NICE_SCALE_KM) that renders at
  * or under targetPixelWidth screen pixels, given the real measured
  * metersPerPixel at the viewport center.
@@ -39,6 +56,42 @@ export function pickNiceScale(metersPerPixel, targetPixelWidth = 100) {
         else break
     }
     return chosen
+}
+
+/**
+ * Pick the largest "nice" round distance in METRES that fits.
+ *
+ * Same rule as pickNiceScale, one ladder lower — see NICE_SCALE_M.
+ */
+export function pickNiceScaleMetres(metersPerPixel, targetPixelWidth = 100) {
+    if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) return null
+    if (!Number.isFinite(targetPixelWidth) || targetPixelWidth <= 0) return null
+
+    const maxM = metersPerPixel * targetPixelWidth
+
+    let chosen = NICE_SCALE_M[0]
+    for (const m of NICE_SCALE_M) {
+        if (m <= maxM) chosen = m
+        else break
+    }
+    return chosen
+}
+
+/** Pixel width for a metre value. */
+export function scaleBarWidthPxMetres(metres, metersPerPixel) {
+    if (!Number.isFinite(metres) || !Number.isFinite(metersPerPixel) || metersPerPixel <= 0) return 0
+    return metres / metersPerPixel
+}
+
+/**
+ * The label for a metre value: metres below a kilometre, kilometres
+ * above it. Never "0.5 km", which is what naive division produces and
+ * which reads as a broken readout rather than a short distance.
+ */
+export function formatScale(metres) {
+    if (!Number.isFinite(metres) || metres <= 0) return ""
+    if (metres < 1000) return `${metres} m`
+    return `${(metres / 1000).toLocaleString()} km`
 }
 
 /**

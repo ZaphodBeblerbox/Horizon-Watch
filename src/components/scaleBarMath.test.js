@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { pickNiceScale, scaleBarWidthPx, NICE_SCALE_KM } from "./scaleBarMath.js"
+import { pickNiceScale, scaleBarWidthPx, NICE_SCALE_KM, pickNiceScaleMetres, scaleBarWidthPxMetres, formatScale } from "./scaleBarMath.js"
 
 describe("pickNiceScale — realistic metersPerPixel inputs", () => {
     it("floors to the smallest defined nice value when very zoomed in (sub-km per 100px)", () => {
@@ -71,5 +71,46 @@ describe("scaleBarWidthPx", () => {
         expect(scaleBarWidthPx(5, 0)).toBe(0)
         expect(scaleBarWidthPx(NaN, 50)).toBe(0)
         expect(scaleBarWidthPx(5, -50)).toBe(0)
+    })
+})
+
+describe("scale below a kilometre", () => {
+    it("keeps going down instead of sticking at 1 km", () => {
+        // The reported bug: zooming in past 1 km left the readout at
+        // "1 km" forever, which is the wrong number rather than a
+        // rounded one — and it is wrong exactly where the imagery is
+        // most detailed.
+        expect(pickNiceScaleMetres(0.5, 100)).toBe(50)
+        expect(pickNiceScaleMetres(0.05, 100)).toBe(5)
+        expect(pickNiceScaleMetres(0.005, 100)).toBe(1)
+    })
+
+    it("bottoms out at one metre, not at zero", () => {
+        expect(pickNiceScaleMetres(0.0000001, 100)).toBe(1)
+    })
+
+    it("still picks the same values as before above a kilometre", () => {
+        for (const km of [1, 5, 100, 5000]) {
+            const mpp = (km * 1000) / 100
+            expect(pickNiceScaleMetres(mpp, 100)).toBe(km * 1000)
+        }
+    })
+
+    it("labels metres as metres and never as a fraction of a kilometre", () => {
+        expect(formatScale(500)).toBe("500 m")
+        expect(formatScale(1)).toBe("1 m")
+        expect(formatScale(1000)).toBe("1 km")
+        expect(formatScale(20000)).toBe("20 km")
+        expect(formatScale(0)).toBe("")
+    })
+
+    it("returns null for a camera looking at space", () => {
+        expect(pickNiceScaleMetres(0, 100)).toBe(null)
+        expect(pickNiceScaleMetres(NaN, 100)).toBe(null)
+    })
+
+    it("width in pixels is the distance over the scale", () => {
+        expect(scaleBarWidthPxMetres(500, 5)).toBe(100)
+        expect(scaleBarWidthPxMetres(500, 0)).toBe(0)
     })
 })

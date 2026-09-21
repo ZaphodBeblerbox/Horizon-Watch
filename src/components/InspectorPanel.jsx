@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
 import { entityMarkerSvg } from "../globe/entityIcons.js"
+import EntityLinksPanel from "./EntityLinksPanel.jsx"
 import { normalizeEntity } from "../inspector/adapters.js"
 import { Panel, Button, EmptyState } from "../ui/index.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
@@ -688,6 +689,12 @@ export default function InspectorPanel({
                         />
                     )}
                 </div>
+
+                {/* WHAT ELSE IS THIS ATTACHED TO. Reaching the graph used
+                    to mean leaving for the Ontology page and searching by
+                    hand; the question arrives here, on the map, in the
+                    middle of something else. */}
+                <EntityLinksPanel entityType={entityType} data={data} />
 
                 {/* V3 Phase 1, §2.2 — real extensions render here, called by
                     the owner (this component), never injected from outside. */}
