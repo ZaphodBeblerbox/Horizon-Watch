@@ -3486,6 +3486,75 @@ def _akili_db_path() -> str:
     return f"{DATA_DIR}/akili.db"
 
 
+@app.get("/api/mining/sequences")
+def api_mining_sequences(
+    source: str = Query("ucdp"),
+    window_days: int = Query(14, ge=1, le=90),
+    min_support: int = Query(5, ge=1),
+    min_lift: float = Query(1.15, ge=1.0, le=50.0),
+    min_consequent: int = Query(20, ge=1),
+    limit: int = Query(60, ge=1, le=500),
+):
+    """What has historically followed what, in the same place.
+
+    Answers "XYZ happened here — what follows?" from this system's own
+    recorded history, with the instances attached so an analyst can
+    disagree with the count rather than having to trust it.
+
+    Every rule is a correlation over a finite record. Not a cause, and
+    not a forecast.
+    """
+    try:
+        import sqlite3
+        import sequence_miner as sm
+        conn = sqlite3.connect(_akili_db_path())
+        try:
+            loader = {"ucdp": sm.from_ucdp,
+                      "geoconfirmed": sm.from_geoconfirmed}.get(source)
+            if not loader:
+                return {"available": False, "sources": ["ucdp", "geoconfirmed"],
+                        "error": f"unknown source {source!r}", "rules": []}
+            out = sm.mine(loader(conn), window_days=window_days,
+                          min_support=min_support, min_lift=min_lift,
+                          min_consequent=min_consequent)
+        finally:
+            conn.close()
+        return {"available": True, "source": source,
+                **{k: v for k, v in out.items() if k != "rules"},
+                "rules": out["rules"][:limit]}
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("sequence mining failed")
+        return {"available": False, "error": str(e)[:200], "rules": []}
+
+
+@app.get("/api/mining/what-follows")
+def api_mining_what_follows(
+    kind: str = Query(...),
+    source: str = Query("ucdp"),
+    window_days: int = Query(14, ge=1, le=90),
+):
+    """Given something that just happened, what has followed it before."""
+    try:
+        import sqlite3
+        import sequence_miner as sm
+        conn = sqlite3.connect(_akili_db_path())
+        try:
+            loader = {"ucdp": sm.from_ucdp,
+                      "geoconfirmed": sm.from_geoconfirmed}.get(source)
+            if not loader:
+                return {"available": False, "error": f"unknown source {source!r}",
+                        "rules": []}
+            mined = sm.mine(loader(conn), window_days=window_days)
+        finally:
+            conn.close()
+        return {"available": True, "kind": kind, "source": source,
+                "rules": sm.what_follows(mined["rules"], kind),
+                "note": mined.get("note")}
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("what-follows failed")
+        return {"available": False, "error": str(e)[:200], "rules": []}
+
+
 @app.get("/api/ontology/graph/neighbourhood")
 def api_graph_neighbourhood(
     id: str = Query(..., description="node id, e.g. vessel:256843000 or country:UKR"),
