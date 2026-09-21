@@ -3486,6 +3486,29 @@ def _akili_db_path() -> str:
     return f"{DATA_DIR}/akili.db"
 
 
+@app.get("/api/airspace")
+def api_airspace(
+    west:  float = Query(...),
+    south: float = Query(...),
+    east:  float = Query(...),
+    north: float = Query(...),
+    limit: int = Query(400, ge=1, le=1000),
+    force: bool = Query(False),
+):
+    """Controlled airspace volumes for a viewport, from openAIP.
+
+    Viewport-bounded because openAIP rate-limits hard and there are
+    31,860 airspaces worldwide; cached for hours because airspace
+    changes on the 28-day AIRAC cycle, not by the minute.
+    """
+    try:
+        import airspace as _as
+        return _as.in_bbox(west, south, east, north, limit=limit, force=force)
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("airspace failed")
+        return {"available": False, "error": str(e)[:200], "airspaces": []}
+
+
 @app.get("/api/ontology/vessel-links")
 def api_ontology_vessel_links(mmsi: str = Query(...)):
     """Which sanctions entities this vessel has been matched to.

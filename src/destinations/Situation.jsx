@@ -381,6 +381,9 @@ export default function Situation({ onOpenDossier }) {
     // days old by nature and belong on the map only when asked for.
     const [gfwOn, setGfwOn] = useState({
         encounters: false, gaps: false, loitering: false, "port-visits": false })
+    // Controlled airspace volumes. Off by default and only drawn close
+    // in — 31 volumes over one German state is a wash at wider zoom.
+    const [airspaceOn, setAirspaceOn] = useState(false)
     // The Ukraine time slider. `null` means live; any other value is a
     // published snapshot date. Index rather than date so the control is
     // evenly spaced in SNAPSHOTS, which is what exists, rather than in
@@ -873,6 +876,27 @@ export default function Situation({ onOpenDossier }) {
                         </div>
                     ))}
                     <div style={{ padding: "8px 12px 2px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
+                        Airspace
+                        <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginLeft: 6 }}>
+                            openAIP
+                        </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
+                            Controlled airspace
+                            <span style={{ display: "block", font: "400 10px var(--font)", color: "var(--txt-4)" }}>
+                                floor to ceiling · zoom in to draw
+                            </span>
+                        </span>
+                        <button
+                            onClick={() => setAirspaceOn((v) => !v)}
+                            title={airspaceOn ? "Hide layer" : "Show layer"}
+                            style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: airspaceOn ? "var(--txt-2)" : "var(--txt-4)" }}
+                        >
+                            <svg className="icon sm"><use href={airspaceOn ? "#i-eye" : "#i-eye-off"} /></svg>
+                        </button>
+                    </div>
+                    <div style={{ padding: "8px 12px 2px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
                         Satellite AIS events
                         <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginLeft: 6 }}>
                             GFW · published days behind
@@ -1264,6 +1288,7 @@ export default function Situation({ onOpenDossier }) {
                         frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
                         frontlinesAt={frontlinesAt}
                         gfwKinds={Object.keys(gfwOn).filter((k) => gfwOn[k])}
+                        airspaceEnabled={airspaceOn}
                         onFacilityStatus={setFacStatus}
                         facilityTypes={Object.entries(FACILITY_ROW_TYPE)
                             .filter(([k]) => infraOn[k])

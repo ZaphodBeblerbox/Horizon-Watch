@@ -39,6 +39,8 @@ export const INSPECTOR_TYPES = new Set([
     // Global Fishing Watch events. Registered by GlobeGfwLayer, so it
     // belongs here for the same reason every line above does.
     "gfw_event",
+    // Controlled airspace volumes, registered by GlobeAirspaceLayer.
+    "airspace",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
