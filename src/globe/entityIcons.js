@@ -593,3 +593,20 @@ export const SHAPE_FOR_SOURCE = {
     detection: "square",        // imagery detection
     ucdp: "square",
 }
+
+/**
+ * When to stop depth-testing a marker against the globe.
+ *
+ * NOT Number.POSITIVE_INFINITY, which is what this was. Infinity means
+ * "never depth test", so a marker sitting on the far side of the planet
+ * draws straight through 12,700km of rock — signals from the other
+ * hemisphere floating over the one you are looking at, indistinguishable
+ * from signals in front of you.
+ *
+ * A finite value keeps the reason the infinity was there: a marker
+ * clamped to the ground sits exactly on the terrain it is tested
+ * against, and up close that flickers. Within this distance the test is
+ * skipped; beyond it the globe occludes, which at any normal viewing
+ * altitude is everything.
+ */
+export const MARKER_DEPTH_TEST_M = 12_000

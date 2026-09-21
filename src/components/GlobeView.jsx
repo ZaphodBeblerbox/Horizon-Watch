@@ -1,4 +1,5 @@
 import "../cesiumConfig.js"
+import { MARKER_DEPTH_TEST_M } from "../globe/entityIcons.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
 import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, EllipsoidTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference, Cartographic, EllipsoidGeodesic, ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium"
@@ -10,6 +11,7 @@ import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
 import GlobeSelectedTrackLayer  from "../globe/GlobeSelectedTrackLayer.jsx"
+import GlobeFollowLayer         from "../globe/GlobeFollowLayer.jsx"
 import GlobeRiskChoroplethLayer from "../globe/GlobeRiskChoroplethLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
@@ -597,7 +599,7 @@ export default function GlobeView({
                     outlineColor:             Color.WHITE,
                     outlineWidth:             2,
                     heightReference:          HeightReference.CLAMP_TO_GROUND,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                 },
                 label: name ? {
                     text:                     name,
@@ -609,7 +611,7 @@ export default function GlobeView({
                     verticalOrigin:           VerticalOrigin.BOTTOM,
                     pixelOffset:              new Cartesian2(0, -16),
                     heightReference:          HeightReference.CLAMP_TO_GROUND,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                 } : undefined,
             })
 
@@ -948,6 +950,8 @@ export default function GlobeView({
                     their real altitude, which is where the shape of a
                     hold or a descent actually lives. */}
                 <GlobeSelectedTrackLayer selected={selectedContact} />
+                {/* Double-click an aircraft or vessel to lock on and orbit it. */}
+                <GlobeFollowLayer />
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />

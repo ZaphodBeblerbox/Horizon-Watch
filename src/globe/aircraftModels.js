@@ -18,8 +18,19 @@ export const FAMILIES = [
     "turboprop", "lightprop", "fighter", "helicopter",
 ]
 
+/**
+ * Bumped whenever the meshes are regenerated.
+ *
+ * A .glb is a static asset and browsers cache it hard. Without this, a
+ * corrected model keeps rendering with the old geometry for anyone who
+ * has already loaded the page — which looks exactly like the fix not
+ * working, and is indistinguishable from it without clearing the cache.
+ */
+export const MODEL_VERSION = 4
+
 export const modelUrl = (family) =>
-    FAMILIES.includes(family) ? `/models/aircraft/${family}.glb` : null
+    FAMILIES.includes(family)
+        ? `/models/aircraft/${family}.glb?v=${MODEL_VERSION}` : null
 
 /** Exact ICAO type designators, where the family is not guessable. */
 const BY_TYPE = {}
@@ -99,7 +110,7 @@ export function familyFor(ac) {
  * So this constant is whatever makes the rendered nose match the
  * direction of travel on screen, checked by comparing the two.
  */
-const HEADING_OFFSET_DEG = 90
+const HEADING_OFFSET_DEG = 270
 
 export function modelHeadingRadians(trackDeg) {
     const t = Number(trackDeg)

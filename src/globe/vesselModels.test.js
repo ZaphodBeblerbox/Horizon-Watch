@@ -31,8 +31,8 @@ describe("modelHeadingRadians", () => {
     const deg = (r) => (r * 180) / Math.PI
 
     it("applies the same measured offset as the aircraft", () => {
-        expect(deg(modelHeadingRadians({ heading: 0 }))).toBeCloseTo(90, 9)
-        expect(deg(modelHeadingRadians({ heading: 90 }))).toBeCloseTo(180, 9)
+        expect(deg(modelHeadingRadians({ heading: 0 }))).toBeCloseTo(270, 9)
+        expect(deg(modelHeadingRadians({ heading: 90 }))).toBeCloseTo(360, 9)
     })
 
     it("refuses to point a hull that has not reported a heading", () => {
@@ -46,7 +46,7 @@ describe("modelHeadingRadians", () => {
 
 describe("modelUrl", () => {
     it("points at a generated hull", () => {
-        expect(modelUrl("tanker")).toBe("/models/vessel/tanker.glb")
+        expect(modelUrl("tanker")).toMatch(/^\/models\/vessel\/tanker\.glb\?v=\d+$/)
     })
     it("refuses a family that does not exist", () => {
         expect(modelUrl("submarine")).toBeNull()

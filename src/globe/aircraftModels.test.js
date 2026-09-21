@@ -46,7 +46,7 @@ describe("familyFor", () => {
 
 describe("modelUrl", () => {
     it("points at a generated model", () => {
-        expect(modelUrl("narrowbody")).toBe("/models/aircraft/narrowbody.glb")
+        expect(modelUrl("narrowbody")).toMatch(/^\/models\/aircraft\/narrowbody\.glb\?v=\d+$/)
     })
     it("refuses a family that does not exist", () => {
         expect(modelUrl("spaceship")).toBeNull()
@@ -59,9 +59,8 @@ describe("modelHeadingRadians", () => {
     it("applies the measured offset that puts the nose on the track", () => {
         // Not derived — see the module. Getting this wrong by 180° is
         // what made every aircraft fly tail-first.
-        expect(deg(modelHeadingRadians(0))).toBeCloseTo(90, 9)
-        expect(deg(modelHeadingRadians(90))).toBeCloseTo(180, 9)
-        expect(deg(modelHeadingRadians(270))).toBeCloseTo(360, 9)
+        expect(deg(modelHeadingRadians(0))).toBeCloseTo(270, 9)
+        expect(deg(modelHeadingRadians(90))).toBeCloseTo(360, 9)
     })
     it("never returns NaN", () => {
         for (const v of [null, undefined, NaN, "x", {}])

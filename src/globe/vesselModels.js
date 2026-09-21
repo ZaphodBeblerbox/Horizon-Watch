@@ -21,8 +21,12 @@ import { vesselHeading } from "./markerOrientation.js"
 export const FAMILIES = ["container", "cargo", "tanker", "passenger",
                          "military", "fishing", "other"]
 
+/** See aircraftModels.js — bumped whenever the hulls are regenerated. */
+export const MODEL_VERSION = 4
+
 export const modelUrl = (family) =>
-    FAMILIES.includes(family) ? `/models/vessel/${family}.glb` : null
+    FAMILIES.includes(family)
+        ? `/models/vessel/${family}.glb?v=${MODEL_VERSION}` : null
 
 /**
  * The hull family for a vessel.
@@ -47,7 +51,7 @@ export function familyFor(vessel) {
  * rather than derived — and applies here because the hulls are built to
  * the same convention.
  */
-const HEADING_OFFSET_DEG = 90
+const HEADING_OFFSET_DEG = 270
 
 export function modelHeadingRadians(vessel) {
     const hdg = vesselHeading(vessel)

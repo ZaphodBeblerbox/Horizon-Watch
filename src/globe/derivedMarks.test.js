@@ -41,8 +41,18 @@ describe("§A8 — the pulse never touches `material`", () => {
     })
 
     it("keeps labels pixel-sized, not ground-sized", () => {
-        expect(layer).toMatch(/disableDepthTestDistance: Number\.POSITIVE_INFINITY/)
         expect(layer).toMatch(/distanceDisplayCondition: labelCond/)
+    })
+
+    it("lets the globe hide marks on the far side of the world", () => {
+        // This used to assert Number.POSITIVE_INFINITY, which means
+        // "never depth test" — so an alert in the opposite hemisphere
+        // drew straight through the planet and sat among the ones you
+        // were actually looking at. A finite distance still skips the
+        // test up close, where a ground-clamped mark would otherwise
+        // flicker against the terrain it sits on.
+        expect(layer).not.toMatch(/disableDepthTestDistance: Number\.POSITIVE_INFINITY/)
+        expect(layer).toMatch(/disableDepthTestDistance: MARKER_DEPTH_TEST_M/)
     })
 
     it("draws one radial tick per modality", () => {

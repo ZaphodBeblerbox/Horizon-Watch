@@ -28,7 +28,7 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { showTip, hideTip } from "./mapTip.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
+import { getShapeMarkerDataUri, MARK_SIZE , MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 import { SurgeTip, FusionTip } from "./DerivedTips.jsx"
 import { CAT } from "../components/timeStripMath.js"
 import {
@@ -74,7 +74,7 @@ function markBillboard(color, size = MARK_SIZE.alert) {
         image: getShapeMarkerDataUri({ shape: "triangle", color, size, strokeWidth: 1.5 }),
         width: size, height: size,
         heightReference: HeightReference.CLAMP_TO_GROUND,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        disableDepthTestDistance: MARKER_DEPTH_TEST_M,
     }
 }
 
@@ -116,7 +116,7 @@ function labelOpts(text, color) {
         verticalOrigin: VerticalOrigin.BOTTOM,
         pixelOffset: { x: 0, y: -14 },
         // §A8: "Keep the label pixel-sized, not ground-sized."
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        disableDepthTestDistance: MARKER_DEPTH_TEST_M,
         distanceDisplayCondition: labelCond,
         heightReference: HeightReference.CLAMP_TO_GROUND,
     }
@@ -248,7 +248,7 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                     }),
                     width: MARK_SIZE.alert - 4, height: MARK_SIZE.alert - 4,
                     heightReference: HeightReference.CLAMP_TO_GROUND,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                 },
                 // The modality, at the end of the line. This is the whole
                 // point of the threads: seeing at a glance whether the
