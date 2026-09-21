@@ -3486,6 +3486,67 @@ def _akili_db_path() -> str:
     return f"{DATA_DIR}/akili.db"
 
 
+@app.get("/api/ontology/relations")
+def api_ontology_relations(
+    level: str = Query("country"),
+    min_events: int = Query(1, ge=1),
+    limit: int = Query(400, ge=1, le=5000),
+):
+    """Typed, directed relations between actors, from CAMEO.
+
+    The ontology could previously say "located in" and little else. Each
+    GDELT event is coded with a CAMEO verb — 042 make a visit, 062
+    cooperate militarily, 072 provide military aid, 163 impose an
+    embargo — and the graph builder was discarding the verb, the
+    direction and the date, leaving an undirected country pair with an
+    averaged tone score.
+    """
+    try:
+        import relations as _rel
+        import gdelt_events as ge
+        events = ge.EVENTS_CACHE.get("events") or []
+        g = _rel.build(events, level=("actor" if level == "actor" else "country"))
+        edges = [e for e in g["edges"] if e["events"] >= min_events][:limit]
+        return {"available": True, "level": g["level"], "edges": edges,
+                "total_relations": g["count"], "events_considered": len(events)}
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("relations failed")
+        return {"available": False, "error": str(e)[:200], "edges": []}
+
+
+@app.get("/api/ontology/chains")
+def api_ontology_chains(
+    min_events: int = Query(2, ge=1),
+    max_age_days: int = Query(120, ge=1, le=730),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Two-hop pathways: A is aligned with B, B materially supports C.
+
+    The question this exists for is "Ukraine visited the UAE, the UAE
+    supplies a party to the Sudan war, so might Ukrainian materiel be
+    reaching Sudan" — which the ontology previously had no way to even
+    represent, let alone find.
+
+    Every result is a LEAD. It carries inferred=true, the chain that
+    produced it, the evidence count and dates per hop, and a confidence
+    capped well below certainty on purpose.
+    """
+    try:
+        import relations as _rel
+        import gdelt_events as ge
+        events = ge.EVENTS_CACHE.get("events") or []
+        g = _rel.build(events, level="country")
+        chains = _rel.supply_chains(g["edges"], min_events=min_events,
+                                    max_age_days=max_age_days)
+        return {"available": True, "chains": chains[:limit],
+                "found": len(chains), "events_considered": len(events),
+                "note": ("Leads, not findings. Each hop aggregates news-coded "
+                         "events; none is a confirmed transfer.")}
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("chains failed")
+        return {"available": False, "error": str(e)[:200], "chains": []}
+
+
 @app.get("/api/airspace")
 def api_airspace(
     west:  float = Query(...),

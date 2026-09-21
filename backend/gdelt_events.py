@@ -59,7 +59,31 @@ KINETIC_ROOT_CODES: frozenset[str] = frozenset({"14", "15", "17", "18", "19", "2
 #   13 Threaten         16 Reduce relations
 VERBAL_ROOT_CODES: frozenset[str] = frozenset({"10", "11", "12", "13", "16"})
 
-RELEVANT_ROOT_CODES: frozenset[str] = KINETIC_ROOT_CODES | VERBAL_ROOT_CODES
+# COOPERATION — the other half that was thrown away, and the reason the
+# ontology could not express an alliance.
+#
+# The filter admitted only codes 10-20: demands, threats, force, violence.
+# Everything cooperative was dropped before storage, which made a whole
+# class of question unanswerable. "Ukraine visited the UAE, the UAE
+# supplies a party to the Sudan war, so Ukrainian materiel may be
+# reaching Sudan" is three coded relations and an inference — and not one
+# of the three could exist here, because visits, military cooperation and
+# military aid are CAMEO 04, 06 and 07.
+#
+# A graph built only from hostility can only ever say who is fighting
+# whom. Alliances, supply and diplomacy are how you work out WHY, and
+# who is behind the party you can see.
+#
+#   03 Intend to cooperate   04 Consult (042 = make a visit)
+#   05 Diplomatic cooperation 06 Material cooperation (062 = military)
+#   07 Provide aid (072 = military aid)
+#
+# 01/02 (statements, appeals) stay out: a press release is not a
+# relationship, and admitting them is how a graph fills with noise.
+COOPERATION_ROOT_CODES: frozenset[str] = frozenset({"03", "04", "05", "06", "07"})
+
+RELEVANT_ROOT_CODES: frozenset[str] = (
+    KINETIC_ROOT_CODES | VERBAL_ROOT_CODES | COOPERATION_ROOT_CODES)
 # NumSources CANNOT BE USED AS A CORROBORATION TEST IN THIS FEED, and the
 # cost of assuming otherwise was that the map layer never drew a single
 # pin. Measured against the live 15-minute export: NumSources is 1 for
@@ -83,6 +107,11 @@ GDELT_MIN_SOURCES   = int(os.getenv("GDELT_MIN_SOURCES", "1"))
 # that is what corroboration means here.
 GDELT_VERBAL_MIN_SOURCES = int(os.getenv("GDELT_VERBAL_MIN_SOURCES", "1"))
 GDELT_VERBAL_MIN_MENTIONS = int(os.getenv("GDELT_VERBAL_MIN_MENTIONS", "3"))
+# Cooperation is corroborated the same way rhetoric is. A single coded
+# report of a visit is one wire story; the relation matters when several
+# outlets carry it.
+GDELT_COOP_MIN_SOURCES = int(os.getenv("GDELT_COOP_MIN_SOURCES", "1"))
+GDELT_COOP_MIN_MENTIONS = int(os.getenv("GDELT_COOP_MIN_MENTIONS", "4"))
 # The corroboration bar for kinetic events. Three mentions of one coded
 # event is the difference between a story being carried and a single wire
 # item; measured on the live file it keeps 30 of 66 kinetic rows, 21 of
@@ -585,8 +614,12 @@ def _normalize_row(row: list[str], source_url: str, row_index: int) -> dict[str,
         # location NAMED IN THE ARTICLE, so "Guterres disapproves of the US"
         # was placed in Tehran because the piece was about Iran. That is not
         # a location, it is a coincidence of vocabulary.
+        # Cooperation joins the verbal codes in being ingested but never
+        # pinned: a state visit is a relationship, not an incident, and
+        # the map and the alert surface are for incidents.
         "pinnable": (action_geo_type in PINNABLE_GEO_TYPES
-                     and event_root_code not in VERBAL_ROOT_CODES),
+                     and event_root_code not in VERBAL_ROOT_CODES
+                     and event_root_code not in COOPERATION_ROOT_CODES),
         "action_geo_country_code": country_code,
         "action_geo_full_name":    location,
     }
@@ -701,7 +734,7 @@ def _passes_filter(ev: dict[str, Any]) -> bool:
         return False
 
     g = float(ev.get("goldstein") if ev.get("goldstein") is not None else 0.0)
-    if root in VERBAL_ROOT_CODES:
+    if root in VERBAL_ROOT_CODES or root in COOPERATION_ROOT_CODES:
         # The Goldstein magnitude test cannot be applied to speech. CAMEO
         # scores rhetoric gently by design — "Disapprove" is -2.0, well
         # inside the -3.0 conflictual threshold — so admitting the verbal
@@ -713,11 +746,20 @@ def _passes_filter(ev: dict[str, Any]) -> bool:
         pass
     elif not (g < GDELT_GOLDSTEIN_NEG or g > GDELT_GOLDSTEIN_POS):
         return False
-    min_sources = GDELT_VERBAL_MIN_SOURCES if root in VERBAL_ROOT_CODES else GDELT_MIN_SOURCES
+    if root in COOPERATION_ROOT_CODES:
+        min_sources = GDELT_COOP_MIN_SOURCES
+    elif root in VERBAL_ROOT_CODES:
+        min_sources = GDELT_VERBAL_MIN_SOURCES
+    else:
+        min_sources = GDELT_MIN_SOURCES
     if int(ev.get("sources") or ev.get("num_sources") or 0) < min_sources:
         return False
-    min_mentions = (GDELT_VERBAL_MIN_MENTIONS if root in VERBAL_ROOT_CODES
-                    else GDELT_MIN_MENTIONS)
+    if root in COOPERATION_ROOT_CODES:
+        min_mentions = GDELT_COOP_MIN_MENTIONS
+    elif root in VERBAL_ROOT_CODES:
+        min_mentions = GDELT_VERBAL_MIN_MENTIONS
+    else:
+        min_mentions = GDELT_MIN_MENTIONS
     if int(ev.get("mentions") or ev.get("num_mentions") or 0) < min_mentions:
         return False
     return True
