@@ -65,33 +65,87 @@ class Mesh:
         self.tri(a, b, c)
         self.tri(a, c, d)
 
+    def quad_outward(self, centre, a, b, c, d):
+        """A quad wound so its normal points AWAY from `centre`.
 
-def fuselage(m, length, radius, nose_frac=0.16, tail_frac=0.30, seg=14):
-    """A body of revolution: rounded nose, straight barrel, tapered tail."""
+        Hand-written face lists get this wrong quietly. box() had its top
+        and bottom swapped and two of its sides inverted, which is
+        invisible in silhouette and invisible with a double-sided
+        material — all it does is light the inside of the box and leave
+        the outside dark. Deriving the winding from the geometry cannot
+        drift the way a list of index tuples can.
+        """
+        ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+        vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
+        nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+        mx = (a[0] + b[0] + c[0] + d[0]) / 4 - centre[0]
+        my = (a[1] + b[1] + c[1] + d[1]) / 4 - centre[1]
+        mz = (a[2] + b[2] + c[2] + d[2]) / 4 - centre[2]
+        if nx * mx + ny * my + nz * mz < 0:
+            self.quad(d, c, b, a)
+        else:
+            self.quad(a, b, c, d)
+
+    def tri_n(self, pts, nrms):
+        """A triangle with normals given per vertex, for smooth shading."""
+        base = len(self.v)
+        for pt, nr in zip(pts, nrms):
+            self.v.append(pt)
+            self.n.append(nr)
+        self.i += [base, base + 1, base + 2]
+
+    def quad_n(self, pts, nrms):
+        """A quad with per-vertex normals.
+
+        WHY THIS EXISTS. Every surface was flat-shaded from face
+        cross-products, which is right for a wing and wrong for a
+        fuselage: a fourteen-sided tube lit per facet reads as a
+        fourteen-sided tube, not as an aeroplane. Bodies of revolution
+        now carry their true radial normals, so the hull shades smoothly
+        and the silhouette is the only faceting left.
+        """
+        a, b, c, d = pts
+        na, nb, nc, nd = nrms
+        self.tri_n((a, b, c), (na, nb, nc))
+        self.tri_n((a, c, d), (na, nc, nd))
+
+
+def fuselage(m, length, radius, nose_frac=0.16, tail_frac=0.30, seg=22):
+    """A body of revolution: rounded nose, straight barrel, tapered tail.
+
+    Smooth-shaded, and finer than it was (22 segments rather than 14).
+    Both cost nothing in a file this size and are the difference between
+    a tube and a hull.
+    """
     nose_x, tail_x = length * nose_frac, length * (1 - tail_frac)
-    # Station list: (x, radius, z-offset) - the tail lifts slightly, as it does.
     stations = []
-    for k in range(5):                       # nose cone
-        t = k / 4
+    for k in range(7):                       # nose cone, finer than before
+        t = k / 6
         stations.append((t * nose_x, radius * math.sin(t * math.pi / 2), 0.0))
     stations.append((tail_x, radius, 0.0))   # barrel
-    for k in range(1, 5):                    # upswept tail
-        t = k / 4
+    for k in range(1, 7):                    # upswept tail
+        t = k / 6
         stations.append((tail_x + t * (length - tail_x),
                          radius * (1 - t) ** 0.7,
                          radius * 0.45 * t ** 2))
-    for s in range(len(stations) - 1):
-        x0, r0, z0 = stations[s]
-        x1, r1, z1 = stations[s + 1]
+
+    def ring(x, r, z, j):
+        a = 2 * math.pi * j / seg
+        return (x, r * math.cos(a), z + r * math.sin(a)), (0.0, math.cos(a), math.sin(a))
+
+    for s_i in range(len(stations) - 1):
+        x0, r0, z0 = stations[s_i]
+        x1, r1, z1 = stations[s_i + 1]
         for j in range(seg):
-            a0, a1 = 2 * math.pi * j / seg, 2 * math.pi * (j + 1) / seg
-            m.quad((x0, r0 * math.cos(a0), z0 + r0 * math.sin(a0)),
-                   (x1, r1 * math.cos(a0), z1 + r1 * math.sin(a0)),
-                   (x1, r1 * math.cos(a1), z1 + r1 * math.sin(a1)),
-                   (x0, r0 * math.cos(a1), z0 + r0 * math.sin(a1)))
+            p00, n00 = ring(x0, r0, z0, j)
+            p10, n10 = ring(x1, r1, z1, j)
+            p11, n11 = ring(x1, r1, z1, j + 1)
+            p01, n01 = ring(x0, r0, z0, j + 1)
+            m.quad_n((p00, p10, p11, p01), (n00, n10, n11, n01))
 
 
-def panel(m, root_x, root_z, span, root_c, tip_c, sweep, dihedral, thick, vertical=False):
+def panel(m, root_x, root_z, span, root_c, tip_c, sweep, dihedral, thick,
+          vertical=False, y_at=0.0):
     """A swept, tapered lifting surface, mirrored unless vertical."""
     sides = [1] if vertical else [1, -1]
     for side in sides:
@@ -102,18 +156,26 @@ def panel(m, root_x, root_z, span, root_c, tip_c, sweep, dihedral, thick, vertic
             # Sweep upward in Z instead of outward in Y.
             pts_top = [(root_x, 0, root_z), (root_x + root_c, 0, root_z),
                        (tip_x + tip_c, 0, root_z + span), (tip_x, 0, root_z + span)]
-            for dy in (thick / 2, -thick / 2):
+            for side, dy in ((1, y_at + thick / 2), (-1, y_at - thick / 2)):
                 quadpts = [(p[0], dy, p[2]) for p in pts_top]
-                m.quad(*quadpts)
+                # OPPOSITE WINDING PER FACE. Both skins were wound the
+                # same way, so their computed normals pointed the same
+                # way and one of the two faced into the surface. The
+                # silhouette is unaffected, which is why it went unseen:
+                # what it produced was a wing lit from underneath.
+                m.quad(*(quadpts if side > 0 else quadpts[::-1]))
             for k in range(4):
                 a, b = pts_top[k], pts_top[(k + 1) % 4]
-                m.quad((a[0], thick / 2, a[2]), (b[0], thick / 2, b[2]),
-                       (b[0], -thick / 2, b[2]), (a[0], -thick / 2, a[2]))
+                m.quad((a[0], y_at + thick / 2, a[2]), (b[0], y_at + thick / 2, b[2]),
+                       (b[0], y_at - thick / 2, b[2]), (a[0], y_at - thick / 2, a[2]))
             continue
         pts = [(root_x, 0, root_z), (root_x + root_c, 0, root_z),
                (tip_x + tip_c, tip_y, tip_z), (tip_x, tip_y, tip_z)]
-        for dz in (thick / 2, -thick / 2):
-            m.quad(*[(p[0], p[1], p[2] + dz) for p in pts])
+        for side, dz in ((1, thick / 2), (-1, -thick / 2)):
+            face = [(p[0], p[1], p[2] + dz) for p in pts]
+            # See the vertical case above: the lower skin has to be wound
+            # the other way round or its normal points up into the wing.
+            m.quad(*(face if side > 0 else face[::-1]))
         for k in range(4):
             a, b = pts[k], pts[(k + 1) % 4]
             m.quad((a[0], a[1], a[2] + thick / 2), (b[0], b[1], b[2] + thick / 2),
@@ -158,7 +220,7 @@ def disc_flat(m, x, y, z, radius, seg=16):
 
 
 def airliner(length, span, engines=2, rear_engines=False, prop=False,
-             sweep_frac=0.28, fin_frac=0.16):
+             sweep_frac=0.28, fin_frac=0.16, winglets=True):
     m = Mesh()
     r = length * 0.052
     fuselage(m, length, r)
@@ -185,6 +247,22 @@ def airliner(length, span, engines=2, rear_engines=False, prop=False,
                     disc(m, x - length * 0.01, y, z, span * 0.055)
                 else:
                     nacelle(m, x, y, z, length * 0.13, r * 0.40)
+                    # PYLON. Without it the nacelle floats under the wing
+                    # with a gap, which at a glance reads as a fault in
+                    # the model rather than as an engine.
+                    panel(m, x + length * 0.03, z + r * 0.30, r * 0.75,
+                          length * 0.055, length * 0.045, length * 0.008, 0,
+                          r * 0.10, vertical=True, y_at=y)
+
+    # WINGLETS. The single most recognisable thing about a modern
+    # airliner's planform, and cheap: two small canted panels at the
+    # tips. Turboprops and older types do not get them.
+    if not prop and winglets:
+        tip_x = wing_x + span * sweep_frac / 2
+        tip_z = -r * 0.35 + (span / 2) * math.tan(math.radians(5))
+        for s in (1, -1):
+            panel(m, tip_x, tip_z, length * 0.055, length * 0.050, length * 0.028,
+                  length * 0.018, 0, r * 0.07, vertical=True, y_at=s * span / 2)
     return m
 
 
@@ -244,7 +322,21 @@ def to_gltf_axes(p, forward=-1):
     gltf = (starboard, up, forward).
     """
     x, y, z = p          # along-body, starboard, up
-    return (y, z, forward * x)
+    if forward == 1:
+        return (y, z, x)
+    # A PROPER ROTATION, NOT A REFLECTION. Turning the model round by
+    # negating x alone gives a transform with determinant -1, which
+    # mirrors it: triangle winding reverses and every normal ends up
+    # pointing into the surface it belongs to. The mesh silhouette looks
+    # right, so nothing complains — but the lighting is inverted, which
+    # is why the fuselage rendered darker than the wings it was supposed
+    # to be lit alongside.
+    #
+    # Rotating 180 degrees about the up axis first (x,y -> -x,-y) and
+    # then mapping gives determinant +1 and the same nose direction. The
+    # airframe comes out mirrored left-for-right, which on a symmetric
+    # aircraft is not a visible difference.
+    return (-y, z, -x)
 
 
 def to_glb(mesh, path, colour, forward=-1):

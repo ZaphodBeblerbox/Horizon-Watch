@@ -50,11 +50,21 @@ def hull(m, length, beam, depth, bow_frac=0.22, stern_frac=0.10):
 
 
 def box(m, x0, x1, y0, y1, z0, z1):
+    """A box whose faces all point outward.
+
+    The winding used to be a hand-written list of index tuples, and four
+    of the six were wrong: top and bottom swapped, two sides inverted.
+    Nothing shows that in a silhouette, and with a double-sided material
+    nothing goes missing either - the visible symptom is a superstructure
+    lit on the inside and dark on the outside. quad_outward derives the
+    winding from where the face sits relative to the box centre.
+    """
     c = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
          (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
-    for a, b, cc, d in [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
-                        (3, 2, 6, 7), (0, 3, 7, 4), (1, 5, 6, 2)]:
-        m.quad(c[a], c[b], c[cc], c[d])
+    centre = ((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+    for a, b, cc, d in [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4),
+                        (3, 2, 6, 7), (0, 3, 7, 4), (1, 2, 6, 5)]:
+        m.quad_outward(centre, c[a], c[b], c[cc], c[d])
 
 
 def ship(length, beam, bridge_at, bridge_h, deck_boxes=0, funnel=True):

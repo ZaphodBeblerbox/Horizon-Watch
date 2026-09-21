@@ -22,7 +22,7 @@ export const FAMILIES = ["container", "cargo", "tanker", "passenger",
                          "military", "fishing", "other"]
 
 /** See aircraftModels.js — bumped whenever the hulls are regenerated. */
-export const MODEL_VERSION = 4
+export const MODEL_VERSION = 5
 
 export const modelUrl = (family) =>
     FAMILIES.includes(family)
