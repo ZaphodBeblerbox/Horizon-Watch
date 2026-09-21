@@ -32,6 +32,17 @@ const PITCH_DEG = -25
 /** A full turn in roughly two minutes: present, not distracting. */
 const ORBIT_RAD_PER_SEC = 0.05
 
+/**
+ * How long after locking on to ignore release input.
+ *
+ * The double-click that takes the lock is itself made of presses, and
+ * relying on Cesium to deliver LEFT_DOUBLE_CLICK after the last
+ * LEFT_DOWN does not hold — wiring the press as a release silently
+ * stopped the lock from ever engaging. A grace window does not care
+ * what order the events arrive in.
+ */
+const RELEASE_GRACE_MS = 500
+
 const FOLLOWABLE = /^(adsb|ais)-/
 
 export default function GlobeFollowLayer({ enabled = true }) {
@@ -47,6 +58,8 @@ export default function GlobeFollowLayer({ enabled = true }) {
 
         const stop = () => {
             if (!followRef.current) return
+            // Ignore the tail of the gesture that started the lock.
+            if (performance.now() - followRef.current.startedAt < RELEASE_GRACE_MS) return
             followRef.current = null
             if (!viewer.isDestroyed?.()) {
                 // Release the reference frame, or every later camera move
@@ -71,7 +84,16 @@ export default function GlobeFollowLayer({ enabled = true }) {
             }
         }, ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
 
+        // ANY DELIBERATE CAMERA INPUT RELEASES THE LOCK. Escape and a
+        // right-click were the only ways out, which meant the obvious
+        // instincts — scroll to zoom out, drag to look elsewhere — did
+        // nothing at all and the camera appeared stuck. Wheel, drag and
+        // pinch all mean "I want to drive now", so they all release.
         handler.setInputAction(stop, ScreenSpaceEventType.RIGHT_CLICK)
+        handler.setInputAction(stop, ScreenSpaceEventType.WHEEL)
+        handler.setInputAction(stop, ScreenSpaceEventType.LEFT_DOWN)
+        handler.setInputAction(stop, ScreenSpaceEventType.MIDDLE_DOWN)
+        handler.setInputAction(stop, ScreenSpaceEventType.PINCH_START)
 
         const follow = () => {
             const f = followRef.current

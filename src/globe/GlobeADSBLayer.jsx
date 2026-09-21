@@ -5,10 +5,10 @@ import {
     CallbackProperty, Transforms, HeadingPitchRoll, ColorBlendMode,
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
-import { getAircraftMarkerDataUri } from "./vesselAircraftGlyphs.js"
 import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { acClassify } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { getShapeMarkerDataUri } from "./entityIcons.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { safeCartesian, billboardRotation } from "./markerOrientation.js"
 import { deadReckon } from "./deadReckon.js"
@@ -249,7 +249,17 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 // now also wired into the globe billboard itself).
                 const watchlisted = !!(icao && watchlistedIcaos?.has(String(icao).toUpperCase()))
                 const classification = acClassify(ac)
-                const icon = getAircraftMarkerDataUri({ watchlisted, classification, size: BILLBOARD_SIZE, theme })
+                // A DOT, NOT A LITTLE AEROPLANE. Aircraft are drawn as
+                // real airframes now; what reaches this line is a
+                // contact whose type and emitter category both said
+                // nothing, so it gets a mark that says "something is
+                // here" rather than a silhouette of an aircraft it was
+                // never reported to be.
+                const icon = getShapeMarkerDataUri({
+                    shape: "circle",
+                    color: watchlisted ? "#FFB020" : "#8E9BAA",
+                    size: BILLBOARD_SIZE * 0.55,
+                })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 
                 // GEOMETRY, NOT A PICTURE OF GEOMETRY. A billboard always

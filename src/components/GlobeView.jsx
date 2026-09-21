@@ -2,7 +2,7 @@ import "../cesiumConfig.js"
 import { MARKER_DEPTH_TEST_M } from "../globe/entityIcons.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
-import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, EllipsoidTerrainProvider, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference, Cartographic, EllipsoidGeodesic, ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium"
+import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, CesiumTerrainProvider, EllipsoidTerrainProvider, Cesium3DTileset, Color, Cartesian2, LabelStyle, VerticalOrigin, HeightReference, Cartographic, EllipsoidGeodesic, ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium"
 import { publishCameraState } from "../globe/cameraState.js"
 import { publishCursor, publishScale, getScale, scaleFor, zoomLabelFor } from "../globe/mapReadout.js"
 import "cesium/Build/Cesium/Widgets/widgets.css"
@@ -222,6 +222,8 @@ export default function GlobeView({
 }) {
     const viewerRef = useRef(null)
     const baseLayerRef = useRef(null) // the one ImageryLayer this component manages imperatively for basemap swaps
+    // Cesium OSM Buildings, added only for the 3D basemap.
+    const buildingsRef = useRef(null)
     const [vessels,  setVessels]  = useState([])
     const [sanctionedMmsis, setSanctionedMmsis] = useState({ confirmed: new Set(), possible: new Set() })
     const [watchlistedIcaos, setWatchlistedIcaos] = useState(new Set())
@@ -712,12 +714,40 @@ export default function GlobeView({
             const provider = basemap === "dark" ? esriDarkProvider : esriSatelliteProvider
             baseLayerRef.current = viewer.imageryLayers.addImageryProvider(provider, 0)
 
+            // The 3D preset is terrain AND buildings; the other two are a
+            // smooth ellipsoid, because draping imagery on real terrain
+            // costs tiles nobody asked for when the point is the map.
+            const dropBuildings = () => {
+                const ts = buildingsRef.current
+                buildingsRef.current = null
+                if (ts && !viewer.isDestroyed?.() && viewer.scene.primitives.contains(ts)) {
+                    viewer.scene.primitives.remove(ts)
+                }
+            }
+
             if (basemap === "terrain") {
                 CesiumTerrainProvider.fromIonAssetId(1).then(tp => {
                     if (!cancelled) viewer.terrainProvider = tp
                 }).catch(() => {})
+                // Cesium OSM Buildings — ion asset 96188, global building
+                // footprints extruded to their OSM heights. Confirmed
+                // reachable with this account's token before wiring it,
+                // along with World Terrain (1) and Google Photorealistic
+                // 3D Tiles (2275207). Google's would look better and is
+                // deliberately not used: it replaces imagery and terrain
+                // wholesale, carries its own attribution requirement, and
+                // bills against the ion quota.
+                if (!buildingsRef.current) {
+                    Cesium3DTileset.fromIonAssetId(96188).then((ts) => {
+                        if (cancelled || viewer.isDestroyed?.()) return
+                        buildingsRef.current = ts
+                        viewer.scene.primitives.add(ts)
+                        viewer.scene.requestRender?.()
+                    }).catch(() => { /* buildings are a garnish, not the map */ })
+                }
             } else {
                 viewer.terrainProvider = new EllipsoidTerrainProvider()
+                dropBuildings()
             }
             // requestRenderMode (set in the effect above) means Cesium only
             // renders on a tracked property change or an explicit
@@ -738,7 +768,16 @@ export default function GlobeView({
             }, 3000)
         }
         tryApply()
-        return () => { cancelled = true; if (restoreId != null) clearTimeout(restoreId) }
+        return () => {
+            cancelled = true
+            if (restoreId != null) clearTimeout(restoreId)
+            const viewer = viewerRef.current?.cesiumElement
+            const ts = buildingsRef.current
+            if (ts && viewer && !viewer.isDestroyed?.() && viewer.scene.primitives.contains(ts)) {
+                viewer.scene.primitives.remove(ts)
+            }
+            buildingsRef.current = null
+        }
     }, [basemap])
 
     // Track camera viewport bounds for event layer scoping

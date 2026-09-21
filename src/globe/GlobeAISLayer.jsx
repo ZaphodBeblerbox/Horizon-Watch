@@ -6,9 +6,9 @@ import {
     NearFarScalar, DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType } from "./iconUtils.js"
-import { getVesselMarkerDataUri } from "./vesselAircraftGlyphs.js"
 import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { getShapeMarkerDataUri } from "./entityIcons.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
 import { safeCartesian, billboardRotation, vesselHeading } from "./markerOrientation.js"
 import { familyFor as hullFor, modelUrl as hullUrl,
@@ -117,7 +117,18 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                 // side in backend/main.py's _check_sanctions_on_update()).
                 const mmsiStr = v.mmsi != null ? String(v.mmsi) : null
                 const sanctioned = !!(mmsiStr && sanctionedMmsis?.confirmed?.has(mmsiStr))
-                const icon = getVesselMarkerDataUri({ sanctioned, shipType: vesselShipType(v), size: BILLBOARD_SIZE, theme })
+                // A DOT, NOT A LITTLE SHIP. The old hull glyph is gone:
+                // vessels are drawn as real hulls now, and anything that
+                // still falls back to a flat marker does so precisely
+                // because it reported no usable heading — so a shape
+                // with a bow would be pointing somewhere we were never
+                // told. A circle is the app's existing mark for "an
+                // observation is here" and claims nothing more.
+                const icon = getShapeMarkerDataUri({
+                    shape: "circle",
+                    color: sanctioned ? "#FF453A" : "#8E9BAA",
+                    size: BILLBOARD_SIZE * 0.55,
+                })
 
                 const hdg = vesselHeading(v) ?? 0
 

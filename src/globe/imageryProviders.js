@@ -5,6 +5,11 @@ import API_BASE from "../apiBase.js"
 // (replaces Google 3D Tiles which bury imagery layers under their mesh)
 export const esriSatelliteProvider = new UrlTemplateImageryProvider({
     url:          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    // 19 is right for this one, and checked rather than inherited:
+    // real tiles at Frankfurt, Manhattan and Dubai through z19, and the
+    // "Map data not yet available" placeholder at z20 in two of the
+    // three. See the note on the dark layer below for how that is told
+    // apart from real imagery.
     maximumLevel: 19,
     credit:       new Credit("Esri, Maxar, Earthstar Geographics", false),
 })
@@ -15,7 +20,19 @@ export const esriSatelliteProvider = new UrlTemplateImageryProvider({
 // this is the actual stock dark map Esri/Cesium examples reuse.
 export const esriDarkProvider = new UrlTemplateImageryProvider({
     url:          "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-    maximumLevel: 19,
+    // SIXTEEN, NOT NINETEEN. This layer only has real tiles to level 16.
+    // Past that Esri answers with a 200 and a 2,521-byte PNG that reads
+    // "Map data not yet available" — so the globe did not fail, it
+    // faithfully drew the words. Measured by fetching the same zoom at
+    // Frankfurt, Manhattan and Dubai: identical bytes at every one from
+    // z17 up, distinct real tiles at z16 and below. Cesium upsamples
+    // level 16 beyond this, which is blurry and continuous rather than
+    // sharp and wrong.
+    //
+    // The service's own metadata is no help here: it advertises LODs to
+    // level 23, because that describes the tiling scheme rather than
+    // what has been published into it.
+    maximumLevel: 16,
     credit:       new Credit("Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community", false),
 })
 
