@@ -377,6 +377,10 @@ export default function Situation({ onOpenDossier }) {
     const [theatresOn, setTheatresOn] = useState({ ukraine: true })
     const [frontlineTheatres, setFrontlineTheatres] = useState([])
     const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+    // Global Fishing Watch events, per kind. Off by default: they are
+    // days old by nature and belong on the map only when asked for.
+    const [gfwOn, setGfwOn] = useState({
+        encounters: false, gaps: false, loitering: false, "port-visits": false })
     // The Ukraine time slider. `null` means live; any other value is a
     // published snapshot date. Index rather than date so the control is
     // evenly spaced in SNAPSHOTS, which is what exists, rather than in
@@ -868,6 +872,32 @@ export default function Situation({ onOpenDossier }) {
                             </button>
                         </div>
                     ))}
+                    <div style={{ padding: "8px 12px 2px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
+                        Satellite AIS events
+                        <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginLeft: 6 }}>
+                            GFW · published days behind
+                        </span>
+                    </div>
+                    {[
+                        ["encounters", "Encounters", "two vessels meeting at sea"],
+                        ["gaps", "AIS gaps", "transmission stopped, then resumed"],
+                        ["loitering", "Loitering", "holding station away from port"],
+                        ["port-visits", "Port visits", "arrivals and departures"],
+                    ].map(([key, label, why]) => (
+                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                            <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
+                                {label}
+                                <span style={{ display: "block", font: "400 10px var(--font)", color: "var(--txt-4)" }}>{why}</span>
+                            </span>
+                            <button
+                                onClick={() => setGfwOn((p) => ({ ...p, [key]: !p[key] }))}
+                                title={gfwOn[key] ? "Hide layer" : "Show layer"}
+                                style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: gfwOn[key] ? "var(--txt-2)" : "var(--txt-4)" }}
+                            >
+                                <svg className="icon sm"><use href={gfwOn[key] ? "#i-eye" : "#i-eye-off"} /></svg>
+                            </button>
+                        </div>
+                    ))}
                     {/* Frontlines, per theatre. The unavailable ones are
                         listed rather than hidden: a control layer offering
                         only Ukraine implies the other wars have no front
@@ -1233,6 +1263,7 @@ export default function Situation({ onOpenDossier }) {
                         riskEnabled={contextOn.risk}
                         frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
                         frontlinesAt={frontlinesAt}
+                        gfwKinds={Object.keys(gfwOn).filter((k) => gfwOn[k])}
                         onFacilityStatus={setFacStatus}
                         facilityTypes={Object.entries(FACILITY_ROW_TYPE)
                             .filter(([k]) => infraOn[k])

@@ -12,6 +12,7 @@ import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
 import GlobeSelectedTrackLayer  from "../globe/GlobeSelectedTrackLayer.jsx"
 import GlobeFollowLayer         from "../globe/GlobeFollowLayer.jsx"
+import GlobeGfwLayer            from "../globe/GlobeGfwLayer.jsx"
 import GlobeRiskChoroplethLayer from "../globe/GlobeRiskChoroplethLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
@@ -131,6 +132,7 @@ export default function GlobeView({
     frontlinesEnabled = false,
     warmapTheatres = [],
     frontlinesAt = null,
+    gfwKinds = [],
     facilityTypes = [],
     onFacilityStatus = null,
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
@@ -977,6 +979,9 @@ export default function GlobeView({
                 <GlobeSelectedTrackLayer selected={selectedContact} />
                 {/* Double-click an aircraft or vessel to lock on and orbit it. */}
                 <GlobeFollowLayer />
+                {/* Satellite-AIS events — drawn hollow, because they are
+                    records of something days old, not live contacts. */}
+                <GlobeGfwLayer enabled={gfwKinds.length > 0} kinds={gfwKinds} />
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />

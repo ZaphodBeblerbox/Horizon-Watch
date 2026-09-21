@@ -36,6 +36,9 @@ export const INSPECTOR_TYPES = new Set([
     // the choropleth has been registering full risk decompositions
     // that no click could ever reach.
     "country_risk", "frontline", "warmap_area", "facility_osm",
+    // Global Fishing Watch events. Registered by GlobeGfwLayer, so it
+    // belongs here for the same reason every line above does.
+    "gfw_event",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────

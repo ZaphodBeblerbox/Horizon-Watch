@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 import { INSPECTOR_TYPES } from "./GlobePopup.jsx"
 
 describe("GlobePopup INSPECTOR_TYPES", () => {
-    it("routes all 16 entity-bearing popup types to the unified InspectorPanel", () => {
+    it("routes all entity-bearing popup types to the unified InspectorPanel", () => {
         // Real drift fix: "geoconfirmed" was added to INSPECTOR_TYPES in an
         // earlier round (the GeoConfirmed map-layer integration) but this
         // test's expected list was never updated to match — caught by
@@ -14,7 +14,7 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "country_risk", "eez", "event", "frontline", "fusion", "fusion_member",
             "gdelt_event", "geoconfirmed", "heatmap_cell", "infra", "port",
             "sentinel_detection", "surge", "thermal_anomaly", "vessel",
-            "facility_osm", "warmap_area",
+            "facility_osm", "warmap_area", "gfw_event",
         ].sort())
     })
 
