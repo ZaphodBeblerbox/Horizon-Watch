@@ -42,6 +42,8 @@ const ORBIT_RAD_PER_SEC = 0.05
  * what order the events arrive in.
  */
 const RELEASE_GRACE_MS = 500
+// How long a followed contact may be missing before the lock gives up.
+const LOST_GRACE_MS = 8000
 
 const FOLLOWABLE = /^(adsb|ais)-/
 
@@ -74,7 +76,7 @@ export default function GlobeFollowLayer({ enabled = true }) {
             const id = entity && String(entity.id || "")
             if (!id || !FOLLOWABLE.test(id)) return
             followRef.current = {
-                entity,
+                id,
                 range: id.startsWith("adsb-") ? AIRCRAFT_RANGE_M : VESSEL_RANGE_M,
                 heading: viewer.camera.heading,
                 last: performance.now(),
@@ -102,8 +104,22 @@ export default function GlobeFollowLayer({ enabled = true }) {
             const dt = Math.min(0.25, (now - f.last) / 1000)
             f.last = now
 
-            const pos = f.entity.position?.getValue(viewer.clock.currentTime)
-            if (!pos || f.entity.isDestroyed?.()) { stop(); return }
+            // LOOKED UP BY ID EVERY FRAME, NOT HELD AS A REFERENCE. Resium
+            // rebuilds these entities whenever the layer re-renders, so a
+            // captured object goes stale within a refresh or two: the lock
+            // then released itself for no visible reason, and the contact
+            // appeared to vanish. The id is stable; the object is not.
+            const ent = viewer.entities.getById(f.id)
+            const pos = ent && !ent.isDestroyed?.()
+                ? ent.position?.getValue(viewer.clock.currentTime) : null
+            if (!pos) {
+                // A contact can be missing for a refresh without being
+                // gone. Coast briefly rather than dropping the lock.
+                if (!f.lostAt) f.lostAt = now
+                if (now - f.lostAt > LOST_GRACE_MS) stop()
+                return
+            }
+            f.lostAt = 0
 
             f.heading += ORBIT_RAD_PER_SEC * dt
 

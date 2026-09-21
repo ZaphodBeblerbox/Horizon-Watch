@@ -239,6 +239,16 @@ export default function GlobeView({
     // The one contact whose full track is drawn. Clicking a vessel or an
     // aircraft is a request to follow it, not just to read its card.
     const [selectedContact, setSelectedContact] = useState(null)
+
+    // THE SELECTED CONTACT IS PINNED IN ITS LAYER. Both live layers cull
+    // by viewport and by budget, and locking the camera onto a contact
+    // shrinks the viewport around it — so the act of following something
+    // could cull the very thing being followed. These ids tell the layers
+    // which contact must survive that.
+    const pinnedIcao = selectedContact?.kind === "aircraft" && selectedContact?.id
+        ? String(selectedContact.id).replace(/^adsb-/i, "") : null
+    const pinnedMmsi = selectedContact?.kind === "vessel" && selectedContact?.id
+        ? String(selectedContact.id).replace(/^ais-/i, "") : null
     const [webglLost, setWebglLost] = useState(false)
     const [cesiumViewer, setCesiumViewer] = useState(null)
 
@@ -1011,8 +1021,8 @@ export default function GlobeView({
                 <GlobeHeatmapLayer enabled={aisHeatmapEnabled}  domain="ais"  hours={heatmapHours} bounds={viewBounds} />
                 <GlobeHeatmapLayer enabled={adsbHeatmapEnabled} domain="adsb" hours={heatmapHours} bounds={viewBounds} />
 
-                {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} sanctionedMmsis={sanctionedMmsis} />}
-                {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} watchlistedIcaos={watchlistedIcaos} />}
+                {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} sanctionedMmsis={sanctionedMmsis} pinnedMmsi={pinnedMmsi} />}
+                {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} watchlistedIcaos={watchlistedIcaos} pinnedIcao={pinnedIcao} />}
                 <GlobeTrackLayer aisEnabled={aisEnabled} adsbEnabled={adsbEnabled}
                                  vessels={vessels} aircraft={aircraft} />
                 {/* The clicked contact's whole recent path — aircraft at

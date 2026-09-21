@@ -65,26 +65,59 @@ const DR_RENDER_MS = 100
 // thousands of components mounting every refresh to render null.
 const DESKTOP_ADSB_CAP = 800
 
-export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos }) {
+export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
+                                        pinnedIcao = null }) {
 
     const drBaseRef = useRef({})
     const rawRef    = useRef([])
+    // Last full record per aircraft, kept so a PINNED contact can outlive
+    // its absence from a refresh. See the pin comment below.
+    const lastSeenRef = useRef({})
     const [smooth, setSmooth] = useState([])
 
+    // THE PINNED CONTACT SURVIVES A REFRESH THAT LOST IT. Double-clicking
+    // an aircraft locks the camera on it, which zooms in hard — and the
+    // ADS-B fetch is viewport-bounded, so the bbox at that zoom is a few
+    // kilometres across. The moment the aircraft crossed out of it, or a
+    // single refresh simply did not include it, it vanished from this
+    // array, Resium destroyed the entity, and the follow layer lost the
+    // reference it was tracking. That is the "clicking twice makes one
+    // disappear" report: locking onto a contact was the very thing that
+    // culled it. A pinned contact is therefore carried forward from its
+    // last sighting and dead-reckoned, for as long as coasting is honest.
+    const PIN_COAST_MS = 60_000
+
     useEffect(() => {
-        rawRef.current = aircraft ?? []
+        const incoming = aircraft ?? []
         const now = Date.now()
-        ;(aircraft ?? []).forEach(ac => {
+        const live = new Set(incoming.map(a => a.icao ?? a.icao24 ?? ""))
+
+        incoming.forEach(ac => {
             const icao = ac.icao ?? ac.icao24 ?? ""
             const lat  = ac.lat  ?? ac.latitude
             const lon  = ac.lon  ?? ac.longitude
-            if (icao && lat != null && lon != null)
+            if (icao && lat != null && lon != null) {
                 drBaseRef.current[icao] = { lat, lon, track: ac.track ?? ac.heading ?? 0, gs: ac.gs ?? 0, ts: now }
+                lastSeenRef.current[icao] = { ac, ts: now }
+            }
         })
-        const live = new Set((aircraft ?? []).map(a => a.icao ?? a.icao24 ?? ""))
+
+        let merged = incoming
+        if (pinnedIcao && !live.has(pinnedIcao)) {
+            const held = lastSeenRef.current[pinnedIcao]
+            if (held && now - held.ts < PIN_COAST_MS) {
+                merged = [...incoming, held.ac]
+                live.add(pinnedIcao)
+            }
+        }
+
+        rawRef.current = merged
         Object.keys(drBaseRef.current).forEach(k => { if (!live.has(k)) delete drBaseRef.current[k] })
-        setSmooth(aircraft ?? [])
-    }, [aircraft])
+        Object.keys(lastSeenRef.current).forEach(k => {
+            if (!live.has(k) && now - lastSeenRef.current[k].ts > PIN_COAST_MS) delete lastSeenRef.current[k]
+        })
+        setSmooth(merged)
+    }, [aircraft, pinnedIcao])
 
     // NO 100ms SMOOTHING TIMER. It used to rebuild the whole aircraft
     // array with new objects and setState ten times a second, which
@@ -126,8 +159,15 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
         // the rest are not. The cluster markers are gone: a numbered blob is
         // not an aircraft, it cannot be inspected, and it covered the very
         // airframes it was summarising.
-        return { filtered: sorted.slice(0, DESKTOP_ADSB_CAP) }
-    }, [smooth, viewBounds])
+        const cut = sorted.slice(0, DESKTOP_ADSB_CAP)
+        // The pin outranks the cap. It is the one aircraft the operator
+        // has actually asked to watch.
+        if (pinnedIcao && !cut.some(a => (a.icao ?? a.icao24) === pinnedIcao)) {
+            const held = valid.find(a => (a.icao ?? a.icao24) === pinnedIcao)
+            if (held) cut.push(held)
+        }
+        return { filtered: cut }
+    }, [smooth, viewBounds, pinnedIcao])
 
     /**
      * Which aircraft are drawn as geometry rather than as a glyph.
@@ -149,6 +189,13 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
             const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.longitude ?? 0) - centerLng)
             return da - db
         })
+        // The pin is modelled first, so a full budget can never be the
+        // reason the followed contact is the one thing not drawn.
+        if (pinnedIcao) {
+            const held = filtered.find(a => (a.icao ?? a.icao24) === pinnedIcao)
+            const fam = held ? familyForDrawing(held) : null
+            if (fam) { considered.add(pinnedIcao); drops.add(pinnedIcao); m.set(pinnedIcao, fam) }
+        }
         for (const ac of sortedByRange) {
             if (considered.size >= MODEL_BUDGET) break
             const id = ac.icao ?? ac.icao24 ?? ""
@@ -162,7 +209,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
             if (fam) m.set(id, fam)
         }
         return { modelled: m, dropIds: drops }
-    }, [filtered, viewBounds])
+    }, [filtered, viewBounds, pinnedIcao])
 
     // Keep the scene drawing while there are aircraft to move. Without
     // this the markers are correct every time they are asked for their

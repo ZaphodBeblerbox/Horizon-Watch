@@ -33,7 +33,13 @@ const HULL_BUDGET = 600
 const aisLat = (v) => v.lat
 const aisLon = (v) => v.lon ?? v.lng
 
-export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) {
+export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
+                                        pinnedMmsi = null }) {
+    // See GlobeADSBLayer's pin comment: locking the camera onto a vessel
+    // zooms in far enough that the viewport query can stop returning it,
+    // and the hull the operator is watching is the one that disappears.
+    const PIN_COAST_MS = 60_000
+    const lastSeenRef = useRef({})
     // COURSE RECOVERED FROM MOVEMENT. 44% of vessels report no usable
     // heading and this feed has no course-over-ground, so those hulls
     // had nothing to point along. A vessel that has moved between two
@@ -56,10 +62,21 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
             } else {
                 seen[mmsi] = { lat, lon, course: null }
             }
+            lastSeenRef.current[mmsi] = { v, ts: Date.now() }
         }
     }, [vessels])
 
+    // The pinned vessel, carried forward when a refresh does not contain it.
+    const held = useMemo(() => {
+        const list = vessels || []
+        if (!pinnedMmsi) return list
+        if (list.some(v => v?.mmsi != null && String(v.mmsi) === pinnedMmsi)) return list
+        const keep = lastSeenRef.current[pinnedMmsi]
+        return keep && Date.now() - keep.ts < PIN_COAST_MS ? [...list, keep.v] : list
+    }, [vessels, pinnedMmsi])
+
     const { filtered } = useMemo(() => {
+        const vessels = held
         if (!vessels?.length) return { filtered: [] }
         if (isMobile) {
             const priority = (v) => {
@@ -82,8 +99,14 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
         // remainder are gone: a numbered blob is not a vessel, it cannot be
         // inspected, and at these densities it covered the hulls it was
         // summarising.
-        return { filtered: sorted.slice(0, DESKTOP_AIS_CAP) }
-    }, [vessels, viewBounds])
+        const cut = sorted.slice(0, DESKTOP_AIS_CAP)
+        // The pin outranks the cap: it is the one vessel actually asked for.
+        if (pinnedMmsi && !cut.some(v => String(v.mmsi) === pinnedMmsi)) {
+            const p = valid.find(v => String(v.mmsi) === pinnedMmsi)
+            if (p) cut.push(p)
+        }
+        return { filtered: cut }
+    }, [held, viewBounds, pinnedMmsi])
 
     /**
      * Which vessels get a hull: the nearest to the view centre, bounded.
@@ -103,12 +126,15 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
             const db = Math.abs(b.lat - centerLat) + Math.abs((b.lon ?? b.lng) - centerLng)
             return da - db
         })
+        // Hull the pin first, so a full budget cannot be the reason the
+        // followed vessel is the one that is not drawn.
+        if (pinnedMmsi) out.add(pinnedMmsi)
         for (const v of byRange) {
             if (out.size >= HULL_BUDGET) break
             if (v.mmsi != null) out.add(String(v.mmsi))
         }
         return out
-    }, [filtered, viewBounds])
+    }, [filtered, viewBounds, pinnedMmsi])
 
     useEffect(() => {
         if (!filtered.length) return
