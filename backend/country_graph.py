@@ -548,34 +548,60 @@ def global_graph(hours: int = 168, min_events: int = 1) -> dict:
         for iso, n in seen_iso.most_common()
     ]
 
+    # TYPED, DIRECTED RELATIONS — not a tone bucket.
+    #
+    # This used to emit one undirected edge per country pair whose kind
+    # was "strained" or "cooperative": a mood, not a relationship. The
+    # verb was in the data the whole time. Each GDELT event is coded with
+    # CAMEO — 042 make a visit, 062 cooperate militarily, 072 provide
+    # military aid, 163 impose an embargo — and this step was averaging
+    # it away into a Goldstein score.
+    #
+    # `conf` scales with how many coded events support the relation, and
+    # the spec's own rule then does the rest: inferred is derived as
+    # conf < 0.8, so a relation resting on a handful of reports renders
+    # dashed and a well-evidenced one renders solid, with no separate
+    # judgement call.
+    import relations as _rel
+
+    typed = _rel.build(events, level="country")["edges"]
     links = []
-    for (x, y), n in sorted(pair_count.items(), key=lambda kv: -kv[1]):
-        if n < min_events:
-            continue
-        tones = pair_tone.get((x, y)) or []
-        mean = sum(tones) / len(tones) if tones else None
-        # Goldstein runs -10 (force) to +10 (cooperation). Naming the
-        # direction beats showing a number nobody has the codebook for.
-        if mean is None:
-            character = "unscored"
-        elif mean <= -5:
-            character = "conflictual"
-        elif mean < 0:
-            character = "strained"
-        elif mean < 5:
-            character = "routine"
-        else:
-            character = "cooperative"
+    for e in typed:
+        n = e["events"]
+        conf = round(min(1.0, n / 20.0), 2)
+        window = (f"{e['first_seen']} → {e['last_seen']}"
+                  if e["first_seen"] and e["last_seen"] else "date unknown")
         links.append({
-            "id": f"rel_{x}_{y}",
-            "s": f"country_{x}", "t": f"country_{y}",
-            "kind": character,
-            "conf": round(min(1.0, n / 20.0), 2),
-            "inferred": False,
+            "id": f"rel_{e['source']}_{e['target']}_{e['relation']}",
+            "s": f"country_{e['source']}", "t": f"country_{e['target']}",
+            # The relationship word the spec wants at the midpoint of the
+            # link, in the form a person reads.
+            "kind": e["relation"].replace("_", " "),
+            "family": e["family"],
+            "conf": conf,
+            # Spec §6.6: inferred is DERIVED, conf < 0.8.
+            "inferred": conf < 0.8,
             "events": n,
-            "mean_goldstein": round(mean, 2) if mean is not None else None,
-            "label": f"{n} coded interaction(s) · {character}",
+            "mean_goldstein": e["mean_goldstein"],
+            # The basis for the assertion, which is what the link editor
+            # shows and what a briefing would cite.
+            "note": (f"{n} coded event(s), {window}. "
+                     f"CAMEO-derived from GDELT actor pairs."),
+            "examples": e["examples"],
+            "label": f"{e['relation'].replace('_', ' ')} · {n} event(s)",
         })
+
+    # Every country named in a typed relation is a node, whether or not
+    # the co-occurrence counter above happened to see it.
+    have = {nd["id"] for nd in nodes}
+    for e in typed:
+        for iso in (e["source"], e["target"]):
+            nid = f"country_{iso}"
+            if nid not in have:
+                have.add(nid)
+                nodes.append(_node(nid, "country", cc.name_of(iso),
+                                   kind="Country", source="GDELT actors",
+                                   risk=min(95, 20 + seen_iso.get(iso, 1))))
 
     # A nation with no surviving edge is in the window but not in any
     # relationship, which is not what this graph is for.
@@ -594,8 +620,10 @@ def global_graph(hours: int = 168, min_events: int = 1) -> dict:
         "total_real_links": len(links),
         "counts": {"nodes": len(nodes), "links": len(links),
                    "by_type": {"country": len(nodes)}},
-        "note": ("nations and the coded interactions between them — edges "
-                 "are GDELT's own actor pairs, counted, not inferred from "
-                 "co-occurrence"),
+        "note": ("nations and the typed relations between them — each edge is "
+                 "a CAMEO verb from GDELT's own actor pairs (visited, provides "
+                 "military aid to, imposes embargo on), directed and dated, "
+                 "not a tone average. Weakly-evidenced relations are marked "
+                 "inferred and render dashed."),
         "error": None,
     }

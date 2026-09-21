@@ -121,3 +121,55 @@ class TestSupplyChains:
         evs = [_ev("UKR", "ARE", "042", "04", d) for _ in range(4)]
         evs += [_ev("ARE", "UKR", "072", "07", d) for _ in range(4)]
         assert R.supply_chains(R.build(evs)["edges"], today=today) == []
+
+
+class TestGlobalGraphEmitsTypedLinks:
+    """The ontology diagram's own feed, which used to emit a mood.
+
+    /api/ontology/global reduced every country pair to one undirected
+    edge whose kind was "strained" or "cooperative". The spec asks for
+    the relationship word at the midpoint of the link; a tone bucket is
+    not one.
+    """
+
+    def test_a_link_carries_the_verb_the_confidence_and_the_basis(self):
+        import country_graph as cg
+        import gdelt_events as ge
+
+        evs = [_ev("ARE", "SDN", "072", "07", "20260910") for _ in range(4)]
+        saved = ge.EVENTS_CACHE.get("events")
+        ge.EVENTS_CACHE["events"] = evs
+        try:
+            g = cg.global_graph(hours=168)
+        finally:
+            ge.EVENTS_CACHE["events"] = saved
+
+        links = g["links"]
+        assert links, "expected a typed link"
+        l = links[0]
+        assert l["kind"] == "provides military aid to"
+        # Directed: source and target are not interchangeable.
+        assert l["s"] == "country_ARE" and l["t"] == "country_SDN"
+        # The basis for the assertion, which the link editor shows and a
+        # briefing would cite.
+        assert "coded event" in l["note"] and "CAMEO" in l["note"]
+        # Spec §6.6: inferred is derived, conf < 0.8.
+        assert l["inferred"] is (l["conf"] < 0.8)
+
+    def test_both_directions_survive_as_separate_links(self):
+        # An undirected tone average could not say that two actors are
+        # doing different things to each other.
+        import country_graph as cg
+        import gdelt_events as ge
+
+        evs = ([_ev("ISR", "PSE", "190", "19", "20260910") for _ in range(3)]
+               + [_ev("PSE", "ISR", "190", "19", "20260911") for _ in range(2)])
+        saved = ge.EVENTS_CACHE.get("events")
+        ge.EVENTS_CACHE["events"] = evs
+        try:
+            links = cg.global_graph(hours=168)["links"]
+        finally:
+            ge.EVENTS_CACHE["events"] = saved
+        pairs = {(l["s"], l["t"]) for l in links}
+        assert ("country_ISR", "country_PSE") in pairs
+        assert ("country_PSE", "country_ISR") in pairs
