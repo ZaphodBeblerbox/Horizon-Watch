@@ -3482,6 +3482,31 @@ def _thin_for_viewport(aircraft: list, limit: int) -> list:
         i += 1
     return keep + picked
 
+@app.get("/api/gfw/events")
+def api_gfw_events(
+    kind:  str = Query("encounters"),
+    days:  int = Query(14, ge=1, le=90),
+    limit: int = Query(200, ge=1, le=1000),
+    force: bool = Query(False),
+):
+    """Global Fishing Watch events — the ocean our own receivers cannot hear.
+
+    Our AIS is terrestrial and Europe-heavy, which makes the Baltic look
+    like the busiest water on earth and Hormuz look empty. GFW processes
+    satellite AIS globally.
+
+    These are NOT live positions: GFW publishes after processing and the
+    newest event is typically several days old. The response carries
+    lag_days for exactly that reason.
+    """
+    try:
+        import gfw as _gfw
+        return _gfw.events(kind=kind, days=days, limit=limit, force=force)
+    except Exception as e:
+        logger.exception("gfw events failed")
+        return {"available": False, "error": str(e)[:200], "events": []}
+
+
 @app.get("/adsb")
 @_response_cache(expire=30)
 def get_adsb(
