@@ -125,10 +125,10 @@ function computeLayout(nodes, links) {
     return positions
 }
 
-function NodePlate({ node, pos, selected, onSelect, onDragStart }) {
+function NodePlate({ node, pos, selected, onSelect, onDragStart, dim = false }) {
     const band = riskBand(node.risk)
     return (
-        <g
+        <g opacity={dim ? 0.18 : 1}
             transform={`translate(${pos.x},${pos.y})`} style={{ cursor: "grab" }}
             onPointerDown={(e) => onDragStart(e, node.id)}
             onClick={(e) => { e.stopPropagation(); onSelect(node) }}
@@ -160,6 +160,37 @@ export default function Ontology({ onOpenGenerate }) {
     const [data, setData] = useState(null)
     const [positions, setPositions] = useState({})
     const [selected, setSelected] = useState(null) // {kind:"node"|"link", item}
+
+    /**
+     * What the current selection touches, so everything else can recede.
+     *
+     * A graph of a few hundred plates is unreadable at rest — the answer
+     * to "what is this connected to" is in there but has to be traced by
+     * eye across crossing links. Selecting a node and dimming everything
+     * it does not touch turns that from a search into a glance.
+     *
+     * Empty when nothing is selected, which is the signal to draw
+     * everything at full strength rather than to dim the whole diagram.
+     */
+    const focus = useMemo(() => {
+        if (!selected || !data) return null
+        if (selected.kind === "link") {
+            const l = selected.item
+            return { nodes: new Set([l.s, l.t]), links: new Set([l.id]) }
+        }
+        const id = selected.item?.id
+        if (!id) return null
+        const nodes = new Set([id])
+        const links = new Set()
+        for (const l of data.links || []) {
+            if (l.s === id || l.t === id) {
+                links.add(l.id)
+                nodes.add(l.s)
+                nodes.add(l.t)
+            }
+        }
+        return { nodes, links }
+    }, [selected, data])
     // V3 Phase 1, §2.2 — real hook-based extension point, owned and called
     // by this component itself (never reassigned from outside).
     const inspectorExtensions = useInspectorExtensions()
@@ -507,8 +538,9 @@ export default function Ontology({ onOpenGenerate }) {
                                 const a = positions[l.s], b = positions[l.t]
                                 if (!a || !b) return null
                                 const mx = (a.x + b.x) / 2 + PLATE_W / 2, my = (a.y + b.y) / 2 + PLATE_H / 2
+                                const lit = !focus || focus.links.has(l.id)
                                 return (
-                                    <g key={l.id}>
+                                    <g key={l.id} opacity={lit ? 1 : 0.12}>
                                         <path d={linkPath(a, b)}
                                             strokeWidth={l.conf >= 0.9 ? 2 : 1} strokeDasharray={l.inferred ? "4 3" : "none"}
                                             onClick={(e) => { e.stopPropagation(); setSelected({ kind: "link", item: l }) }}
@@ -519,6 +551,7 @@ export default function Ontology({ onOpenGenerate }) {
                             })}
                             {visibleNodes.map((n) => positions[n.id] && (
                                 <NodePlate key={n.id} node={n} pos={positions[n.id]} selected={selected?.item?.id === n.id}
+                                    dim={!!focus && !focus.nodes.has(n.id)}
                                     onSelect={handleNodeClick} onDragStart={onDragStart} />
                             ))}
                         </g>

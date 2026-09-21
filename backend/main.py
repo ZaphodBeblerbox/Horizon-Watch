@@ -3486,6 +3486,66 @@ def _akili_db_path() -> str:
     return f"{DATA_DIR}/akili.db"
 
 
+@app.get("/api/ontology/graph/neighbourhood")
+def api_graph_neighbourhood(
+    id: str = Query(..., description="node id, e.g. vessel:256843000 or country:UKR"),
+    hops: int = Query(2, ge=1, le=3),
+    min_conf: float = Query(0.0, ge=0.0, le=1.0),
+    limit_per_hop: int = Query(250, ge=10, le=2000),
+):
+    """A node, its links, AND its links' links.
+
+    This is what the ontology could not do. The old feed returned one
+    flat ring of countries, so an analyst could see that a country was
+    connected to things but never that those things were connected to
+    each other — which is where the finding actually lives.
+    """
+    try:
+        import sqlite3
+        import graph_store as gs
+        conn = sqlite3.connect(_akili_db_path())
+        try:
+            gs.ensure_schema(conn)
+            return {"available": True,
+                    **gs.neighbourhood(conn, id, hops=hops, min_conf=min_conf,
+                                       limit_per_hop=limit_per_hop)}
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("neighbourhood failed")
+        return {"available": False, "error": str(e)[:200], "nodes": [], "links": []}
+
+
+@app.get("/api/ontology/graph/stats")
+def api_graph_store_stats():
+    """What is actually in the canonical graph."""
+    try:
+        import sqlite3
+        import graph_store as gs
+        conn = sqlite3.connect(_akili_db_path())
+        try:
+            gs.ensure_schema(conn)
+            return {"available": True, **gs.stats(conn)}
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("graph stats failed")
+        return {"available": False, "error": str(e)[:200]}
+
+
+@app.post("/api/ontology/graph/rebuild")
+def api_graph_rebuild():
+    """Run every producer into the canonical store. Idempotent."""
+    try:
+        import graph_build
+        import gdelt_events as ge
+        return graph_build.rebuild(_akili_db_path(),
+                                   events=(ge.EVENTS_CACHE.get("events") or []))
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("graph rebuild failed")
+        return {"available": False, "error": str(e)[:200]}
+
+
 @app.get("/api/ontology/relations")
 def api_ontology_relations(
     level: str = Query("country"),
