@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Entity } from "resium"
 import {
     Cartesian3, Cartesian2, Color, HeightReference,
@@ -10,9 +10,9 @@ import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { getShapeMarkerDataUri } from "./entityIcons.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
-import { safeCartesian, billboardRotation, vesselHeading } from "./markerOrientation.js"
+import { safeCartesian, billboardRotation, vesselHeading, bearingBetween } from "./markerOrientation.js"
 import { familyFor as hullFor, modelUrl as hullUrl,
-         modelHeadingRadians as hullHeading } from "./vesselModels.js"
+         headingRadiansFromDegrees as hullHeadingFrom } from "./vesselModels.js"
 import useCameraHeading from "./useCameraHeading.js"
 
 const BILLBOARD_SIZE = 26
@@ -42,6 +42,31 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
     useEffect(() => subscribeRenderedTheme(setTheme), [])
     const cameraHeading = useCameraHeading()
 
+    // COURSE RECOVERED FROM MOVEMENT. 44% of vessels report no usable
+    // heading and this feed has no course-over-ground, so those hulls
+    // had nothing to point along. A vessel that has moved between two
+    // reports has told us its course by doing so. Kept in a ref because
+    // it must not trigger a render of its own.
+    const courseRef = useRef({})
+    useEffect(() => {
+        const seen = courseRef.current
+        for (const v of vessels || []) {
+            const mmsi = v?.mmsi != null ? String(v.mmsi) : null
+            if (!mmsi) continue
+            const lat = v.lat, lon = v.lon ?? v.lng
+            const prev = seen[mmsi]
+            if (prev) {
+                const brg = bearingBetween(prev.lat, prev.lon, lat, lon)
+                // Only overwrite on real movement; a vessel at rest keeps
+                // whatever course it was last seen making.
+                if (brg !== null) seen[mmsi] = { lat, lon, course: brg }
+                else seen[mmsi] = { ...prev, lat, lon }
+            } else {
+                seen[mmsi] = { lat, lon, course: null }
+            }
+        }
+    }, [vessels])
+
     const { filtered } = useMemo(() => {
         if (!vessels?.length) return { filtered: [] }
         if (isMobile) {
@@ -69,9 +94,12 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
     }, [vessels, viewBounds])
 
     /**
-     * Which vessels get a hull. The nearest to the view centre, bounded,
-     * and only ones that reported a heading — the rest keep the glyph
-     * because a hull would have to point somewhere.
+     * Which vessels get a hull: the nearest to the view centre, bounded.
+     *
+     * No longer restricted to vessels that reported a heading. A ship
+     * drawn as a dot is not more honest than a ship drawn as a ship —
+     * it is just less useful — so the hull is always drawn, and where
+     * the orientation is not known the inspector says so.
      */
     const hullMmsis = useMemo(() => {
         const out = new Set()
@@ -85,7 +113,6 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
         })
         for (const v of byRange) {
             if (out.size >= HULL_BUDGET) break
-            if (vesselHeading(v) === null) continue
             if (v.mmsi != null) out.add(String(v.mmsi))
         }
         return out
@@ -117,17 +144,13 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                 // side in backend/main.py's _check_sanctions_on_update()).
                 const mmsiStr = v.mmsi != null ? String(v.mmsi) : null
                 const sanctioned = !!(mmsiStr && sanctionedMmsis?.confirmed?.has(mmsiStr))
-                // A DOT, NOT A LITTLE SHIP. The old hull glyph is gone:
-                // vessels are drawn as real hulls now, and anything that
-                // still falls back to a flat marker does so precisely
-                // because it reported no usable heading — so a shape
-                // with a bow would be pointing somewhere we were never
-                // told. A circle is the app's existing mark for "an
-                // observation is here" and claims nothing more.
+                // Only reached beyond the hull budget, which the viewport
+                // limit makes unlikely. A square rather than a circle:
+                // dots among 3D hulls read as a rendering fault.
                 const icon = getShapeMarkerDataUri({
-                    shape: "circle",
+                    shape: "square",
                     color: sanctioned ? "#FF453A" : "#8E9BAA",
-                    size: BILLBOARD_SIZE * 0.55,
+                    size: BILLBOARD_SIZE * 0.5,
                 })
 
                 const hdg = vesselHeading(v) ?? 0
@@ -144,8 +167,18 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis }) 
                 // points somewhere, and 44% of this feed has no usable
                 // heading and no course-over-ground to fall back on —
                 // those keep the glyph rather than being pointed north.
-                const hullAngle = hullMmsis.has(mmsiStr) ? hullHeading(v) : null
-                const hull = hullAngle === null ? null : hullFor(v)
+                // Reported heading, else the course it was observed
+                // making, else unoriented — and the inspector is told
+                // which of the three it was.
+                const reportedHdg = vesselHeading(v)
+                const derivedHdg = reportedHdg === null && mmsiStr
+                    ? (courseRef.current[mmsiStr]?.course ?? null) : null
+                const headingSource = reportedHdg !== null ? "reported"
+                    : derivedHdg !== null ? "derived from movement" : "not reported"
+                const usableHdg = reportedHdg ?? derivedHdg
+                const hull = hullMmsis.has(mmsiStr) ? hullFor(v) : null
+                const hullAngle = hull
+                    ? hullHeadingFrom(usableHdg ?? 0) : null
 
                 // Null rather than a throw: Cesium's fromDegrees raises on
                 // a coordinate that is not a number, and a raise here

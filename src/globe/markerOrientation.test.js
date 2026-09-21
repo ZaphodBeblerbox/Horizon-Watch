@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { Cartesian3, Math as CesiumMath } from "cesium"
-import { safeCartesian, billboardRotation, vesselHeading } from "./markerOrientation.js"
+import { safeCartesian, billboardRotation, vesselHeading, bearingBetween } from "./markerOrientation.js"
 
 describe("safeCartesian", () => {
     it("builds a position from real coordinates", () => {
@@ -91,5 +91,30 @@ describe("vesselHeading", () => {
         expect(vesselHeading({ heading: [] })).toBeNull()
         // A real zero is a real heading.
         expect(vesselHeading({ heading: 0 })).toBe(0)
+    })
+})
+
+describe("bearingBetween", () => {
+    it("reads due east and due north correctly", () => {
+        expect(bearingBetween(0, 0, 0, 0.01)).toBeCloseTo(90, 1)
+        expect(bearingBetween(0, 0, 0.01, 0)).toBeCloseTo(0, 1)
+        expect(bearingBetween(0, 0, -0.01, 0)).toBeCloseTo(180, 1)
+    })
+
+    it("refuses to turn AIS jitter into a course", () => {
+        // A moored vessel's position wobbles by metres. Treating that as
+        // movement spins the hull on the spot.
+        expect(bearingBetween(50.0, 8.0, 50.00005, 8.00005)).toBeNull()
+        expect(bearingBetween(50.0, 8.0, 50.0, 8.0)).toBeNull()
+    })
+
+    it("accepts movement once it is unambiguous", () => {
+        // ~200m east at this latitude.
+        expect(bearingBetween(50.0, 8.0, 50.0, 8.0028)).toBeCloseTo(90, 0)
+    })
+
+    it("returns null on unusable coordinates rather than a direction", () => {
+        expect(bearingBetween(null, 0, 1, 1)).toBeNull()
+        expect(bearingBetween(0, 0, "x", 1)).toBeNull()
     })
 })

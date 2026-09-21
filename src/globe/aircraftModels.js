@@ -80,6 +80,30 @@ export function isSurfaceVehicle(ac) {
  * Null means draw the flat glyph — an unidentified return should not be
  * given a specific airframe it was never reported to have.
  */
+/**
+ * The commonest airliner class, used when nothing identifies the
+ * contact at all.
+ *
+ * 65% of a live sample were narrowbodies, so for a return that reports
+ * neither type nor emitter category this is the likeliest airframe by a
+ * wide margin. It is a fallback, not a claim, and the inspector says
+ * the type was not reported.
+ */
+export const FALLBACK_FAMILY = "narrowbody"
+
+/**
+ * The family to DRAW for a contact.
+ *
+ * Returns null only for something that is not an aircraft at all — a
+ * surface vehicle — which should not be drawn by an aircraft layer in
+ * any form. Everything else gets geometry: a flat dot among 3D
+ * airframes reads as a rendering fault, not as caution.
+ */
+export function familyForDrawing(ac) {
+    if (!ac || isSurfaceVehicle(ac)) return null
+    return familyFor(ac) || FALLBACK_FAMILY
+}
+
 export function familyFor(ac) {
     if (!ac || isSurfaceVehicle(ac)) return null
     const type = String(ac.type || ac.aircraft_type || "").trim().toUpperCase()

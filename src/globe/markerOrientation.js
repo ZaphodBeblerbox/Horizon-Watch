@@ -91,3 +91,36 @@ export function vesselHeading(v) {
     if (cog !== null && cog >= 0 && cog < 360) return cog
     return null
 }
+
+/**
+ * The compass bearing from one position to another, or null.
+ *
+ * WHY THIS IS HERE. 44% of AIS vessels report no usable heading and
+ * this feed carries no course-over-ground, so those hulls had nothing
+ * to point along and were drawn as a plain dot instead. A vessel that
+ * has MOVED between two reports has told us its course by doing so —
+ * that is an observation, not a guess, and it is the honest way to
+ * recover most of that 44%.
+ *
+ * `minMetres` exists because AIS positions jitter at rest. Below it the
+ * two fixes are the same place and the "direction" between them is
+ * noise that would spin a moored ship on the spot.
+ */
+export function bearingBetween(lat1, lon1, lat2, lon2, minMetres = 40) {
+    const a1 = coord(lat1), o1 = coord(lon1), a2 = coord(lat2), o2 = coord(lon2)
+    if (a1 === null || o1 === null || a2 === null || o2 === null) return null
+
+    const R = 6371000
+    const toRad = Math.PI / 180
+    const dLat = (a2 - a1) * toRad
+    const dLon = (o2 - o1) * toRad
+    const midLat = ((a1 + a2) / 2) * toRad
+    const dist = R * Math.hypot(dLat, dLon * Math.cos(midLat))
+    if (!Number.isFinite(dist) || dist < minMetres) return null
+
+    const y = Math.sin(dLon) * Math.cos(a2 * toRad)
+    const x = Math.cos(a1 * toRad) * Math.sin(a2 * toRad)
+            - Math.sin(a1 * toRad) * Math.cos(a2 * toRad) * Math.cos(dLon)
+    const brg = (Math.atan2(y, x) * 180) / Math.PI
+    return (brg + 360) % 360
+}

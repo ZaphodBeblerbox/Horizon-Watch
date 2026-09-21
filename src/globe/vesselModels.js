@@ -56,5 +56,16 @@ const HEADING_OFFSET_DEG = 270
 export function modelHeadingRadians(vessel) {
     const hdg = vesselHeading(vessel)
     if (hdg === null) return null
-    return ((hdg + HEADING_OFFSET_DEG) * Math.PI) / 180
+    return headingRadiansFromDegrees(hdg)
+}
+
+/**
+ * The same conversion for a heading we worked out ourselves — a course
+ * derived from movement, or 0 for a vessel whose orientation nobody has
+ * reported. Separate entry point because the caller, not this module,
+ * is the one that knows where the number came from.
+ */
+export function headingRadiansFromDegrees(deg) {
+    const d = Number(deg)
+    return (((Number.isFinite(d) ? d : 0) + HEADING_OFFSET_DEG) * Math.PI) / 180
 }

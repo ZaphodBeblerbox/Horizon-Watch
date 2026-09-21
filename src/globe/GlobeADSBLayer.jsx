@@ -12,7 +12,7 @@ import { getShapeMarkerDataUri } from "./entityIcons.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { safeCartesian, billboardRotation } from "./markerOrientation.js"
 import { deadReckon } from "./deadReckon.js"
-import { familyFor, modelUrl, modelHeadingRadians } from "./aircraftModels.js"
+import { familyForDrawing, isSurfaceVehicle, modelUrl, modelHeadingRadians } from "./aircraftModels.js"
 import useCameraHeading from "./useCameraHeading.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
@@ -114,7 +114,12 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                     .slice(0, ADSB_CAP),
             }
         }
-        const valid = smooth.filter(ac => ac.lat != null && (ac.lon ?? ac.longitude) != null)
+        // ADS-B emitter category C* is a SURFACE vehicle or a fixed
+        // obstruction — pushback tugs, airport trucks, masts. Around 5%
+        // of a live sample. They were being drawn as contacts; an
+        // aircraft layer should simply not carry them.
+        const valid = smooth.filter(ac => ac.lat != null && (ac.lon ?? ac.longitude) != null
+                                          && !isSurfaceVehicle(ac))
         if (valid.length <= DESKTOP_ADSB_CAP) return { filtered: valid }
         const centerLat = viewBounds ? (viewBounds.south + viewBounds.north) / 2 : 0
         const centerLng = viewBounds ? (viewBounds.west  + viewBounds.east)  / 2 : 0
@@ -159,7 +164,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
             // A family only when the type or category says so — an
             // unidentified return keeps the flat glyph rather than being
             // given an airframe it was never reported to have.
-            const fam = familyFor(ac)
+            const fam = familyForDrawing(ac)
             if (fam) m.set(id, fam)
         }
         return { modelled: m, dropIds: drops }
@@ -249,16 +254,15 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos 
                 // now also wired into the globe billboard itself).
                 const watchlisted = !!(icao && watchlistedIcaos?.has(String(icao).toUpperCase()))
                 const classification = acClassify(ac)
-                // A DOT, NOT A LITTLE AEROPLANE. Aircraft are drawn as
-                // real airframes now; what reaches this line is a
-                // contact whose type and emitter category both said
-                // nothing, so it gets a mark that says "something is
-                // here" rather than a silhouette of an aircraft it was
-                // never reported to be.
+                // The glyph is now only a safety net for a contact beyond
+                // the model budget, which the viewport limit means should
+                // not happen in practice. It is a small chevron rather
+                // than a dot: a circle among 3D airframes read as a
+                // rendering fault rather than as an aircraft.
                 const icon = getShapeMarkerDataUri({
-                    shape: "circle",
+                    shape: "triangle",
                     color: watchlisted ? "#FFB020" : "#8E9BAA",
-                    size: BILLBOARD_SIZE * 0.55,
+                    size: BILLBOARD_SIZE * 0.6,
                 })
                 const dropColor = Color.fromCssColorString("#8899aa") // mirrors --text-secondary
 

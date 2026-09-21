@@ -28,25 +28,74 @@ from make_aircraft_models import Mesh, to_glb  # noqa: E402
 OUT = pathlib.Path(__file__).resolve().parent.parent / "public" / "models" / "vessel"
 
 
-def hull(m, length, beam, depth, bow_frac=0.22, stern_frac=0.10):
-    """A hull: flat bottom, vertical sides, a pointed bow, a square stern."""
+def hull(m, length, beam, depth, bow_frac=0.22, stern_frac=0.10, seg=7):
+    """A hull with a raked stem, a chamfered bilge and deck sheer.
+
+    The first version was a flat-bottomed box with a point on the front,
+    and at any zoom where a ship is more than a few pixels that is what
+    it looked like. Three things carry almost all of the improvement:
+
+      - a CHAMFERED BILGE, so the turn from bottom to side is two facets
+        instead of a right angle. Real hulls are round there and the
+        square edge is the single most model-like thing about a box.
+      - a RAKED STEM: the bow overhangs forward at deck level and tucks
+        under at the waterline, which is what makes a ship read as
+        moving rather than as a brick.
+      - DECK SHEER, the slight rise of the deck towards the bow. A few
+        centimetres of it is the difference between a ship and a barge.
+
+    Every face is wound by quad_outward against the hull centroid rather
+    than by hand. Writing the orders out by hand is how box() ended up
+    lit on the inside, and the first draft of this function repeated it
+    exactly - the hull came out uniformly dark because half its faces
+    pointed inwards.
+    """
+    centre = (length / 2, 0.0, depth / 2)
     bow_x = length * (1 - bow_frac)
     stern_x = length * stern_frac
-    # Waterline stations as (x, half-beam).
-    stations = [(0.0, beam * 0.34), (stern_x, beam / 2),
-                (bow_x, beam / 2), (length, 0.0)]
-    for s in range(len(stations) - 1):
-        x0, b0 = stations[s]
-        x1, b1 = stations[s + 1]
-        # Deck and bottom.
-        m.quad((x0, -b0, depth), (x1, -b1, depth), (x1, b1, depth), (x0, b0, depth))
-        m.quad((x0, b0, 0.0), (x1, b1, 0.0), (x1, -b1, 0.0), (x0, -b0, 0.0))
-        # Sides.
-        m.quad((x0, b0, 0.0), (x1, b1, 0.0), (x1, b1, depth), (x0, b0, depth))
-        m.quad((x0, -b0, depth), (x1, -b1, depth), (x1, -b1, 0.0), (x0, -b0, 0.0))
+
+    # Stations: x, half-beam at deck, half-beam at the bilge, deck height.
+    def station(t):
+        x = t * length
+        if x < stern_x:                      # transom shoulder
+            f = 0.72 + 0.28 * (x / max(stern_x, 1e-6))
+        elif x > bow_x:                      # fining towards the stem
+            u = (x - bow_x) / max(length - bow_x, 1e-6)
+            f = (1 - u) ** 0.65
+        else:
+            f = 1.0
+        half = beam / 2 * f
+        sheer = depth * 0.10 * max(0.0, (x / length - 0.55)) / 0.45
+        return x, half, half * 0.78, depth + sheer
+
+    ts = [k / (seg * 3) for k in range(seg * 3 + 1)]
+    prev = None
+    for t in ts:
+        cur = station(t)
+        if prev is None:
+            prev = cur
+            continue
+        (x0, h0, b0, d0), (x1, h1, b1, d1) = prev, cur
+        # The stem rakes forward: at the bow the deck edge runs ahead of
+        # the waterline, so the keel line is pulled aft of the deck line.
+        k0 = x0 - (length * 0.05 if x0 > bow_x else 0.0)
+        k1 = x1 - (length * 0.05 if x1 > bow_x else 0.0)
+        for sgn in (1, -1):
+            # deck edge -> bilge -> keel, two facets per side
+            m.quad_outward(centre, (x0, sgn * h0, d0), (x1, sgn * h1, d1),
+                           (x1, sgn * b1, depth * 0.30), (x0, sgn * b0, depth * 0.30))
+            m.quad_outward(centre, (x0, sgn * b0, depth * 0.30), (x1, sgn * b1, depth * 0.30),
+                           (k1, sgn * b1 * 0.45, 0.0), (k0, sgn * b0 * 0.45, 0.0))
+        # deck and bottom
+        m.quad_outward(centre, (x0, -h0, d0), (x1, -h1, d1), (x1, h1, d1), (x0, h0, d0))
+        m.quad_outward(centre, (k0, b0 * 0.45, 0.0), (k1, b1 * 0.45, 0.0),
+                       (k1, -b1 * 0.45, 0.0), (k0, -b0 * 0.45, 0.0))
+        prev = cur
+
     # Transom.
-    m.quad((0.0, -stations[0][1], 0.0), (0.0, stations[0][1], 0.0),
-           (0.0, stations[0][1], depth), (0.0, -stations[0][1], depth))
+    _, h, bg, d = station(0.0)
+    m.quad_outward(centre, (0.0, -h, d), (0.0, h, d),
+                   (0.0, bg * 0.45, 0.0), (0.0, -bg * 0.45, 0.0))
 
 
 def box(m, x0, x1, y0, y1, z0, z1):
