@@ -125,13 +125,17 @@ function computeLayout(nodes, links) {
     return positions
 }
 
-function NodePlate({ node, pos, selected, onSelect, onDragStart, dim = false }) {
+function NodePlate({ node, pos, selected, onSelect, onExpand, onDragStart, dim = false }) {
     const band = riskBand(node.risk)
     return (
         <g opacity={dim ? 0.18 : 1}
             transform={`translate(${pos.x},${pos.y})`} style={{ cursor: "grab" }}
             onPointerDown={(e) => onDragStart(e, node.id)}
             onClick={(e) => { e.stopPropagation(); onSelect(node) }}
+            /* Spec §8.8: "Double-click a node expands its neighbourhood."
+               It can do that literally now — re-rooting the walk on this
+               node rather than merely clearing filters over a fixed set. */
+            onDoubleClick={(e) => { e.stopPropagation(); onExpand?.(node) }}
         >
             {/* Real fix — the documented SVG-theming trap: a bare
                 fill/stroke="var(--x)" presentation attribute doesn't
@@ -233,6 +237,40 @@ export default function Ontology({ onOpenGenerate }) {
      * fixed things near it.
      */
     const [scope, setScope] = useState("global")
+
+    /**
+     * WALKING FROM AN ENTITY, not just listing a country's contents.
+     *
+     * Both existing scopes answer "what is in this box": global lists
+     * nations, a country lists its own airfields and events. Neither can
+     * answer "what is THIS connected to, and what are those connected
+     * to" — which is the question the graph exists for, and the reason
+     * the diagram only ever showed a flat ring.
+     *
+     * A root plus a hop count reads the canonical store instead, so the
+     * walk can cross between a vessel, its flag state and that state's
+     * relations — three different sources in one picture.
+     */
+    const [root, setRoot] = useState(null)      // {id, label, type} | null
+    const [hops, setHops] = useState(2)
+    const [entityQuery, setEntityQuery] = useState("")
+    const [entityHits, setEntityHits] = useState([])
+
+    useEffect(() => {
+        const q = entityQuery.trim()
+        if (q.length < 2) { setEntityHits([]); return }
+        let cancelled = false
+        // Debounced: a search box that fires per keystroke is a search
+        // box that fires ten requests to answer one question.
+        const t = setTimeout(() => {
+            fetch(`${API_BASE}/api/ontology/graph/search?q=${encodeURIComponent(q)}&limit=12`,
+                  { credentials: "include" })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((d) => { if (!cancelled) setEntityHits(d?.results || []) })
+                .catch(() => {})
+        }, 250)
+        return () => { cancelled = true; clearTimeout(t) }
+    }, [entityQuery])
     const [countries, setCountries] = useState([])
     useEffect(() => {
         fetch(`${API_BASE}/api/ontology/countries`, { credentials: "include" })
@@ -242,17 +280,44 @@ export default function Ontology({ onOpenGenerate }) {
     }, [])
 
     useEffect(() => {
-        const url = scope === "global"
-            ? `${API_BASE}/api/ontology/global?hours=168`
-            : `${API_BASE}/api/ontology/country/${encodeURIComponent(scope)}?hours=168`
-        fetch(url).then((r) => r.json()).then((d) => {
+        // The canonical store speaks in src/dst/relation; the diagram
+        // speaks in s/t/kind. Mapped here rather than renaming either,
+        // because the store's names are shared with the miner and the
+        // diagram's are the spec's (§6.6).
+        const fromStore = (d) => ({
+            ...d,
+            nodes: (d.nodes || []).map((n) => ({
+                ...n,
+                risk: n.risk ?? 30,
+                // The plate's sub-line is "type · risk"; without a type
+                // every node lands in the same tier.
+                type: n.type || "event",
+            })),
+            links: (d.links || []).map((l) => ({
+                id: l.id, s: l.src, t: l.dst, kind: l.relation,
+                conf: l.conf, inferred: l.inferred,
+                note: l.basis, method: l.method, events: l.events,
+            })),
+        })
+
+        const url = root
+            ? `${API_BASE}/api/ontology/graph/neighbourhood`
+              + `?id=${encodeURIComponent(root.id)}&hops=${hops}&min_conf=${confFloor}`
+            : scope === "global"
+                ? `${API_BASE}/api/ontology/global?hours=168`
+                : `${API_BASE}/api/ontology/country/${encodeURIComponent(scope)}?hours=168`
+        fetch(url).then((r) => r.json()).then((raw) => {
+            const d0 = root ? fromStore(raw) : raw
+            return d0
+        }).then((d) => {
             // A country graph carries no tiers, and can legitimately be
             // empty for a quiet week. Neither may throw.
             const nodes = Array.isArray(d?.nodes) ? d.nodes : []
             const links = Array.isArray(d?.links) ? d.links : []
             d = { ...d, nodes, links }
             setData(d)
-            const key = nodes.map((n) => n.id).sort().join(",") + `|${scope}`
+            const key = nodes.map((n) => n.id).sort().join(",")
+                + `|${scope}|${root?.id || ""}|${hops}`
             if (layoutKeyRef.current !== key) {
                 setPositions(computeLayout(nodes, links))
                 layoutKeyRef.current = key
@@ -269,7 +334,7 @@ export default function Ontology({ onOpenGenerate }) {
             }
         })
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [scope])
+    }, [scope, root, hops, confFloor])
 
     // Real deep-link entry point — the Briefings reader's "open in ontology"
     // xref action (and any other future caller) selects and locates a real
@@ -440,6 +505,62 @@ export default function Ontology({ onOpenGenerate }) {
                     a 50,686-entity store. Picking a country swaps it for
                     everything that country actually has — and joins each
                     event to the fixed things near it. */}
+                <div style={{ marginBottom: 14 }}>
+                    <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
+                        Walk from an entity
+                    </div>
+                    {root ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                            <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt)" }}>
+                                {root.label}
+                                <span style={{ display: "block", font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
+                                    {root.type} · {hops} hop{hops === 1 ? "" : "s"}
+                                </span>
+                            </span>
+                            <button className="btn ghost sm" onClick={() => { setRoot(null); setEntityQuery("") }}>
+                                clear
+                            </button>
+                        </div>
+                    ) : (
+                        <input className="input" value={entityQuery}
+                               onChange={(e) => setEntityQuery(e.target.value)}
+                               placeholder="vessel, country, airport, cable…"
+                               style={{ width: "100%", font: "400 12px var(--font)" }} />
+                    )}
+                    {!root && entityHits.length > 0 && (
+                        <div style={{ marginTop: 4, maxHeight: 168, overflowY: "auto" }}>
+                            {entityHits.map((h) => (
+                                <div key={h.id} role="button"
+                                     onClick={() => { setRoot({ id: h.id, label: h.label, type: h.type }); setEntityHits([]) }}
+                                     style={{ padding: "3px 0", cursor: "pointer",
+                                              font: "400 12px var(--font)", color: "var(--txt-2)" }}>
+                                    {h.label}
+                                    <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginLeft: 6 }}>
+                                        {h.type}{h.country ? ` · ${h.country}` : ""}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {root && (
+                        <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                            {[1, 2, 3].map((h) => (
+                                <button key={h} className={`btn sm${hops === h ? " primary" : ""}`}
+                                        onClick={() => setHops(h)}>{h} hop</button>
+                            ))}
+                        </div>
+                    )}
+                    {/* Rule 5: an empty pane says what would appear and how
+                        to get it, rather than sitting blank. */}
+                    {!root && entityQuery.trim().length < 2 && (
+                        <div style={{ marginTop: 4, font: "400 11px var(--font)", color: "var(--txt-4)" }}>
+                            Name a vessel, country, airport or cable to see what it
+                            connects to — and what those connect to. Double-click any
+                            plate to walk on from it.
+                        </div>
+                    )}
+                </div>
+
                 <div>
                     <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Scope</div>
                     <select className="input" value={scope}
@@ -552,7 +673,9 @@ export default function Ontology({ onOpenGenerate }) {
                             {visibleNodes.map((n) => positions[n.id] && (
                                 <NodePlate key={n.id} node={n} pos={positions[n.id]} selected={selected?.item?.id === n.id}
                                     dim={!!focus && !focus.nodes.has(n.id)}
-                                    onSelect={handleNodeClick} onDragStart={onDragStart} />
+                                    onSelect={handleNodeClick}
+                                    onExpand={(n) => setRoot({ id: n.id, label: n.label, type: n.type })}
+                                    onDragStart={onDragStart} />
                             ))}
                         </g>
                     </svg>

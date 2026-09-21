@@ -3585,6 +3585,23 @@ def api_graph_neighbourhood(
         return {"available": False, "error": str(e)[:200], "nodes": [], "links": []}
 
 
+@app.get("/api/ontology/graph/search")
+def api_graph_search(q: str = Query(...), limit: int = Query(20, ge=1, le=100)):
+    """Find an entity to start a walk from."""
+    try:
+        import sqlite3
+        import graph_store as gs
+        conn = sqlite3.connect(_akili_db_path())
+        try:
+            gs.ensure_schema(conn)
+            return {"available": True, "results": gs.search(conn, q, limit=limit)}
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("graph search failed")
+        return {"available": False, "error": str(e)[:200], "results": []}
+
+
 @app.get("/api/ontology/graph/stats")
 def api_graph_store_stats():
     """What is actually in the canonical graph."""

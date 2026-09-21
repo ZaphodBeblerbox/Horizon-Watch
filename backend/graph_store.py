@@ -238,3 +238,29 @@ def stats(conn: sqlite3.Connection) -> dict:
             "edges": total, "edges_by_relation": by_rel,
             "edges_by_method": by_method,
             "asserted": asserted, "inferred": total - asserted}
+
+
+def search(conn: sqlite3.Connection, q: str, *, limit: int = 20,
+           types: tuple | None = None) -> list:
+    """Find a node to start from.
+
+    Ordered so that an exact label match beats a prefix and a prefix
+    beats a substring: searching "Malta" should offer the country
+    before a vessel whose name happens to contain it.
+    """
+    term = (q or "").strip()
+    if len(term) < 2:
+        return []
+    like = f"%{term}%"
+    sql = ("SELECT id, type, label, country FROM graph_nodes"
+           " WHERE label LIKE ? COLLATE NOCASE")
+    args: list = [like]
+    if types:
+        sql += f" AND type IN ({','.join('?' * len(types))})"
+        args.extend(types)
+    sql += (" ORDER BY CASE WHEN label = ? COLLATE NOCASE THEN 0"
+            "            WHEN label LIKE ? COLLATE NOCASE THEN 1 ELSE 2 END,"
+            " LENGTH(label) LIMIT ?")
+    args.extend([term, f"{term}%", int(limit)])
+    return [{"id": r[0], "type": r[1], "label": r[2], "country": r[3]}
+            for r in conn.execute(sql, args).fetchall()]
