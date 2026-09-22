@@ -68,19 +68,47 @@ def real_history_days(events: list) -> float:
     return (max(dts) - min(dts)).total_seconds() / 86400.0
 
 
+#: The whole-world risk computation, memoised.
+#:
+#: compute_all_countries() scores 121 countries, and each one makes
+#: three full passes over the GDELT event list — measured at 4,840,000
+#: calls to _country_matches and 19.4 seconds for one invocation.
+#:
+#: It was being run from scratch on EVERY /api/notifications request,
+#: and the front end polls that every 20 seconds. So the tray's endpoint
+#: could never be faster than 19 seconds no matter what else was fixed:
+#: not the missing index, not the per-alert coverage N+1, neither of
+#: which touched this.
+#:
+#: Its only inputs are the GDELT event cache, which refreshes every 15
+#: minutes, and the GeoConfirmed counts. Recomputing between refreshes
+#: cannot produce a different answer, so a TTL under the refresh
+#: interval is exact rather than approximate.
+_RISK_CACHE: dict = {}
+_RISK_TTL_S = 600
+
+
 @router.get("/countries")
-def get_all_country_risk(window_days: int = 30):
+def get_all_country_risk(window_days: int = 30, force: bool = False):
+    import time as _time
+    hit = _RISK_CACHE.get(window_days)
+    if hit and not force and _time.time() - hit[0] < _RISK_TTL_S:
+        return hit[1]
+
     events = get_all_events()
     geo_counts = _real_geoconfirmed_counts_by_iso(window_days)
     hist_days = real_history_days(events)
     results = _gri.compute_all_countries(
         events, geo_counts, weights=_current_weights, window_days=window_days, real_history_days=hist_days,
     )
-    return {
+    payload = {
         "countries": results, "weights": _current_weights,
         "real_gdelt_history_days": hist_days, "real_total_gdelt_events": len(events),
         "window_days": window_days,
     }
+    import time as _t2
+    _RISK_CACHE[window_days] = (_t2.time(), payload)
+    return payload
 
 
 @router.get("/country/{iso_code}")

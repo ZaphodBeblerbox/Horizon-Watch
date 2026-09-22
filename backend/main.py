@@ -10832,7 +10832,7 @@ async def _findings_warm_loop():
 
 
 async def _ais_coverage_warm_loop():
-    """Keep the AIS coverage reading warm, so no request ever computes it.
+    """Keep the expensive derived caches warm, so no request computes them.
 
     coverage_for() is called once per alert by notification_relevance(),
     and the notifications endpoint runs that over up to 2,400 alerts. If
@@ -10857,6 +10857,24 @@ async def _ais_coverage_warm_loop():
                       f"{len(cov.get('blind_regions') or [])} blind regions")
         except Exception as e:                               # noqa: BLE001
             print(f"[ais-coverage] warm failed: {e}")
+
+        # THE WHOLE-WORLD RISK INDEX, for the same reason and worse.
+        # compute_all_countries() scores 121 countries with three full
+        # passes over the GDELT events each — 4,840,000 comparisons,
+        # measured at 19.4s — and /api/notifications called it on every
+        # single request while the front end polled every 20 seconds. It
+        # is cached now; this keeps the cache filled so the cold run
+        # never lands on somebody waiting for their notification tray.
+        try:
+            from routers import risk_index as _ri
+            loop_ = asyncio.get_event_loop()
+            t1 = time.monotonic()
+            rows = await loop_.run_in_executor(
+                _maintenance_executor, lambda: _ri.get_all_country_risk(force=True))
+            print(f"[risk-index] warmed in {time.monotonic() - t1:.1f}s; "
+                  f"{len(rows.get('countries') or [])} countries")
+        except Exception as e:                               # noqa: BLE001
+            print(f"[risk-index] warm failed: {e}")
         # Just under the 15-minute cache TTL so it never lapses.
         await asyncio.sleep(720)
 
@@ -24517,22 +24535,35 @@ def api_get_notifications(
     from datetime import datetime as _dt, timedelta as _td
 
     cutoff = _dt.utcnow() - _td(hours=max(1, min(hours, 24 * 30)))
-    # Scan a bounded window newest-first and stop once enough have qualified.
-    # Unbounded scans over a 346k-row table are how this app has previously
-    # put blocking work on the event loop; the cap is the point.
+    # WIDEN ONLY IF NEEDED. This used to fetch limit*40 rows in one go —
+    # 2,400 for the default limit of 60 — on the assumption that about
+    # one alert in forty earns an interruption. Measured, it is closer
+    # to one in nine, so the great majority of those rows were read and
+    # thrown away.
+    #
+    # That is cheap locally and expensive in production, where the rows
+    # are scattered through a 37GB file on a network-attached volume and
+    # each one is a random page fetch at network latency. Fetching 2,400
+    # rows to return 60 was most of why this endpoint still took 12-30s
+    # after its missing index and its N+1 were both fixed.
+    #
+    # So: start small and widen only if too few qualified. The common
+    # case reads one page; a genuinely quiet window costs what it did
+    # before, which is the right way round.
     scan_cap = max(limit * 40, 2000)
+    pages = [max(limit * 10, 300), max(limit * 20, 800), scan_cap]
 
-    with _gdb() as db:
-        rows = (
-            db.query(_A)
-            .filter(_A.status == "active", _A.created_at >= cutoff)
-            .order_by(_A.created_at.desc())
-            .limit(scan_cap)
-            .all()
-        )
+    def _fetch(n):
+        with _gdb() as db:
+            return (
+                db.query(_A)
+                .filter(_A.status == "active", _A.created_at >= cutoff)
+                .order_by(_A.created_at.desc())
+                .limit(n)
+                .all()
+            )
 
-    out = []
-    for r in rows:
+    def _judge(r):
         item = {
             "alert_id": r.alert_id, "alert_type": r.alert_type, "source": r.source,
             "title": r.title, "severity": r.severity, "lat": r.lat, "lon": r.lon,
@@ -24541,12 +24572,25 @@ def api_get_notifications(
             "raw_json": r.raw_json,
         }
         try:
-            verdict = _nc.notification_relevance(item)
-            headline = _nc.headline(item)
-        except Exception as ex:                 # never let one bad row 500 the tray
+            return r, _nc.notification_relevance(item), _nc.headline(item)
+        except Exception as ex:             # never let one bad row 500 the tray
             logger.debug("[notifications] %s: %s", r.alert_id, ex)
-            verdict, headline = {"notify": False, "sev": "low", "reason": "unreadable"}, r.title
+            return r, {"notify": False, "sev": "low", "reason": "unreadable"}, r.title
 
+    judged, exhausted = [], False
+    for page in pages:
+        rows = _fetch(page)
+        exhausted = len(rows) < page
+        # Judged once and kept — recomputing per widening would trade the
+        # I/O this saves for CPU it does not need to spend.
+        judged = [_judge(r) for r in rows]
+        if include_silent or exhausted:
+            break
+        if sum(1 for _r, v, _h in judged if v["notify"]) >= limit:
+            break
+
+    out = []
+    for r, verdict, headline in judged:
         if not verdict["notify"] and not include_silent:
             continue
         out.append({
