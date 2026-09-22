@@ -786,7 +786,13 @@ _NEWS_STORE_LOCK = threading.Lock()
 _PROCESSED_URLS: CappedDict = CappedDict(maxsize=50_000)  # url → timestamp, evicted after 72h
 _PROCESSED_URLS_TTL = 72 * 3600  # 72 hours in seconds
 _FIRST_EXTRACTION_DONE = False   # cleared on first cycle so all current articles are processed fresh
-_executor = ThreadPoolExecutor(max_workers=4)   # for blocking I/O in sync extraction
+# Shared pool for blocking I/O behind HTTP endpoints — 55 call sites use
+# it. Four was thin for that many, and every one of them is latency a
+# user is waiting on; the feed-driven work that used to crowd them out
+# now has _sanctions_executor of its own. Kept modest rather than large
+# because most of what runs here ends in a SQLite write, and more writer
+# threads buys contention ("database is locked") rather than throughput.
+_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="shared-io")
 # Dedicated, single-worker executor for the RSS news-extraction cycle only.
 # That sync function is a long-running batch job (up to 80 feeds, near-dup/
 # IDF/boilerplate scoring per candidate article) that previously ran on the
@@ -819,6 +825,26 @@ _geoconfirmed_executor = ThreadPoolExecutor(max_workers=1)
 # AIS/ADS-B/GDELT work, and a warm queued behind those never ran at all —
 # the loop started, logged, and then waited forever for a thread.
 _frontline_executor = ThreadPoolExecutor(max_workers=1)
+
+# THE AIS FIRE-HOSE GETS ITS OWN THREADS.
+#
+# The 2026-09 event-loop-starvation fix moved the per-position sanctions
+# check off the event loop and onto `_executor` — which has four workers
+# and is shared by 55 call sites, including the HTTP endpoints. Under
+# real AIS volume (8,000+ messages/60s) a burst of sanctions hits takes
+# all four, and every request that needs a worker waits behind them until
+# the platform edge gives up at ~15s and returns 502. The process stays
+# alive and keeps logging throughout, which is exactly what makes it look
+# like a CORS fault from the browser: a 502 carries no
+# Access-Control-Allow-Origin header, so the origin check fails before
+# anyone reads the status.
+#
+# Same remedy as _news_executor / _geoconfirmed_executor /
+# _frontline_executor, applied one level down: work whose ARRIVAL RATE is
+# set by an external feed must never share a pool with work whose latency
+# a user is waiting on.
+_sanctions_executor = ThreadPoolExecutor(max_workers=2,
+                                         thread_name_prefix="sanctions")
 # Zone scans: satellite fetch + ONNX inference, minutes at a time.
 _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="zone-scan")
 # Briefing drafting gets its OWN pool. A researched narrative draft occupies a
@@ -9455,7 +9481,10 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     if not mmsi:
         return
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(_executor, _check_sanctions_on_update_sync, vessel)
+    # Its own pool — see _sanctions_executor. On the shared one this
+    # starved every HTTP endpoint under real AIS volume.
+    await loop.run_in_executor(_sanctions_executor,
+                               _check_sanctions_on_update_sync, vessel)
 
 
 def _check_sanctions_on_update_sync(vessel: dict) -> None:
