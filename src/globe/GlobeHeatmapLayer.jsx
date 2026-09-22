@@ -20,10 +20,24 @@ const colorFor = (intensity) => {
     return                 Color.fromCssColorString("#0033FF").withAlpha(0.35)
 }
 
-export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24, bounds = null }) {
+export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24,
+                                            bounds = null,
+                                            // "tracks" grids AIS/ADS-B positions;
+                                            // "gfw" grids Global Fishing Watch
+                                            // events, which are discrete
+                                            // incidents and so are gridded much
+                                            // coarser — see gfw.density().
+                                            source = "tracks",
+                                            gfwKind = "encounters", days = 30 }) {
     const { viewer } = useCesium()
     const entitiesRef = useRef([])
     const [cells, setCells] = useState(null)
+    // The cell size comes from whatever answered, because the two
+    // sources do not use the same grid and a fixed half-cell drew GFW
+    // cells at a fifth of their real footprint — a heatmap with gaps
+    // between the cells, which reads as sparse data rather than a
+    // rendering choice.
+    const [cellDeg, setCellDeg] = useState(null)
 
     // Fetch heatmap data when enabled / bounds / params change
     useEffect(() => {
@@ -31,19 +45,32 @@ export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24,
         let cancelled = false
         const ctrl = new AbortController()
 
-        let url = `${API_BASE}/api/analytics/heatmap?domain=${domain}&hours=${hours}`
-        if (bounds && bounds.south != null) {
-            url += `&south=${bounds.south.toFixed(3)}&north=${bounds.north.toFixed(3)}`
-                + `&west=${bounds.west.toFixed(3)}&east=${bounds.east.toFixed(3)}`
+        let url
+        if (source === "gfw") {
+            // Worldwide: GFW publishes days behind real time and the
+            // whole point of the layer is the global pattern, so it is
+            // not viewport-bounded the way the track heatmap is.
+            url = `${API_BASE}/api/gfw/heatmap?kind=${encodeURIComponent(gfwKind)}&days=${days}`
+        } else {
+            url = `${API_BASE}/api/analytics/heatmap?domain=${domain}&hours=${hours}`
+            if (bounds && bounds.south != null) {
+                url += `&south=${bounds.south.toFixed(3)}&north=${bounds.north.toFixed(3)}`
+                    + `&west=${bounds.west.toFixed(3)}&east=${bounds.east.toFixed(3)}`
+            }
         }
 
         fetch(url, { signal: ctrl.signal })
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (!cancelled) setCells(d?.cells || []) })
+            .then(d => {
+                if (cancelled) return
+                setCells(d?.cells || [])
+                setCellDeg(Number.isFinite(d?.cell_deg) ? d.cell_deg : null)
+            })
             .catch(err => { if (err.name !== "AbortError") console.warn("[globe-heatmap]", err) })
 
         return () => { cancelled = true; ctrl.abort() }
-    }, [enabled, domain, hours, bounds?.south, bounds?.north, bounds?.west, bounds?.east])
+    }, [enabled, domain, hours, source, gfwKind, days,
+        bounds?.south, bounds?.north, bounds?.west, bounds?.east])
 
     // Render rectangles
     useEffect(() => {
@@ -61,17 +88,19 @@ export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24,
         if (!enabled || !cells?.length) return
 
         const max = Math.max(...cells.map(c => c.count), 1)
+        const half = cellDeg ? cellDeg / 2 : HALF_CELL
         const added = []
 
         cells.forEach(cell => {
             const intensity = cell.count / max
-            const entityId = `heatmap-${domain}-${cell.lat.toFixed(3)}-${cell.lon.toFixed(3)}`
+            const entityId = `heatmap-${source === "gfw" ? `gfw-${gfwKind}` : domain}`
+                           + `-${cell.lat.toFixed(3)}-${cell.lon.toFixed(3)}`
             const entity = viewer.entities.add({
                 id: entityId,
                 rectangle: {
                     coordinates: Rectangle.fromDegrees(
-                        cell.lon - HALF_CELL, cell.lat - HALF_CELL,
-                        cell.lon + HALF_CELL, cell.lat + HALF_CELL
+                        cell.lon - half, cell.lat - half,
+                        cell.lon + half, cell.lat + half
                     ),
                     material:        colorFor(intensity),
                     heightReference: HeightReference.CLAMP_TO_GROUND,
@@ -80,14 +109,20 @@ export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24,
             setEntity(entityId, "heatmap_cell", {
                 lat: cell.lat, lon: cell.lon,
                 count: cell.count, avg_speed: cell.avg_speed,
-                domain, intensity,
+                domain: source === "gfw" ? `gfw:${gfwKind}` : domain,
+                intensity,
+                // GFW's own flag count, under GFW's name — never
+                // restated as this system's assessment.
+                gfw_potential_risk_count: cell.gfw_potential_risk_count,
+                distinct_vessels: cell.distinct_vessels,
+                cell_size_deg: cellDeg || undefined,
             })
             added.push(entity)
         })
         entitiesRef.current = added
 
         return cleanup
-    }, [viewer, enabled, cells])
+    }, [viewer, enabled, cells, cellDeg, source, gfwKind, domain])
 
     return null
 }

@@ -215,3 +215,78 @@ def events(kind: str = "encounters", days: int = 14, limit: int = 200,
     }
     _cache[key] = {"ts": time.time(), "data": data}
     return data
+
+
+# ── Density ───────────────────────────────────────────────────────────
+
+#: Default grid size for the heatmap, in degrees. Coarser than the AIS
+#: heatmap's 0.1° on purpose: GFW publishes discrete events, not track
+#: positions, so at 0.1° almost every cell holds exactly one event and
+#: the "heatmap" is just the markers again with softer edges.
+DENSITY_CELL_DEG = 0.5
+
+
+def density(kind: str = "encounters", days: int = 30, limit: int = 2000,
+            cell_deg: float = DENSITY_CELL_DEG, force: bool = False) -> dict:
+    """GFW events aggregated onto a grid, for heatmap rendering.
+
+    WHY THIS IS NOT THE MARKER LAYER WITH A BLUR. Individual encounter
+    markers answer "what happened here"; they are useless for "where
+    does this happen", which is the question GFW's own map is good at
+    and ours was not. One transhipment is an incident. Four hundred in
+    one patch of ocean is a pattern, and it is invisible when each one
+    is a separate hollow circle at the same size as all the others.
+
+    Returns the same {cells:[{lat,lon,count}]} shape the AIS/ADS-B
+    heatmap already uses, so the existing globe layer can draw it
+    without a second renderer.
+    """
+    got = events(kind, days=days, limit=limit, force=force)
+    if not got.get("available"):
+        return {"available": False, "error": got.get("error"), "cells": [],
+                "kind": kind, "count": 0}
+
+    step = float(cell_deg) if cell_deg and cell_deg > 0 else DENSITY_CELL_DEG
+    grid: dict[tuple, dict] = {}
+    for e in got.get("events") or []:
+        lat, lon = e.get("lat"), e.get("lon")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            continue
+        # Snapped to the cell CENTRE, not its corner: the globe layer
+        # draws a symbol at the coordinate it is given, and a corner
+        # puts every cell half a cell south-west of the events in it.
+        klat = round((lat // step) * step + step / 2, 4)
+        klon = round((lon // step) * step + step / 2, 4)
+        cell = grid.setdefault((klat, klon), {
+            "lat": klat, "lon": klon, "count": 0, "risk": 0, "vessels": set(),
+        })
+        cell["count"] += 1
+        if e.get("gfw_potential_risk"):
+            cell["risk"] += 1
+        for v in e.get("vessels") or []:
+            name = v.get("name") or v.get("mmsi")
+            if name:
+                cell["vessels"].add(str(name))
+
+    cells = []
+    for c in grid.values():
+        cells.append({
+            "lat": c["lat"], "lon": c["lon"], "count": c["count"],
+            # How much of this cell GFW itself flagged — carried under
+            # their name, never restated as our own assessment.
+            "gfw_potential_risk_count": c["risk"],
+            "distinct_vessels": len(c["vessels"]),
+        })
+    cells.sort(key=lambda c: -c["count"])
+
+    return {
+        "available": True, "cells": cells, "kind": kind, "days": days,
+        "cell_deg": step, "count": len(cells),
+        "events_gridded": sum(c["count"] for c in cells),
+        # Carried through, because an empty map is a statement about
+        # GFW's publishing schedule rather than about the sea.
+        "lag_days": got.get("lag_days"),
+        "stale": got.get("stale"),
+        "source": got.get("source"),
+        "source_url": got.get("source_url"),
+    }

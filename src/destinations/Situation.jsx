@@ -387,6 +387,7 @@ export default function Situation({ onOpenDossier }) {
     // in — 31 volumes over one German state is a wash at wider zoom.
     const [airspaceOn, setAirspaceOn] = useState(false)
     const [airspaceStatus, setAirspaceStatus] = useState(null)
+    const [gfwHeatOn, setGfwHeatOn] = useState(false)
     // The Ukraine time slider. `null` means live; any other value is a
     // published snapshot date. Index rather than date so the control is
     // evenly spaced in SNAPSHOTS, which is what exists, rather than in
@@ -892,6 +893,7 @@ export default function Situation({ onOpenDossier }) {
                 <LayerGroup id="context" title="Context layers"
                             activeCount={Object.values(contextOn).filter(Boolean).length
                                          + (airspaceOn ? 1 : 0)
+                                         + (gfwHeatOn ? 1 : 0)
                                          + Object.values(gfwOn).filter(Boolean).length}>
                     {[
                         ["risk", "Country risk index"],
@@ -961,6 +963,28 @@ export default function Situation({ onOpenDossier }) {
                             </button>
                         </div>
                     ))}
+                    {/* DENSITY, NOT INCIDENTS. The marker layers above answer
+                        "what happened here". This answers "where does this
+                        happen" — the thing GFW's own map is good at and this
+                        one was not: one transhipment is an incident, four
+                        hundred in a patch of ocean is a pattern, and that
+                        pattern is invisible when every event is an identical
+                        hollow circle at the same size as all the others. */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
+                            Encounter density
+                            <span style={{ display: "block", font: "400 10px var(--font)", color: "var(--txt-4)" }}>
+                                30 days gridded at 0.5° · worldwide
+                            </span>
+                        </span>
+                        <button
+                            onClick={() => setGfwHeatOn((v) => !v)}
+                            title={gfwHeatOn ? "Hide layer" : "Show layer"}
+                            style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: gfwHeatOn ? "var(--txt-2)" : "var(--txt-4)" }}
+                        >
+                            <svg className="icon sm"><use href={gfwHeatOn ? "#i-eye" : "#i-eye-off"} /></svg>
+                        </button>
+                    </div>
                     {/* Frontlines, per theatre. The unavailable ones are
                         listed rather than hidden: a control layer offering
                         only Ukraine implies the other wars have no front
@@ -1323,6 +1347,7 @@ export default function Situation({ onOpenDossier }) {
                         frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
                         frontlinesAt={frontlinesAt}
                         gfwKinds={Object.keys(gfwOn).filter((k) => gfwOn[k])}
+                        gfwHeatmapEnabled={gfwHeatOn}
                         airspaceEnabled={airspaceOn}
                         onAirspaceStatus={setAirspaceStatus}
                         onFacilityStatus={setFacStatus}

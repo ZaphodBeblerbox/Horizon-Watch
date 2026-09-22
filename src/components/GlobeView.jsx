@@ -134,6 +134,7 @@ export default function GlobeView({
     warmapTheatres = [],
     frontlinesAt = null,
     gfwKinds = [],
+    gfwHeatmapEnabled = false,
     airspaceEnabled = false,
     facilityTypes = [],
     onFacilityStatus = null,
@@ -1034,6 +1035,11 @@ export default function GlobeView({
                 {/* Satellite-AIS events — drawn hollow, because they are
                     records of something days old, not live contacts. */}
                 <GlobeGfwLayer enabled={gfwKinds.length > 0} kinds={gfwKinds} />
+                {/* Worldwide rather than viewport-bounded: GFW publishes days
+                    behind real time and the value of the layer is the global
+                    pattern. See gfw.density(). */}
+                <GlobeHeatmapLayer enabled={gfwHeatmapEnabled} source="gfw"
+                                   gfwKind="encounters" days={30} />
                 {/* Controlled airspace as real volumes — floor to ceiling. */}
                 <GlobeAirspaceLayer enabled={airspaceEnabled} viewBounds={viewBounds}
                                     onStatus={onAirspaceStatus} />

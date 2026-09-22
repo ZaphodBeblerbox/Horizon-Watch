@@ -45,6 +45,30 @@ const PRINT_CSS = `
   .docpage{box-shadow:none;margin:0;width:8.5in;min-height:11in;padding:.72in .8in .6in;
            break-after:page}
   .docpage:last-child{break-after:auto}
+
+  /* COLOUR HAS TO BE ASKED FOR. Browsers drop background colours when
+     printing unless told otherwise, so every severity bar, callout rule
+     and shaded cell in the briefing came out white — which is most of
+     why the PDF read as a broken screenshot of the screen rather than a
+     document. */
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+  /* NOTHING SPLITS ACROSS A PAGE MID-THOUGHT. A table row broken over a
+     page boundary loses its header and reads as corrupted; a heading
+     stranded at the foot of a page belongs to nothing. */
+  table,figure,blockquote{break-inside:avoid}
+  tr,li{break-inside:avoid}
+  thead{display:table-header-group}
+  tfoot{display:table-footer-group}
+  h1,h2,h3,h4{break-after:avoid;break-inside:avoid}
+
+  /* An image wider than the text block silently pushed the page out and
+     clipped the right margin. */
+  img,svg,canvas{max-width:100%;height:auto}
+
+  /* A link printed as blue underlined text with no destination is
+     noise on paper; the reference grammar already carries the source. */
+  a{color:inherit;text-decoration:none}
 }
 `
 
@@ -134,7 +158,17 @@ export default function PrintLayout({ reportId, onBack, onOpenDeck }) {
                 <div className="field"><label style={{ font: "600 11px var(--font)", color: "var(--txt-3)" }}>Zoom</label>
                     <div className="seg" style={{ marginTop: 4 }}>{[75, 100, 125].map((z) => <button key={z} aria-pressed={zoom === z} onClick={() => setZoom(z)}>{z}%</button>)}</div>
                 </div>
-                <button className="btn primary" onClick={() => window.print()}>print / pdf</button>
+                {/* SAYS WHERE THE PDF COMES FROM. The export works — the
+                    layout below is a real paginated document, not a
+                    screenshot — but it arrives through the browser's own
+                    print dialog, and "print" on a button is not a
+                    discoverable way to say "this is how you get a PDF".
+                    Choose "Save as PDF" as the destination. */}
+                <button className="btn primary" onClick={() => window.print()}
+                        title={'Opens the print dialog — choose "Save as PDF" as the '
+                               + "destination. The pages below are what you get, at letter size."}>
+                    export pdf
+                </button>
                 {report && <button className="btn" onClick={() => onOpenDeck?.(reportId)}>deck</button>}
                 {/* distribute — omitted: no real distribution-list feature
                     exists in the backend (checked main.py/database.py) — a

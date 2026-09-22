@@ -3748,6 +3748,29 @@ def api_ontology_chains(
         return {"available": False, "error": str(e)[:200], "chains": []}
 
 
+@app.get("/api/gfw/heatmap")
+def api_gfw_heatmap(kind: str = Query("encounters"),
+                    days: int = Query(30, ge=1, le=90),
+                    limit: int = Query(2000, ge=1, le=5000),
+                    cell_deg: float = Query(0.5, gt=0.0, le=5.0),
+                    force: bool = Query(False)):
+    """GFW events gridded for heatmap rendering.
+
+    The marker layer answers "what happened here". This answers "where
+    does this happen", which is what GFW's own map is good at and ours
+    was not: one transhipment is an incident, four hundred in one patch
+    of ocean is a pattern, and that pattern is invisible when every
+    event is an identical hollow circle.
+    """
+    try:
+        import gfw as _gfw
+        return _gfw.density(kind, days=days, limit=limit,
+                            cell_deg=cell_deg, force=force)
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("gfw heatmap failed")
+        return {"available": False, "error": str(e)[:200], "cells": []}
+
+
 @app.get("/api/airspace")
 def api_airspace(
     west:  float = Query(...),
