@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { toast } from "../ui/toast.js"
 import { boundsToPolygon } from "../destinations/sourcesLogic.js"
+import { detectionPixels, detectionLabel, provenanceLine } from "./annotateScene.js"
+import { detectionCorners } from "../globe/detectionShape.js"
 import { SENSOR_OPTIONS } from "./imagery/sceneComparison.jsx"
 import { usablePasses, isSar, bboxAreaKm2, cornerCount, fmtArea, confidenceBand, detectionDiamond } from "./imagery/taskingMath.js"
 
@@ -76,6 +78,80 @@ function polygonVerticesToGeoJson(vertices) {
     const ring = vertices.map(([lat, lon]) => [lon, lat])
     ring.push(ring[0])
     return { type: "Polygon", coordinates: [ring] }
+}
+
+
+/**
+ * The exported image: the scene, its detections, and its provenance,
+ * all burned into the pixels.
+ *
+ * Burned in rather than overlaid because an export gets cropped, pasted
+ * into documents and screenshotted, and a floating annotation survives
+ * none of that. The datestamp already worked this way; this extends it
+ * to the finding itself, which is what the export was losing.
+ */
+async function renderAnnotatedScene(base64Png, { bounds, detections = [], meta = {} }) {
+    const img = await new Promise((resolve, reject) => {
+        const i = new Image()
+        i.onload = () => resolve(i)
+        i.onerror = () => reject(new Error("image decode failed"))
+        i.src = `data:image/png;base64,${base64Png}`
+    })
+
+    const canvas = document.createElement("canvas")
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    const ctx = canvas.getContext("2d")
+    ctx.drawImage(img, 0, 0)
+
+    const scale = Math.max(1, canvas.width / 1000)
+    let drawn = 0
+
+    for (const det of detections) {
+        const px = detectionPixels(det, bounds, canvas.width, canvas.height, detectionCorners)
+        if (!px) continue
+        drawn += 1
+        ctx.beginPath()
+        ctx.moveTo(px.points[0].x, px.points[0].y)
+        for (const p of px.points.slice(1)) ctx.lineTo(p.x, p.y)
+        ctx.closePath()
+        // Amber at low alpha: legible over both bright desert and dark
+        // water, which a pure white or black outline is not.
+        ctx.fillStyle = "rgba(255,176,32,0.14)"
+        ctx.fill()
+        ctx.strokeStyle = "rgba(255,176,32,0.95)"
+        ctx.lineWidth = Math.max(1.5, 2 * scale)
+        ctx.stroke()
+
+        const label = detectionLabel(det)
+        const fs = Math.max(11, Math.round(12 * scale))
+        ctx.font = `${fs}px "SF Mono", Menlo, monospace`
+        const w = ctx.measureText(label).width
+        const top = Math.min(...px.points.map((p) => p.y))
+        const left = Math.min(...px.points.map((p) => p.x))
+        const ly = Math.max(fs + 4, top - 4)
+        ctx.fillStyle = "rgba(0,0,0,0.7)"
+        ctx.fillRect(left, ly - fs - 2, w + 8, fs + 6)
+        ctx.fillStyle = "#FFB020"
+        ctx.textBaseline = "alphabetic"
+        ctx.textAlign = "left"
+        ctx.fillText(label, left + 4, ly)
+    }
+
+    // The provenance bar, always — including when nothing was drawn,
+    // because "no boxes" and "boxes that failed to project" must not
+    // look the same in an exported file.
+    const line = provenanceLine({ ...meta, detections: drawn })
+    const barH = Math.max(24, Math.round(canvas.height * 0.045))
+    ctx.fillStyle = "rgba(0,0,0,0.66)"
+    ctx.fillRect(0, canvas.height - barH, canvas.width, barH)
+    ctx.fillStyle = "#ffffff"
+    ctx.font = `${Math.max(11, Math.round(barH * 0.42))}px "SF Mono", Menlo, monospace`
+    ctx.textBaseline = "middle"
+    ctx.textAlign = "center"
+    ctx.fillText(line, canvas.width / 2, canvas.height - barH / 2)
+
+    return { dataUrl: canvas.toDataURL("image/png"), drawn }
 }
 
 export default function ImagerySidebar({
@@ -397,6 +473,48 @@ export default function ImagerySidebar({
                     <div><b>{detections.filter((d) => (d.change_type || "").includes("new")).length}</b><span>new objects</span></div>
                     <div><b>{detections.filter((d) => (d.change_type || "").includes("removed")).length}</b><span>removed</span></div>
                 </div>
+                {/* EXPORT WITH THE FINDING IN IT. The scene could be
+                    exported as bare pixels, which lost the entire point:
+                    the recipient got a picture of some coastline with no
+                    indication of what had been detected, where, how
+                    confidently, or when it was taken. */}
+                <button className="btn sm" disabled={!scene?.image_b64 || busy.exporting}
+                        onClick={async () => {
+                            const bounds = scene?.bounds || drawn?.bounds
+                            if (!scene?.image_b64) return
+                            setBusy((b) => ({ ...b, exporting: true }))
+                            try {
+                                const { dataUrl, drawn: n } = await renderAnnotatedScene(
+                                    scene.image_b64, {
+                                        bounds,
+                                        detections: visibleDetections,
+                                        meta: {
+                                            sensor: scene?.sensor || sensor,
+                                            captured: fmtCaptureLabel(scene?.capture_timestamp),
+                                            cloud: scene?.cloud_cover,
+                                        },
+                                    })
+                                const a = document.createElement("a")
+                                a.href = dataUrl
+                                a.download = `scene-${(scene?.capture_timestamp || "").slice(0, 10) || "export"}-annotated.png`
+                                a.click()
+                                // Says how many boxes actually made it in:
+                                // "no detections" and "detections that
+                                // could not be projected" must not look
+                                // the same in a downloaded file.
+                                toast(n
+                                    ? `Exported with ${n} annotation${n === 1 ? "" : "s"}`
+                                    : "Exported — no detections could be placed on this scene",
+                                    { icon: "i-export" })
+                            } catch (e) {
+                                toast("Could not render the annotated image", { icon: "i-alert" })
+                            } finally {
+                                setBusy((b) => ({ ...b, exporting: false }))
+                            }
+                        }}>
+                    <svg className="icon sm"><use href="#i-export" /></svg>
+                    {busy.exporting ? " rendering…" : " export annotated png"}
+                </button>
                 <input className="input" placeholder="Filter by type or id"
                        value={detFilter} onChange={(e) => setDetFilter(e.target.value)} />
                 <div className="field">
