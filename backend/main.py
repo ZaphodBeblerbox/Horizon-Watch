@@ -10920,15 +10920,33 @@ async def _risk_index_warm_loop():
             loop_ = asyncio.get_event_loop()
             t0 = time.monotonic()
 
-            def _warm():
+            # IN TWO STEPS, WITH THE LOOP LET THROUGH BETWEEN THEM.
+            #
+            # This warm is ~16 seconds of CPU in a worker thread, and a
+            # thread doing CPU holds the GIL: the event loop is starved
+            # even though the work is not on it. Measured, a request
+            # arriving during the warm took 17 seconds while the handler
+            # itself logged nothing — because the handler never ran; the
+            # request was not dispatched. That is the same "active+gil"
+            # condition this codebase's event-loop notes already
+            # describe.
+            #
+            # Splitting it and awaiting between the halves gives the loop
+            # a chance to accept and answer whatever is waiting, so the
+            # starvation is in shorter pieces instead of one 16s block.
+            def _warm_risk():
                 from routers import risk_index as _ri
-                _ri.get_all_country_risk(force=True)
+                return len(_ri.get_all_country_risk(force=True).get("countries") or [])
+
+            def _warm_sources():
                 # force=True rebuilds and SWAPS; it never empties the
-                # cache first, so readers keep the previous block for
-                # the whole 14 seconds this takes.
+                # cache first, so readers keep the previous block
+                # throughout.
                 return len(_live_notification_sources(48, force=True))
 
-            n = await loop_.run_in_executor(_maintenance_executor, _warm)
+            await loop_.run_in_executor(_maintenance_executor, _warm_risk)
+            await asyncio.sleep(1)
+            n = await loop_.run_in_executor(_maintenance_executor, _warm_sources)
             print(f"[notifications] warmed in {time.monotonic() - t0:.1f}s; "
                   f"{n} items ready")
         except Exception as e:                               # noqa: BLE001
