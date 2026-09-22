@@ -10836,21 +10836,76 @@ async def _findings_warm_loop():
 #: pays the cold cost — see routers.risk_index._RISK_TTL_S.
 DERIVED_WARM_INTERVAL_S = 720
 
+#: Assembled derived notification sources (GDELT / GeoConfirmed /
+#: derived / frontline), cached as one block. Their inputs refresh on
+#: 15- and 30-minute cycles, so this can never be staler than the data
+#: behind it.
+#:
+#: LONGER THAN DERIVED_WARM_INTERVAL_S, deliberately. The risk-index
+#: cache was first given a TTL shorter than its warmer's period, so it
+#: lapsed for two minutes in every cycle and whichever request arrived
+#: then paid the full cold cost — which is exactly what production
+#: showed. A TTL below the warm interval is not a cache, it is a
+#: scheduled outage.
+_LIVE_SOURCES_CACHE: dict = {}
+_LIVE_SOURCES_TTL_S = 900
+
+
+class _LiveCached(Exception):
+    """Control-flow marker: the derived block was served from cache."""
+
+
+async def _risk_index_warm_loop():
+    """Keep the notification tray's whole derived path warm.
+
+    Warms by calling the endpoint itself rather than its parts, so
+    whatever the endpoint actually needs is what gets warmed — the risk
+    index, the four derived sources, and the alert scan together. Warming
+    a list of pieces is how you end up warming the wrong ones.
+
+    /api/notifications needs this and nothing else in the warmer, so it
+    must not queue behind anything. It previously shared a loop with the
+    AIS coverage measurement, which counts 10.2 million vessel_history
+    rows across twenty regions with no index on lat/lon — on production
+    that runs for minutes, and the risk index, sitting after it in the
+    same loop, was never reached at all. Zero warm lines in the logs
+    after six minutes is how that showed up.
+
+    Slow work must never be scheduled in front of fast work that
+    something is waiting on.
+    """
+    await asyncio.sleep(60)
+    while True:
+        try:
+            loop_ = asyncio.get_event_loop()
+            t0 = time.monotonic()
+
+            def _warm():
+                from routers import risk_index as _ri
+                _ri.get_all_country_risk(force=True)
+                # Drop the derived block so the call below rebuilds it,
+                # then rebuild it here where nobody is waiting.
+                _LIVE_SOURCES_CACHE.clear()
+                return len(api_get_notifications(limit=60, hours=48))
+
+            n = await loop_.run_in_executor(_maintenance_executor, _warm)
+            print(f"[notifications] warmed in {time.monotonic() - t0:.1f}s; "
+                  f"{n} items ready")
+        except Exception as e:                               # noqa: BLE001
+            print(f"[notifications] warm failed: {e}")
+        await asyncio.sleep(DERIVED_WARM_INTERVAL_S)
+
 
 async def _ais_coverage_warm_loop():
-    """Keep the expensive derived caches warm, so no request computes them.
+    """Keep the AIS coverage reading warm — separately, because it is slow.
 
-    coverage_for() is called once per alert by notification_relevance(),
-    and the notifications endpoint runs that over up to 2,400 alerts. If
-    the reading is cold, one unlucky request recounts vessel_history —
-    10.2 million rows, once for the total and again per region, with no
-    index on lat/lon. Profiling put 9.83 of 10.3 seconds inside it.
-
-    coverage_for() no longer computes on demand, so without this warmer
-    the note would simply never appear. Computed here instead: on a
-    timer, in the maintenance pool, where nobody is waiting for it.
+    measure() counts vessel_history (10.2M rows in production) once for
+    the total and again per region, with no index on lat/lon. It is only
+    ever a sentence of context attached to a finding, so it gets its own
+    loop where taking minutes harms nothing, and coverage_for() never
+    computes on demand.
     """
-    await asyncio.sleep(240)
+    await asyncio.sleep(300)
     while True:
         try:
             import ais_coverage as _ac
@@ -10858,30 +10913,11 @@ async def _ais_coverage_warm_loop():
             t0 = time.monotonic()
             cov = await loop_.run_in_executor(
                 _maintenance_executor, lambda: _ac.measure(force=True))
-            if cov.get("available"):
-                print(f"[ais-coverage] warmed in {time.monotonic() - t0:.1f}s; "
-                      f"{len(cov.get('blind_regions') or [])} blind regions")
+            print(f"[ais-coverage] warm finished in {time.monotonic() - t0:.1f}s "
+                  f"(available={cov.get('available')})")
         except Exception as e:                               # noqa: BLE001
             print(f"[ais-coverage] warm failed: {e}")
-
-        # THE WHOLE-WORLD RISK INDEX, for the same reason and worse.
-        # compute_all_countries() scores 121 countries with three full
-        # passes over the GDELT events each — 4,840,000 comparisons,
-        # measured at 19.4s — and /api/notifications called it on every
-        # single request while the front end polled every 20 seconds. It
-        # is cached now; this keeps the cache filled so the cold run
-        # never lands on somebody waiting for their notification tray.
-        try:
-            from routers import risk_index as _ri
-            loop_ = asyncio.get_event_loop()
-            t1 = time.monotonic()
-            rows = await loop_.run_in_executor(
-                _maintenance_executor, lambda: _ri.get_all_country_risk(force=True))
-            print(f"[risk-index] warmed in {time.monotonic() - t1:.1f}s; "
-                  f"{len(rows.get('countries') or [])} countries")
-        except Exception as e:                               # noqa: BLE001
-            print(f"[risk-index] warm failed: {e}")
-        await asyncio.sleep(DERIVED_WARM_INTERVAL_S)
+        await asyncio.sleep(3600)
 
 
 async def _vessel_resolution_loop():
@@ -13523,6 +13559,7 @@ async def startup_event():
     # was never called by anything — complete machinery that had only
     # ever produced the 1,014 rows somebody once made by hand.
     asyncio.create_task(_vessel_resolution_loop())
+    asyncio.create_task(_risk_index_warm_loop())
     asyncio.create_task(_ais_coverage_warm_loop())
     asyncio.create_task(_findings_warm_loop())
     asyncio.create_task(_geo_refresh_loop())
@@ -24582,6 +24619,9 @@ def api_get_notifications(
             logger.debug("[notifications] %s: %s", r.alert_id, ex)
             return r, {"notify": False, "sev": "low", "reason": "unreadable"}, r.title
 
+    _t_start = time.monotonic()
+    _timings = {}
+
     judged, exhausted = [], False
     for page in pages:
         rows = _fetch(page)
@@ -24593,6 +24633,8 @@ def api_get_notifications(
             break
         if sum(1 for _r, v, _h in judged if v["notify"]) >= limit:
             break
+    _timings["scan"] = round(time.monotonic() - _t_start, 2)
+    _timings["rows"] = len(judged)
 
     out = []
     for r, verdict, headline in judged:
@@ -24628,29 +24670,83 @@ def api_get_notifications(
     #
     # Each source carries its own `reason` in the same vocabulary, so a
     # reader can always see the rule that raised the card.
-    try:
-        import live_notifications as _ln
-        extra = []
-        extra += _ln.gdelt_items(hours=hours)
-        extra += _ln.geoconfirmed_items(hours=hours)
-        extra += _ln.derived_items()
-        extra += _ln.frontline_items(days=30)
-        try:
-            from routers import risk_index as _ri
-            rows = _ri.get_all_country_risk().get("countries") or []
-            extra += _ln.risk_change_items(rows)
-        except Exception as ex:                             # noqa: BLE001
-            print(f"[notifications] risk: {type(ex).__name__}: {ex}")
+    # THE DERIVED SOURCES ARE CACHED AS A BLOCK.
+    #
+    # Instrumented, a cold request breaks down as: scan 0.05s, gdelt
+    # 0.03s, geoconfirmed 1.73s, derived 2.23s, frontline 0.60s, risk
+    # index 3.56s. Four separate derived computations, none of them
+    # cheap and none of them cached, on an endpoint the front end polls
+    # every 20 seconds.
+    #
+    # None of them can change faster than their own inputs — GDELT
+    # refreshes every 15 minutes, GeoConfirmed every 30 — so recomputing
+    # per request cannot produce a different answer. Cached as one block
+    # rather than four, because the caller needs all of them and four
+    # separate TTLs is four chances to lapse.
+    _t_live = time.monotonic()
+    _live_key = (hours,)
+    _live_hit = _LIVE_SOURCES_CACHE.get(_live_key)
+    if _live_hit and time.monotonic() - _live_hit[0] < _LIVE_SOURCES_TTL_S:
+        extra = _live_hit[1]
+        _timings["live_cached"] = True
         seen_ids = {o["id"] for o in out}
         for e in extra:
             if e["id"] in seen_ids:
                 continue
             seen_ids.add(e["id"])
             out.append(e)
+        _timings["live_sources"] = round(time.monotonic() - _t_live, 2)
+        _live_done = True
+    else:
+        _live_done = False
+
+    try:
+        if _live_done:
+            raise _LiveCached
+        import live_notifications as _ln
+        extra = []
+        for _name, _fn in (("gdelt", lambda: _ln.gdelt_items(hours=hours)),
+                           ("geoconfirmed", lambda: _ln.geoconfirmed_items(hours=hours)),
+                           ("derived", _ln.derived_items),
+                           ("frontline", lambda: _ln.frontline_items(days=30))):
+            _t_src = time.monotonic()
+            try:
+                extra += _fn()
+            except Exception as _se:                        # noqa: BLE001
+                print(f"[notifications] source {_name}: {type(_se).__name__}: {_se}")
+            _timings[_name] = round(time.monotonic() - _t_src, 2)
+        try:
+            from routers import risk_index as _ri
+            _t_risk = time.monotonic()
+            rows = _ri.get_all_country_risk().get("countries") or []
+            _timings["risk_index"] = round(time.monotonic() - _t_risk, 2)
+            extra += _ln.risk_change_items(rows)
+        except Exception as ex:                             # noqa: BLE001
+            print(f"[notifications] risk: {type(ex).__name__}: {ex}")
+        _LIVE_SOURCES_CACHE[_live_key] = (time.monotonic(), extra)
+        seen_ids = {o["id"] for o in out}
+        for e in extra:
+            if e["id"] in seen_ids:
+                continue
+            seen_ids.add(e["id"])
+            out.append(e)
+    except _LiveCached:
+        pass
     except Exception as ex:                                 # noqa: BLE001
         # A failure in a derived source must never take the alert tray
         # down with it.
         print(f"[notifications] live sources: {type(ex).__name__}: {ex}")
+    _timings["live_sources"] = round(time.monotonic() - _t_live, 2)
+
+    # SAY WHERE THE TIME WENT. This endpoint has now had four separate
+    # causes of slowness — a missing index, an N+1 on AIS coverage, a
+    # whole-world risk recompute, and a cache whose TTL was shorter than
+    # its warmer's interval — and each was found by profiling locally
+    # and guessed at remotely. Production should not need a profiler
+    # attached to say which part is slow.
+    _total = time.monotonic() - _t_start
+    if _total > 2.0:
+        print(f"[notifications] SLOW {_total:.1f}s {_timings}")
 
     # ── a fair merge, not a global sort ──────────────────────────────────
     #

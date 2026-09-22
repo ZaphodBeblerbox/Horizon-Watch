@@ -94,3 +94,18 @@ def test_the_ttl_outlives_the_warmers_interval():
     assert ri._RISK_TTL_S > main.DERIVED_WARM_INTERVAL_S, (
         f"TTL {ri._RISK_TTL_S}s must exceed warm interval "
         f"{main.DERIVED_WARM_INTERVAL_S}s")
+
+
+def test_every_warmed_ttl_outlives_the_warm_interval():
+    """Any TTL shorter than the warmer's period is a scheduled outage.
+
+    This happened once already: the risk index had a 600s TTL warmed on
+    a 720s loop, so for two minutes in every cycle there was no entry
+    and whichever request arrived paid 19 seconds. The assertion covers
+    every cache the warmer is responsible for, so adding a new one with
+    a too-short TTL fails here rather than in production.
+    """
+    import main
+    interval = main.DERIVED_WARM_INTERVAL_S
+    assert ri._RISK_TTL_S > interval, "risk index"
+    assert main._LIVE_SOURCES_TTL_S > interval, "live notification sources"
