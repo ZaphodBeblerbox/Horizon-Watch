@@ -10831,6 +10831,12 @@ async def _findings_warm_loop():
         await asyncio.sleep(780)
 
 
+#: How often the derived-cache warmer runs. MUST be shorter than every
+#: TTL it refreshes, or the cache lapses between passes and a request
+#: pays the cold cost — see routers.risk_index._RISK_TTL_S.
+DERIVED_WARM_INTERVAL_S = 720
+
+
 async def _ais_coverage_warm_loop():
     """Keep the expensive derived caches warm, so no request computes them.
 
@@ -10875,8 +10881,7 @@ async def _ais_coverage_warm_loop():
                   f"{len(rows.get('countries') or [])} countries")
         except Exception as e:                               # noqa: BLE001
             print(f"[risk-index] warm failed: {e}")
-        # Just under the 15-minute cache TTL so it never lapses.
-        await asyncio.sleep(720)
+        await asyncio.sleep(DERIVED_WARM_INTERVAL_S)
 
 
 async def _vessel_resolution_loop():

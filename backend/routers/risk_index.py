@@ -84,8 +84,15 @@ def real_history_days(events: list) -> float:
 #: minutes, and the GeoConfirmed counts. Recomputing between refreshes
 #: cannot produce a different answer, so a TTL under the refresh
 #: interval is exact rather than approximate.
+#: MUST EXCEED THE WARMER'S INTERVAL. The background warmer refreshes
+#: this every 720s. With a 600s TTL the cache lapsed for two minutes in
+#: every cycle, and whichever request arrived in that window paid the
+#: full 19-second recompute — which is exactly what production showed:
+#: 13s, 22s, 12s, then 1.2s once warm. 900s both covers the warmer and
+#: matches GDELT's own 15-minute refresh, so an entry can never be
+#: staler than its inputs.
 _RISK_CACHE: dict = {}
-_RISK_TTL_S = 600
+_RISK_TTL_S = 900
 
 
 @router.get("/countries")

@@ -78,3 +78,19 @@ def test_the_cached_payload_is_the_same_object_shape(monkeypatch):
     b = ri.get_all_country_risk()
     assert a["countries"] == b["countries"]
     assert set(a) == set(b)
+
+
+def test_the_ttl_outlives_the_warmers_interval():
+    """Otherwise the cache lapses between warm passes.
+
+    Production showed exactly this: 13s, 22s, 12s, then 1.2s. The warmer
+    ran every 720s against a 600s TTL, so for two minutes in every cycle
+    there was no cached entry and whichever request arrived paid the
+    full 19-second recompute. Two constants in two files have to stay
+    in a relationship, so the relationship is asserted rather than
+    remembered.
+    """
+    import main
+    assert ri._RISK_TTL_S > main.DERIVED_WARM_INTERVAL_S, (
+        f"TTL {ri._RISK_TTL_S}s must exceed warm interval "
+        f"{main.DERIVED_WARM_INTERVAL_S}s")
