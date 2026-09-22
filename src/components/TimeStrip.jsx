@@ -36,6 +36,37 @@ const zulu = (ms) => {
 }
 const iso = (ms) => new Date(ms).toISOString().slice(0, 10)
 
+
+/** How wide one density bar is, in words rather than minutes. */
+export function formatBucket(minutes) {
+    if (!Number.isFinite(minutes) || minutes <= 0) return ""
+    if (minutes < 60) return `${minutes} min`
+    const h = minutes / 60
+    return Number.isInteger(h) ? `${h} h` : `${h.toFixed(1)} h`
+}
+
+/**
+ * The hover text for one density bar.
+ *
+ * The old one said "14 signals" and nothing else, which is a count
+ * without a subject: it does not say when, how bad, or where, so there
+ * is nothing to do with it.
+ */
+export function densityTooltip(cell) {
+    if (!cell) return ""
+    const when = `${new Date(cell.from).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+              + `–${new Date(cell.to).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+    if (!cell.count) return `${when} · nothing reported`
+    const parts = [`${when} · ${cell.count} signal${cell.count === 1 ? "" : "s"}`]
+    if (cell.critical) parts.push(`${cell.critical} critical or high`)
+    if (cell.topRegion) {
+        parts.push(cell.topRegionCount === cell.count
+            ? `all in ${cell.topRegion}`
+            : `most in ${cell.topRegion} (${cell.topRegionCount})`)
+    }
+    return parts.join("\n")
+}
+
 export default function TimeStrip({
     // density face
     densityBuckets,
@@ -204,19 +235,41 @@ export default function TimeStrip({
 
             {/* ── density face ─────────────────────────────────────────── */}
             {face === "density" && (
-                <svg id="stripsvg" preserveAspectRatio="none" viewBox="0 0 100 40" aria-label="Event density">
-                    {(densityBuckets?.counts || []).map((c, i, arr) => {
-                        const w = 100 / arr.length
-                        const h = Math.max(1.5, (c / (densityBuckets.max || 1)) * 36)
-                        return (
-                            <rect key={i} x={i * w + w * 0.12} width={w * 0.76}
-                                  y={40 - h} height={h}
-                                  className={densityBuckets.hot?.[i] ? "dbar hot" : "dbar"}>
-                                <title>{`${c} signal${c === 1 ? "" : "s"}`}</title>
-                            </rect>
-                        )
-                    })}
-                </svg>
+                <div style={{ position: "relative" }}>
+                    <svg id="stripsvg" preserveAspectRatio="none" viewBox="0 0 100 40" aria-label="Event density">
+                        {(densityBuckets?.cells || []).map((cell, i, arr) => {
+                            const w = 100 / arr.length
+                            const h = Math.max(cell.count ? 1.5 : 0.4,
+                                               (cell.count / (densityBuckets.max || 1)) * 36)
+                            return (
+                                <rect key={i} x={i * w + w * 0.12} width={w * 0.76}
+                                      y={40 - h} height={h}
+                                      className={cell.hot ? "dbar hot" : "dbar"}>
+                                    {/* WHAT THE BAR IS MADE OF. "14 signals" is
+                                        not something anybody can act on; the
+                                        hours it covers, how much of it was
+                                        critical and where it happened are. */}
+                                    <title>{densityTooltip(cell)}</title>
+                                </rect>
+                            )
+                        })}
+                    </svg>
+                    {/* The strip had no axis at all, so a bar's position
+                        carried no meaning beyond "further right is newer". */}
+                    <div style={{
+                        display: "flex", justifyContent: "space-between",
+                        font: "400 9px var(--mono)", color: "var(--txt-4)",
+                        padding: "0 2px", marginTop: 1,
+                    }}>
+                        <span>{densityBuckets?.windowHours ? `−${densityBuckets.windowHours}h` : ""}</span>
+                        <span>
+                            {densityBuckets?.bucketMinutes
+                                ? `${formatBucket(densityBuckets.bucketMinutes)} per bar · hover for detail`
+                                : ""}
+                        </span>
+                        <span>now</span>
+                    </div>
+                </div>
             )}
 
             {/* ── archive face ─────────────────────────────────────────── */}

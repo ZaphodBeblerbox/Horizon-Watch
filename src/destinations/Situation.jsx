@@ -679,23 +679,54 @@ export default function Situation({ onOpenDossier }) {
         return out
     }, [windowRows])
 
-    // 12-bucket density histogram over the current window — real counts,
-    // real time axis.
+    // DENSITY OVER THE WINDOW, AT A RESOLUTION THAT SHOWS SHAPE.
+    //
+    // This was 12 buckets whatever the window, so at 72h each bar was
+    // six hours wide — wide enough that a burst and a steady trickle
+    // drew the same block, which is precisely the complaint that it
+    // showed "huge blocks" and said nothing. 48 buckets puts a 72h
+    // window at 90 minutes a bar, which is where a surge starts to be
+    // visible as a shape rather than as one taller rectangle.
+    //
+    // Each bucket now carries what it is made of, because "14 signals"
+    // is not a fact anybody can use: the hours it covers, how many were
+    // critical or high, and where most of them were.
+    const DENSITY_BUCKETS = 48
     const densityBuckets = useMemo(() => {
-        const buckets = 12
+        const buckets = DENSITY_BUCKETS
         const bucketMs = (windowHours * 3600000) / buckets
-        const counts = new Array(buckets).fill(0)
-        const hot = new Array(buckets).fill(false)
+        const start = nowMs - windowHours * 3600000
+        const cells = Array.from({ length: buckets }, (_, i) => ({
+            count: 0, critical: 0, hot: false,
+            from: start + i * bucketMs, to: start + (i + 1) * bucketMs,
+            regions: new Map(),
+        }))
         for (const r of visibleRows) {
             if (!r.publishedAt) continue
             const age = nowMs - new Date(r.publishedAt).getTime()
             const idx = buckets - 1 - Math.min(buckets - 1, Math.floor(age / bucketMs))
-            if (idx >= 0 && idx < buckets) {
-                counts[idx] += 1
-                if (r.severityRank <= 1) hot[idx] = true
-            }
+            if (idx < 0 || idx >= buckets) continue
+            const c = cells[idx]
+            c.count += 1
+            if (r.severityRank <= 1) { c.hot = true; c.critical += 1 }
+            const key = r.aoi || "Unknown"
+            c.regions.set(key, (c.regions.get(key) || 0) + 1)
         }
-        return { counts, hot, max: Math.max(1, ...counts) }
+        for (const c of cells) {
+            let top = null, topN = 0
+            for (const [k, n] of c.regions) if (n > topN) { top = k; topN = n }
+            c.topRegion = top
+            c.topRegionCount = topN
+            delete c.regions
+        }
+        return {
+            cells,
+            counts: cells.map((c) => c.count),
+            hot: cells.map((c) => c.hot),
+            max: Math.max(1, ...cells.map((c) => c.count)),
+            bucketMinutes: Math.round(bucketMs / 60000),
+            windowHours,
+        }
     }, [visibleRows, windowHours, nowMs])
 
     const byRegion = useMemo(() => {
