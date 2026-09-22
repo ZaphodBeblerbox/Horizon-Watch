@@ -99,7 +99,26 @@ CHANNEL_RELATIONS = ALIGNMENT | SUPPLY | HOSTILITY | STRUCTURAL
 # edges invalidates the cache without needing to be told.
 CACHE_TTL_S = 900
 
+#: THE ADJACENCY IS 59 MEGABYTES AND min_conf IS A QUERY PARAMETER.
+#:
+#: The first version of this cache held up to 64 entries keyed partly on
+#: min_conf, which /api/ontology/predict and /api/ontology/findings both
+#: expose to the caller. Every distinct value stacked another full
+#: adjacency — measured at 59MB for 85,146 nodes — so a handful of
+#: different values was enough to exhaust a small container's memory and
+#: have it killed, which reaches a browser as a 502 with no CORS headers
+#: on it.
+#:
+#: So the big object gets exactly ONE slot: a different min_conf
+#: replaces it rather than joining it. Recomputing costs a couple of
+#: seconds; running out of memory costs the process.
+_ADJ_SLOTS = 1
+
+#: Derived results are small (a few hundred dicts), so they may be kept.
+_RESULT_ENTRIES = 16
+
 _cache: dict = {}
+_adj_cache: dict = {}
 
 
 def _edge_count(conn: sqlite3.Connection) -> int:
@@ -130,20 +149,27 @@ def _db_identity(conn: sqlite3.Connection):
     return f"mem:{id(conn)}"
 
 
-def _cached(conn: sqlite3.Connection, key: tuple, build):
-    """Memoised on (database, key, edge count), with a TTL as a backstop."""
+def _cached(conn: sqlite3.Connection, key: tuple, build, *, store=None,
+            max_entries: int = _RESULT_ENTRIES):
+    """Memoised on (database, key, edge count), with a TTL as a backstop.
+
+    `store` lets the caller keep the one enormous object in its own
+    single-slot cache — see _ADJ_SLOTS.
+    """
+    cache = _cache if store is None else store
     full = (_db_identity(conn), key, _edge_count(conn))
-    hit = _cache.get(full)
+    hit = cache.get(full)
     now = time.time()
     if hit and now - hit[0] < CACHE_TTL_S:
         return hit[1]
     val = build()
-    _cache[full] = (now, val)
-    # Bounded: the key space is small, but an unbounded dict that lives
-    # for the process lifetime is how a slow leak starts.
-    if len(_cache) > 64:
-        for k in sorted(_cache, key=lambda k: _cache[k][0])[:32]:
-            _cache.pop(k, None)
+    cache[full] = (now, val)
+    # Evict oldest first, down to the cap. Unbounded growth in a
+    # process that runs for weeks is how a slow leak starts, and for
+    # the adjacency it is not slow at all.
+    if len(cache) > max_entries:
+        for k in sorted(cache, key=lambda k: cache[k][0])[:len(cache) - max_entries]:
+            cache.pop(k, None)
     return val
 
 
@@ -159,7 +185,9 @@ def _load(conn: sqlite3.Connection, min_conf: float = 0.5):
     but each edge keeps its direction so the explanation can be written
     the right way round.
     """
-    return _cached(conn, ("load", min_conf), lambda: _load_uncached(conn, min_conf))
+    return _cached(conn, ("load", min_conf),
+                   lambda: _load_uncached(conn, min_conf),
+                   store=_adj_cache, max_entries=_ADJ_SLOTS)
 
 
 def _load_uncached(conn: sqlite3.Connection, min_conf: float):

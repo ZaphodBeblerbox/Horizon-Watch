@@ -10694,6 +10694,18 @@ async def _findings_warm_loop():
     exactly the shape of blocking work that had a trivial query queued
     behind it for fifteen seconds earlier tonight.
     """
+    # OFF UNLESS ASKED FOR. This holds a ~59MB adjacency for the whole
+    # graph, and on a memory-constrained container that is the
+    # difference between a process that runs and one the platform kills
+    # — which reaches a browser as a 502 with no CORS headers, looking
+    # for all the world like a CORS misconfiguration. The endpoint works
+    # without the warmer; it is only slower on the first call. Enable
+    # with HW_WARM_FINDINGS=1 once there is known memory headroom.
+    if (os.getenv("HW_WARM_FINDINGS") or "").strip() not in ("1", "true", "yes"):
+        print("[ontology] findings cache warmer disabled "
+              "(set HW_WARM_FINDINGS=1 to enable)")
+        return
+
     await asyncio.sleep(120)
     while True:
         try:
