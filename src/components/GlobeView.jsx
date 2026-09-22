@@ -15,6 +15,7 @@ import GlobeFollowLayer         from "../globe/GlobeFollowLayer.jsx"
 import GlobeGfwLayer            from "../globe/GlobeGfwLayer.jsx"
 import GlobeAirspaceLayer       from "../globe/GlobeAirspaceLayer.jsx"
 import GlobeFlowsLayer          from "../globe/GlobeFlowsLayer.jsx"
+import { watchProvider, health } from "../globe/tileHealth.js"
 import GlobeRiskChoroplethLayer from "../globe/GlobeRiskChoroplethLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
@@ -142,6 +143,7 @@ export default function GlobeView({
     onAirspaceStatus = null,
     flowsEnabled = false,
     onFlowsStatus = null,
+    onBasemapHealth = null,
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
     firesEnabled = false,
@@ -229,6 +231,8 @@ export default function GlobeView({
 }) {
     const viewerRef = useRef(null)
     const baseLayerRef = useRef(null) // the one ImageryLayer this component manages imperatively for basemap swaps
+    const tileErrRef = useRef([])
+    const offTileErrRef = useRef(null)
     // Cesium OSM Buildings, added only for the 3D basemap.
     const buildingsRef = useRef(null)
     const [vessels,  setVessels]  = useState([])
@@ -731,6 +735,32 @@ export default function GlobeView({
             const provider = basemap === "dark" ? esriDarkProvider : esriSatelliteProvider
             baseLayerRef.current = viewer.imageryLayers.addImageryProvider(provider, 0)
 
+            // A BASEMAP THAT FAILS SHOULD SAY SO. Cesium retries a tile
+            // a few times, gives up, and reports it nowhere a person can
+            // see — so "tiles don't load at high zoom" is impossible to
+            // act on, because a dead provider, a lost network, our own
+            // tile proxy timing out and simply being below the deepest
+            // level the provider publishes all look identical: blank.
+            if (offTileErrRef.current) offTileErrRef.current()
+            tileErrRef.current = []
+            const name = basemap === "dark" ? "dark basemap" : "satellite basemap"
+            const maxLevel = basemap === "dark" ? 16 : 19
+            offTileErrRef.current = watchProvider(provider, () => {
+                tileErrRef.current.push(Date.now())
+                const lvl = (() => {
+                    try {
+                        // Rough zoom level from camera height, only to
+                        // tell "too deep" apart from "broken".
+                        const h = viewer.camera.positionCartographic?.height
+                        return Number.isFinite(h)
+                            ? Math.max(0, Math.round(Math.log2(40_075_017 / Math.max(1, h))) + 1)
+                            : null
+                    } catch { return null }
+                })()
+                onBasemapHealth?.(health(name, tileErrRef.current,
+                                         { level: lvl, maxLevel }))
+            })
+
             // The 3D preset is terrain AND buildings; the other two are a
             // smooth ellipsoid, because draping imagery on real terrain
             // costs tiles nobody asked for when the point is the map.
@@ -794,6 +824,12 @@ export default function GlobeView({
                 viewer.scene.primitives.remove(ts)
             }
             buildingsRef.current = null
+            // Or the listener outlives the provider it was watching and
+            // keeps counting errors against a basemap nobody is using.
+            if (offTileErrRef.current) {
+                offTileErrRef.current()
+                offTileErrRef.current = null
+            }
         }
     }, [basemap])
 

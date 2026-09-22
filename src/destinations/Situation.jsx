@@ -389,6 +389,7 @@ export default function Situation({ onOpenDossier }) {
     const [airspaceStatus, setAirspaceStatus] = useState(null)
     const [gfwHeatOn, setGfwHeatOn] = useState(false)
     const [flowsStatus, setFlowsStatus] = useState(null)
+    const [basemapHealth, setBasemapHealth] = useState(null)
     // The Ukraine time slider. `null` means live; any other value is a
     // published snapshot date. Index rather than date so the control is
     // evenly spaced in SNAPSHOTS, which is what exists, rather than in
@@ -1331,6 +1332,26 @@ export default function Situation({ onOpenDossier }) {
                     "--map-inset-l": leftMin ? "0px" : "250px",
                     "--map-inset-r": `${activeRightOverlayWidth || 0}px`,
                 }}>
+                    {/* A BASEMAP THAT FAILS SAYS SO. Cesium retries a tile,
+                        gives up, and reports it nowhere visible — so a dead
+                        provider, a lost network, our own tile proxy timing
+                        out and simply being below the deepest zoom the
+                        provider publishes all looked identical: blank. */}
+                    {basemapHealth ? (
+                        <div style={{
+                            position: "absolute", top: 8,
+                            left: "calc(var(--map-inset-l) + 12px)",
+                            zIndex: 6, pointerEvents: "none",
+                            background: "var(--bg-2)",
+                            border: `1px solid ${basemapHealth.state === "error" ? "var(--amber)" : "var(--line)"}`,
+                            borderRadius: 2, padding: "4px 8px",
+                            font: "400 10px var(--font)",
+                            color: basemapHealth.state === "error" ? "var(--amber)" : "var(--txt-4)",
+                        }}>
+                            {basemapHealth.text}
+                        </div>
+                    ) : null}
+
                     {/* Event domains — real signal/alert visualization, per group.
                         Fixed a real bug here: precisionEventsEnabled defaults to
                         true INSIDE GlobeView itself when omitted, so News being
@@ -1366,6 +1387,7 @@ export default function Situation({ onOpenDossier }) {
                         onAirspaceStatus={setAirspaceStatus}
                         flowsEnabled={contextOn.flows}
                         onFlowsStatus={setFlowsStatus}
+                        onBasemapHealth={setBasemapHealth}
                         onFacilityStatus={setFacStatus}
                         facilityTypes={Object.entries(FACILITY_ROW_TYPE)
                             .filter(([k]) => infraOn[k])
