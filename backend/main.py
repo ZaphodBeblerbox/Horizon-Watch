@@ -10291,16 +10291,37 @@ def _wal_checkpoint() -> int:
 async def _wal_checkpoint_loop():
     """The WAL reached 2GB in hours on 2026-09-16 because auto-checkpointing is
     starved by continuously-open readers, and a large WAL slows every read.
-    Checkpoint off the event loop on a short cycle to hold it down."""
+    Checkpoint off the event loop on a short cycle to hold it down.
+
+    MEASURED AGAIN 2026-09-22, and it is still losing: the WAL file was
+    2.14GB, and a one-off TRUNCATE checkpoint ran for 100 seconds and
+    reclaimed 152 pages out of 32,147 before giving up with busy=1. The
+    checkpoint is not slow, it is BLOCKED — something holds a read
+    transaction open essentially all the time, and a reader's snapshot
+    pins every WAL page newer than it.
+
+    A PASSIVE checkpoint only makes progress in the gaps when readers
+    happen to clear, so the interval is now 60s rather than 300s: five
+    times as many chances to catch one of those gaps. This is a
+    mitigation, not the fix. The fix is that no session should be held
+    open across an await — there are five such places in this file, and
+    _foresight_loop's can hold one for the length of an entire foresight
+    cycle.
+
+    Logs the WAL size every time now, unconditionally, because the old
+    50,000-page threshold meant the one number that would have shown
+    this problem was never printed.
+    """
     await asyncio.sleep(120)
     while True:
         try:
             pages = await asyncio.to_thread(_wal_checkpoint)
-            if pages > 50_000:
-                print(f"[wal] checkpoint ran; {pages} pages still in WAL")
+            if pages >= 0:
+                print(f"[wal] {pages} pages in WAL after checkpoint "
+                      f"({pages * 4096 / 1e6:.0f}MB)")
         except Exception as e:
             print(f"[wal] checkpoint error: {e}")
-        await asyncio.sleep(300)
+        await asyncio.sleep(60)
 
 
 def _prune_history_once() -> str:
