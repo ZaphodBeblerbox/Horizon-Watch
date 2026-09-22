@@ -208,18 +208,36 @@ def cables_and_landfalls(conn: sqlite3.Connection, *, cmap: dict | None = None) 
 
 def airports_located(conn: sqlite3.Connection, *, limit: int = 60000,
                      cmap: dict | None = None) -> tuple:
-    """Airports as facilities, in the country they sit in."""
+    """Airports as facilities, in the country they sit in.
+
+    IDENTITY IS `ident`, NOT THE NAME. This keyed on "icao or name", and
+    39,188 of the 49,260 airports have no ICAO code, so four fifths of
+    them fell back to their name — of which 1,635 are duplicated. Seven
+    different airports called "La Esperanza Airport" therefore became
+    ONE node recorded as located in Colombia, Honduras, Mexico,
+    Nicaragua, Chile, Bolivia and Venezuela at once.
+
+    That is not just an untidy node. Every traversal through it invented
+    a connection between countries that share nothing but a common
+    Spanish place name, so the link predictor was being fed several
+    hundred fabricated bridges. Found by the cluster view, which asks
+    "what touches more than one country" and got 300 airports back.
+
+    OurAirports' own `ident` is unique and non-null across all 49,260
+    rows, which is exactly what an instance identifier should be.
+    """
     nodes, edges = [], []
-    for name, icao, cc in conn.execute(
-            "SELECT airport_name, icao_code, country_code FROM airports"
+    for ident, name, icao, cc in conn.execute(
+            "SELECT ident, airport_name, icao_code, country_code FROM airports"
             " WHERE country_code IS NOT NULL AND country_code <> '' LIMIT ?",
             (limit,)).fetchall():
-        key = (icao or name or "").strip()
+        key = (ident or icao or "").strip()
         if not key:
             continue
         fid = gs.node_id("facility", key)
         nodes.append({"id": fid, "type": "facility", "label": name or key,
                       "country": cc, "props": {"icao": icao or None,
+                                               "ident": ident or None,
                                                "kind": "airport"}})
         cnode = _country_node(cc, cmap)
         if not cnode:
@@ -498,6 +516,42 @@ def _cached_gdelt_events() -> list:
     return blob.get("events") or [] if isinstance(blob, dict) else (blob or [])
 
 
+
+def prune_superseded_airports(conn: sqlite3.Connection) -> dict:
+    """Remove airport facility nodes left behind by the old name keying.
+
+    A REBUILD HAS TO CONVERGE. upsert is keyed on node id, so changing
+    how an id is derived does not replace the old rows — it adds new
+    ones beside them. When airport identity moved from "icao or name" to
+    OurAirports' `ident`, the 37,320 name-keyed nodes stayed, still
+    carrying the multi-country "located in" edges that were the whole
+    problem: one node called "La Esperanza Airport" recorded as located
+    in seven countries at once, inventing a connection between every
+    pair of them for anything traversing the graph.
+
+    Scoped as narrowly as it can be: airport facilities only, identified
+    by the absence of the `ident` property that every correctly-keyed
+    node now carries, and their edges. Nothing else in the graph creates
+    a facility node, which is what makes this safe.
+    """
+    stale = [r[0] for r in conn.execute(
+        "SELECT id FROM graph_nodes WHERE type = 'facility'"
+        " AND (props_json IS NULL OR props_json NOT LIKE '%\"ident\"%')")]
+    if not stale:
+        return {"nodes": 0, "edges": 0}
+    removed_edges = 0
+    for i in range(0, len(stale), 500):
+        chunk = stale[i:i + 500]
+        marks = ",".join("?" * len(chunk))
+        cur = conn.execute(
+            f"DELETE FROM graph_edges WHERE src IN ({marks}) OR dst IN ({marks})",
+            (*chunk, *chunk))
+        removed_edges += cur.rowcount or 0
+        conn.execute(f"DELETE FROM graph_nodes WHERE id IN ({marks})", chunk)
+    conn.commit()
+    return {"nodes": len(stale), "edges": removed_edges}
+
+
 def rebuild(db_path: str, *, events: list | None = None) -> dict:
     """Run every producer and upsert. Idempotent: same facts, same rows."""
     conn = sqlite3.connect(db_path)
@@ -530,6 +584,12 @@ def rebuild(db_path: str, *, events: list | None = None) -> dict:
                 # One failing producer must not cost the whole graph.
                 logger.exception("graph producer %s failed", name)
                 report[name] = {"error": f"{type(ex).__name__}: {ex}"}
+
+        # Converge: drop rows superseded by a change in how ids are made.
+        try:
+            report["pruned_superseded_airports"] = prune_superseded_airports(conn)
+        except Exception:                                    # noqa: BLE001
+            logger.exception("airport prune failed")
 
         return {"available": True, "written_nodes": total_n,
                 "written_edges": total_e, "by_producer": report,

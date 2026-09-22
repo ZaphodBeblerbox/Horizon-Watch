@@ -3602,6 +3602,39 @@ def api_graph_search(q: str = Query(...), limit: int = Query(20, ge=1, le=100)):
         return {"available": False, "error": str(e)[:200], "results": []}
 
 
+@app.get("/api/ontology/clusters")
+def api_ontology_clusters(min_conf: float = Query(0.0, ge=0.0, le=1.0),
+                          link_limit: int = Query(1500, ge=10, le=5000),
+                          bridge_limit: int = Query(400, ge=10, le=2000),
+                          bridge_types: str = Query("")):
+    """The ontology as country plates, their links, and what bridges them.
+
+    Countries are summarised by count and NEVER expanded: the graph is
+    overwhelmingly country-anchored — 50,450 `located in` and 30,115
+    `flagged in` edges terminate on 243 country nodes — so drawn flat,
+    membership wins on volume and the diagram says "country — located in
+    — thing" forever. Membership is counted server-side; the links
+    between countries and the entities that bridge them are the content.
+
+    The payload stays a few hundred rows however large the graph grows,
+    which is the point: it has to be quick and smooth.
+    """
+    try:
+        import sqlite3
+        import graph_clusters as gc
+        conn = sqlite3.connect(f"file:{_akili_db_path()}?mode=ro", uri=True)
+        try:
+            types = tuple(t.strip() for t in bridge_types.split(",") if t.strip()) or None
+            return gc.overview(conn, min_conf=min_conf, link_limit=link_limit,
+                               bridge_limit=bridge_limit, bridge_types=types)
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("ontology clusters failed")
+        return {"available": False, "error": str(e)[:200],
+                "clusters": [], "links": [], "bridges": []}
+
+
 @app.get("/api/ontology/predict")
 def api_ontology_predict(root: str = Query(...),
                          limit: int = Query(25, ge=1, le=100),
