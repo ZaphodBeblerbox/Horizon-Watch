@@ -32,6 +32,11 @@ export const INSPECTOR_TYPES = new Set([
     // exact failure the "surge" line above records, repeated. These three
     // arrived with the GDELT/FIRMS/thread work and were not added.
     "gdelt_event", "thermal_anomaly", "fusion_member",
+    // Trade routes, from the "Trade & energy flows" layer. Its own type
+    // rather than reusing "cable": a shipping lane and a submarine cable
+    // are both corridors but nothing else about them is alike, and the
+    // inspector shows different fields for each.
+    "trade_route",
     // Found by the registration-site test below, not by a bug report:
     // the choropleth has been registering full risk decompositions
     // that no click could ever reach.

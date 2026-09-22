@@ -14,6 +14,7 @@ import GlobeSelectedTrackLayer  from "../globe/GlobeSelectedTrackLayer.jsx"
 import GlobeFollowLayer         from "../globe/GlobeFollowLayer.jsx"
 import GlobeGfwLayer            from "../globe/GlobeGfwLayer.jsx"
 import GlobeAirspaceLayer       from "../globe/GlobeAirspaceLayer.jsx"
+import GlobeFlowsLayer          from "../globe/GlobeFlowsLayer.jsx"
 import GlobeRiskChoroplethLayer from "../globe/GlobeRiskChoroplethLayer.jsx"
 import GlobeEEZLayer            from "../globe/GlobeEEZLayer.jsx"
 import GlobeCablesLayer         from "../globe/GlobeCablesLayer.jsx"
@@ -139,6 +140,8 @@ export default function GlobeView({
     facilityTypes = [],
     onFacilityStatus = null,
     onAirspaceStatus = null,
+    flowsEnabled = false,
+    onFlowsStatus = null,
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
     firesEnabled = false,
@@ -1043,6 +1046,10 @@ export default function GlobeView({
                 {/* Controlled airspace as real volumes — floor to ceiling. */}
                 <GlobeAirspaceLayer enabled={airspaceEnabled} viewBounds={viewBounds}
                                     onStatus={onAirspaceStatus} />
+                {/* The "Trade & energy flows" toggle has existed in the
+                    Layers rail this whole time, wired to state that was
+                    never passed to the globe. */}
+                <GlobeFlowsLayer enabled={flowsEnabled} onStatus={onFlowsStatus} />
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />

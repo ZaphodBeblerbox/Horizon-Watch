@@ -12294,6 +12294,99 @@ async def _firms_trigger_pass() -> None:
         del _FIRMS_RECENT[:-_FIRMS_RECENT_MAX]
         _launch_zone_scan_background(zd, "firms_fire")
 
+        # A FIRE BECOMES A STANDING AREA OF INTEREST, AND SAYS SO.
+        #
+        # The chain above scanned once and stopped. Nothing recorded
+        # that the same ground should be looked at again tomorrow, so
+        # the one thing imagery is actually good at — did this change —
+        # was never asked. watch_zones already had every field needed
+        # for a recurring scan and exactly one row in it, written by
+        # hand; nothing was writing to it.
+        #
+        # Deduplicated first, because a single fire front produces
+        # dozens of hotspot pixels across several passes and one AOI
+        # each would scan the same ground a dozen times over, spending
+        # Sentinel quota and raising a dozen alerts. See firms_aoi.
+        try:
+            import firms_aoi as _fa
+            from database import WatchZone as _WZ, get_db as _gdbz
+            import json as _jz
+            import datetime as _dtz
+            with _gdbz() as _zdb:
+                existing = _zdb.query(_WZ).filter(_WZ.enabled == True).all()  # noqa: E712
+                made = 0
+                for fire in _fa.dedupe_fires(hits):
+                    flat, flon = float(fire["lat"]), float(fire["lon"])
+                    if not _fa.should_create(flat, flon, existing):
+                        # Covered already — push its next scan forward so
+                        # a still-burning fire keeps its area watched.
+                        near, _km = _fa.nearest_existing(flat, flon, existing)
+                        if near is not None:
+                            near.next_scan_at = now + _dtz.timedelta(
+                                hours=_fa.SCAN_INTERVAL_HOURS)
+                        continue
+                    box = _fa.bbox_for(flat, flon)
+                    zid = f"FIRE-{abs(hash((round(flat, 3), round(flon, 3)))) % 10**8:08d}"
+                    row = _WZ(
+                        system_id=zid,
+                        name=_fa.zone_name_for(fire),
+                        description=_fa.fire_alert_text(fire),
+                        polygon_geojson=_jz.dumps(_fa.polygon_for(flat, flon)),
+                        bbox_min_lon=box["min_lon"], bbox_min_lat=box["min_lat"],
+                        bbox_max_lon=box["max_lon"], bbox_max_lat=box["max_lat"],
+                        priority="high", scan_interval_hours=_fa.SCAN_INTERVAL_HOURS,
+                        enabled=True, created_by="firms",
+                        next_scan_at=now + _dtz.timedelta(hours=_fa.SCAN_INTERVAL_HOURS),
+                        ml_tasks=_jz.dumps(["ship_detection", "object_detection"]),
+                        alert_threshold="both",
+                        # Its own class, so pruning a stale fire AOI can
+                        # never delete an area somebody drew by hand.
+                        aoi_class=_fa.AOI_CLASS, status="active",
+                        sensor_preference="sentinel2_optical",
+                    )
+                    _zdb.add(row)
+                    existing.append(row)
+                    made += 1
+
+                    # TELL SOMEBODY, WITH THE REASON ATTACHED. Standing
+                    # rule here: a notification carries why it is
+                    # relevant, never just that something happened.
+                    try:
+                        write_alert({
+                            "title": f"Fire detected — {zd['name']}",
+                            "source": "imagery",
+                            "alert_type": "firms_fire_aoi",
+                            "severity": "medium",
+                            "lat": flat, "lon": flon,
+                            "region": zd["name"],
+                            "entity_type": "aoi", "entity_id": zid,
+                            "entity_name": row.name,
+                            "tags": ["firms", "fire", "recurring-scan"],
+                            "raw": {"reason": _fa.fire_alert_text(fire),
+                                    "fire": fire, "aoi": zid,
+                                    "rescan_hours": _fa.SCAN_INTERVAL_HOURS},
+                        })
+                    except Exception as _ae:
+                        print(f"[firms] AOI alert failed for {zid}: {_ae}")
+
+                # PRUNE. An AOI created by a fire that stopped burning
+                # three weeks ago is quota spent on nothing.
+                cutoff = now - _dtz.timedelta(days=_fa.EXPIRE_DAYS)
+                stale = (_zdb.query(_WZ)
+                         .filter(_WZ.aoi_class == _fa.AOI_CLASS,
+                                 _WZ.enabled == True,                  # noqa: E712
+                                 _WZ.created_at < cutoff)
+                         .all())
+                for z in stale:
+                    z.enabled = False
+                    z.status = "expired"
+                _zdb.commit()
+                if made or stale:
+                    print(f"[firms] {made} new recurring AOI(s), "
+                          f"{len(stale)} expired")
+        except Exception as _ze:
+            print(f"[firms] could not maintain fire AOIs: {_ze}")
+
 
 def _auto_ingest() -> None:
     """

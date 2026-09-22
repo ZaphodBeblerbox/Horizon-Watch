@@ -388,6 +388,7 @@ export default function Situation({ onOpenDossier }) {
     const [airspaceOn, setAirspaceOn] = useState(false)
     const [airspaceStatus, setAirspaceStatus] = useState(null)
     const [gfwHeatOn, setGfwHeatOn] = useState(false)
+    const [flowsStatus, setFlowsStatus] = useState(null)
     // The Ukraine time slider. `null` means live; any other value is a
     // published snapshot date. Index rather than date so the control is
     // evenly spaced in SNAPSHOTS, which is what exists, rather than in
@@ -903,7 +904,20 @@ export default function Situation({ onOpenDossier }) {
                         ["labels", "Marker labels"],
                     ].map(([key, label]) => (
                         <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
-                            <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>{label}</span>
+                            <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
+                                {label}
+                                {/* A layer called "trade AND energy" that
+                                    silently shows only trade is worse than
+                                    one that says which half is missing: the
+                                    pipeline source has been 404ing since
+                                    March and nothing said so. */}
+                                {key === "flows" && contextOn.flows && flowsStatus ? (
+                                    <span style={{ display: "block", font: "400 10px var(--font)",
+                                                   color: flowsStatus.state === "error" ? "var(--amber)" : "var(--txt-4)" }}>
+                                        {flowsStatus.text}
+                                    </span>
+                                ) : null}
+                            </span>
                             <button
                                 onClick={() => setContextOn((p) => ({ ...p, [key]: !p[key] }))}
                                 title={contextOn[key] ? "Hide layer" : "Show layer"}
@@ -1350,6 +1364,8 @@ export default function Situation({ onOpenDossier }) {
                         gfwHeatmapEnabled={gfwHeatOn}
                         airspaceEnabled={airspaceOn}
                         onAirspaceStatus={setAirspaceStatus}
+                        flowsEnabled={contextOn.flows}
+                        onFlowsStatus={setFlowsStatus}
                         onFacilityStatus={setFacStatus}
                         facilityTypes={Object.entries(FACILITY_ROW_TYPE)
                             .filter(([k]) => infraOn[k])
