@@ -503,8 +503,44 @@ def build(iso3: str, hours: int = 168, radius_km: float = PROXIMITY_KM) -> dict:
 # counted. Volume is the edge weight, mean Goldstein is its tone, and
 # both are things the reader can argue with.
 
-def global_graph(hours: int = 168, min_events: int = 1) -> dict:
-    """Every nation in the window, and what passed between them."""
+#: How many relations the global view ships.
+#:
+#: Measured on production: uncapped it returned 158 nodes and 1,715
+#: links in a 1MB payload — eleven links per node, which is a hairball
+#: no layout can make readable, and 1,715 SVG lines for the browser to
+#: draw and re-draw. Most of them rest on ONE coded event (conf 0.05),
+#: so the cap costs almost no information: it drops the tail that was
+#: never legible and keeps the relations that are actually evidenced.
+GLOBAL_MAX_LINKS = 250
+
+
+def cap_links(links: list, max_links: int = GLOBAL_MAX_LINKS) -> tuple:
+    """The best-evidenced relations, and how many were held back.
+
+    Sorted by how many coded events support each relation, so the cap
+    removes the single-report tail rather than an arbitrary slice — most
+    of the 1,715 links production was shipping rested on ONE event.
+
+    Returns (kept, total, hidden). The hidden count is returned rather
+    than discarded because a graph quietly showing a seventh of the data
+    looks exactly like one showing all of it.
+    """
+    total = len(links)
+    if max_links is None or max_links <= 0 or total <= max_links:
+        return list(links), total, 0
+    ordered = sorted(links,
+                     key=lambda l: (-(l.get("events") or 0), -(l.get("conf") or 0)))
+    return ordered[:max_links], total, total - max_links
+
+
+def global_graph(hours: int = 168, min_events: int = 1,
+                 max_links: int = GLOBAL_MAX_LINKS) -> dict:
+    """Every nation in the window, and what passed between them.
+
+    Bounded — see GLOBAL_MAX_LINKS. How many were held back is returned
+    rather than silently dropped, because a graph that quietly shows a
+    seventh of the data looks like the whole picture.
+    """
     from collections import Counter, defaultdict
     import country_codes as cc
 
@@ -603,6 +639,11 @@ def global_graph(hours: int = 168, min_events: int = 1) -> dict:
                                    kind="Country", source="GDELT actors",
                                    risk=min(95, 20 + seen_iso.get(iso, 1))))
 
+    # THE STRONGEST RELATIONS, NOT ALL OF THEM. Sorted by how many coded
+    # events support each one, so the cap removes the single-report tail
+    # rather than an arbitrary slice.
+    links, links_total, links_hidden = cap_links(links, max_links)
+
     # A nation with no surviving edge is in the window but not in any
     # relationship, which is not what this graph is for.
     linked = {l["s"] for l in links} | {l["t"] for l in links}
@@ -612,6 +653,8 @@ def global_graph(hours: int = 168, min_events: int = 1) -> dict:
         "available": bool(nodes),
         "scope": "global",
         "window_hours": hours,
+        "links_total": links_total,
+        "links_hidden": links_hidden,
         "nodes": nodes,
         "links": links,
         "tier_names": ["Nations", "", "", ""],

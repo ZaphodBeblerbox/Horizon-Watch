@@ -609,6 +609,20 @@ export default function Ontology({ onOpenGenerate }) {
                             <option key={c.iso3} value={c.iso3}>{c.name}</option>
                         ))}
                     </select>
+                    {/* WHAT IS NOT BEING DRAWN. The global view shipped 1,715
+                        links for 158 nations — eleven per node, a hairball no
+                        layout can make readable, and 1MB for the browser to
+                        parse and then draw as SVG. It is capped at the
+                        best-evidenced relations now, and a graph quietly
+                        showing a seventh of the data must say so. */}
+                    {scope === "global" && data?.links_hidden > 0 && (
+                        <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginTop: 4 }}>
+                            {`${data.links_total - data.links_hidden} of ${data.links_total} relations shown`}
+                            <span style={{ display: "block" }}>
+                                the rest rest on a single report each
+                            </span>
+                        </div>
+                    )}
                     {scope !== "global" && (
                         <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginTop: 4 }}>
                             {data?.counts

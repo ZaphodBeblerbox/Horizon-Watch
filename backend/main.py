@@ -25128,7 +25128,8 @@ def _ontology_node_risk(node, degree):
 
 
 @app.get("/api/ontology/global")
-async def api_ontology_global(hours: int = 168, min_events: int = 1):
+async def api_ontology_global(hours: int = 168, min_events: int = 1,
+                              max_links: int = 250):
     """The world as nations and what passes between them.
 
     At world scale the only question a graph can answer legibly is who is
