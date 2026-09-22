@@ -88,6 +88,14 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return R * 2 * math.asin(math.sqrt(a))
 
 
+#: Marker key for a signal that has no place at all. It is persisted
+#: under this key so it survives a restart and stays visible, but it is
+#: never a correlation bucket — see _resolve_geo_key and the restore
+#: path, both of which must agree about that or the bug returns on the
+#: next process start.
+UNLOCATED_KEY = "GEO:unlocated"
+
+
 class FusionEngine:
     def __init__(self):
         # geo_key → [signal, ...]
@@ -135,7 +143,7 @@ class FusionEngine:
         # never have contributed to honestly.
         correlatable = geo_key is not None
         if not correlatable:
-            geo_key = "GEO:unlocated"
+            geo_key = UNLOCATED_KEY
         else:
             print(f"[FUSION] Signal received: {signal.get('domain')} | "
                   f"{signal.get('signal_id')} | geo_key={geo_key} | "
@@ -848,6 +856,24 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                         if not isinstance(payload.get("timestamp"), datetime.datetime):
                             payload["timestamp"] = row.created_at
                         geo_key = row.geo_key
+                        # THE RESTORE PATH HAD THE SAME BUG AS THE LIVE
+                        # ONE. Unlocated signals are persisted so they
+                        # survive a restart and stay visible, under the
+                        # marker key "GEO:unlocated" — but loading them
+                        # back into active_signals put them straight into
+                        # one shared bucket again, and on the next restart
+                        # 287 of them were evaluated together and produced
+                        # "Unknown Location Intelligence Event | 287
+                        # signals / 2 domains". Fixing only on_signal()
+                        # meant the bug came back every time the process
+                        # restarted, which is exactly when nobody is
+                        # watching the log.
+                        #
+                        # "Unknown" is not a place, so it is not a
+                        # correlation bucket. These stay persisted and
+                        # stay out of the geographic correlation.
+                        if not geo_key or geo_key == UNLOCATED_KEY:
+                            continue
                         if geo_key not in self.active_signals:
                             self.active_signals[geo_key] = []
                         existing_ids = {s["signal_id"] for s in self.active_signals[geo_key]}

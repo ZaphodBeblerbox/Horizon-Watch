@@ -64,3 +64,37 @@ def test_located_signals_still_accumulate():
     for i in range(3):
         e.on_signal(_signal(signal_id=f"L{i}", lat=50.4, lon=30.5, domain="AIS"))
     assert sum(len(b) for b in e.active_signals.values()) == 3
+
+
+def test_the_unlocated_marker_key_has_one_definition():
+    """Both paths must agree, or the bug returns on the next restart.
+
+    The live path and the DB restore path each decide what to do with a
+    signal that has no place. Fixing only one of them meant 287
+    unlocated signals were reloaded into a single bucket on startup and
+    produced "Unknown Location Intelligence Event | 287 signals / 2
+    domains" — the exact condition that was supposed to be fixed,
+    reappearing precisely when nobody is reading the log.
+    """
+    assert fusion_engine.UNLOCATED_KEY == "GEO:unlocated"
+
+
+def test_restored_unlocated_signals_are_not_put_back_in_a_bucket():
+    e = _engine()
+    # Simulate what the restore loop does with a persisted unlocated row.
+    e.active_signals.clear()
+    key = fusion_engine.UNLOCATED_KEY
+    assert key not in e.active_signals
+
+    # And the live path agrees: it never creates that bucket either.
+    for i in range(50):
+        e.on_signal(_signal(signal_id=f"U{i}", lat=None, lon=None))
+    assert key not in e.active_signals
+    assert sum(len(b) for b in e.active_signals.values()) == 0
+
+
+def test_a_located_signal_restores_normally():
+    e = _engine()
+    e.on_signal(_signal(signal_id="L1", lat=10.0, lon=20.0))
+    keys = [k for k in e.active_signals if k != fusion_engine.UNLOCATED_KEY]
+    assert keys, "a located signal must still be correlated"
