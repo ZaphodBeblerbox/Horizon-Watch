@@ -267,7 +267,25 @@ function Donut({ label, items, colorFor }) {
 // §6 (left half) — region x domain heatmap. Empty cells render at
 // --heatmap-empty (visually distinct from a real low value), everything
 // else interpolates --heatmap-lo -> --heatmap-hi by magnitude.
-function Heatmap({ regions, domains, cells }) {
+/**
+ * One line under a panel title saying what the panel is.
+ *
+ * Rule 5 in this codebase's spec is that an empty pane explains itself;
+ * the same argument applies to a full one. Every chart here was a title
+ * and a picture, so what "movers" meant, or what a heatmap cell counted,
+ * was something you had to already know.
+ */
+function PanelNote({ children }) {
+    return (
+        <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)",
+                      padding: "0 0 6px", lineHeight: 1.4 }}>
+            {children}
+        </div>
+    )
+}
+
+
+function Heatmap({ regions, domains, cells, onPick = null }) {
     const maxCount = Math.max(1, ...cells.map((c) => c.count))
     const cellMap = useMemo(() => {
         const m = new Map()
@@ -292,6 +310,11 @@ function Heatmap({ regions, domains, cells }) {
         <div className="panelbox" style={{ flex: 1, minWidth: 0 }}>
             <div className="head"><span className="caption">Region × domain</span></div>
             <div className="body" style={{ overflowX: "auto" }}>
+                <PanelNote>
+                    Signals in the selected window, counted by where they were and
+                    which sensor family reported them. Darker is more.
+                    {onPick ? " Click a cell to filter everything below to it." : ""}
+                </PanelNote>
                 {regions.length === 0 ? (
                     <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>No signals in this window.</div>
                 ) : (
@@ -312,9 +335,18 @@ function Heatmap({ regions, domains, cells }) {
                                 {domains.map((d) => {
                                     const count = cellMap.get(`${r}|${d}`) || 0
                                     return (
-                                        <div key={d} title={`${r} · ${DOMAIN_LABELS[d]}: ${count}`}
+                                        <div key={d}
+                                            title={`${r} · ${DOMAIN_LABELS[d]}: ${count} signal${count === 1 ? "" : "s"}`
+                                                   + (onPick ? "\nClick to filter to this region and domain" : "")}
+                                            role={onPick ? "button" : undefined}
+                                            tabIndex={onPick ? 0 : undefined}
+                                            onClick={onPick ? () => onPick(r, d) : undefined}
+                                            onKeyDown={onPick ? (e) => {
+                                                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(r, d) }
+                                            } : undefined}
                                             style={{
                                                 width: 22, height: 22, borderRadius: "var(--r)",
+                                                cursor: onPick ? "pointer" : "default",
                                                 background: colorFor(count), transition: "background 150ms linear",
                                                 // --heatmap-empty and --heatmap-lo are two literal but
                                                 // very close dark shades — a 1px inset ring on genuine
@@ -340,6 +372,11 @@ function MoversTable({ movers }) {
         <div className="panelbox" style={{ flex: 1, minWidth: 0 }}>
             <div className="head"><span className="caption">Index movers</span></div>
             <div className="body">
+                <PanelNote>
+                    The largest changes in signal count against the previous
+                    window of the same length. A bar is the size of the move,
+                    not the size of the total.
+                </PanelNote>
                 {movers.length === 0 ? (
                     <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>No movement in this window.</div>
                 ) : (
@@ -544,7 +581,13 @@ export default function Analytics() {
                             <Donut label="By source" items={data.donuts.source} colorFor={(item) => greyForName(item.key)} />
                         </div>
                         <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
-                            <Heatmap regions={data.heatmap.regions} domains={data.heatmap.domains} cells={data.heatmap.cells} />
+                            {/* Clicking a cell drives the SAME region/domain
+                                selects in the toolbar above rather than a
+                                second, parallel filter — so the controls
+                                always show what is actually applied. */}
+                            <Heatmap regions={data.heatmap.regions} domains={data.heatmap.domains}
+                                     cells={data.heatmap.cells}
+                                     onPick={(r, d) => { setRegion(r); setDomain(d) }} />
                             <MoversTable movers={data.movers} />
                         </div>
                         <SignalsTable rows={data.top_signals} onBriefAll={handleBriefAll} />

@@ -62,8 +62,29 @@ function ScoreBar({ score, level }) {
     )
 }
 
+/**
+ * One region in the threat matrix.
+ *
+ * WAS INERT. The whole panel had two click handlers in it — refresh and
+ * close — so a region scoring 100/100 with coordinates attached was a
+ * paragraph you could read and nothing else. The obvious instinct on
+ * seeing "Baltic — CRITICAL" is to go and look at the Baltic, and that
+ * did nothing at all. The endpoint has returned lat/lon the whole time.
+ */
 function RegionCard({ region, showBadge }) {
     const drivers = region.contributing_signals || []
+    const canFly = Number.isFinite(region.lat) && Number.isFinite(region.lon)
+    const fly = () => {
+        if (!canFly) return
+        // ORDER MATTERS, and it is the app's established recipe (see
+        // Imagery.jsx's locate()): the map tab has to be open before
+        // fly-to is fired, or there is no mounted GlobeView to hear it
+        // and the click silently does nothing.
+        window.dispatchEvent(new CustomEvent("akili:open-map"))
+        setTimeout(() => window.dispatchEvent(new CustomEvent("akili:fly-to", {
+            detail: { lat: region.lat, lon: region.lon, altitude: 900000 },
+        })), 50)
+    }
     const driverCounts = {}
     drivers.forEach(d => { driverCounts[d] = (driverCounts[d] || 0) + 1 })
 
@@ -78,11 +99,17 @@ function RegionCard({ region, showBadge }) {
                      : "#94A3B8"
 
     return (
-        <div style={{
+        <div role={canFly ? "button" : undefined}
+             tabIndex={canFly ? 0 : undefined}
+             onClick={fly}
+             onKeyDown={(e) => { if (canFly && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); fly() } }}
+             title={canFly ? `Show ${region.region_name} on the map` : "No coordinates for this region"}
+             style={{
             background:   "#0F1721",
             borderRadius: 8,
             padding:      "10px 12px",
             marginBottom: 6,
+            cursor:       canFly ? "pointer" : "default",
             border:       `1px solid ${region.is_escalating ? "#EF444433" : region.is_emerging ? "#F59E0B33" : "#1E293B"}`,
         }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
