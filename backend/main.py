@@ -10831,6 +10831,36 @@ async def _findings_warm_loop():
         await asyncio.sleep(780)
 
 
+async def _ais_coverage_warm_loop():
+    """Keep the AIS coverage reading warm, so no request ever computes it.
+
+    coverage_for() is called once per alert by notification_relevance(),
+    and the notifications endpoint runs that over up to 2,400 alerts. If
+    the reading is cold, one unlucky request recounts vessel_history —
+    10.2 million rows, once for the total and again per region, with no
+    index on lat/lon. Profiling put 9.83 of 10.3 seconds inside it.
+
+    coverage_for() no longer computes on demand, so without this warmer
+    the note would simply never appear. Computed here instead: on a
+    timer, in the maintenance pool, where nobody is waiting for it.
+    """
+    await asyncio.sleep(240)
+    while True:
+        try:
+            import ais_coverage as _ac
+            loop_ = asyncio.get_event_loop()
+            t0 = time.monotonic()
+            cov = await loop_.run_in_executor(
+                _maintenance_executor, lambda: _ac.measure(force=True))
+            if cov.get("available"):
+                print(f"[ais-coverage] warmed in {time.monotonic() - t0:.1f}s; "
+                      f"{len(cov.get('blind_regions') or [])} blind regions")
+        except Exception as e:                               # noqa: BLE001
+            print(f"[ais-coverage] warm failed: {e}")
+        # Just under the 15-minute cache TTL so it never lapses.
+        await asyncio.sleep(720)
+
+
 async def _vessel_resolution_loop():
     """Keep the sanctions bridge current.
 
@@ -13470,6 +13500,7 @@ async def startup_event():
     # was never called by anything — complete machinery that had only
     # ever produced the 1,014 rows somebody once made by hand.
     asyncio.create_task(_vessel_resolution_loop())
+    asyncio.create_task(_ais_coverage_warm_loop())
     asyncio.create_task(_findings_warm_loop())
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())

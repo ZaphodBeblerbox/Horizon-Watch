@@ -69,11 +69,36 @@ CAVEAT = ("AIS here is terrestrial — receivers reach 40-80km from shore and "
           "not of shipping.")
 
 
-def measure(force: bool = False) -> dict:
-    """Stored AIS positions per region. Never raises."""
+def measure(force: bool = False, compute_if_cold: bool = True) -> dict:
+    """Stored AIS positions per region. Never raises.
+
+    EXPENSIVE, AND CALLERS ON A REQUEST PATH MUST NOT PAY FOR IT. This
+    counts vessel_history — 10.2 million rows in production — once for
+    the total and again for each of the regions, with no index on
+    lat/lon, so a cold run is tens of seconds. It is cached for fifteen
+    minutes, which is fine for a dashboard and disastrous for anything
+    called in a loop: whichever unlucky request arrives when the cache
+    has just expired wears the whole recount.
+
+    That is precisely what happened. notification_relevance() calls
+    _coverage_note() per alert, the notifications endpoint runs it over
+    up to 2,400 alerts, and profiling put 9.83 of 10.3 seconds inside
+    this one function. The tray's endpoint took 45 seconds on a cold
+    cache and returned nothing at all before the index fix.
+
+    So `compute_if_cold=False` lets a caller say "only if it is already
+    known". A missing coverage note is a missing sentence of context; a
+    45-second request is a feature that does not work.
+    """
     hit = _CACHE.get("coverage")
     if hit and not force and time.time() - hit["ts"] < _CACHE_TTL:
         return hit["data"]
+    if not compute_if_cold and not force:
+        # Stale is better than slow: serve an expired reading if we have
+        # one, and otherwise say nothing rather than stalling the caller.
+        if hit:
+            return hit["data"]
+        return {"available": False, "error": "not measured yet", "regions": []}
 
     rows = []
     try:
@@ -121,11 +146,16 @@ def measure(force: bool = False) -> dict:
     return data
 
 
-def coverage_for(lat: float, lon: float) -> dict | None:
-    """How well we see this point, for attaching to a finding made there."""
+def coverage_for(lat: float, lon: float, compute_if_cold: bool = False) -> dict | None:
+    """How well we see this point, for attaching to a finding made there.
+
+    Does NOT compute by default — see measure(). This is called once per
+    alert inside the notification loop, and a note about antenna
+    coverage is not worth making the tray unusable.
+    """
     if lat is None or lon is None:
         return None
-    cov = measure()
+    cov = measure(compute_if_cold=compute_if_cold)
     if not cov.get("available"):
         return None
     for r in cov["regions"]:
