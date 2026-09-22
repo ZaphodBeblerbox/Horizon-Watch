@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react"
 import { scaleLinear, scaleTime } from "d3-scale"
 import { area as d3area, curveMonotoneX, pie as d3pie, arc as d3arc } from "d3-shape"
 import API_BASE from "../apiBase.js"
+import { useFloatingReadout } from "../components/FloatingReadout.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { applyTransition } from "../utils/rafTransition.js"
@@ -286,6 +287,7 @@ function PanelNote({ children }) {
 
 
 function Heatmap({ regions, domains, cells, onPick = null }) {
+    const { readout, bind } = useFloatingReadout()
     const maxCount = Math.max(1, ...cells.map((c) => c.count))
     const cellMap = useMemo(() => {
         const m = new Map()
@@ -308,6 +310,7 @@ function Heatmap({ regions, domains, cells, onPick = null }) {
 
     return (
         <div className="panelbox" style={{ flex: 1, minWidth: 0 }}>
+            {readout}
             <div className="head"><span className="caption">Region × domain</span></div>
             <div className="body" style={{ overflowX: "auto" }}>
                 <PanelNote>
@@ -336,8 +339,16 @@ function Heatmap({ regions, domains, cells, onPick = null }) {
                                     const count = cellMap.get(`${r}|${d}`) || 0
                                     return (
                                         <div key={d}
-                                            title={`${r} · ${DOMAIN_LABELS[d]}: ${count} signal${count === 1 ? "" : "s"}`
-                                                   + (onPick ? "\nClick to filter to this region and domain" : "")}
+                                            {...bind({
+                                                title: `${r} · ${DOMAIN_LABELS[d]}`,
+                                                lines: [
+                                                    `${count} signal${count === 1 ? "" : "s"} in the selected window`,
+                                                    count === 0
+                                                        ? "Nothing reported here from this sensor family."
+                                                        : `${Math.round((count / Math.max(1, maxCount)) * 100)}% of the busiest cell`,
+                                                    onPick ? "Click to filter everything below to this region and domain." : "",
+                                                ],
+                                            })}
                                             role={onPick ? "button" : undefined}
                                             tabIndex={onPick ? 0 : undefined}
                                             onClick={onPick ? () => onPick(r, d) : undefined}
@@ -368,8 +379,10 @@ function Heatmap({ regions, domains, cells, onPick = null }) {
 
 // §6 (right half) — index movers.
 function MoversTable({ movers }) {
+    const { readout, bind } = useFloatingReadout()
     return (
         <div className="panelbox" style={{ flex: 1, minWidth: 0 }}>
+            {readout}
             <div className="head"><span className="caption">Index movers</span></div>
             <div className="body">
                 <PanelNote>
@@ -382,7 +395,21 @@ function MoversTable({ movers }) {
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
                         {movers.map((m) => (
-                            <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div key={m.key}
+                                 tabIndex={0}
+                                 {...bind({
+                                     title: m.label,
+                                     lines: [
+                                         `${m.delta > 0 ? "+" : ""}${m.delta} against the previous window of the same length`,
+                                         m.delta > 0
+                                             ? "More activity than the comparable period, not a total."
+                                             : m.delta < 0
+                                                 ? "Less activity than the comparable period."
+                                                 : "Unchanged against the comparable period.",
+                                         "The bar is the size of the move, not the size of the total.",
+                                     ],
+                                 })}
+                                 style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <span style={{
                                     width: 132, flexShrink: 0, font: "400 12px var(--font)", color: "var(--txt)",
                                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
