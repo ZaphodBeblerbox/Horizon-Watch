@@ -88,3 +88,53 @@ def test_one_failing_source_does_not_lose_the_others(monkeypatch):
         raise RuntimeError("geoconfirmed down")
     monkeypatch.setattr(ln, "geoconfirmed_items", boom)
     assert main._live_notification_sources(48) == [{"id": "kept"}]
+
+
+def test_concurrent_cold_callers_build_only_once(monkeypatch):
+    """The post-deploy condition, which produced the worst numbers seen.
+
+    Build-then-swap stops the warmer emptying the cache, but does
+    nothing about several callers arriving when there is nothing to
+    serve yet — without a single-flight guard each starts its own
+    rebuild. Measured right after a deploy: 45.3s, 11.1s, 5.7s, 0.5s,
+    35.7s, 17.1s, because the front end polls every 20s and every poll
+    began another build.
+    """
+    import threading
+    main._LIVE_SOURCES_CACHE.clear()
+    builds = []
+
+    import live_notifications as ln
+    monkeypatch.setattr(ln, "gdelt_items", lambda **_k: [])
+    monkeypatch.setattr(ln, "geoconfirmed_items", lambda **_k: [])
+    monkeypatch.setattr(ln, "frontline_items", lambda **_k: [])
+    monkeypatch.setattr(ln, "risk_change_items", lambda _r: [])
+
+    def derived():
+        builds.append(1)
+        time.sleep(0.3)
+        return [{"id": "x"}]
+    monkeypatch.setattr(ln, "derived_items", derived)
+
+    threads = [threading.Thread(target=lambda: main._live_notification_sources(48))
+               for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(builds) == 1, f"{len(builds)} concurrent rebuilds; expected 1"
+
+
+def test_a_waiter_gets_the_builders_result(monkeypatch):
+    import threading
+    main._LIVE_SOURCES_CACHE.clear()
+    _stub(monkeypatch, "built", delay=0.3)
+    out = []
+    threads = [threading.Thread(target=lambda: out.append(main._live_notification_sources(48)))
+               for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert all(o == [{"id": "built"}] for o in out), out

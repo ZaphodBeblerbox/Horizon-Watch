@@ -10850,6 +10850,17 @@ DERIVED_WARM_INTERVAL_S = 720
 _LIVE_SOURCES_CACHE: dict = {}
 _LIVE_SOURCES_TTL_S = 900
 
+#: SINGLE FLIGHT. Build-then-swap stops the warmer emptying the cache,
+#: but it does nothing about several callers arriving when there is
+#: nothing to serve yet — every one of them starts its own 8-second
+#: rebuild. That is exactly what a cold container does: measured right
+#: after a deploy, 45.3s, 11.1s, 5.7s, 0.5s, 35.7s, 17.1s, because the
+#: front end polls every 20s and each poll began another build.
+#:
+#: One builder at a time. Whoever gets the lock builds; everyone else
+#: waits for that result rather than duplicating it.
+_LIVE_SOURCES_LOCK = threading.Lock()
+
 
 def _live_notification_sources(hours: int, force: bool = False) -> list:
     """The derived notification sources, assembled and cached as a block.
@@ -10866,10 +10877,28 @@ def _live_notification_sources(hours: int, force: bool = False) -> list:
     a cache is for.
     """
     key = (hours,)
-    hit = _LIVE_SOURCES_CACHE.get(key)
-    if hit and not force and time.monotonic() - hit[0] < _LIVE_SOURCES_TTL_S:
-        return hit[1]
 
+    def _fresh():
+        h = _LIVE_SOURCES_CACHE.get(key)
+        return h[1] if h and time.monotonic() - h[0] < _LIVE_SOURCES_TTL_S else None
+
+    if not force:
+        cached = _fresh()
+        if cached is not None:
+            return cached
+
+    # One builder at a time — see _LIVE_SOURCES_LOCK. Waiters re-check
+    # after acquiring, so the second caller through the door gets the
+    # first caller's result instead of repeating eight seconds of work.
+    with _LIVE_SOURCES_LOCK:
+        if not force:
+            cached = _fresh()
+            if cached is not None:
+                return cached
+        return _build_live_notification_sources(key, hours)
+
+
+def _build_live_notification_sources(key, hours: int) -> list:
     import live_notifications as _ln
     built: list = []
     for name, fn in (("gdelt", lambda: _ln.gdelt_items(hours=hours)),
