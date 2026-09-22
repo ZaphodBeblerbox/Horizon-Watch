@@ -9,6 +9,13 @@
  */
 
 export const MODES = [
+    // FINDINGS FIRST, AND AS SENTENCES. A node-link diagram makes the
+    // reader reconstruct the finding themselves out of edges; what they
+    // actually want to know is "UK materiel may reach Pakistan via Saudi
+    // Arabia". The graph is still the BRAIN — link_predict walks it —
+    // but it does not have to be the PICTURE, and drawing it was both
+    // the slowest thing on the page and the least legible.
+    { key: "findings", label: "findings", nav: "on-nav-findings", stage: "findingswrap" },
     { key: "graph",  label: "graph",      nav: "on-nav-graph",  stage: "graphwrap" },
     // Countries as centroids, membership counted rather than drawn, and
     // the entities that bridge two or more of them as their own class.

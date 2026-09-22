@@ -5,7 +5,7 @@ import {
 } from "./ontologyModes.js"
 
 describe("§17 — the modes of one frame", () => {
-    it("is graph · clusters · orbat · open world · engine", () => {
+    it("leads with findings, then graph · clusters · orbat · open world · engine", () => {
         // A DELIBERATE DEVIATION FROM §17, which names four. "clusters"
         // was added on request: the flat graph is ~80,000 nodes of which
         // 50,450 edges say only "this thing is in that country", so
@@ -14,9 +14,9 @@ describe("§17 — the modes of one frame", () => {
         // spec's four are all still here and unchanged; this is an
         // addition, not a replacement, and it is recorded rather than
         // quietly absorbed so the divergence is visible.
-        expect(MODE_KEYS).toEqual(["graph", "clusters", "orbat", "pat", "engine"])
+        expect(MODE_KEYS).toEqual(["findings", "graph", "clusters", "orbat", "pat", "engine"])
         expect(MODES.map((m) => m.label))
-            .toEqual(["graph", "clusters", "orbat", "open world", "engine"])
+            .toEqual(["findings", "graph", "clusters", "orbat", "open world", "engine"])
     })
 
     it("every mode names its own nav and stage", () => {

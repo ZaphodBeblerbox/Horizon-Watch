@@ -549,7 +549,8 @@ def meta_path_findings(conn: sqlite3.Connection, *, limit: int = 50,
 
 def grouped_chains(conn: sqlite3.Connection, *, limit: int = 25,
                    min_conf: float = 0.05, min_score: float = 0.002,
-                   per_group: int = 400) -> list[dict]:
+                   per_group: int = 400,
+                   require_conflict: bool = True) -> list[dict]:
     """The same routes, reported the way a person would say them.
 
     Ungrouped, this produced twelve findings that differed only in which
@@ -565,6 +566,15 @@ def grouped_chains(conn: sqlite3.Connection, *, limit: int = 25,
     raw = _cached(conn, ("chains", per_group, min_conf, min_score),
                   lambda: chains(conn, limit=per_group, min_conf=min_conf,
                                  min_score=min_score))
+
+    # THE DESTINATION HAS TO BE A PLACE WHERE THIS MATTERS. Without this
+    # the feed leads with "Turkey materiel may reach the United States
+    # via Denmark" — structurally true, and of no interest to anybody.
+    # The question being answered is the operator's own: where might
+    # this materiel turn up in a conflict. A destination with no
+    # recorded armed conflict is not an answer to that.
+    if require_conflict:
+        raw = [r for r in raw if (r.get("destination_conflict_weight") or 0) > 1.0]
     groups: dict[tuple, dict] = {}
     for r in raw:
         key = (r["origin"], tuple(r["via"]), r["dst"])
@@ -590,8 +600,15 @@ def grouped_chains(conn: sqlite3.Connection, *, limit: int = 25,
         n = len(g["systems"])
         shown = ", ".join(g["systems"][:4])
         more = f" and {n - 4} more" if n > 4 else ""
-        g["claim"] = (f"{g['origin_label']}-origin materiel ({shown}{more}) "
-                      f"could reach {g['dst_label']}")
+        # WRITTEN AS A SENTENCE, because the sentence is the product.
+        # The operator's own phrasing for what they want to read is
+        # "French material might land in the Sudan conflict via the UAE"
+        # — origin, what, destination, and the route, in that order. A
+        # node-link diagram makes a reader reconstruct that themselves;
+        # this states it.
+        via = " via " + ", ".join(g["via_labels"]) if g.get("via_labels") else ""
+        g["claim"] = (f"{g['origin_label']} materiel ({shown}{more}) "
+                      f"may reach {g['dst_label']}{via}")
         g["system_count"] = n
         out.append(g)
     out.sort(key=lambda r: -r["score"])

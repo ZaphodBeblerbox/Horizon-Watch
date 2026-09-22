@@ -202,7 +202,7 @@ export default function Ontology({ onOpenGenerate }) {
     const inspectorExtensions = useInspectorExtensions()
     // §17 — four modes, one frame. All four share the left nav, the centre
     // stage and the inspector; only the CONTENTS change.
-    const [mode, setMode] = useState("graph")
+    const [mode, setMode] = useState("findings")
     const [bridgeType, setBridgeType] = useState("equipment")
     const [typeFilter, setTypeFilter] = useState(null)
     const [confFloor, setConfFloor] = useState(0)
@@ -495,7 +495,14 @@ export default function Ontology({ onOpenGenerate }) {
                                 onClick={() => setMode(m.key)}>{m.label}</button>
                     ))}
                 </div>
-                {mode === "clusters" ? (
+                {mode === "findings" ? (
+                    <p className="risknote" style={{ padding: 0 }}>
+                        What the graph implies, written out. The store is still
+                        the brain — link_predict walks it to find these — but a
+                        route is easier to check as a sentence than as a line
+                        between two plates.
+                    </p>
+                ) : mode === "clusters" ? (
                     <>
                         <p className="risknote" style={{ padding: 0 }}>
                             Country plates are summarised by count and never
@@ -679,6 +686,11 @@ export default function Ontology({ onOpenGenerate }) {
                     <button className="btn sm" onClick={briefSelection} disabled={!selected}>brief selection</button>
                     {linkMode && <span style={{ font: "400 11px var(--font)", color: "var(--acc-hi)" }}>{linkFirst ? `${linkFirst.label} → click target` : "click first node"}</span>}
                 </div>
+                {mode === "findings" && (
+                    <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "12px 16px" }}>
+                        <FindingsPanel limit={40} />
+                    </div>
+                )}
                 {mode === "clusters" && (
                     <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
                         <OntologyClusters
