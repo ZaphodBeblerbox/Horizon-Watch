@@ -16,6 +16,7 @@
  */
 import { useState, useEffect, useMemo, useCallback } from "react"
 import API_BASE from "../apiBase.js"
+import { freshnessLabel } from "./inboxFreshness.js"
 import { safeArray } from "../utils/safeArray.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { buildWatchQueueRows } from "./dashboardLogic.js"
@@ -77,7 +78,16 @@ export default function Inbox() {
         try { sessionStorage.setItem("inbox.sort", JSON.stringify(sort)) } catch { /* private window */ }
     }, [sort])
 
+    // WHEN IT LAST ACTUALLY ARRIVED. The queue refreshed every thirty
+    // seconds and said so nowhere, which is indistinguishable from a
+    // queue that has stopped refreshing — and a working record that
+    // might be stale is one nobody trusts. Both states are now on
+    // screen: when the last load landed, and whether one is in flight.
+    const [lastLoad, setLastLoad] = useState(0)
+    const [loading, setLoading] = useState(false)
+
     const load = useCallback(() => {
+        setLoading(true)
         Promise.all([
             fetch(`${API_BASE}/api/surface`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
             fetch(`${API_BASE}/api/fusions?status=active&limit=50`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
@@ -85,12 +95,22 @@ export default function Inbox() {
             setItems(safeArray(s?.items))
             setFusions(Array.isArray(f) ? f : [])
             setLoaded(true)
-        })
+            setLastLoad(Date.now())
+        }).finally(() => setLoading(false))
     }, [])
     // Two minutes was long enough that the inbox was reliably showing
     // something other than what the map was showing. It is the working
     // record and it has to keep up with the feed that fills it.
     useEffect(() => { load(); const iv = setInterval(load, 30_000); return () => clearInterval(iv) }, [load])
+
+    // The freshness label has to count up by itself; without its own
+    // tick it only changed when a load happened, which is exactly the
+    // moment it says "0s ago" and tells you nothing.
+    const [nowTick, setNowTick] = useState(() => Date.now())
+    useEffect(() => {
+        const iv = setInterval(() => setNowTick(Date.now()), 5000)
+        return () => clearInterval(iv)
+    }, [])
 
     const allRows = useMemo(
         () => buildWatchQueueRows(mergeNotificationItems(items, fusions)).map((r) => toInboxRow(r, statuses)),
@@ -171,6 +191,15 @@ export default function Inbox() {
                            style={{ width: 200, height: 26 }} value={q} onChange={(e) => setQ(e.target.value)} />
                     <div className="sp" />
                     <span className="lbl" id="inbox-count">{rows.length} signals · {unread} unread</span>
+                    <span className="lbl" id="inbox-freshness" title={lastLoad ? new Date(lastLoad).toLocaleTimeString() : ""}>
+                        {loading ? "refreshing…"
+                            : lastLoad ? `updated ${freshnessLabel(lastLoad, nowTick)}`
+                            : ""}
+                    </span>
+                    <button className="btn sm" id="inbox-refresh" onClick={load} disabled={loading}
+                            title="Refresh the queue now">
+                        <svg className="icon sm"><use href="#i-refresh" /></svg> refresh
+                    </button>
                     <button className="btn sm" disabled={!sel} onClick={() => { setStatusFor(sel, "ack"); toast("Acknowledged", { icon: "i-check" }) }}>acknowledge</button>
                     <button className="btn sm danger" disabled={!sel} onClick={() => { setStatusFor(sel, "esc"); toast("Escalated", { icon: "i-up" }) }}>escalate</button>
                     <button className="btn sm primary" disabled={!sel}

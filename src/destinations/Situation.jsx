@@ -39,10 +39,12 @@ import { getActiveViews, subscribeActiveSession, saveCurrentAsView, applyView, d
 import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
+import { tintBackground } from "./criticalTint.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
 import RiskIndexPanel from "../components/RiskIndexPanel.jsx"
 import CoveragePanel from "../components/CoveragePanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
+import LayerGroup from "../components/LayerGroup.jsx"
 import TimeStrip from "../components/TimeStrip.jsx"
 import ImagerySidebar from "../components/ImagerySidebar.jsx"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
@@ -811,8 +813,8 @@ export default function Situation({ onOpenDossier }) {
                     onSaveCurrent={(name) => { saveCurrentAsView(name).catch(() => toast("Could not save view", { icon: "i-alert" })) }}
                 />
 
-                <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
-                    <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Event domains</div>
+                <LayerGroup id="event-domains" title="Event domains"
+                            activeCount={LAYER_GROUPS.filter((g) => groupsOn[g.key]).length}>
                     {LAYER_GROUPS.map((g) => (
                         <Fragment key={g.key}>
                             <DomainRow group={g} count={domainCounts[g.key]} on={groupsOn[g.key]} onToggle={() => setGroupsOn((p) => ({ ...p, [g.key]: !p[g.key] }))} />
@@ -851,13 +853,15 @@ export default function Situation({ onOpenDossier }) {
                             )}
                         </Fragment>
                     ))}
-                </div>
+                </LayerGroup>
 
                 {/* Context layers — build spec v2 §4.2. "Satellite tasking
                     (none)" is deliberately unavailable — a real, honest
                     unavailable capability, not a silently-broken toggle. */}
-                <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
-                    <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Context layers</div>
+                <LayerGroup id="context" title="Context layers"
+                            activeCount={Object.values(contextOn).filter(Boolean).length
+                                         + (airspaceOn ? 1 : 0)
+                                         + Object.values(gfwOn).filter(Boolean).length}>
                     {[
                         ["risk", "Country risk index"],
                         ["graticule", "Graticule 10°"],
@@ -1046,7 +1050,7 @@ export default function Situation({ onOpenDossier }) {
                         <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-3)" }}>Satellite tasking (none)</span>
                         <svg className="icon sm" style={{ color: "var(--txt-4)" }}><use href="#i-eye-off" /></svg>
                     </div>
-                </div>
+                </LayerGroup>
 
                 {/* §10.3 puts the risk index fifth in this pane, after the
                     severity floor. Its map shading is gone with the threat
@@ -1064,13 +1068,9 @@ export default function Situation({ onOpenDossier }) {
                 {/* §L5 — Global infrastructure. Each row carries an
                     epistemic sub-line (§L2): "the cheapest honesty mechanism
                     in the product, and it costs one line per row." */}
-                <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line-soft)" }}>
-                    <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
-                        Global infrastructure
-                        <span style={{ float: "right", font: "10px var(--mono)", color: "var(--txt-4)" }}>
-                            {Object.values(infraOn).filter(Boolean).length}/{Object.keys(infraOn).length}
-                        </span>
-                    </div>
+                <LayerGroup id="infrastructure" title="Global infrastructure"
+                            note={`${Object.values(infraOn).filter(Boolean).length}/${Object.keys(infraOn).length}`}
+                            activeCount={Object.values(infraOn).filter(Boolean).length}>
                     {INFRA_LAYERS.map((l) => (
                         <button key={l.key} type="button" className="layer"
                                 aria-pressed={!!infraOn[l.key]}
@@ -1086,7 +1086,7 @@ export default function Situation({ onOpenDossier }) {
                             </span>
                         </button>
                     ))}
-                </div>
+                </LayerGroup>
 
                 {contextOn.risk && <RiskIndexPanel />}
 
@@ -1474,7 +1474,9 @@ export default function Situation({ onOpenDossier }) {
                             {newestCritical.length === 0 ? (
                                 <div style={{ font: "400 12px var(--font)", color: "var(--txt-4)" }}>No critical or high-severity signals in this window.</div>
                             ) : newestCritical.map((r) => (
-                                <div key={r.id} className="evrow" onClick={() => { setInspectorPopup(null); setSelected(r) }}>
+                                <div key={r.id} className="evrow"
+                                     style={{ background: tintBackground(r.severityRank, r.publishedAt, nowMs) }}
+                                     onClick={() => { setInspectorPopup(null); setSelected(r) }}>
                                     <span className={`dia ${SEV_CLASS_BY_RANK[r.severityRank] || "moderate"}`} />
                                     <div>
                                         <div className="title">{r.title}</div>

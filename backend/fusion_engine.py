@@ -129,9 +129,18 @@ class FusionEngine:
         self._log_signal(signal)
 
         geo_key = self._resolve_geo_key(signal)
-        print(f"[FUSION] Signal received: {signal.get('domain')} | "
-              f"{signal.get('signal_id')} | geo_key={geo_key} | relevance={signal.get('relevance_score', 0)}")
-        self._add_signal(geo_key, signal)
+        # An unlocated signal is still a signal: it is logged above and
+        # stored below so it survives a restart and stays visible. It is
+        # only kept out of the geographic correlation, which it could
+        # never have contributed to honestly.
+        correlatable = geo_key is not None
+        if not correlatable:
+            geo_key = "GEO:unlocated"
+        else:
+            print(f"[FUSION] Signal received: {signal.get('domain')} | "
+                  f"{signal.get('signal_id')} | geo_key={geo_key} | "
+                  f"relevance={signal.get('relevance_score', 0)}")
+            self._add_signal(geo_key, signal)
 
         # Persist to DB so signals survive restarts
         try:
@@ -168,6 +177,9 @@ class FusionEngine:
                 _db.close()
         except Exception as _pe:
             print(f"[fusion] Signal persist error: {_pe}")
+
+        if not correlatable:
+            return
 
         current = self.active_signals.get(geo_key, [])
         domains_now = set(s["domain"] for s in current)
@@ -239,7 +251,22 @@ class FusionEngine:
             # and no country — the tiers above are real named geographic
             # entities, unaffected by this change.
             return _cs.find_or_create_radius_geo_key(lat, lon, datetime.datetime.utcnow(), self.active_signals)
-        return "GEO:unknown"
+        # A SIGNAL WITH NO PLACE CANNOT BE FUSED BY PLACE. Everything
+        # that reached here — no region, no strategic zone, no country,
+        # no coordinates — used to be dropped into one shared
+        # "GEO:unknown" bucket, which then behaved like the busiest
+        # location on earth. Measured live: 2,433 AIS and ADS-B signals
+        # in it, re-evaluated in full on every single incoming signal,
+        # on the event loop. That is where the backend's multi-second
+        # stalls were coming from — a trivial query behind it took 15s.
+        #
+        # It was also wrong on its own terms. Fusion means several
+        # independent domains reporting the SAME PLACE; "unknown" is not
+        # a place, so any fusion point it produced corroborated nothing.
+        # Returning None means the signal is still logged and still
+        # persisted — it is simply not a candidate for geographic
+        # correlation, which it never honestly was.
+        return None
 
     def _add_signal(self, geo_key: str, signal: dict):
         bucket = self.active_signals.setdefault(geo_key, [])

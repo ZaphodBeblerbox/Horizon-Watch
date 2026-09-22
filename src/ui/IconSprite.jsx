@@ -71,6 +71,10 @@ const SPRITE = `
 <symbol id="i-node-faction" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l8 3.5v6c0 4.6-3.4 8-8 9.5-4.6-1.5-8-4.9-8-9.5v-6z"/><path d="M9 12l2 2 4-4"/></symbol>
 <symbol id="i-node-facility" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 20.5V11l6-3.5V11l6-3.5v13z"/><path d="M15.5 11h5v9.5h-5M6.5 15h2M11 15h2"/></symbol>
 <symbol id="i-node-country" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.3 3.6 8.5s-1.2 6.2-3.6 8.5c-2.4-2.3-3.6-5.3-3.6-8.5S9.6 5.8 12 3.5z"/></symbol>
+<symbol id="i-node-vessel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 16l1.6 3.2a2 2 0 0 0 1.8 1.1h11.2a2 2 0 0 0 1.8-1.1L21 16z"/><path d="M5.5 16V10h13v6"/><path d="M12 10V5"/><path d="M9 7.5h6"/></symbol>
+<symbol id="i-node-aircraft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l1.4 6.2L21 12v1.8l-7.6-1.4L12.8 18l2.2 1.6V21l-3-1-3 1v-1.4L11.2 18l-.6-5.6L3 13.8V12l7.6-2.8z"/></symbol>
+<symbol id="i-node-equipment" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 14h5l2-3h6l2 3h3"/><path d="M6 14v3h12v-3"/><circle cx="8.5" cy="18.5" r="1.5"/><circle cx="15.5" cy="18.5" r="1.5"/><path d="M10 11V7h4v4"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></symbol>
 <symbol id="i-node-corridor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7h18M3 17h18"/><path d="M8 12h8M14 9.5l2.5 2.5-2.5 2.5"/></symbol>
 <symbol id="i-node-event" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"/></symbol>
 <symbol id="i-merge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3.5v5a4 4 0 004 4h8"/><path d="M6 20.5v-5a4 4 0 014-4"/><path d="M15.5 9l3 3.5-3 3.5"/></symbol>
