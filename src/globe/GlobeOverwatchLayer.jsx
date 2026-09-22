@@ -7,6 +7,7 @@ import {
     SingleTileImageryProvider, ColorMaterialProperty,
     ClassificationType, LabelStyle, DistanceDisplayCondition,
 } from "cesium"
+import { detectionCorners } from "./detectionShape.js"
 
 const CATEGORY_COLORS = {
     Aircraft:        "#5856D6",
@@ -105,45 +106,22 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
 
         const added = []
 
-        // Real, small (~15m half-width) square built around a bare
-        // centroid — the only case with no real shape data at all (no
-        // corners/bbox_geo/polygon/bounds), so a real box still renders
-        // instead of falling back to a dot marker.
-        function fallbackSquareCorners(lat, lon) {
-            const dLat = 15 / 111320
-            const dLon = 15 / (111320 * Math.max(0.15, Math.cos(lat * Math.PI / 180)))
-            return [
-                [lat - dLat, lon - dLon], [lat - dLat, lon + dLon],
-                [lat + dLat, lon + dLon], [lat + dLat, lon - dLon],
-            ]
-        }
-
         for (const det of detections) {
             const hex   = colorForDet(det)
             const color = Color.fromCssColorString(hex)
 
-            // Real, oriented (or axis-aligned) bounding box for every
-            // detection — a filled, outlined polygon, never a bare dot.
-            // Corner source, in order of preference: the model's own real
-            // rotated OBB corners, an axis-aligned [W,S,E,N] box, an
-            // explicit polygon, NSEW bounds, or (last resort, no real
-            // shape at all) a small real box around the centroid.
-            let latLonCorners = null
-            if (det.corners && det.corners.length >= 3) {
-                latLonCorners = det.corners
-            } else if (det.bbox_geo) {
-                const [W, S, E, N] = det.bbox_geo
-                latLonCorners = [[S, W], [S, E], [N, E], [N, W]]
-            } else if (det.polygon?.length >= 3) {
-                latLonCorners = det.polygon
-            } else if (det.north != null) {
-                const { north, south, east, west } = det
-                latLonCorners = [[south, west], [south, east], [north, east], [north, west]]
-            } else if (det.center?.length === 2) {
-                latLonCorners = fallbackSquareCorners(det.center[0], det.center[1])
-            } else {
-                continue
-            }
+            // THE DETECTOR'S OWN OUTLINE, WHERE THERE IS ONE. This used
+            // to look for corners/bbox_geo/polygon/center — none of
+            // which the payload actually contains — so every real traced
+            // polygon in `geo_geometry` was discarded and a fixed ~30m
+            // square was drawn around the centroid instead. That is why
+            // detections rendered as small identical boxes rather than
+            // as outlines of the thing detected. See detectionShape.js;
+            // the lon/lat swap lives there, with tests, because getting
+            // it wrong moves a detection to another continent silently.
+            const shape = detectionCorners(det)
+            if (!shape) continue
+            const latLonCorners = shape.corners
 
             const positions = latLonCorners.map(([lat, lon]) => Cartesian3.fromDegrees(lon, lat))
             // Real filled box — height:0 (not classificationType/ground-
