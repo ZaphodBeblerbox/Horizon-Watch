@@ -846,6 +846,22 @@ _frontline_executor = ThreadPoolExecutor(max_workers=1)
 _sanctions_executor = ThreadPoolExecutor(max_workers=2,
                                          thread_name_prefix="sanctions")
 
+# PERIODIC MAINTENANCE, OFF BOTH THE LOOP AND THE REQUEST PATH.
+#
+# An audit of every background *_loop found several doing synchronous
+# SQLite work inline on the event loop. The worst is the AIS aggregate
+# flush: every 60 seconds it bulk-upserts up to 2,000 buffered vessel
+# positions into track_density, and on a network-attached volume that
+# blocks the loop for seconds — which is every request in the process,
+# once a minute. Measured against production: mean 4.89s on
+# /api/sessions, max 25.0s, 6 of 20 samples over 2s.
+#
+# Its own pool again, for the same reason sanctions got one: this work
+# is on a timer nobody is waiting for, so it must not compete with
+# requests somebody is.
+_maintenance_executor = ThreadPoolExecutor(max_workers=1,
+                                           thread_name_prefix="maintenance")
+
 #: How many sanctions checks may be in flight before new ones are shed.
 #:
 #: A thread pool's work queue is unbounded, so if hits arrive faster than
@@ -10227,7 +10243,10 @@ async def _ais_aggregate_loop():
                     continue
                 batch = list(_AIS_AGG_BUFFER.values())
                 _AIS_AGG_BUFFER.clear()
-            aggregate_tracks(batch, domain="ais")
+            # Off the loop — see _maintenance_executor. Inline, this bulk
+            # upsert stalled every endpoint in the process once a minute.
+            await asyncio.get_event_loop().run_in_executor(
+                _maintenance_executor, lambda: aggregate_tracks(batch, domain="ais"))
         except Exception as e:
             print(f"[ais-aggregate] loop error: {e}")
 
@@ -12797,10 +12816,14 @@ async def _fusion_expire_loop():
     await asyncio.sleep(30)
     while True:
         try:
-            if _fusion_engine:
-                _fusion_engine.expire_old_signals()
-            if _surge_engine:
-                _surge_engine.expire_old_surges()
+            # Both walk and UPDATE their tables; off the loop.
+            def _expire():
+                if _fusion_engine:
+                    _fusion_engine.expire_old_signals()
+                if _surge_engine:
+                    _surge_engine.expire_old_surges()
+            await asyncio.get_event_loop().run_in_executor(
+                _maintenance_executor, _expire)
         except Exception as _fxe:
             print(f"[fusion] expire loop error: {_fxe}")
         await asyncio.sleep(900)   # 15 minutes
