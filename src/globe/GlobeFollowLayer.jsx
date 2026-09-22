@@ -17,6 +17,7 @@
  */
 import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
+import { nextRange } from "./followZoom.js"
 import {
     ScreenSpaceEventHandler, ScreenSpaceEventType,
     HeadingPitchRange, Matrix4, Math as CesiumMath,
@@ -47,6 +48,7 @@ const LOST_GRACE_MS = 8000
 
 const FOLLOWABLE = /^(adsb|ais)-/
 
+
 export default function GlobeFollowLayer({ enabled = true }) {
     const ctx = useCesium()
     const followRef = useRef(null)   // { entity, range, heading, last }
@@ -58,11 +60,24 @@ export default function GlobeFollowLayer({ enabled = true }) {
 
         const handler = new ScreenSpaceEventHandler(scene.canvas)
 
+        // CESIUM'S OWN ZOOM HAS TO BE TURNED OFF, NOT JUST INTERCEPTED.
+        //
+        // Registering a WHEEL action here does not stop
+        // ScreenSpaceCameraController from handling the same wheel — both
+        // run. And while camera.lookAt is active the camera sits in a
+        // LOCAL reference frame, so camera.positionCartographic.height is
+        // not a height above the ground at all. Cesium scales each zoom
+        // step by exactly that value, so one notch became an astronomical
+        // step and the view ended up in space. That is the reported bug.
+        const ssc = scene.screenSpaceCameraController
+        const zoomWasEnabled = ssc ? ssc.enableZoom : true
+
         const stop = () => {
             if (!followRef.current) return
             // Ignore the tail of the gesture that started the lock.
             if (performance.now() - followRef.current.startedAt < RELEASE_GRACE_MS) return
             followRef.current = null
+            if (ssc) ssc.enableZoom = zoomWasEnabled
             if (!viewer.isDestroyed?.()) {
                 // Release the reference frame, or every later camera move
                 // stays relative to a contact that is no longer followed.
@@ -75,6 +90,7 @@ export default function GlobeFollowLayer({ enabled = true }) {
             const entity = picked?.id
             const id = entity && String(entity.id || "")
             if (!id || !FOLLOWABLE.test(id)) return
+            if (ssc) ssc.enableZoom = false
             followRef.current = {
                 id,
                 range: id.startsWith("adsb-") ? AIRCRAFT_RANGE_M : VESSEL_RANGE_M,
@@ -92,7 +108,26 @@ export default function GlobeFollowLayer({ enabled = true }) {
         // nothing at all and the camera appeared stuck. Wheel, drag and
         // pinch all mean "I want to drive now", so they all release.
         handler.setInputAction(stop, ScreenSpaceEventType.RIGHT_CLICK)
-        handler.setInputAction(stop, ScreenSpaceEventType.WHEEL)
+
+        // THE WHEEL ZOOMS THE CONTACT, IT DOES NOT FLEE IT. Scrolling
+        // used to release the lock, which was right when the lock
+        // ignored the wheel entirely and left people feeling trapped.
+        // Now that it can be zoomed, the obvious reading of a scroll is
+        // "get closer to this", so that is what it does — and pulling
+        // back past MAX_RANGE_M still releases, which is the same
+        // escape by a gesture that means it.
+        handler.setInputAction((delta) => {
+            const f = followRef.current
+            if (!f) return
+            const next = nextRange(f.range, delta)
+            if (next === null) { stop(); return }   // pulled back far enough to mean "done"
+            f.range = next
+            // The ease targets this too, or an early scroll is undone by
+            // the lock-on animation still running.
+            f.fromRange = f.range
+            f.startedAt = 0
+            scene.requestRender?.()
+        }, ScreenSpaceEventType.WHEEL)
         handler.setInputAction(stop, ScreenSpaceEventType.LEFT_DOWN)
         handler.setInputAction(stop, ScreenSpaceEventType.MIDDLE_DOWN)
         handler.setInputAction(stop, ScreenSpaceEventType.PINCH_START)
@@ -144,6 +179,10 @@ export default function GlobeFollowLayer({ enabled = true }) {
             if (followRef.current && !viewer.isDestroyed?.()) {
                 viewer.camera.lookAtTransform(Matrix4.IDENTITY)
             }
+            // Or unmounting while locked leaves the globe permanently
+            // unzoomable, which is a far worse bug than the one this
+            // whole block exists to fix.
+            if (ssc && !viewer.isDestroyed?.()) ssc.enableZoom = zoomWasEnabled
             followRef.current = null
         }
     }, [ctx?.viewer, ctx?.scene, enabled])
