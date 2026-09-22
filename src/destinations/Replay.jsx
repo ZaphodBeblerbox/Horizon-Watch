@@ -113,12 +113,32 @@ export default function Replay({ isVisible = true }) {
         if (!isVisible) setPlaying(false)
     }, [isVisible])
 
-    const rows = useMemo(() => {
+    // WHAT THE WINDOW IS ACTUALLY MADE OF. The reported complaint was
+    // "very old data"; measured, the window is the last seven days and
+    // current to the minute. The real problem is composition: 47,471 of
+    // 50,918 signals are AIS, so at 93% it drowns every other domain and
+    // the imagery and GeoConfirmed lanes are invisible beside it. That
+    // reads as "nothing here but stale vessels" whatever the dates say.
+    const allRows = useMemo(() => {
         if (!signals) return []
         return signals
             .map((s) => ({ ...s, ts: new Date(s.created_at).getTime() }))
             .filter((s) => Number.isFinite(s.ts))
     }, [signals])
+
+    const composition = useMemo(() => {
+        const m = new Map()
+        for (const r of allRows) m.set(r.domain, (m.get(r.domain) || 0) + 1)
+        return [...m.entries()].sort((a, b) => b[1] - a[1])
+    }, [allRows])
+
+    // Domains switched OFF, not on: the default has to be everything, or
+    // the view silently hides data and the count stops matching the feed.
+    const [mutedDomains, setMutedDomains] = useState(() => new Set())
+
+    const rows = useMemo(
+        () => (mutedDomains.size ? allRows.filter((r) => !mutedDomains.has(r.domain)) : allRows),
+        [allRows, mutedDomains])
 
     const { t0, t1 } = useMemo(() => {
         if (!rows.length) return { t0: null, t1: null }
@@ -180,8 +200,45 @@ export default function Replay({ isVisible = true }) {
                             <button key={g.key} aria-pressed={groupBy === g.key} onClick={() => setGroupBy(g.key)}>{g.label}</button>
                         ))}
                     </div>
+                    {/* COMPOSITION, AND A WAY TO MUTE THE LOUDEST DOMAIN.
+                        The window is current to the minute — measured — but
+                        93% of it is AIS, so every other lane is invisible
+                        beside it and the whole view reads as stale vessel
+                        traffic. Clicking a domain drops it out. */}
+                    <span style={{ font: "400 10px var(--font)", color: "var(--txt-4)" }}>Domains</span>
+                    {composition.map(([dom, n]) => {
+                        const off = mutedDomains.has(dom)
+                        return (
+                            <button key={dom} type="button"
+                                    onClick={() => setMutedDomains((prev) => {
+                                        const next = new Set(prev)
+                                        if (next.has(dom)) next.delete(dom); else next.add(dom)
+                                        return next
+                                    })}
+                                    title={off ? `Show ${dom}` : `Hide ${dom} (${n.toLocaleString()} signals)`}
+                                    style={{
+                                        background: "none", border: "1px solid var(--line)",
+                                        borderRadius: 2, padding: "1px 5px", cursor: "pointer",
+                                        font: "400 10px var(--mono)",
+                                        color: off ? "var(--txt-4)" : "var(--txt-2)",
+                                        textDecoration: off ? "line-through" : "none",
+                                    }}>
+                                {dom} {n >= 1000 ? `${Math.round(n / 1000)}k` : n}
+                            </button>
+                        )
+                    })}
                     <span style={{ marginLeft: "auto", font: "400 11.5px var(--mono)", color: "var(--txt-2)" }}>{fmtCursorLabel(cursorMs)}</span>
                 </div>
+                {/* THE WINDOW, STATED. "Very old data" was the report; the
+                    dates are the answer, and they were nowhere on screen. */}
+                {t0 != null ? (
+                    <div style={{ padding: "3px 10px", font: "400 10px var(--font)", color: "var(--txt-4)",
+                                  borderBottom: "1px solid var(--line-soft)" }}>
+                        {`${new Date(t0).toLocaleString()} → ${new Date(t1).toLocaleString()}`}
+                        {` · ${rows.length.toLocaleString()} of ${allRows.length.toLocaleString()} signals`}
+                        {mutedDomains.size ? ` · ${[...mutedDomains].join(", ")} hidden` : ""}
+                    </div>
+                ) : null}
 
                 {/* §S3.1 / part 3 §26 — "Keep that sentence in the UI. Two time
                     scrubbers in one product will be confused for each other
