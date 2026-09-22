@@ -10851,6 +10851,46 @@ _LIVE_SOURCES_CACHE: dict = {}
 _LIVE_SOURCES_TTL_S = 900
 
 
+def _live_notification_sources(hours: int, force: bool = False) -> list:
+    """The derived notification sources, assembled and cached as a block.
+
+    SWAPS, NEVER CLEARS. The first version of the warmer emptied the
+    cache and then spent 14.4 seconds rebuilding it, so every request
+    arriving in that window found nothing, rebuilt the block itself, and
+    paid the full cold cost — a stampede the warmer caused. Production
+    showed it immediately: 46.8s and 20.2s against an otherwise steady
+    0.45s.
+
+    The new value is built first and assigned when it is ready. Readers
+    keep being served the previous one throughout, which is exactly what
+    a cache is for.
+    """
+    key = (hours,)
+    hit = _LIVE_SOURCES_CACHE.get(key)
+    if hit and not force and time.monotonic() - hit[0] < _LIVE_SOURCES_TTL_S:
+        return hit[1]
+
+    import live_notifications as _ln
+    built: list = []
+    for name, fn in (("gdelt", lambda: _ln.gdelt_items(hours=hours)),
+                     ("geoconfirmed", lambda: _ln.geoconfirmed_items(hours=hours)),
+                     ("derived", _ln.derived_items),
+                     ("frontline", lambda: _ln.frontline_items(days=30))):
+        try:
+            built += fn()
+        except Exception as e:                              # noqa: BLE001
+            print(f"[notifications] source {name}: {type(e).__name__}: {e}")
+    try:
+        from routers import risk_index as _ri
+        built += _ln.risk_change_items(_ri.get_all_country_risk().get("countries") or [])
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[notifications] risk: {type(e).__name__}: {e}")
+
+    # Assigned only once complete.
+    _LIVE_SOURCES_CACHE[key] = (time.monotonic(), built)
+    return built
+
+
 class _LiveCached(Exception):
     """Control-flow marker: the derived block was served from cache."""
 
@@ -10883,10 +10923,10 @@ async def _risk_index_warm_loop():
             def _warm():
                 from routers import risk_index as _ri
                 _ri.get_all_country_risk(force=True)
-                # Drop the derived block so the call below rebuilds it,
-                # then rebuild it here where nobody is waiting.
-                _LIVE_SOURCES_CACHE.clear()
-                return len(api_get_notifications(limit=60, hours=48))
+                # force=True rebuilds and SWAPS; it never empties the
+                # cache first, so readers keep the previous block for
+                # the whole 14 seconds this takes.
+                return len(_live_notification_sources(48, force=True))
 
             n = await loop_.run_in_executor(_maintenance_executor, _warm)
             print(f"[notifications] warmed in {time.monotonic() - t0:.1f}s; "
@@ -24670,68 +24710,20 @@ def api_get_notifications(
     #
     # Each source carries its own `reason` in the same vocabulary, so a
     # reader can always see the rule that raised the card.
-    # THE DERIVED SOURCES ARE CACHED AS A BLOCK.
-    #
-    # Instrumented, a cold request breaks down as: scan 0.05s, gdelt
-    # 0.03s, geoconfirmed 1.73s, derived 2.23s, frontline 0.60s, risk
-    # index 3.56s. Four separate derived computations, none of them
-    # cheap and none of them cached, on an endpoint the front end polls
+    # The derived sources, assembled and cached as one block — see
+    # _live_notification_sources(). Instrumented, a cold request was
+    # scan 0.05s but geoconfirmed 1.73s, derived 2.15s, frontline 0.63s
+    # and risk index 3.63s, none of them cached, on an endpoint polled
     # every 20 seconds.
-    #
-    # None of them can change faster than their own inputs — GDELT
-    # refreshes every 15 minutes, GeoConfirmed every 30 — so recomputing
-    # per request cannot produce a different answer. Cached as one block
-    # rather than four, because the caller needs all of them and four
-    # separate TTLs is four chances to lapse.
     _t_live = time.monotonic()
-    _live_key = (hours,)
-    _live_hit = _LIVE_SOURCES_CACHE.get(_live_key)
-    if _live_hit and time.monotonic() - _live_hit[0] < _LIVE_SOURCES_TTL_S:
-        extra = _live_hit[1]
-        _timings["live_cached"] = True
-        seen_ids = {o["id"] for o in out}
-        for e in extra:
-            if e["id"] in seen_ids:
-                continue
-            seen_ids.add(e["id"])
-            out.append(e)
-        _timings["live_sources"] = round(time.monotonic() - _t_live, 2)
-        _live_done = True
-    else:
-        _live_done = False
-
     try:
-        if _live_done:
-            raise _LiveCached
-        import live_notifications as _ln
-        extra = []
-        for _name, _fn in (("gdelt", lambda: _ln.gdelt_items(hours=hours)),
-                           ("geoconfirmed", lambda: _ln.geoconfirmed_items(hours=hours)),
-                           ("derived", _ln.derived_items),
-                           ("frontline", lambda: _ln.frontline_items(days=30))):
-            _t_src = time.monotonic()
-            try:
-                extra += _fn()
-            except Exception as _se:                        # noqa: BLE001
-                print(f"[notifications] source {_name}: {type(_se).__name__}: {_se}")
-            _timings[_name] = round(time.monotonic() - _t_src, 2)
-        try:
-            from routers import risk_index as _ri
-            _t_risk = time.monotonic()
-            rows = _ri.get_all_country_risk().get("countries") or []
-            _timings["risk_index"] = round(time.monotonic() - _t_risk, 2)
-            extra += _ln.risk_change_items(rows)
-        except Exception as ex:                             # noqa: BLE001
-            print(f"[notifications] risk: {type(ex).__name__}: {ex}")
-        _LIVE_SOURCES_CACHE[_live_key] = (time.monotonic(), extra)
+        extra = _live_notification_sources(hours)
         seen_ids = {o["id"] for o in out}
         for e in extra:
             if e["id"] in seen_ids:
                 continue
             seen_ids.add(e["id"])
             out.append(e)
-    except _LiveCached:
-        pass
     except Exception as ex:                                 # noqa: BLE001
         # A failure in a derived source must never take the alert tray
         # down with it.
