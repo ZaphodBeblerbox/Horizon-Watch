@@ -4,6 +4,7 @@ import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { MODES } from "./ontologyModes.js"
+import OntologyClusters from "./OntologyClusters.jsx"
 import OntologyOrbat from "./OntologyOrbat.jsx"
 import OntologyEngine from "./OntologyEngine.jsx"
 
@@ -201,6 +202,7 @@ export default function Ontology({ onOpenGenerate }) {
     // §17 — four modes, one frame. All four share the left nav, the centre
     // stage and the inspector; only the CONTENTS change.
     const [mode, setMode] = useState("graph")
+    const [bridgeType, setBridgeType] = useState("equipment")
     const [typeFilter, setTypeFilter] = useState(null)
     const [confFloor, setConfFloor] = useState(0)
     const [showInferred, setShowInferred] = useState(true)
@@ -492,7 +494,34 @@ export default function Ontology({ onOpenGenerate }) {
                                 onClick={() => setMode(m.key)}>{m.label}</button>
                     ))}
                 </div>
-                {mode !== "graph" ? (
+                {mode === "clusters" ? (
+                    <>
+                        <p className="risknote" style={{ padding: 0 }}>
+                            Country plates are summarised by count and never
+                            expanded — membership is counted, not drawn. What is
+                            drawn is the links between countries and the entities
+                            that bridge two or more of them.
+                        </p>
+                        <div style={{ marginTop: 12 }}>
+                            <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
+                                Bridging entities
+                            </div>
+                            <select className="input" value={bridgeType}
+                                    onChange={(e) => setBridgeType(e.target.value)}
+                                    style={{ width: "100%", font: "400 12px var(--font)" }}>
+                                <option value="equipment">Equipment — weapon system types</option>
+                                <option value="corridor">Corridors — cables and routes</option>
+                                <option value="org">Organisations</option>
+                                <option value="faction">Factions</option>
+                            </select>
+                            <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginTop: 4 }}>
+                                One kind at a time: submarine cables reach up to 32
+                                countries each and unfiltered they push everything
+                                else off the list.
+                            </div>
+                        </div>
+                    </>
+                ) : mode !== "graph" ? (
                     <p className="risknote" style={{ padding: 0 }}>
                         {mode === "orbat" && "Theatres, then the countries in them. A country with no held order of battle is drawn hollow rather than omitted."}
                         {mode === "pat" && "Open-world pattern detection over a document set. No document corpus is loaded in this deployment."}
@@ -627,6 +656,22 @@ export default function Ontology({ onOpenGenerate }) {
                     <button className="btn sm" onClick={briefSelection} disabled={!selected}>brief selection</button>
                     {linkMode && <span style={{ font: "400 11px var(--font)", color: "var(--acc-hi)" }}>{linkFirst ? `${linkFirst.label} → click target` : "click first node"}</span>}
                 </div>
+                {mode === "clusters" && (
+                    <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                        <OntologyClusters
+                            bridgeType={bridgeType}
+                            confFloor={confFloor}
+                            // Double-clicking a plate hands off to the
+                            // existing entity walk, so the clustered view
+                            // is a way IN to the detail rather than a
+                            // second, parallel graph.
+                            onPickCountry={(c) => {
+                                setRoot({ id: c.id, label: c.label, type: "country" })
+                                setMode("graph")
+                            }}
+                        />
+                    </div>
+                )}
                 {mode === "orbat" && (
                     <div style={{ flex: 1, minHeight: 0 }}>
                         <OntologyOrbat onSelect={setSelected} selectedId={selected?.id} />

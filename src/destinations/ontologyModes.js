@@ -10,6 +10,12 @@
 
 export const MODES = [
     { key: "graph",  label: "graph",      nav: "on-nav-graph",  stage: "graphwrap" },
+    // Countries as centroids, membership counted rather than drawn, and
+    // the entities that bridge two or more of them as their own class.
+    // Added because the flat graph is 80,000 nodes of which 50,450 edges
+    // say only "this thing is in that country" — drawn at equal weight,
+    // membership buries every finding.
+    { key: "clusters", label: "clusters", nav: "on-nav-clusters", stage: "clusterwrap" },
     { key: "orbat",  label: "orbat",      nav: "on-nav-orbat",  stage: "orbatwrap" },
     { key: "pat",    label: "open world", nav: "on-nav-pat",    stage: "on-pat" },
     { key: "engine", label: "engine",     nav: "on-nav-engine", stage: "en-main" },

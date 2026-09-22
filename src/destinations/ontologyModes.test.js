@@ -4,10 +4,29 @@ import {
     layoutTier, confidenceRing, cappedConfidence, TIER_X, THEATRE_SLUGS,
 } from "./ontologyModes.js"
 
-describe("§17 — four modes, one frame", () => {
-    it("is exactly graph · orbat · open world · engine", () => {
-        expect(MODE_KEYS).toEqual(["graph", "orbat", "pat", "engine"])
-        expect(MODES.map((m) => m.label)).toEqual(["graph", "orbat", "open world", "engine"])
+describe("§17 — the modes of one frame", () => {
+    it("is graph · clusters · orbat · open world · engine", () => {
+        // A DELIBERATE DEVIATION FROM §17, which names four. "clusters"
+        // was added on request: the flat graph is ~80,000 nodes of which
+        // 50,450 edges say only "this thing is in that country", so
+        // drawn at equal weight membership buries every finding. The
+        // clustered view counts membership instead of drawing it. The
+        // spec's four are all still here and unchanged; this is an
+        // addition, not a replacement, and it is recorded rather than
+        // quietly absorbed so the divergence is visible.
+        expect(MODE_KEYS).toEqual(["graph", "clusters", "orbat", "pat", "engine"])
+        expect(MODES.map((m) => m.label))
+            .toEqual(["graph", "clusters", "orbat", "open world", "engine"])
+    })
+
+    it("every mode names its own nav and stage", () => {
+        // §17's rule is that each mode owns all three columns; a mode
+        // missing either identifier renders somebody else's pane.
+        for (const m of MODES) {
+            expect(m.nav, m.key).toBeTruthy()
+            expect(m.stage, m.key).toBeTruthy()
+        }
+        expect(new Set(MODES.map((m) => m.stage)).size).toBe(MODES.length)
     })
 
     it("rejects an unknown mode rather than rendering a blank frame", () => {
