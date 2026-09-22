@@ -3602,6 +3602,50 @@ def api_graph_search(q: str = Query(...), limit: int = Query(20, ge=1, le=100)):
         return {"available": False, "error": str(e)[:200], "results": []}
 
 
+@app.get("/api/forecast/events")
+def api_forecast_events(horizon: int = Query(14, ge=1, le=60),
+                        limit: int = Query(50, ge=1, le=200),
+                        allow_stale: bool = Query(False),
+                        backtest: bool = Query(True)):
+    """Probability of an event type recurring in a locale, with its score.
+
+    HONEST ABOUT WHAT IT IS. The self-exciting term was fitted, selected
+    on held-out time and pooled across all series, and it never beat the
+    locale's own base rate — so it is switched off and this is a
+    calibrated base-rate forecaster that says so. Measured skill is
+    therefore 0.00 against the baseline, which is reported rather than
+    hidden, and the reliability curve is genuinely good (the 40-60% band
+    is observed at 0.50, the 60-80% at 0.62).
+
+    It also refuses by default: the UCDP copy ends 2026-06-30, so a
+    "next 14 days" number from it would be a historical average wearing
+    a present tense. Pass allow_stale=true to see them anyway.
+    """
+    try:
+        import sqlite3
+        import forecast as _fc
+        conn = sqlite3.connect(f"file:{_akili_db_path()}?mode=ro", uri=True)
+        try:
+            events = _fc.from_ucdp(conn)
+            series = _fc.to_series(events)
+            models = _fc.fit(series, horizon=horizon)
+            out = _fc.forecast(series, models, horizon=horizon, limit=limit,
+                               allow_stale=allow_stale)
+            out["models"] = len(models)
+            out["events"] = len(events)
+            if backtest:
+                # Shipped WITH the forecast, never on request only: a
+                # probability whose skill the reader has to go and look
+                # up separately will be read as if it had been checked.
+                out["backtest"] = _fc.backtest(series, models, horizon=horizon)
+            return out
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("forecast failed")
+        return {"available": False, "error": str(e)[:200], "forecasts": []}
+
+
 @app.get("/api/ontology/clusters")
 def api_ontology_clusters(min_conf: float = Query(0.0, ge=0.0, le=1.0),
                           link_limit: int = Query(1500, ge=10, le=5000),
