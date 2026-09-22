@@ -158,3 +158,54 @@ def test_a_route_to_where_the_system_is_already_seen_is_not_news():
     ]
     conn = _graph(nodes, edges)
     assert lp.chains(conn, min_conf=0.05, min_score=0.0) == []
+
+
+def test_two_different_graphs_do_not_share_a_cache_entry():
+    """The cache must key on WHICH database, not just its size.
+
+    Keying on the edge count alone served one graph's answer for
+    another whenever the two held the same number of edges — which is
+    common, and was caught the moment these tests ran against the
+    memoised version.
+    """
+    a = _graph(
+        [{"id": "org:x", "type": "org", "label": "X"},
+         {"id": "vessel:a", "type": "vessel", "label": "A"},
+         {"id": "vessel:b", "type": "vessel", "label": "B"}],
+        [{"src": "org:x", "dst": "vessel:a", "relation": "owns",
+          "conf": 0.9, "method": "reg"},
+         {"src": "org:x", "dst": "vessel:b", "relation": "owns",
+          "conf": 0.9, "method": "reg"}])
+    # Same edge count, completely different graph.
+    b = _graph(
+        [{"id": "org:y", "type": "org", "label": "Y"},
+         {"id": "vessel:c", "type": "vessel", "label": "C"},
+         {"id": "vessel:d", "type": "vessel", "label": "D"}],
+        [{"src": "org:y", "dst": "vessel:c", "relation": "owns",
+          "conf": 0.9, "method": "reg"},
+         {"src": "org:y", "dst": "vessel:d", "relation": "owns",
+          "conf": 0.9, "method": "reg"}])
+
+    from_a = {r["dst"] for r in lp.predict(a, "vessel:a", min_score=0.0)}
+    from_b = {r["dst"] for r in lp.predict(b, "vessel:c", min_score=0.0)}
+    assert from_a == {"vessel:b"}
+    assert from_b == {"vessel:d"}, "graph b was served graph a's cached adjacency"
+
+
+def test_a_rebuild_that_changes_the_graph_invalidates_the_cache():
+    conn = _graph(
+        [{"id": "org:x", "type": "org", "label": "X"},
+         {"id": "vessel:a", "type": "vessel", "label": "A"},
+         {"id": "vessel:b", "type": "vessel", "label": "B"},
+         {"id": "vessel:c", "type": "vessel", "label": "C"}],
+        [{"src": "org:x", "dst": "vessel:a", "relation": "owns",
+          "conf": 0.9, "method": "reg"},
+         {"src": "org:x", "dst": "vessel:b", "relation": "owns",
+          "conf": 0.9, "method": "reg"}])
+    first = {r["dst"] for r in lp.predict(conn, "vessel:a", min_score=0.0)}
+    assert first == {"vessel:b"}
+
+    gs.upsert_edges(conn, [{"src": "org:x", "dst": "vessel:c",
+                            "relation": "owns", "conf": 0.9, "method": "reg"}])
+    after = {r["dst"] for r in lp.predict(conn, "vessel:a", min_score=0.0)}
+    assert after == {"vessel:b", "vessel:c"}, "stale cache survived a rebuild"

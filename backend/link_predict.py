@@ -39,6 +39,7 @@ not a finding.
 from __future__ import annotations
 import math
 import sqlite3
+import time
 from collections import defaultdict
 
 # Above this, an intermediate is a hub: shared by so many nodes that
@@ -84,14 +85,84 @@ STRUCTURAL = frozenset({
 CHANNEL_RELATIONS = ALIGNMENT | SUPPLY | HOSTILITY | STRUCTURAL
 
 
+# ── Caching ───────────────────────────────────────────────────────────
+#
+# WHY THIS IS NOT OPTIONAL. Every call here loads the whole edge table
+# and walks it. Measured on the live graph, grouped_chains() took 5.8
+# seconds — and it is polled by the notification feed, so that was 5.8
+# seconds of server CPU per client every five minutes, on the same event
+# loop everything else is served from. The graph only changes when it is
+# rebuilt, which is on a timer, so recomputing per request was buying
+# nothing at all.
+#
+# Keyed on the parameters AND on the edge count, so a rebuild that adds
+# edges invalidates the cache without needing to be told.
+CACHE_TTL_S = 900
+
+_cache: dict = {}
+
+
+def _edge_count(conn: sqlite3.Connection) -> int:
+    try:
+        return conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
+    except sqlite3.Error:
+        return -1
+
+
+def _db_identity(conn: sqlite3.Connection):
+    """Which database this is, so two of them cannot share a cache entry.
+
+    Keying on the edge count alone was wrong, and the tests caught it
+    immediately: two different in-memory graphs that happen to hold the
+    same number of edges are indistinguishable, so one test's answer was
+    served to another. On a file-backed database the path is the
+    identity and the cache survives across connections, which is the
+    whole point — a request opens its own connection. An in-memory
+    database has no path, so it falls back to the connection object,
+    which is exactly the right granularity for a throwaway graph.
+    """
+    try:
+        for _seq, name, path in conn.execute("PRAGMA database_list"):
+            if name == "main":
+                return path or f"mem:{id(conn)}"
+    except sqlite3.Error:
+        pass
+    return f"mem:{id(conn)}"
+
+
+def _cached(conn: sqlite3.Connection, key: tuple, build):
+    """Memoised on (database, key, edge count), with a TTL as a backstop."""
+    full = (_db_identity(conn), key, _edge_count(conn))
+    hit = _cache.get(full)
+    now = time.time()
+    if hit and now - hit[0] < CACHE_TTL_S:
+        return hit[1]
+    val = build()
+    _cache[full] = (now, val)
+    # Bounded: the key space is small, but an unbounded dict that lives
+    # for the process lifetime is how a slow leak starts.
+    if len(_cache) > 64:
+        for k in sorted(_cache, key=lambda k: _cache[k][0])[:32]:
+            _cache.pop(k, None)
+    return val
+
+
 def _load(conn: sqlite3.Connection, min_conf: float = 0.5):
-    """Adjacency and degree for the whole graph, once.
+    """Adjacency and degree for the whole graph, once — and memoised.
+
+    Every entry point here needs the whole adjacency, and predict(),
+    chains() and meta_path_findings() each rebuilt it from scratch. It
+    is the same 85,000 rows every time and it only changes on a rebuild.
 
     Undirected for traversal — "who connects to this company" and "who
     does this company connect to" are the same question for prediction —
     but each edge keeps its direction so the explanation can be written
     the right way round.
     """
+    return _cached(conn, ("load", min_conf), lambda: _load_uncached(conn, min_conf))
+
+
+def _load_uncached(conn: sqlite3.Connection, min_conf: float):
     adj: dict[str, list] = defaultdict(list)
     deg: dict[str, int] = defaultdict(int)
     rows = conn.execute(
@@ -463,7 +534,9 @@ def grouped_chains(conn: sqlite3.Connection, *, limit: int = 25,
     Grouped by (origin, bridge, destination), which is the thing that is
     actually being claimed.
     """
-    raw = chains(conn, limit=per_group, min_conf=min_conf, min_score=min_score)
+    raw = _cached(conn, ("chains", per_group, min_conf, min_score),
+                  lambda: chains(conn, limit=per_group, min_conf=min_conf,
+                                 min_score=min_score))
     groups: dict[tuple, dict] = {}
     for r in raw:
         key = (r["origin"], tuple(r["via"]), r["dst"])

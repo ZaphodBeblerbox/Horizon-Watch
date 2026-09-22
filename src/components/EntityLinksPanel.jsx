@@ -76,7 +76,11 @@ export default function EntityLinksPanel({ entityType, data }) {
             .then((id) => {
                 if (!id) { if (!cancelled) setState({ loading: false, known: [], inferred: [], node: null }); return null }
                 return Promise.all([
-                    fetch(`${API_BASE}/api/ontology/graph/neighbourhood?root=${encodeURIComponent(id)}&hops=1&limit_per_hop=40`,
+                    // The parameter is `id`, not `root`. Getting it wrong
+                    // returns 422 and this panel then reported, in good
+                    // faith, that the entity was not in the graph at all.
+                    fetch(`${API_BASE}/api/ontology/graph/neighbourhood`
+                          + `?id=${encodeURIComponent(id)}&hops=1&limit_per_hop=40`,
                           { credentials: "include" }).then((r) => (r.ok ? r.json() : null)),
                     fetch(`${API_BASE}/api/ontology/predict?root=${encodeURIComponent(id)}&limit=8`,
                           { credentials: "include" }).then((r) => (r.ok ? r.json() : null)),
@@ -84,7 +88,11 @@ export default function EntityLinksPanel({ entityType, data }) {
                     if (cancelled) return
                     const labels = {}
                     for (const n of safeArray(nb?.nodes)) labels[n.id] = n.label || n.id
-                    const known = safeArray(nb?.edges).map((e) => ({
+                    // The endpoint calls them `links`, not `edges`.
+                    // Reading the wrong key meant this panel found a
+                    // node, reported it as present, and then showed no
+                    // connections for anything at all.
+                    const known = safeArray(nb?.links).map((e) => ({
                         id: e.id,
                         relation: e.relation,
                         other: e.src === id ? e.dst : e.src,
