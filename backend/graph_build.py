@@ -552,6 +552,60 @@ def prune_superseded_airports(conn: sqlite3.Connection) -> dict:
     return {"nodes": len(stale), "edges": removed_edges}
 
 
+
+def equipment_makers_producer(conn: sqlite3.Connection, *,
+                              cmap: dict | None = None) -> tuple:
+    """Who builds each weapon system — the join to the corporate layer.
+
+    THE LAST MISSING LINK IN THE OPERATOR'S EXAMPLE, which ends "drones
+    supplied by German manufacturers". Equipment already bridges
+    countries, but without the firm that builds it the chain cannot
+    reach a company — and a company is what the sanctions bridge, the
+    vessel-ownership edges and the FtM resolution layer are all keyed
+    on. A maker is where those three meet the battlefield.
+
+    Reuses the `org` node type rather than inventing `manufacturer`,
+    because a role something plays is not a subclass of it (Noy &
+    McGuinness): the firm that builds a drone may also own a vessel and
+    be sanctioned, and those must be one node or none of it joins up.
+
+    Cache-only. equipment_makers.makers() never touches the network, so
+    a rebuild cannot hang on Wikidata, and with no cache this producer
+    contributes nothing rather than guessing.
+    """
+    import equipment_makers as em
+    nodes, edges = [], []
+    systems = em.makers()
+    if not systems:
+        return [], []
+
+    for name, rec in systems.items():
+        eid = gs.node_id("equipment", name)
+        for maker in rec.get("manufacturers") or []:
+            if len(maker) < 3:
+                continue
+            oid = gs.node_id("org", maker.lower())
+            nodes.append({"id": oid, "type": "org", "label": maker})
+            edges.append({
+                "src": oid, "dst": eid, "relation": "manufactures",
+                "conf": 0.9, "method": "wikidata_p176",
+                "basis": f"Wikidata records {maker} as a manufacturer of {name}",
+                "source_url": rec.get("source_url"),
+            })
+        for origin in rec.get("origin") or []:
+            cnode = _country_node(origin, cmap)
+            if not cnode:
+                continue
+            nodes.append(cnode)
+            edges.append({
+                "src": eid, "dst": cnode["id"], "relation": "originates in",
+                "conf": 0.92, "method": "wikidata_p495",
+                "basis": f"Wikidata records {name} as originating in {cnode['label']}",
+                "source_url": rec.get("source_url"),
+            })
+    return nodes, edges
+
+
 def rebuild(db_path: str, *, events: list | None = None) -> dict:
     """Run every producer and upsert. Idempotent: same facts, same rows."""
     conn = sqlite3.connect(db_path)
@@ -567,6 +621,7 @@ def rebuild(db_path: str, *, events: list | None = None) -> dict:
             ("sanctions_bridge", lambda: sanctions_bridge(conn)),
             ("equipment_observed", lambda: equipment_observed(conn, cmap=cmap)),
             ("alliances", lambda: alliances(conn, cmap=cmap)),
+            ("equipment_makers", lambda: equipment_makers_producer(conn, cmap=cmap)),
         ]
         ev = events if events is not None else _cached_gdelt_events()
         if ev:
