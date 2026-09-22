@@ -13199,10 +13199,23 @@ async def _dirty_region_refresh_loop():
                     active_events = es.get_active_events()
                 except Exception:
                     pass
-                with _gdb_dr() as _dr_db:
-                    threat_matrix.refresh_dirty_regions(
-                        dirty, _dr_db, list(_forge_alerts), active_events,
-                    )
+
+                # OFF THE LOOP. This wakes every 30 seconds and rescores
+                # every region an alert has touched, against a DB session
+                # it opens itself — and the AIS feed marks regions dirty
+                # continuously, so it is not an occasional job. Inline, it
+                # stalls every endpoint in the process. Same treatment and
+                # same reasoning as the AIS aggregate flush.
+                alerts_snapshot = list(_forge_alerts)
+
+                def _refresh():
+                    with _gdb_dr() as _dr_db:
+                        threat_matrix.refresh_dirty_regions(
+                            dirty, _dr_db, alerts_snapshot, active_events,
+                        )
+
+                await asyncio.get_event_loop().run_in_executor(
+                    _maintenance_executor, _refresh)
                 print(f"[threat-matrix] dirty-region refresh: {dirty}")
         except Exception as _dr_e:
             print(f"[threat-matrix] dirty-region loop error: {_dr_e}")
