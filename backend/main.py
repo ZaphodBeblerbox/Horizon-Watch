@@ -10678,6 +10678,48 @@ def _cluster_center(cluster):
     return (sum(lats) / len(lats), sum(lons) / len(lons))
 
 
+async def _findings_warm_loop():
+    """Keep the inferred-link cache warm, off the event loop.
+
+    WHY A WARMER AND NOT JUST A CACHE. grouped_chains() walks the whole
+    edge table. Measured through the running server on a cold page
+    cache it took 50 seconds the first time, and the notification feed
+    polls it — so the first client after every restart paid that, and so
+    did anyone who opened the findings panel before them. A cache that
+    is only ever filled by a user request means some user always pays
+    for it.
+
+    Recomputed a little faster than the cache expires, so a request
+    should never find it cold. In an executor, never inline: this is
+    exactly the shape of blocking work that had a trivial query queued
+    behind it for fifteen seconds earlier tonight.
+    """
+    await asyncio.sleep(120)
+    while True:
+        try:
+            import sqlite3 as _sq
+            import link_predict as _lp
+            loop_ = asyncio.get_event_loop()
+
+            def _warm():
+                conn = _sq.connect(f"file:{_akili_db_path()}?mode=ro", uri=True)
+                try:
+                    t0 = time.monotonic()
+                    found = _lp.grouped_chains(conn, limit=25)
+                    return len(found), time.monotonic() - t0
+                finally:
+                    conn.close()
+
+            n, secs = await loop_.run_in_executor(_executor, _warm)
+            print(f"[ontology] findings cache warmed: {n} routes in {secs:.1f}s")
+        except Exception as e:                               # noqa: BLE001
+            # A warmer that takes the process down is worse than a cold
+            # cache, and the endpoint still works either way.
+            print(f"[ontology] findings warm failed: {e}")
+        # Just under link_predict.CACHE_TTL_S so the cache never lapses.
+        await asyncio.sleep(780)
+
+
 async def _vessel_resolution_loop():
     """Keep the sanctions bridge current.
 
@@ -13300,6 +13342,7 @@ async def startup_event():
     # was never called by anything — complete machinery that had only
     # ever produced the 1,014 rows somebody once made by hand.
     asyncio.create_task(_vessel_resolution_loop())
+    asyncio.create_task(_findings_warm_loop())
     asyncio.create_task(_geo_refresh_loop())
     asyncio.create_task(_startup_warmup_tasks())
     asyncio.create_task(_ais_websocket_loop())
