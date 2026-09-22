@@ -845,6 +845,19 @@ _frontline_executor = ThreadPoolExecutor(max_workers=1)
 # a user is waiting on.
 _sanctions_executor = ThreadPoolExecutor(max_workers=2,
                                          thread_name_prefix="sanctions")
+
+#: How many sanctions checks may be in flight before new ones are shed.
+#:
+#: A thread pool's work queue is unbounded, so if hits arrive faster than
+#: two threads can clear them the backlog grows without limit — memory
+#: first, then the platform killing the container. Shedding is SAFE here
+#: in a way it usually is not: this is a per-position check on a live
+#: feed, so a vessel dropped now is re-checked on its next position
+#: report seconds later. The alternative — queue the work and fall
+#: further behind — turns a busy minute into an outage.
+_SANCTIONS_MAX_INFLIGHT = 64
+_sanctions_inflight = 0
+_sanctions_shed = 0
 # Zone scans: satellite fetch + ONNX inference, minutes at a time.
 _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="zone-scan")
 # Briefing drafting gets its OWN pool. A researched narrative draft occupies a
@@ -9477,14 +9490,31 @@ async def _check_sanctions_on_update(vessel: dict) -> None:
     confirmed dead — zero real callers — and deleted in the 2026-09
     alert/detector audit.)
     """
+    global _sanctions_inflight, _sanctions_shed
     mmsi = str(vessel.get("mmsi", ""))
     if not mmsi:
         return
+
+    # Bounded, and it sheds rather than queues — see
+    # _SANCTIONS_MAX_INFLIGHT. Counted so the shedding is visible;
+    # silent load-shedding is indistinguishable from a broken detector.
+    if _sanctions_inflight >= _SANCTIONS_MAX_INFLIGHT:
+        _sanctions_shed += 1
+        if _sanctions_shed % 100 == 1:
+            print(f"[sanctions] shedding under load: {_sanctions_shed} checks "
+                  f"skipped ({_sanctions_inflight} in flight); each vessel is "
+                  f"re-checked on its next position report")
+        return
+
     loop = asyncio.get_event_loop()
-    # Its own pool — see _sanctions_executor. On the shared one this
-    # starved every HTTP endpoint under real AIS volume.
-    await loop.run_in_executor(_sanctions_executor,
-                               _check_sanctions_on_update_sync, vessel)
+    _sanctions_inflight += 1
+    try:
+        # Its own pool — see _sanctions_executor. On the shared one this
+        # starved every HTTP endpoint under real AIS volume.
+        await loop.run_in_executor(_sanctions_executor,
+                                   _check_sanctions_on_update_sync, vessel)
+    finally:
+        _sanctions_inflight -= 1
 
 
 def _check_sanctions_on_update_sync(vessel: dict) -> None:
