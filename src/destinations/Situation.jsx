@@ -605,7 +605,20 @@ export default function Situation({ onOpenDossier }) {
 
     const maxRank = SEVERITY_FLOORS.find((f) => f.key === severityFloor)?.maxRank ?? 3
     const windowHours = TIME_WINDOWS.find((w) => w.key === timeWindow)?.hours ?? 24
-    const nowMs = Date.now()
+    // A CLOCK THAT TICKS, NOT ONE READ EVERY RENDER. This was
+    // `Date.now()` evaluated inline, and it is a dependency of the
+    // row-filtering and density memos below — so it changed on every
+    // single render and those memos never hit once. Every hover, every
+    // toggle, every keystroke in a filter box recomputed the whole
+    // window over 50,000 surface items. Ticking it on an interval makes
+    // the memos actually memoise, and 30-second granularity is far finer
+    // than anything that reads it needs: the coarsest consumer is an
+    // "N minutes ago" label.
+    const [nowMs, setNowMs] = useState(() => Date.now())
+    useEffect(() => {
+        const iv = setInterval(() => setNowMs(Date.now()), 30000)
+        return () => clearInterval(iv)
+    }, [])
 
     // windowRows: severity-floor + time-window filtered only — the real
     // basis for the Layers pane's own per-domain row counts, which the
