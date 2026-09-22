@@ -5,6 +5,7 @@ import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { MODES } from "./ontologyModes.js"
 import OntologyClusters from "./OntologyClusters.jsx"
+import FindingsPanel from "../components/FindingsPanel.jsx"
 import OntologyOrbat from "./OntologyOrbat.jsx"
 import OntologyEngine from "./OntologyEngine.jsx"
 
@@ -519,6 +520,14 @@ export default function Ontology({ onOpenGenerate }) {
                                 countries each and unfiltered they push everything
                                 else off the list.
                             </div>
+                        </div>
+                        {/* The reading surface for what the graph inferred.
+                            The notification tray already receives these, but a
+                            tray is for interrupting — it is the wrong place to
+                            sit and read through routes and reject the wrong
+                            ones. */}
+                        <div style={{ marginTop: 14 }}>
+                            <FindingsPanel limit={20} />
                         </div>
                     </>
                 ) : mode !== "graph" ? (
