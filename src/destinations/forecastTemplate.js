@@ -86,6 +86,21 @@ export const TPL = {
             { x: 300, y: 118, aff: "hostile", size: "bn", id: "X", to: [300, 118] },
         ],
     },
+    reprisal: {
+        doctrine: "Violence directed at a population rather than at a force: "
+                + "movement toward settlements, no opposing formation to meet, "
+                + "and displacement as the measurable effect.",
+        line: "M300,20 L300,220", lineLabel: "area of civilian presence",
+        units: [
+            { x: 70, y: 60, aff: "unknown", size: "coy", id: "1", to: [280, 78] },
+            { x: 70, y: 160, aff: "unknown", size: "coy", id: "2", to: [280, 168] },
+            { x: 40, y: 110, aff: "unknown", size: "bn", id: "A", to: [180, 118] },
+            // Neutral, static, and in the way: the population is the
+            // object of the doctrine, not a participant in it.
+            { x: 400, y: 80, aff: "neutral", size: "coy", id: "C", to: [400, 80] },
+            { x: 400, y: 150, aff: "neutral", size: "coy", id: "C", to: [400, 150] },
+        ],
+    },
     strike: {
         doctrine: "Interdiction against a node rather than a corridor, which "
                 + "changes who is exposed.",
@@ -140,4 +155,5 @@ export const TEMPLATE_LABEL = {
     demo: "Demonstration / signalling",
     reroute: "Maritime interdiction",
     strike: "Strike on a fixed node",
+    reprisal: "Violence against a population",
 }

@@ -66,11 +66,28 @@ describe("the doctrinal template, rendered", () => {
     it("draws at t = 0 on selection, before anything is played", () => {
         // A bordered box containing only a warning label is a
         // quarter-pane of dead space, and dead space is where a reader
-        // stops reading warnings.
+        // stops reading warnings. The symbols are on screen at t = 0,
+        // and the run starts from there rather than replacing it.
+        expect((html(<Schematic tpl={TPL.incursion} t={0} />).match(/<path/g) || []).length)
+            .toBeGreaterThan(4)
         const m = html(<ForecastTemplate templateKey="incursion" window="0-3 months" />)
-        expect((m.match(/<path/g) || []).length).toBeGreaterThan(4)
         expect(m).toContain("T+0d")
-        expect(m).toContain(">play<")
+    })
+
+    it("opens on the map, because that is where movement means something", () => {
+        // The schematic shows relationships; the map shows whether they
+        // are possible. A reader looking for "what would this look like"
+        // wants the second one first.
+        const m = html(<ForecastTemplate templateKey="incursion" country="Sudan" />)
+        expect(m).toContain("Loading country outlines")
+    })
+
+    it("plays itself once, so a movement is not a still picture", () => {
+        // t = 0 is still drawn first — the autoplay is deferred, not a
+        // replacement for the opening frame.
+        expect(SRC).toContain("setTimeout(() => setPlaying(true)")
+        expect(SRC).toContain("clearTimeout")
+        expect(SRC).toContain("replay")
     })
 
     it("names the doctrine under the frame", () => {
@@ -82,6 +99,34 @@ describe("the doctrinal template, rendered", () => {
     it("says in words, not in a badge, that nothing here was observed", () => {
         expect(html(<ForecastTemplate templateKey="incursion" />))
             .toContain("Nothing above has been observed")
+    })
+
+    it("guarantees the run ends even if animation frames never arrive", () => {
+        // A10 trap 1: "animation frames are not guaranteed — in a
+        // throttled or backgrounded frame the callback never runs."
+        // rAF against a wall clock fixes drift, not absence: without a
+        // backstop the template freezes at a partial t with the button
+        // stuck on "playing…", which reads as a movement that stopped
+        // rather than an animation that died.
+        expect(SRC).toContain("setTimeout(")
+        expect(SRC).toMatch(/RUN_MS \+ \d+/)
+        expect(SRC).toContain("clearTimeout(backstop)")
+    })
+
+    it("never crops the map, because what gets cropped is the stamp", () => {
+        // preserveAspectRatio="slice" scales to fill and cuts the
+        // overflow. It cut the stamp off the top of the minimap, and the
+        // text was still in the DOM, so a test that only checked for the
+        // string passed while the warning was invisible on screen.
+        expect(SRC).not.toContain("slice")
+        expect(SRC).toContain('preserveAspectRatio="xMidYMid meet"')
+    })
+
+    it("follows the house minimap, not a second map of its own", () => {
+        // reference_src A4.4: 196px, mm-land #242b31 on #12161a.
+        expect(SRC).toContain("height: 196")
+        expect(SRC).toContain("#242b31")
+        expect(SRC).toContain("#12161a")
     })
 
     it("plays on requestAnimationFrame against a wall clock, never setInterval", () => {

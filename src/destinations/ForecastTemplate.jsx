@@ -179,23 +179,43 @@ export function Geographic({ tpl, t, country }) {
 
     return (
         <div>
+            {/* The house locator minimap, reference_src A4.4: 196px,
+                mm-land #242b31 on #12161a, so this reads as the same
+                object as the Replay and Reader minimaps rather than a
+                second, differently-coloured map in the same product.
+
+                preserveAspectRatio is "meet" and must never be "slice":
+                slice scales to fill and crops the overflow, and what it
+                cropped was the stamp. The warning text stayed in the DOM
+                the whole time, so a test that only looked for the string
+                passed while it was invisible on screen. */}
             <svg viewBox={`0 0 ${W} ${H}`} width="100%"
-                 style={{ display: "block", background: "#05080C", borderRadius: 4 }}
+                 style={{ display: "block", height: 196, background: "#12161a",
+                          border: "1px solid #1C1F26", borderRadius: 3 }}
+                 preserveAspectRatio="xMidYMid meet"
                  role="img"
                  aria-label={`Doctrinal template over ${country}. Not an observed movement.`}>
-                <rect x={0} y={0} width={W} height={H} fill="#05080C" />
+                <rect x={0} y={0} width={W} height={H} fill="#12161a" />
                 {others.map((f, i) => {
                     const d = pathFor(f.geometry, view)
-                    return d ? <path key={i} d={d} fill="#151B24" stroke="#2A3340"
-                                     strokeWidth="0.7" /> : null
+                    return d ? <path key={i} d={d} fill="#242b31" stroke="#2f373e"
+                                     strokeWidth="0.5"
+                                     vectorEffect="non-scaling-stroke" /> : null
                 })}
-                <path d={pathFor(feature.geometry, view)} fill="#1E2833"
-                      stroke="#5A6678" strokeWidth="1.4" />
+                <path d={pathFor(feature.geometry, view)} fill="#2b343c"
+                      stroke="#47525c" strokeWidth="1.1"
+                      vectorEffect="non-scaling-stroke" />
 
                 {tpl.units.filter(isMoving).map((u, i) => (
-                    <line key={`a${i}`} x1={u.x} y1={u.y} x2={u.to[0]} y2={u.to[1]}
-                          stroke={TINT[u.aff] || TINT.unknown} strokeWidth="1"
-                          strokeDasharray="3 5" opacity="0.4" />
+                    <g key={`a${i}`}>
+                        <line x1={u.x} y1={u.y} x2={u.to[0]} y2={u.to[1]}
+                              stroke={TINT[u.aff] || TINT.unknown} strokeWidth="1"
+                              strokeDasharray="3 5" opacity="0.45" />
+                        {chevron(u, t) ? (
+                            <path d={chevron(u, t)} stroke={TINT[u.aff] || TINT.unknown}
+                                  strokeWidth="1.6" fill="none" opacity="0.9" />
+                        ) : null}
+                    </g>
                 ))}
                 {tpl.units.map((u, i) => <Unit key={i} u={u} t={t} />)}
                 <Stamp />
@@ -217,14 +237,21 @@ export function Geographic({ tpl, t, country }) {
 export default function ForecastTemplate({ templateKey, window: window_ = "",
                                            country = "" }) {
     const tpl = TPL[templateKey]
-    const [face, setFace] = useState("schematic")
+    const [face, setFace] = useState("terrain")
     const [t, setT] = useState(0)
     const [playing, setPlaying] = useState(false)
     const raf = useRef(0)
 
-    // Rule 3: t = 0 the moment a template is selected. The picture is
-    // there to be read before it is played.
-    useEffect(() => { setT(0); setPlaying(false) }, [templateKey])
+    // Rule 3 still holds: t = 0 is drawn the moment a template is
+    // selected, so the frame is never empty. It then plays itself once,
+    // because a movement nobody presses play on is a still picture, and
+    // the whole claim of this panel is about motion over a window.
+    useEffect(() => {
+        setT(0)
+        setPlaying(false)
+        const id = setTimeout(() => setPlaying(true), 450)
+        return () => clearTimeout(id)
+    }, [templateKey])
 
     useEffect(() => {
         if (!playing) return
@@ -239,7 +266,29 @@ export default function ForecastTemplate({ templateKey, window: window_ = "",
             else setPlaying(false)
         }
         raf.current = requestAnimationFrame(step)
-        return () => cancelAnimationFrame(raf.current)
+
+        // A10 trap 1: "animation frames are not guaranteed — in a
+        // throttled or backgrounded frame the callback never runs."
+        // rAF against a wall clock fixes DRIFT, which was F8's concern,
+        // and does nothing about the frame never arriving at all: the
+        // template then freezes at a partial t with the button stuck on
+        // "playing…", which reads as a movement that stopped rather than
+        // an animation that died.
+        //
+        // So rAF still drives it — it is the smooth, drift-free path and
+        // F8 is right that setInterval is not — and a single stepped
+        // timer guarantees the run terminates. It is a backstop, not the
+        // clock: if rAF kept up, this fires after the run is already
+        // finished and finds nothing to do.
+        const backstop = setTimeout(() => {
+            setT(1)
+            setPlaying(false)
+        }, RUN_MS + 900)
+
+        return () => {
+            cancelAnimationFrame(raf.current)
+            clearTimeout(backstop)
+        }
     }, [playing])
 
     if (!tpl) return null
@@ -269,7 +318,7 @@ export default function ForecastTemplate({ templateKey, window: window_ = "",
                     {elapsedLabel(t, window_)}
                 </span>
                 <button style={btn} onClick={() => { setT(0); setPlaying(true) }}>
-                    {playing ? "playing…" : "play"}
+                    {playing ? "playing…" : "replay"}
                 </button>
             </div>
 

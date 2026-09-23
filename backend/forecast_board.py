@@ -55,7 +55,22 @@ MIN_RECENT_EVENTS = 3
 #: here so an unknown key is refused at the door rather than
 #: rendering an empty frame, which reads as 'no doctrine' instead of
 #: 'typo'. Kept in step with src/destinations/forecastTemplate.js.
-TEMPLATES = ("incursion", "hybrid", "demo", "reroute", "strike")
+TEMPLATES = ("incursion", "hybrid", "demo", "reroute", "strike", "reprisal")
+
+#: Which doctrine illustrates which kind of violence.
+#:
+#: This is NOT the model predicting a movement. The model produces a
+#: probability from counts and knows nothing about axes of advance. What
+#: it does know is the KIND of violence it is forecasting, and each kind
+#: has a shape in doctrine — that shape is a fact about the category, not
+#: a claim about this country. Drawing it lets a reader ask "would that
+#: even be possible here", which is the question the terrain face exists
+#: to answer, and the stamp on every frame says the rest.
+VIOLENCE_TEMPLATE = {
+    "state-based conflict": "incursion",
+    "non-state conflict": "hybrid",
+    "one-sided violence against civilians": "reprisal",
+}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS forecast_proposals (
@@ -382,6 +397,8 @@ def _model_scenarios(panel: dict, fit: dict, country: str) -> list:
             "events_last_3m": int(f["ev_3"]),
             "baseline_3m": round(base3, 1),
             "months_since_last": int(f["months_since"]),
+            # Chosen by the KIND of violence, never by the probability.
+            "template": VIOLENCE_TEMPLATE.get(violence),
         })
     out.sort(key=lambda s: -s["p"])
     return out
