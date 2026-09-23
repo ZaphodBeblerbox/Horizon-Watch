@@ -100,6 +100,10 @@ class FusionEngine:
     def __init__(self):
         # geo_key → [signal, ...]
         self.active_signals: dict  = {}
+        #: geo_key -> set of domains currently in that bucket.
+        #: Maintained in _add_signal's existing pass so the
+        #: single-domain check in _evaluate_fusion is O(1).
+        self._bucket_domains: dict = {}
         # fusion_id → {fusion_id, title, ...}  (in-memory mirror of DB rows)
         self.active_fusions: dict  = {}
         # signal_id → fusion_id
@@ -189,9 +193,13 @@ class FusionEngine:
         if not correlatable:
             return
 
+        # Logged only for buckets that can actually fuse — see
+        # _evaluate_fusion. This line fired once per arriving signal and
+        # built a set over the whole bucket to do it.
         current = self.active_signals.get(geo_key, [])
-        domains_now = set(s["domain"] for s in current)
-        print(f"[FUSION] Active signals for {geo_key}: {len(current)} | domains={domains_now}")
+        if self._domain_count(geo_key, current) >= 2:
+            print(f"[FUSION] Active signals for {geo_key}: {len(current)} | "
+                  f"domains={self._bucket_domains.get(geo_key) or '?'}")
         self._evaluate_fusion(geo_key)
 
     def get_recent_signals(self, limit: int = 50) -> list:
@@ -207,6 +215,10 @@ class FusionEngine:
             ]
             if not self.active_signals[geo_key]:
                 del self.active_signals[geo_key]
+                self._bucket_domains.pop(geo_key, None)
+            else:
+                self._bucket_domains[geo_key] = {
+                    s["domain"] for s in self.active_signals[geo_key]}
 
         try:
             from database import get_db
@@ -279,16 +291,64 @@ class FusionEngine:
     def _add_signal(self, geo_key: str, signal: dict):
         bucket = self.active_signals.setdefault(geo_key, [])
         cutoff = datetime.datetime.utcnow() - timedelta(hours=self.fusion_window_hours)
-        bucket = [s for s in bucket if s["timestamp"] > cutoff]
-        # Deduplicate by signal_id
-        existing_ids = {s["signal_id"] for s in bucket}
-        if signal["signal_id"] not in existing_ids:
-            bucket.append(signal)
-        self.active_signals[geo_key] = bucket
+        # ONE pass, not two. This runs per arriving signal against a
+        # bucket that reached 10,012 entries for CTY:us in production,
+        # and the domain set it collects on the way is what lets
+        # _evaluate_fusion refuse a hopeless bucket in O(1).
+        kept, ids, doms = [], set(), set()
+        for s in bucket:
+            if s["timestamp"] > cutoff:
+                kept.append(s)
+                ids.add(s["signal_id"])
+                doms.add(s["domain"])
+        if signal["signal_id"] not in ids:
+            kept.append(signal)
+            doms.add(signal["domain"])
+        self.active_signals[geo_key] = kept
+        self._bucket_domains[geo_key] = doms
+
+    def _domain_count(self, geo_key: str, signals: list) -> int:
+        """How many distinct domains are in this bucket, cheaply.
+
+        Uses the set maintained by _add_signal when it is there, and
+        otherwise counts with an early exit — the restore path appends to
+        active_signals directly, so the cache can legitimately be absent.
+        Two is all the caller needs to know.
+        """
+        cached = self._bucket_domains.get(geo_key)
+        if cached is not None:
+            return len(cached)
+        seen = set()
+        for s in signals:
+            seen.add(s.get("domain"))
+            if len(seen) >= 2:
+                break
+        return len(seen)
 
     def _evaluate_fusion(self, geo_key: str):
         signals = self.active_signals.get(geo_key, [])
         if not signals:
+            return
+
+        # A SINGLE-DOMAIN BUCKET CAN NEVER FUSE. domain_diversity_score's
+        # own docstring says so by construction, and the floor check below
+        # already rejected every one of them — but only AFTER three O(n)
+        # passes and two log lines, per arriving signal.
+        #
+        # In production CTY:us reached 10,012 signals, all GDELT. That is
+        # 4.26ms of event-loop time and two log lines to reach a verdict
+        # that was never in doubt, on every signal that arrived. GDELT
+        # alone exceeds the ~235 signals/sec that leaves, and two lines
+        # per signal crosses Railway's 500 logs/sec ceiling at the same
+        # rate — at which point print() blocks on a backpressured pipe and
+        # takes the event loop with it. The healthcheck then goes
+        # unanswered and the platform kills a container that is, by its
+        # own account, busy.
+        #
+        # So the verdict is reached first, and nothing is computed or
+        # logged to reach it. Behaviour is unchanged: these buckets
+        # returned here anyway.
+        if self._domain_count(geo_key, signals) < 2:
             return
 
         # Prioritise strategically relevant signals when scoring
@@ -882,6 +942,14 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                             reloaded += 1
                     except Exception:
                         pass
+                # The restore appends to active_signals directly, so the
+                # domain cache _evaluate_fusion relies on is rebuilt here
+                # rather than left stale. A stale cache would be the worst
+                # kind of wrong: it would silently suppress fusions for a
+                # bucket that had since become multi-domain.
+                self._bucket_domains = {
+                    k: {s["domain"] for s in v if s.get("domain")}
+                    for k, v in self.active_signals.items()}
                 print(f"[fusion] Reloaded {reloaded} signals from DB "
                       f"({len(self.active_signals)} geo keys)")
 
