@@ -487,3 +487,52 @@ def test_the_basis_says_so_when_there_is_no_tail_at_all():
     lines = " | ".join(fb._basis({}, {"skill": 0.2}, meta))
     assert "no live tail" in lines
     c.close()
+
+
+# ── The residual: P(none), not 1 - sum ────────────────────────────────
+
+def test_the_residual_is_the_chance_none_of_them_happens():
+    # 1 - sum is the residual only when the rows are alternatives. The
+    # model's rows are not: escalation in state-based conflict, in
+    # non-state conflict and in one-sided violence are three independent
+    # yes/no questions about the same quarter in the same country.
+    sc = [{"p": 0.07}, {"p": 0.24}, {"p": 0.13}]
+    assert abs(fb.residual_of(sc) - (0.93 * 0.76 * 0.87)) < 1e-9
+
+
+def test_it_never_claims_a_quiet_quarter_is_impossible():
+    # Sudan's rows summed to 1.121, so 1 - sum clamped to 0.0 and the
+    # board said "there is no chance that none of these happens" — false,
+    # unfalsifiable, and printed in the row the spec calls the most
+    # important one.
+    r = fb.residual_of([{"p": 0.573}, {"p": 0.275}, {"p": 0.273}])
+    assert r > 0
+    assert abs(r - (0.427 * 0.725 * 0.727)) < 1e-9
+
+
+def test_it_is_a_floor_so_adding_a_scenario_only_lowers_it():
+    base = fb.residual_of([{"p": 0.3}])
+    more = fb.residual_of([{"p": 0.3}, {"p": 0.2}])
+    assert more < base
+    assert abs(more - 0.56) < 1e-9
+
+
+def test_it_stays_inside_the_unit_interval_for_any_input():
+    assert fb.residual_of([]) == 1.0
+    assert fb.residual_of([{"p": 1.0}, {"p": 0.5}]) == 0.0
+    assert fb.residual_of([{"p": 5}]) == 0.0
+    assert fb.residual_of([{"p": -3}]) == 1.0
+    assert abs(fb.residual_of([{"p": None}, {"p": 0.5}]) - 0.5) < 1e-9
+    assert abs(fb.residual_of([{"p": "x"}, {"p": 0.5}]) - 0.5) < 1e-9
+
+
+def test_the_caveat_says_the_rows_are_not_alternatives():
+    # A reader who thinks the bars are alternatives will read every one
+    # of them wrong, and they no longer sum to 100%.
+    c = _corpora()
+    built = {"panel": fb._panel(c), "fit": {"skill": 0.2}, "tail": {}}
+    c.close()
+    import inspect
+    src = inspect.getsource(fb.get_board)
+    assert "not alternatives to each other" in src
+    assert "do not sum to 100" in src

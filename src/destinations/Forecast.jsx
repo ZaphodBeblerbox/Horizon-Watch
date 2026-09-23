@@ -168,9 +168,20 @@ export default function Forecast() {
                                 history did not.
                             </P>
                             <P>
+                                The rows are <b>not alternatives to one another</b>.
+                                Escalation in state-based conflict, in non-state
+                                conflict and against civilians are three separate
+                                questions about the same quarter, and several can come
+                                true together — so the bars do not add up to 100%, and
+                                are not meant to.
+                            </P>
+                            <P>
                                 <b>None of these</b> is a real row and usually the
-                                largest. Three named scenarios summing to 100% would be
-                                a lie.
+                                largest: the chance that not one of them happens. It is
+                                a floor rather than an estimate, because violence of
+                                these kinds tends to move together — what flares
+                                together also stays quiet together — so a quiet quarter
+                                is at least as likely as that row says.
                             </P>
                         </Sect>
                     </>
@@ -214,7 +225,9 @@ export default function Forecast() {
                                     color: "var(--txt-3)", lineHeight: 1.5, margin: "2px 0 10px" }}>
                             Each bar is a probability; the tick on it is how often that has
                             happened here before. Read every bar as a departure from
-                            history, never as an absolute.
+                            history, never as an absolute — and read the rows as
+                            separate questions, not as a menu: they can all be true at
+                            once, so they do not sum to 100%.
                         </p>
 
                         {selected

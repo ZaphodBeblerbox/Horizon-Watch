@@ -22,15 +22,38 @@ export function pct(p) {
 }
 
 /**
- * The residual, computed from the scenarios present.
+ * The probability that NONE of the listed scenarios happens.
  *
  * Never read from the payload even when the server sends one: the board
  * gains analyst proposals client-side, and a residual that does not move
  * when a scenario is added is the exact failure F7 calls out.
+ *
+ * THIS WAS 1 - SUM(p), WHICH IS A CATEGORY ERROR. That is the residual
+ * only if the rows are alternatives to one another, and they are not:
+ * escalation in state-based conflict, in non-state conflict and in
+ * one-sided violence can all happen in the same quarter, in the same
+ * country. The old formula carried its own evidence — it needed a clamp
+ * at zero, which can only bite when the rows sum past 1, which can only
+ * happen when they are not exclusive. Sudan summed to 1.121 and the
+ * board printed a residual of 0.0: "there is no chance that none of
+ * these happens", in the row the spec calls the most important one.
+ *
+ * The product of the complements is P(none) under independence. That is
+ * not true either, but its error has a known and safe direction: these
+ * events are positively correlated, and for positively correlated events
+ * P(neither) EXCEEDS the independent product, because what flares
+ * together stays quiet together. So this is a floor, and the row reads
+ * honestly as "at least this likely".
+ *
+ * Kept identical to forecast_board.residual_of on the server; a test
+ * checks the two against the same cases.
  */
 export function residualOf(scenarios) {
-    const total = (scenarios || []).reduce((s, x) => s + (num(x?.p) || 0), 0)
-    return Math.max(0, 1 - total)
+    return (scenarios || []).reduce((r, x) => {
+        const p = num(x?.p)
+        if (p === null) return r
+        return r * (1 - Math.max(0, Math.min(1, p)))
+    }, 1)
 }
 
 /**
@@ -90,7 +113,7 @@ export function rows(scenarios) {
         {
             id: "__residual__", residual: true, p: residualOf(list),
             label: "None of these",
-            note: "the listed set is never complete",
+            note: "at least this likely — the listed set is never complete",
         },
     ]
 }

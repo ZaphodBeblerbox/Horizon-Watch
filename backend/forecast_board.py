@@ -189,6 +189,42 @@ def fitted(conn: sqlite3.Connection, *, force: bool = False) -> dict:
         return built
 
 
+def residual_of(scenarios) -> float:
+    """The probability that NONE of the listed scenarios happens.
+
+    THIS WAS 1 - SUM(p), AND THAT IS A CATEGORY ERROR. It is only the
+    residual if the rows are mutually exclusive, and these rows are not:
+    "escalation in state-based conflict", "in non-state conflict" and
+    "in one-sided violence against civilians" can all happen in the same
+    quarter, in the same country, and frequently do.
+
+    The old formula carried its own evidence. It needed max(0.0, ...),
+    which can only trigger when the rows sum past 1 — which can only
+    happen when they are not exclusive. Sudan summed to 1.121 and the
+    board reported a residual of 0.0: "there is no chance that none of
+    these happens". That is precisely the unfalsifiable overconfidence
+    the four rules exist to prevent, printed in the row the spec calls
+    the most important one on the board.
+
+    Under independence P(none) is the product of the complements, which
+    is what this returns. Independence is not true either — violence
+    types in one country are positively correlated — but the direction of
+    that error is known and it is the safe one: for positively correlated
+    events P(neither) EXCEEDS the independent product, because things
+    that flare together also stay quiet together. So this is a lower
+    bound on the residual, and the row can honestly be read as "at least
+    this likely", never as an overstatement.
+    """
+    r = 1.0
+    for sc in scenarios or []:
+        try:
+            p = float(sc.get("p"))
+        except (TypeError, ValueError):
+            continue
+        r *= 1.0 - max(0.0, min(1.0, p))
+    return r
+
+
 def _basis(panel: dict, fit: dict, tail: dict) -> list:
     """What the board is standing on, including where it is weakest.
 
@@ -445,9 +481,8 @@ def get_board(conn: sqlite3.Connection, bid: str) -> dict:
         return {"available": False, "error": f"no board {bid}"}
 
     scenarios = _model_scenarios(panel, fit, country) + _proposals(conn, bid)
-    total = sum(s["p"] for s in scenarios)
     # COMPUTED, never authored, and recomputed whenever a proposal lands.
-    residual = max(0.0, 1.0 - total)
+    residual = residual_of(scenarios)
 
     last_month = max((s["m"] for series in panel.values() for s in series), default=None)
     return {
@@ -472,9 +507,12 @@ def get_board(conn: sqlite3.Connection, bid: str) -> dict:
         # same number differently, which is the point.
         "tail": built.get("tail") or {},
         "caveat": ("Probabilities are for escalation beyond this locale's own "
-                   "recent rate, not for any specific named event. The residual "
-                   "is what none of the listed scenarios covers, and it is "
-                   "usually the largest row."),
+                   "recent rate, not for any specific named event. The rows are "
+                   "not alternatives to each other — several can happen in the "
+                   "same quarter — so they do not sum to 100%. The residual is "
+                   "the chance that none of them does, and because these events "
+                   "tend to move together it is a floor rather than an estimate: "
+                   "the real chance of a quiet quarter is at least that."),
     }
 
 
