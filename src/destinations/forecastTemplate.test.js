@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import fs from "node:fs"
 import { FRAME, SIZE, TPL, AFFILIATIONS, TEMPLATE_KEYS, TEMPLATE_LABEL,
          isMoving, positionAt, chevron, elapsedLabel } from "./forecastTemplate.js"
+import { DOMAINS, ICONS } from "./forecastSymbols.js"
 
 describe("the doctrinal template", () => {
     it("draws every APP-6 affiliation rather than approximating one", () => {
@@ -81,5 +82,34 @@ describe("the doctrinal template", () => {
         expect(m, "TEMPLATES not found in forecast_board.py").toBeTruthy()
         const backend = m[1].match(/"([a-z_]+)"/g).map((q) => q.slice(1, -1))
         expect(backend.sort()).toEqual([...TEMPLATE_KEYS].sort())
+    })
+
+    it("gives every unit a battle dimension", () => {
+        // Without one every formation is drawn in a ground frame, which
+        // says every movement is a march — and an air axis that looks
+        // like a march is the specific thing this is meant to prevent.
+        for (const k of TEMPLATE_KEYS) {
+            for (const u of TPL[k].units) {
+                expect(DOMAINS, `${k}/${u.id}`).toContain(u.domain)
+            }
+        }
+    })
+
+    it("gives every unit a function glyph the symbol set knows", () => {
+        for (const k of TEMPLATE_KEYS) {
+            for (const u of TPL[k].units) {
+                expect(Object.keys(ICONS), `${k}/${u.id}`).toContain(u.icon)
+            }
+        }
+    })
+
+    it("puts sea units only in the maritime template", () => {
+        // A naval symbol in a land incursion would be drawn, checked
+        // against the coastline, and refused — which is right, but it
+        // should not be authored in the first place.
+        for (const k of TEMPLATE_KEYS) {
+            const sea = TPL[k].units.filter((u) => u.domain === "sea")
+            if (sea.length) expect(k).toBe("reroute")
+        }
     })
 })

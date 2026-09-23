@@ -26,20 +26,19 @@
  * indistinguishable from tracks.
  */
 import { useEffect, useRef, useState } from "react"
+import API_BASE from "../apiBase.js"
+import { num } from "../utils/strictNumber.js"
 import {
     FRAME, SIZE, TPL, RUN_MS, isMoving, positionAt, chevron, elapsedLabel,
 } from "./forecastTemplate.js"
 import {
     matchCountry, bboxOf, viewFor, project, pathFor,
 } from "./forecastTerrain.js"
+import { frameFor, iconFor, tintFor, SIZE as ECHELON } from "./forecastSymbols.js"
+import { unproject } from "./forecastTerrain.js"
+import { checkUnit } from "./forecastFeasibility.js"
 
 const W = 560, H = 240
-
-/** Affiliation colours. Deliberately not the globe's track colours. */
-const TINT = {
-    friendly: "#5AC8FA", hostile: "#FF6B6B",
-    neutral:  "#8E8E93", unknown: "#FFD166",
-}
 
 /**
  * The stamp. Rendered inside the SVG rather than over it, so it cannot
@@ -66,18 +65,32 @@ function Stamp() {
     )
 }
 
-/** One APP-6 symbol: frame, echelon tick, designator. */
+/**
+ * One APP-6 symbol: frame, function glyph, echelon tick, designator.
+ *
+ * The frame carries BOTH affiliation and battle dimension, so an air
+ * formation is visibly not a ground one — its frame arches over the top
+ * and is open at the base. Drawing everything in a land frame, which is
+ * what this did first, says every movement is a march.
+ */
 function Unit({ u, t }) {
     const { x, y } = positionAt(u, t)
-    const tint = TINT[u.aff] || TINT.unknown
+    const tint = tintFor(u)
+    const frame = frameFor(u)
+    const icon = iconFor(u)
     return (
         <g transform={`translate(${x},${y})`}>
-            <path d={FRAME[u.aff]} fill="rgba(10,12,16,0.85)"
-                  stroke={tint} strokeWidth="1.6" />
+            <path d={frame.d}
+                  fill={frame.closed ? "rgba(10,12,16,0.85)" : "none"}
+                  stroke={tint} strokeWidth="1.6" strokeLinejoin="round" />
+            {icon ? (
+                <path d={icon} fill={u.icon === "artillery" ? tint : "none"}
+                      stroke={tint} strokeWidth="1.2" opacity="0.95" />
+            ) : null}
             <text x={0} y={-16} textAnchor="middle" fill={tint}
-                  fontSize="9" fontWeight="700">{SIZE[u.size]}</text>
-            <text x={0} y={4} textAnchor="middle" fill={tint}
-                  fontSize="9" fontWeight="600">{u.id}</text>
+                  fontSize="9" fontWeight="700">{ECHELON[u.size] || ""}</text>
+            <text x={0} y={19} textAnchor="middle" fill={tint}
+                  fontSize="8.5" fontWeight="600" opacity="0.85">{u.id}</text>
         </g>
     )
 }
@@ -100,10 +113,10 @@ export function Schematic({ tpl, t }) {
             {tpl.units.filter(isMoving).map((u, i) => (
                 <g key={`ax${i}`}>
                     <line x1={u.x} y1={u.y} x2={u.to[0]} y2={u.to[1]}
-                          stroke={TINT[u.aff] || TINT.unknown} strokeWidth="1"
+                          stroke={tintFor(u)} strokeWidth="1"
                           strokeDasharray="3 5" opacity="0.35" />
                     {chevron(u, t) ? (
-                        <path d={chevron(u, t)} stroke={TINT[u.aff] || TINT.unknown}
+                        <path d={chevron(u, t)} stroke={tintFor(u)}
                               strokeWidth="1.6" fill="none" opacity="0.9" />
                     ) : null}
                 </g>
@@ -134,6 +147,7 @@ export function Schematic({ tpl, t }) {
  */
 export function Geographic({ tpl, t, country }) {
     const [world, setWorld] = useState(null)
+    const [fields, setFields] = useState(null)
     const [failed, setFailed] = useState(false)
 
     useEffect(() => {
@@ -142,6 +156,32 @@ export function Geographic({ tpl, t, country }) {
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => { if (!dead) (d ? setWorld(d) : setFailed(true)) })
             .catch(() => { if (!dead) setFailed(true) })
+        return () => { dead = true }
+    }, [])
+
+    // Real airfields, for the one check that decides whether an air axis
+    // is a movement or an assertion. Failure is not fatal: the check
+    // then reports "unknown" rather than passing everything.
+    useEffect(() => {
+        let dead = false
+        fetch(`${API_BASE}/api/airports?limit=4000`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                if (dead) return
+                // GeoJSON: coordinates are [lon, lat], in that order.
+                // Reading them as [lat, lon] puts every airfield in the
+                // wrong hemisphere and quietly fails every air check.
+                const feats = d?.features || (Array.isArray(d) ? d : [])
+                setFields(feats.map((f) => {
+                    const c = f?.geometry?.coordinates || []
+                    return {
+                        name: f?.properties?.airport_name || f?.properties?.ident
+                              || "airfield",
+                        lon: num(c[0]), lat: num(c[1]),
+                    }
+                }).filter((a) => a.lat !== null && a.lon !== null))
+            })
+            .catch(() => { if (!dead) setFields([]) })
         return () => { dead = true }
     }, [])
 
@@ -177,6 +217,20 @@ export function Geographic({ tpl, t, country }) {
     // border that matters is the one the template is about.
     const others = world.features.filter((f) => f !== feature)
 
+    // THE CHECK THE WHOLE FACE IS FOR. Each unit's schematic axis is
+    // turned back into real coordinates and asked whether that movement
+    // is physically possible: an air axis needs an airfield behind it, a
+    // surface contact cannot drive inland, a ground axis cannot cross
+    // open water. Ground trafficability comes back "unknown" and says
+    // so — there is no road network loaded, and pretending otherwise
+    // would be a lie about the hardest part of the question.
+    const verdicts = tpl.units.map((u) => {
+        const from = unproject(u.x, u.y, view)
+        const to = unproject(u.to[0], u.to[1], view)
+        return checkUnit(u, { from, to }, world.features, fields || [])
+    })
+    const impossible = verdicts.filter((v) => v.status === "impossible")
+
     return (
         <div>
             {/* The house locator minimap, reference_src A4.4: 196px,
@@ -206,20 +260,43 @@ export function Geographic({ tpl, t, country }) {
                       stroke="#47525c" strokeWidth="1.1"
                       vectorEffect="non-scaling-stroke" />
 
-                {tpl.units.filter(isMoving).map((u, i) => (
+                {tpl.units.map((u, i) => (!isMoving(u) ? null : (
                     <g key={`a${i}`}>
                         <line x1={u.x} y1={u.y} x2={u.to[0]} y2={u.to[1]}
-                              stroke={TINT[u.aff] || TINT.unknown} strokeWidth="1"
-                              strokeDasharray="3 5" opacity="0.45" />
+                              stroke={verdicts[i].status === "impossible"
+                                  ? "#FF3B30" : tintFor(u)}
+                              strokeWidth={verdicts[i].status === "impossible" ? 1.4 : 1}
+                              strokeDasharray={verdicts[i].status === "impossible"
+                                  ? "1 3" : "3 5"}
+                              opacity={verdicts[i].status === "impossible" ? 0.95 : 0.45} />
                         {chevron(u, t) ? (
-                            <path d={chevron(u, t)} stroke={TINT[u.aff] || TINT.unknown}
+                            <path d={chevron(u, t)} stroke={tintFor(u)}
                                   strokeWidth="1.6" fill="none" opacity="0.9" />
                         ) : null}
                     </g>
-                ))}
+                )))}
                 {tpl.units.map((u, i) => <Unit key={i} u={u} t={t} />)}
                 <Stamp />
             </svg>
+            {/* Refusals are named, not just drawn red. A dotted line the
+                reader has to interpret is not a finding. */}
+            {impossible.length ? (
+                <div style={{ margin: "8px 0 0", padding: "8px 10px",
+                              border: "1px solid rgba(255,59,48,0.4)",
+                              background: "rgba(255,59,48,0.07)" }}>
+                    <div style={{ color: "#FF3B30", fontSize: 10.5, fontWeight: 700,
+                                  letterSpacing: ".06em", marginBottom: 4 }}>
+                        {impossible.length} MOVEMENT{impossible.length > 1 ? "S" : ""} NOT
+                        POSSIBLE HERE
+                    </div>
+                    {verdicts.map((v, i) => (v.status !== "impossible" ? null : (
+                        <div key={i} style={{ color: "#C8CDD6", fontSize: 11,
+                                              lineHeight: 1.45 }}>
+                            {tpl.units[i].id} ({tpl.units[i].domain}) — {v.reason}
+                        </div>
+                    )))}
+                </div>
+            ) : null}
             <p style={{ color: "#6B7280", fontSize: 11, lineHeight: 1.5,
                         margin: "8px 0 0" }}>
                 {country}, about {Math.round((view.maxLon - view.minLon) * 111 *
@@ -230,6 +307,110 @@ export function Geographic({ tpl, t, country }) {
                 crosses, what it would have to traverse. If an axis runs into the sea,
                 that is the check working.
             </p>
+        </div>
+    )
+}
+
+/**
+ * The key. APP-6 is a language, and a reader who does not speak it sees
+ * coloured shapes moving — which is worse than no symbols at all,
+ * because shapes moving with confidence look like knowledge.
+ *
+ * Collapsed by default so it does not compete with the map, and drawn
+ * from the same FRAMES and ICONS the symbols use, so it cannot drift out
+ * of step with what is actually on screen.
+ */
+function Legend({ units }) {
+    const [open, setOpen] = useState(false)
+    // Only what is actually on this template: a key to symbols that are
+    // not present teaches the wrong things to look for.
+    const doms = [...new Set(units.map((u) => u.domain))]
+    const icons = [...new Set(units.map((u) => u.icon))].filter((i) => i && i !== "none")
+    const affs = [...new Set(units.map((u) => u.aff))]
+    const sizes = [...new Set(units.map((u) => u.size))]
+
+    const cell = { display: "flex", alignItems: "center", gap: 6,
+                   color: "#9AA0AA", fontSize: 10.5 }
+    const swatch = (u, label) => (
+        <div style={cell} key={label}>
+            <svg width="34" height="28" viewBox="-17 -14 34 28">
+                <g transform="scale(0.72)">
+                    <path d={frameFor(u).d}
+                          fill={frameFor(u).closed ? "rgba(10,12,16,0.85)" : "none"}
+                          stroke={tintFor(u)} strokeWidth="2" strokeLinejoin="round" />
+                    {iconFor(u) ? (
+                        <path d={iconFor(u)} fill={u.icon === "artillery" ? tintFor(u) : "none"}
+                              stroke={tintFor(u)} strokeWidth="1.6" />
+                    ) : null}
+                </g>
+            </svg>
+            <span>{label}</span>
+        </div>
+    )
+
+    return (
+        <div style={{ marginTop: 8 }}>
+            <button onClick={() => setOpen(!open)}
+                    style={{ background: "transparent", border: "1px solid #2A2F3A",
+                             color: "#8A909B", borderRadius: 3, padding: "3px 9px",
+                             fontSize: 10.5, cursor: "pointer" }}>
+                {open ? "hide key" : "what do these symbols mean?"}
+            </button>
+            {!open ? null : (
+                <div style={{ marginTop: 8, padding: "10px 12px", background: "#0A0C10",
+                              border: "1px solid #1C1F26", borderRadius: 3,
+                              display: "grid", gap: 10 }}>
+                    <Row title="Affiliation — the frame's shape and colour">
+                        {affs.map((a) => swatch(
+                            { aff: a, domain: "ground", icon: "none" }, a))}
+                    </Row>
+                    <Row title="Dimension — an air frame is open at the base">
+                        {doms.map((d) => swatch(
+                            { aff: "unknown", domain: d, icon: "none" },
+                            d === "sea" ? "sea (surface)" : d))}
+                    </Row>
+                    {icons.length ? (
+                        <Row title="Arm — the glyph inside the frame">
+                            {icons.map((ic) => swatch(
+                                { aff: "unknown", domain: "ground", icon: ic }, ic))}
+                        </Row>
+                    ) : null}
+                    <Row title="Echelon — the tick above the frame">
+                        {sizes.map((sz) => (
+                            <div style={cell} key={sz}>
+                                <span style={{ width: 34, textAlign: "center",
+                                               color: "#C8CDD6", fontWeight: 700,
+                                               fontSize: 11 }}>{ECHELON[sz]}</span>
+                                <span>{ECHELON_NAME[sz] || sz}</span>
+                            </div>
+                        ))}
+                    </Row>
+                    <p style={{ color: "#6B7280", fontSize: 10.5, lineHeight: 1.5,
+                                margin: 0 }}>
+                        A red dotted axis is a movement this terrain will not permit —
+                        it is drawn so you can see the template being wrong, not hidden
+                        so the picture stays tidy.
+                    </p>
+                </div>
+            )}
+        </div>
+    )
+}
+
+const ECHELON_NAME = {
+    team: "team", squad: "squad", plt: "platoon", coy: "company",
+    bn: "battalion", regt: "regiment", bde: "brigade", div: "division",
+    corps: "corps",
+}
+
+function Row({ title, children }) {
+    return (
+        <div>
+            <div style={{ color: "#6B7280", fontSize: 10, letterSpacing: ".06em",
+                          textTransform: "uppercase", marginBottom: 5 }}>{title}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px" }}>
+                {children}
+            </div>
         </div>
     )
 }
@@ -325,6 +506,8 @@ export default function ForecastTemplate({ templateKey, window: window_ = "",
             {face === "schematic"
                 ? <Schematic tpl={tpl} t={t} />
                 : <Geographic tpl={tpl} t={t} country={country} />}
+
+            <Legend units={tpl.units} />
 
             {/* Rule 2: the doctrine, named, under the frame. */}
             <p style={{ color: "#8A909B", fontSize: 11, lineHeight: 1.55,
