@@ -418,3 +418,113 @@ def resolve(conn: sqlite3.Connection, *, scenario_id: str, board: str,
          1 if outcome else 0, _dt.datetime.now(_dt.timezone.utc).isoformat()))
     conn.commit()
     return {"ok": True}
+
+
+# ── Predictions as signals, for the briefing ──────────────────────────
+#
+# A FORECAST WRITTEN AS A SIGNAL MUST NEVER READ AS AN OBSERVATION. That
+# is the whole risk of this integration: the briefing pipeline treats
+# alerts as things that have happened, and a probability dropped into
+# that stream without marking becomes, two hands later, a fact. So every
+# row written here says "Forecast" in its title, carries is_forecast in
+# its payload, and is classified C (model) or B (analyst) at tier T2 so
+# the reader can tell machine from analyst without parsing prose.
+#
+# AND MOST OF THEM ARE NOT WRITTEN AT ALL. A scenario sitting on its own
+# base rate is the model agreeing with history — true, and not news. If
+# every locale published every quarter the briefing would fill with
+# restatements of the obvious and the real departures would be lost in
+# them. Only a material departure becomes a signal, which is the same
+# argument the bar's own tick makes, applied at write time.
+
+#: How far from its base rate a forecast must be before it is worth
+#: telling anybody. Below this the model is agreeing with history.
+DEPARTURE_FLOOR = 0.12
+
+#: And a forecast this unlikely is not worth a line whatever its
+#: departure — a rise from 1% to 4% is a tripling and still nothing.
+PROBABILITY_FLOOR = 0.25
+
+
+def signal_worthy(p: float, base: float | None) -> tuple:
+    """(worth_writing, reason). The tick's argument, applied at write time."""
+    if p is None:
+        return False, "no probability"
+    if p < PROBABILITY_FLOOR:
+        return False, f"below {int(PROBABILITY_FLOOR * 100)}% — not worth a line"
+    if base is None:
+        # An authored scenario has no measured history to depart from.
+        # It is published on the analyst's say-so, and marked as theirs.
+        return True, "analyst scenario, no measured base rate"
+    diff = p - base
+    if abs(diff) < DEPARTURE_FLOOR:
+        return False, "on its base rate — history already said this"
+    return True, (f"{abs(diff) * 100:.0f} points "
+                  f"{'above' if diff > 0 else 'below'} a base rate of {base * 100:.0f}%")
+
+
+def publish_signals(conn: sqlite3.Connection, write_alert, *, limit: int = 40) -> dict:
+    """Write today's material forecasts as alerts, for the briefing.
+
+    `write_alert` is passed in rather than imported so this can be
+    tested without the whole application.
+    """
+    built = fitted(conn)
+    panel, fit = built["panel"], built["fit"]
+    if not fit.get("available") or not fit.get("skilful"):
+        return {"written": 0, "skipped": 0,
+                "reason": "model not skilful enough to publish"}
+
+    countries = {c for (c, _v) in panel}
+    written = skipped = 0
+    for country in countries:
+        bid = board_id(country)
+        for sc in _model_scenarios(panel, fit, country):
+            ok, why = signal_worthy(sc["p"], sc["base"])
+            if not ok:
+                skipped += 1
+                continue
+            pctv = int(round(sc["p"] * 100))
+            try:
+                write_alert({
+                    # Deterministic, so republishing the same quarter's
+                    # forecast updates rather than duplicating it.
+                    "id": f"FC-{sc['id']}",
+                    "title": (f"Forecast — {sc['label'].lower()} in {country}: "
+                              f"{pctv}% over {cm.HORIZON_M} months"),
+                    "source": "forecast",
+                    "alert_type": "forecast_escalation",
+                    "severity": "high" if sc["p"] >= 0.6 else "medium",
+                    "region": country,
+                    "entity_type": "forecast", "entity_id": sc["id"],
+                    "entity_name": sc["label"],
+                    "tags": ["forecast", "escalation", "not-an-observation"],
+                    "raw": {
+                        # The flag a downstream reader checks before
+                        # treating any of this as something that happened.
+                        "is_forecast": True,
+                        "board": bid,
+                        "probability": sc["p"],
+                        "base_rate": sc["base"],
+                        "horizon_months": cm.HORIZON_M,
+                        "reason": why,
+                        "falsifier": sc["falsifier"],
+                        "indicators": sc["indicators"],
+                        "events_last_3m": sc.get("events_last_3m"),
+                        "baseline_3m": sc.get("baseline_3m"),
+                        "model_skill": fit.get("skill"),
+                        "caveat": ("A forecast, not an observation. It states "
+                                   "what may happen and how often it has "
+                                   "happened here before."),
+                    },
+                })
+                written += 1
+            except Exception:                                # noqa: BLE001
+                skipped += 1
+            if written >= limit:
+                break
+        if written >= limit:
+            break
+    return {"written": written, "skipped": skipped,
+            "departure_floor": DEPARTURE_FLOOR,
+            "probability_floor": PROBABILITY_FLOOR}

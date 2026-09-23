@@ -75,6 +75,13 @@ ALERT_SOURCE_PROVENANCE: dict[str, tuple[str, str]] = {
     "ais":          ("B", "T1"),
     "adsb":         ("C", "T1"),
     "geoconfirmed": ("B", "T3"),
+    # Scenario board (spec addendum F10). A model forecast is class C —
+    # machine-derived — and an analyst's is class B, because the two have
+    # different records and the briefing must be able to tell them apart
+    # without reading the text. T2: internal by default, since a forecast
+    # is not an observation and must not leave on the same footing as one.
+    "forecast":          ("C", "T2"),
+    "forecast_analyst":  ("B", "T2"),
 }
 
 

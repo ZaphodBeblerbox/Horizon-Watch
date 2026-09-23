@@ -11018,6 +11018,40 @@ class _LiveCached(Exception):
     """Control-flow marker: the derived block was served from cache."""
 
 
+async def _forecast_publish_loop():
+    """Write material forecasts into the alert stream, for the briefing.
+
+    A forecast that agrees with its own base rate is not published at
+    all — see forecast_board.signal_worthy. Publishing every locale
+    every quarter would fill the briefing with restatements of history
+    and bury the departures in them.
+
+    Daily, because the underlying model is monthly and a forecast that
+    changes between breakfast and lunch is noise.
+    """
+    await asyncio.sleep(900)
+    while True:
+        try:
+            import sqlite3 as _sq
+            import forecast_board as _fb
+            loop_ = asyncio.get_event_loop()
+
+            def _publish():
+                conn = _sq.connect(_akili_db_path())
+                try:
+                    _fb.ensure_schema(conn)
+                    return _fb.publish_signals(conn, write_alert)
+                finally:
+                    conn.close()
+
+            out = await loop_.run_in_executor(_maintenance_executor, _publish)
+            print(f"[forecast] published {out.get('written')} forecast signals, "
+                  f"{out.get('skipped')} held back as agreeing with history")
+        except Exception as e:                               # noqa: BLE001
+            print(f"[forecast] publish failed: {e}")
+        await asyncio.sleep(86400)
+
+
 async def _risk_index_warm_loop():
     """Keep the notification tray's whole derived path warm.
 
@@ -13760,6 +13794,7 @@ async def startup_event():
     # ever produced the 1,014 rows somebody once made by hand.
     asyncio.create_task(_vessel_resolution_loop())
     asyncio.create_task(_risk_index_warm_loop())
+    asyncio.create_task(_forecast_publish_loop())
     asyncio.create_task(_ais_coverage_warm_loop())
     asyncio.create_task(_findings_warm_loop())
     asyncio.create_task(_geo_refresh_loop())

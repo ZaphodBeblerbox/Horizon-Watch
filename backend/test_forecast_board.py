@@ -149,3 +149,99 @@ def test_an_unavailable_model_reports_why():
         assert out["available"] is False and "no data" in out["error"]
     finally:
         m.fitted = saved
+
+
+# ── predictions as signals for the briefing ───────────────────────────
+
+def test_a_forecast_on_its_base_rate_is_not_a_signal():
+    """The tick's argument, applied at write time.
+
+    If every locale published every quarter the briefing would fill with
+    restatements of the obvious and the real departures would be lost in
+    them.
+    """
+    ok, why = fb.signal_worthy(0.55, 0.55)
+    assert ok is False
+    assert "history already said" in why
+
+
+def test_a_material_departure_is_a_signal_and_says_which_way():
+    ok, why = fb.signal_worthy(0.62, 0.30)
+    assert ok is True and "above" in why
+    ok2, why2 = fb.signal_worthy(0.30, 0.62)
+    assert ok2 is True and "below" in why2
+
+
+def test_a_tripling_of_a_tiny_probability_is_still_nothing():
+    # 1% to 4% is a large relative move and not worth a line.
+    assert fb.signal_worthy(0.04, 0.01)[0] is False
+
+
+def test_an_authored_scenario_publishes_on_the_analysts_say_so():
+    ok, why = fb.signal_worthy(0.4, None)
+    assert ok is True and "no measured base rate" in why
+
+
+def test_published_signals_are_marked_as_forecasts_not_observations(monkeypatch):
+    """The whole risk of this integration.
+
+    The briefing pipeline treats alerts as things that happened. A
+    probability dropped into that stream unmarked becomes, two hands
+    later, a fact.
+    """
+    c = _conn()
+    seen = []
+    monkeypatch.setattr(fb, "fitted", lambda _c, **_k: {
+        "panel": {("Testland", "state-based conflict"): _series([5] * 60)},
+        "fit": {"available": True, "skilful": True, "skill": 0.18,
+                "model": _AlwaysHigh()},
+    })
+    out = fb.publish_signals(c, lambda a: seen.append(a))
+    assert out["written"] == 1, out
+    a = seen[0]
+    assert a["title"].startswith("Forecast —")
+    assert a["raw"]["is_forecast"] is True
+    assert "not-an-observation" in a["tags"]
+    assert a["source"] == "forecast"
+    assert a["raw"]["falsifier"]
+    assert "not an observation" in a["raw"]["caveat"]
+
+
+def test_the_alert_id_is_deterministic_so_republishing_updates(monkeypatch):
+    c = _conn()
+    a, b = [], []
+    panel = {("Testland", "state-based conflict"): _series([5] * 60)}
+    monkeypatch.setattr(fb, "fitted", lambda _c, **_k: {
+        "panel": panel, "fit": {"available": True, "skilful": True,
+                                "skill": 0.18, "model": _AlwaysHigh()}})
+    fb.publish_signals(c, lambda x: a.append(x))
+    fb.publish_signals(c, lambda x: b.append(x))
+    assert a[0]["id"] == b[0]["id"]
+
+
+def test_an_unskilled_model_publishes_nothing(monkeypatch):
+    c = _conn()
+    seen = []
+    monkeypatch.setattr(fb, "fitted", lambda _c, **_k: {
+        "panel": {}, "fit": {"available": True, "skilful": False, "skill": 0.0}})
+    out = fb.publish_signals(c, lambda a: seen.append(a))
+    assert out["written"] == 0 and seen == []
+
+
+def test_the_model_is_classified_c_and_the_analyst_b():
+    # So a briefing can tell machine from analyst without reading prose.
+    import provenance
+    assert provenance.provenance_for_alert_source("forecast") == ("C", "T2")
+    assert provenance.provenance_for_alert_source("forecast_analyst") == ("B", "T2")
+
+
+class _AlwaysHigh:
+    """A stand-in classifier that is confident, so the departure is real.
+
+    Returns a numpy array because that is what sklearn returns and the
+    caller slices it as one; a list of lists passes a naive test and
+    fails against the real model.
+    """
+    def predict_proba(self, rows):
+        import numpy as np
+        return np.array([[0.1, 0.9] for _ in rows])
