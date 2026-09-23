@@ -3726,6 +3726,31 @@ async def api_forecast_propose(request: Request):
         return {"ok": False, "error": str(e)[:200]}
 
 
+@app.post("/api/forecast/scenarios/{scenario_id}/watch")
+async def api_forecast_watch(scenario_id: str, request: Request):
+    """Instrument a scenario's indicators as alert rules.
+
+    The rules fire on the DETECTOR, not on the forecast. A probability
+    changing is not something an operations team can act on; "rail
+    throughput above baseline" is. That is what turns a prediction into
+    work.
+    """
+    try:
+        import forecast_board as _fb
+        body = await request.json()
+        conn = _fc_conn()
+        try:
+            return _fb.watch(conn, scenario_id=scenario_id,
+                             board=str(body.get("board") or ""),
+                             indicators=body.get("indicators") or [],
+                             label=str(body.get("label") or ""))
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("forecast watch failed")
+        return {"ok": False, "error": str(e)[:200]}
+
+
 @app.post("/api/forecast/scenarios/{scenario_id}/resolve")
 async def api_forecast_resolve(scenario_id: str, request: Request):
     """What actually happened. The only thing that ever moves the record.

@@ -528,3 +528,56 @@ def publish_signals(conn: sqlite3.Connection, write_alert, *, limit: int = 40) -
     return {"written": written, "skipped": skipped,
             "departure_floor": DEPARTURE_FLOOR,
             "probability_floor": PROBABILITY_FLOOR}
+
+
+def watch(conn: sqlite3.Connection, *, scenario_id: str, board: str,
+          indicators: list, label: str = "") -> dict:
+    """Turn a scenario's indicators into alert rules (spec F10).
+
+    THE RULES FIRE ON THE DETECTOR, NOT ON THE FORECAST. That is the
+    whole point of the button: a probability changing is not an event
+    anybody can act on, but "rail throughput past Luga went above
+    baseline" is. Watching a forecast means instrumenting the
+    observables it rests on, so an operations team gets told about the
+    world rather than about the model's opinion of it.
+    """
+    import json as _j
+    import datetime as _dt
+    ensure_schema(conn)
+    made, skipped = 0, 0
+    now = _dt.datetime.utcnow().isoformat()
+    for row in indicators or []:
+        try:
+            obs, source, direction, weight = row
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+        if not str(obs).strip():
+            skipped += 1
+            continue
+        # Deterministic name, so pressing watch twice does not create a
+        # second copy of the same rule.
+        rule = "fc_" + hashlib.sha1(
+            f"{scenario_id}|{obs}".encode()).hexdigest()[:12]
+        exists = conn.execute(
+            "SELECT 1 FROM rule_configs WHERE rule_name = ?", (rule,)).fetchone()
+        if exists:
+            skipped += 1
+            continue
+        conn.execute(
+            "INSERT INTO rule_configs"
+            " (name, rule_name, trigger_type, severity, enabled, params,"
+            "  created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (f"Watch: {obs}"[:200], rule, "forecast_indicator", "medium", 1,
+             _j.dumps({
+                 "observable": obs, "source": source, "direction": direction,
+                 "weight": weight, "scenario": scenario_id, "board": board,
+                 "scenario_label": label,
+                 # Recorded so a rule firing months later can still say
+                 # which forecast asked for it and why it mattered.
+                 "why": ("instrumented because it would move the scenario "
+                         f"'{label or scenario_id}'"),
+             }), now, now))
+        made += 1
+    conn.commit()
+    return {"ok": True, "created": made, "already_watched": skipped}

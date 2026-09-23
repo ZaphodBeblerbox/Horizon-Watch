@@ -62,6 +62,23 @@ export default function Forecast() {
 
     useEffect(() => { load(boardId) }, [boardId, load])
 
+    // Scoped from an inspector (F2). Matched here rather than by the
+    // caller because only this component knows which boards exist, and
+    // a hint that matches nothing must leave the current board alone
+    // rather than blanking it.
+    useEffect(() => {
+        const onScope = (e) => {
+            const place = String(e?.detail?.place || "").toLowerCase()
+            if (!place || !boards?.length) return
+            const hit = boards.find((b) => b.name.toLowerCase() === place)
+                || boards.find((b) => b.name.toLowerCase().includes(place)
+                                   || place.includes(b.name.toLowerCase()))
+            if (hit) setBoardId(hit.id)
+        }
+        window.addEventListener("akili:open-forecast", onScope)
+        return () => window.removeEventListener("akili:open-forecast", onScope)
+    }, [boards])
+
     const scenarios = useMemo(
         () => [...safeArray(board?.scenarios), ...local], [board, local])
     const stack = useMemo(() => rows(scenarios), [scenarios])
@@ -275,6 +292,37 @@ function Detail({ s, board }) {
             </div>
 
             <P style={{ color: "var(--txt-4)" }}>{board.caveat}</P>
+        </div>
+    )
+}
+
+function WatchAll({ s, board }) {
+    const [state, setState] = useState(null)
+    const n = safeArray(s.indicators).length
+    const go = () => {
+        setState("working")
+        fetch(`${API_BASE}/api/forecast/scenarios/${encodeURIComponent(s.id)}/watch`, {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ board: board.id, label: s.label,
+                                   indicators: s.indicators }),
+        })
+            .then((r) => r.json())
+            .then((d) => setState(d?.ok
+                ? (d.created
+                    ? `watching ${d.created} — rules created on the detectors`
+                    : "already watching all of these")
+                : (d?.error || "could not create the rules")))
+            .catch((e) => setState(String(e.message || e)))
+    }
+    return (
+        <div style={{ marginTop: 8 }}>
+            <button className="btn sm" onClick={go} disabled={state === "working"}>
+                <svg className="icon sm"><use href="#i-bell" /></svg>
+                {state === "working" ? " creating rules…" : ` watch all ${n}`}
+            </button>
+            {state && state !== "working"
+                ? <P style={{ marginTop: 4 }}>{state}</P> : null}
         </div>
     )
 }

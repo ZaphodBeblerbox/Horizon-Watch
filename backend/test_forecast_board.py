@@ -245,3 +245,55 @@ class _AlwaysHigh:
     def predict_proba(self, rows):
         import numpy as np
         return np.array([[0.1, 0.9] for _ in rows])
+
+
+def _rules_conn():
+    c = sqlite3.connect(":memory:")
+    fb.ensure_schema(c)
+    c.execute("CREATE TABLE rule_configs (id INTEGER PRIMARY KEY, name TEXT,"
+              " rule_name TEXT, trigger_type TEXT, severity TEXT, icon_type TEXT,"
+              " enabled INT, params TEXT, created_at TEXT, updated_at TEXT)")
+    return c
+
+
+def test_watching_creates_a_rule_per_indicator():
+    c = _rules_conn()
+    out = fb.watch(c, scenario_id="SC-1", board="FB-X", label="Escalation",
+                   indicators=[["Rail throughput above baseline", "UCDP", "up", 0.4],
+                               ["Tone falling", "GDELT", "down", 0.2]])
+    assert out["created"] == 2
+    assert c.execute("SELECT COUNT(*) FROM rule_configs").fetchone()[0] == 2
+
+
+def test_the_rule_fires_on_the_detector_not_on_the_forecast():
+    """A probability changing is not something anyone can act on."""
+    import json
+    c = _rules_conn()
+    fb.watch(c, scenario_id="SC-1", board="FB-X", label="Escalation",
+             indicators=[["Rail throughput above baseline", "UCDP", "up", 0.4]])
+    name, params = c.execute(
+        "SELECT trigger_type, params FROM rule_configs").fetchone()
+    assert name == "forecast_indicator"
+    p = json.loads(params)
+    assert p["observable"] == "Rail throughput above baseline"
+    assert p["source"] == "UCDP"
+    # So a rule firing months later can still say which forecast asked
+    # for it.
+    assert p["scenario"] == "SC-1" and "Escalation" in p["why"]
+
+
+def test_pressing_watch_twice_does_not_duplicate_rules():
+    c = _rules_conn()
+    inds = [["Rail throughput above baseline", "UCDP", "up", 0.4]]
+    fb.watch(c, scenario_id="SC-1", board="FB-X", indicators=inds)
+    second = fb.watch(c, scenario_id="SC-1", board="FB-X", indicators=inds)
+    assert second["created"] == 0 and second["already_watched"] == 1
+    assert c.execute("SELECT COUNT(*) FROM rule_configs").fetchone()[0] == 1
+
+
+def test_a_malformed_indicator_is_skipped_not_stored():
+    c = _rules_conn()
+    out = fb.watch(c, scenario_id="SC-1", board="FB-X",
+                   indicators=[["ok", "UCDP", "up", 0.4], ["too", "short"], [], None, ["  ", "x", "up", 1]])
+    assert out["created"] == 1
+    assert c.execute("SELECT COUNT(*) FROM rule_configs").fetchone()[0] == 1

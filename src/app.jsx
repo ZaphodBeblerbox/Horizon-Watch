@@ -1053,6 +1053,17 @@ export default function App() {
         return () => window.removeEventListener("akili:open-map", h)
     }, [openTab])
 
+    // Spec addendum F2 — the inspector's "what happens next" opens the
+    // SHARED board scoped to that signal's situation, never a private
+    // forecast. The place travels on the event; Forecast.jsx picks the
+    // board rather than the caller, because only it knows which boards
+    // exist.
+    useEffect(() => {
+        const h = () => openTab("forecast")
+        window.addEventListener("akili:open-forecast", h)
+        return () => window.removeEventListener("akili:open-forecast", h)
+    }, [openTab])
+
     const closeTab = useCallback((id) => {
         const tab = tabs.find(t => t.id === id)
         // Any tab, including "situation", can now be closed — closing the

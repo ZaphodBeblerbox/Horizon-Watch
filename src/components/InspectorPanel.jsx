@@ -91,6 +91,20 @@ const DEFAULT_DOCK_STYLE = {
 
 function noop() {}
 
+/**
+ * The place a signal is about, for scoping the shared forecast board.
+ *
+ * Returns null when there is nothing to scope by, so the button is
+ * absent rather than present and inert — an action that opens the wrong
+ * board is worse than one that is not offered.
+ */
+export function forecastHint(data) {
+    if (!data) return null
+    const v = data.country_name || data.country || data.region || data.aoi
+    const s = String(v || "").trim()
+    return s.length >= 3 ? s : null
+}
+
 function SectionLabel({ children }) {
     return (
         <div style={{
@@ -713,12 +727,27 @@ export default function InspectorPanel({
             </div>
 
             {/* Actions */}
-            {(actions.canJumpToLocation || (onTrackEntity && entityId)) && (
+            {(actions.canJumpToLocation || (onTrackEntity && entityId) || forecastHint(data)) && (
                 <div style={{
                     display: "flex", gap: "var(--space-2)", flexWrap: "wrap",
                     padding: "var(--space-3) var(--space-4)",
                     borderTop: "var(--elevation-1)", flexShrink: 0,
                 }}>
+                    {/* Spec addendum F2 — "what happens next" opens the
+                        SHARED board scoped to this signal's situation. It
+                        never generates a private forecast: one that exists
+                        only inside an inspector is a forecast nobody can
+                        audit, and nobody can score. */}
+                    {forecastHint(data) && (
+                        <Button variant="ghost" size="sm" style={{ flex: 1 }}
+                                onClick={() => {
+                                    window.dispatchEvent(new CustomEvent("akili:open-forecast", {
+                                        detail: { place: forecastHint(data) },
+                                    }))
+                                }}>
+                            <svg className="icon sm"><use href="#i-orb" /></svg> what happens next
+                        </Button>
+                    )}
                     {actions.canJumpToLocation && (
                         <Button variant="ghost" size="sm" style={{ flex: 1 }} onClick={() => onJumpToLocation(data)}>
                             Jump to globe
