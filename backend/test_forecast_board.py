@@ -364,8 +364,16 @@ def test_ensure_schema_is_safe_to_run_twice():
 
 # ── The live tail: current to predict from, revised to train on ───────
 
-def _corpora(hist_months=30, cand_months=6):
-    """A db with a revised corpus and a candidate tail beyond it."""
+def _corpora(hist_months=30, cand_months=6, overlap=8):
+    """A db with a revised corpus and a candidate tail beyond it.
+
+    `overlap` months of candidate data sit INSIDE the revised range, which
+    is how the real releases behave: UCDP keeps publishing monthly files
+    for a year that the annual revision has already covered. The overlap
+    is what calibration is measured on, so a fixture without it is not a
+    smaller version of reality — it is a different situation, the one
+    where the tail gets refused.
+    """
     import ucdp_history as uh
     import ucdp_candidate as uc
     c = sqlite3.connect(":memory:")
@@ -373,17 +381,19 @@ def _corpora(hist_months=30, cand_months=6):
     eid = 0
     rows = []
     for k in range(hist_months):
-        y, m = 2023 + k // 12, k % 12 + 1
+        i = 2023 * 12 + k
+        y, m = i // 12, i % 12 + 1
         for _ in range(10):
             eid += 1
             rows.append((eid, f"{y:04d}-{m:02d}-05", y, "Sudan", None, None,
                          None, "state-based conflict", 1))
     c.executemany("INSERT INTO ucdp_history (event_id,date,year,country,adm1,"
                   "lat,lon,violence,deaths) VALUES (?,?,?,?,?,?,?,?,?)", rows)
-    last = 2023 * 12 + (hist_months - 1)
+
+    last = 2023 * 12 + hist_months - 1
     crows = []
-    for k in range(cand_months):
-        i = last + 1 + k
+    # The overlapping months first, then the tail proper.
+    for i in range(last - overlap + 1, last + 1 + cand_months):
         y, m = i // 12, i % 12 + 1
         for _ in range(10):
             eid += 1
@@ -449,6 +459,25 @@ def test_the_basis_states_where_the_recent_months_came_from():
     assert "candidate" in lines
     assert "not used to train" in lines
     assert meta["corpus_to"] in lines
+    c.close()
+
+
+def test_an_uncalibratable_tail_is_refused_rather_than_disclaimed():
+    # Candidate data runs 1.42x heavy on one-sided violence, which put the
+    # United States at p=0.546 for escalation in a category it is not
+    # escalating in. A footnote does not make that number safe to publish.
+    c = _corpora(hist_months=30, cand_months=6)
+    # Strip the overlap so calibration cannot be measured.
+    c.execute("DELETE FROM ucdp_history WHERE date >= '2025-01-01'")
+    c.commit()
+    import ucdp_candidate as uc
+    assert uc.calibration(c) == {}
+    train = fb._panel(c)
+    pred, meta = fb._predict_panel(c, train)
+    assert meta["tail"] is False
+    assert pred is train
+    assert "cannot be put on the same scale" in meta["reason"]
+    assert "not used" in " | ".join(fb._basis(train, {"skill": 0.2}, meta))
     c.close()
 
 

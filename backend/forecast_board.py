@@ -132,8 +132,19 @@ def _predict_panel(conn: sqlite3.Connection, train_panel: dict) -> tuple:
         return train_panel, meta
     try:
         factors = uc.calibration(conn)
-        rows = uc.monthly_counts(conn, after=last, calibrate=True)
+        rows = uc.monthly_counts(conn, after=last, calibrate=True) if factors else []
     except sqlite3.Error:
+        return train_panel, meta
+    if not factors:
+        # REFUSED, not used-and-disclaimed. An uncorrected tail is not a
+        # slightly worse tail: candidate data runs 1.42x heavy on
+        # one-sided violence, which put the United States at p=0.546 for
+        # escalation in a category it is not escalating in. A footnote
+        # does not make that number safe to publish, and this function's
+        # own rule is that a board nine months behind and honest about it
+        # beats one that is current and quietly wrong.
+        meta["reason"] = ("no overlap with the revised corpus, so the live "
+                          "tail cannot be put on the same scale and is not used")
         return train_panel, meta
     if not rows:
         return train_panel, meta
@@ -192,8 +203,9 @@ def _basis(panel: dict, fit: dict, tail: dict) -> list:
         f"model skill {fit.get('skill')} against the base rate on held-out time",
     ]
     if not tail.get("tail"):
+        why = tail.get("reason") or "no live tail available"
         out.append(f"revised corpus only, ending {tail.get('corpus_to') or 'unknown'}"
-                   " — no live tail available, so the window is measured from there")
+                   f" — {why}, so the window is measured from there")
         return out
     out.append(
         f"revised corpus to {tail.get('corpus_to')}, then {tail.get('tail_months')} "
@@ -206,9 +218,6 @@ def _basis(panel: dict, fit: dict, tail: dict) -> list:
                 f"candidate months rescaled onto revised levels from the overlap "
                 f"the two datasets share (largest correction: {worst[0]} "
                 f"x{worst[1]}) — revision removes events, it does not only add them")
-    else:
-        out.append("candidate months are uncorrected: too little overlap with the "
-                   "revised corpus to measure the difference")
     return out
 
 
