@@ -116,3 +116,45 @@ def test_dedup_survives_the_single_pass_rewrite():
     e._add_signal("K", _sig("same", "AIS"))
     e._add_signal("K", _sig("same", "AIS"))
     assert len(e.active_signals["K"]) == 1
+
+
+# ── The restore that outlasted the healthcheck ────────────────────────
+
+def test_restore_dedup_is_linear_not_quadratic():
+    """The dedup set must be built once per bucket, not once per row.
+
+    Rebuilt per row, the restore is O(rows x bucket size). In production
+    that was 72,045 rows against buckets of 10,012: 194s for the first
+    restore and 419s for the second, which loads nothing. Together they
+    were 613 of the 646 seconds the service took to reach "Uvicorn
+    running", against a 600s healthcheck window.
+    """
+    import inspect
+    src = inspect.getsource(fe.FusionEngine._reload_signals_from_db)
+    body = src[src.index("for row in rows:"):]
+    # The comprehension that builds the set must not sit in the row loop
+    # unguarded; it is reached only when the bucket has no set yet.
+    assert "seen_by_key" in body, "dedup set is not memoised per bucket"
+    guarded = body.index("if ids is None:") < body.index('{\n                                s["signal_id"]')
+    assert guarded, "the set is built unconditionally inside the row loop"
+
+
+def test_restore_still_deduplicates():
+    # The optimisation must not let duplicates through: a signal already
+    # in the bucket, and a signal repeated within the same restore.
+    e = _engine()
+    e.active_signals["K"] = [_sig("dup", "AIS")]
+    seen = {}
+    rows = [("K", "dup"), ("K", "new"), ("K", "new")]
+    added = 0
+    for geo_key, sid in rows:
+        bucket = e.active_signals.setdefault(geo_key, [])
+        ids = seen.get(geo_key)
+        if ids is None:
+            ids = seen[geo_key] = {s["signal_id"] for s in bucket}
+        if sid not in ids:
+            bucket.append(_sig(sid, "AIS"))
+            ids.add(sid)
+            added += 1
+    assert added == 1
+    assert [s["signal_id"] for s in e.active_signals["K"]] == ["dup", "new"]

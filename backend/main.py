@@ -13841,10 +13841,39 @@ async def startup_event():
     if _fusion_engine:
         _fusion_engine.set_fire_callback(_fusion_fire_callback)
         print("[startup] FusionEngine fire callback registered")
-        # Reload persisted signals NOW that the callback is wired,
-        # so any fusions that re-cross their threshold can actually fire.
-        _fusion_engine._reload_signals_from_db()
-        print("[startup] FusionEngine signals reloaded from DB")
+        # Reload persisted signals once the callback is wired, so any
+        # fusion that re-crosses its threshold can actually fire.
+        #
+        # OFF THE STARTUP PATH. This reads every unexpired fusion_signals
+        # row — 72,045 in production, off a network volume — and it took
+        # 419 seconds there while adding nothing, because the import-time
+        # restore had already loaded them. Startup reached "Uvicorn
+        # running" at T+646s against a 600s healthcheck window, so the
+        # platform killed the container 46 seconds before the app it was
+        # waiting for was ready. Seven deploys in a row.
+        #
+        # In a thread, not on the loop: the call is synchronous DB work,
+        # and awaiting it on the loop would block dispatch just as
+        # effectively as blocking startup did.
+        #
+        # Its OWN thread, not _maintenance_executor, which has a single
+        # worker shared with the risk-index warm and the forecast loops.
+        # Measured here: the restore itself takes 4.7s but waited roughly
+        # two minutes behind that worker. This is a one-shot startup
+        # operation and has no business queueing behind recurring
+        # maintenance — and if that worker ever wedged, the signals would
+        # never come back at all.
+        def _restore_fusion_signals():
+            t0 = time.monotonic()
+            try:
+                _fusion_engine._reload_signals_from_db()
+                print(f"[startup] FusionEngine signals reloaded from DB "
+                      f"in {time.monotonic() - t0:.1f}s")
+            except Exception as e:                           # noqa: BLE001
+                print(f"[startup] FusionEngine signal reload failed: {e}")
+
+        threading.Thread(target=_restore_fusion_signals, name="fusion-restore",
+                         daemon=True).start()
         asyncio.create_task(_fusion_expire_loop())
 
     # RSS retired for real (fix/geoconfirmed-real-backbone) — GeoConfirmed

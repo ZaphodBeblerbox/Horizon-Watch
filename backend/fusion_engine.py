@@ -908,6 +908,20 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                     .all()
                 )
                 reloaded = 0
+                # THE DEDUP SET IS BUILT ONCE PER BUCKET, NOT PER ROW.
+                # It used to be rebuilt inside this loop, which made the
+                # restore O(rows x bucket size). In production that was
+                # 72,045 rows against buckets reaching 10,012 entries:
+                # the first restore took 194s and the second — which
+                # loads nothing, because everything is already in memory —
+                # took 419s, purely rebuilding sets to discover that.
+                #
+                # Those two calls are 613 of the 646 seconds this service
+                # took to reach "Uvicorn running". Railway's healthcheck
+                # window is 600. The container was killed 46 seconds
+                # before the app it was waiting for finished starting, on
+                # seven consecutive deploys.
+                seen_by_key: dict = {}
                 for row in rows:
                     try:
                         payload = _json.loads(row.payload or "{}")
@@ -934,11 +948,14 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                         # stay out of the geographic correlation.
                         if not geo_key or geo_key == UNLOCATED_KEY:
                             continue
-                        if geo_key not in self.active_signals:
-                            self.active_signals[geo_key] = []
-                        existing_ids = {s["signal_id"] for s in self.active_signals[geo_key]}
-                        if row.signal_id not in existing_ids:
-                            self.active_signals[geo_key].append(payload)
+                        bucket = self.active_signals.setdefault(geo_key, [])
+                        ids = seen_by_key.get(geo_key)
+                        if ids is None:
+                            ids = seen_by_key[geo_key] = {
+                                s["signal_id"] for s in bucket}
+                        if row.signal_id not in ids:
+                            bucket.append(payload)
+                            ids.add(row.signal_id)
                             reloaded += 1
                     except Exception:
                         pass
@@ -1100,4 +1117,15 @@ fusion_engine = FusionEngine()
 # _find_existing_fusion() already seeing real existing fusions (see
 # _reload_fusions_from_db()'s docstring for the bug this fixes).
 fusion_engine._reload_fusions_from_db()
-fusion_engine._reload_signals_from_db()
+# THE SIGNAL RESTORE IS NOT DONE AT IMPORT ANY MORE. It reads every
+# unexpired row of fusion_signals — 72,045 of them in production, off a
+# network volume, materialised as ORM objects — and it ran here, before
+# uvicorn had bound a socket. Together with the second restore in main's
+# startup handler it accounted for 613 of the 646 seconds the service
+# took to reach "Uvicorn running", against a 600-second healthcheck
+# window. Seven consecutive deploys were killed 46 seconds short.
+#
+# The fusions above stay: that restore is small (10 rows, ~13s) and the
+# signal restore's re-evaluation pass depends on it having happened.
+# main.py now schedules the signal restore as a background task, so the
+# process serves health checks while it runs.
