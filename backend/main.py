@@ -3662,6 +3662,100 @@ def _fc_conn():
     return _sq.connect(_akili_db_path())
 
 
+@app.get("/api/forecast/dyad-risk")
+def api_forecast_dyad_risk(a: str, b: str, contiguous: bool = False,
+                           tension: float = 0.0, months: int = 3):
+    """The prior for a pairing: is this scenario worth drawing at all?
+
+    Every constant behind it is measured from UCDP's own actor names —
+    see dyad_risk. Kept separate from the board because it answers a
+    different question: the board scores a locale's escalation, this
+    scores a PAIRING, and Russia/Burundi must not render like
+    Russia/Estonia.
+    """
+    try:
+        import dyad_risk as _dr
+        conn = _fc_conn()
+        try:
+            return _dr.assess(conn, a, b, contiguous=bool(contiguous),
+                              tension=float(tension or 0.0),
+                              months=int(months or 3))
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("dyad risk failed")
+        return {"available": False, "error": str(e)}
+
+
+@app.get("/api/forecast/capabilities")
+def api_forecast_capabilities(force: str):
+    """What a force fields, from its Wikipedia equipment list.
+
+    known=False means we could not find out, which is NOT the same as a
+    force known to lack a capability — the caller must be able to tell
+    those apart, and the COA logic depends on it.
+    """
+    try:
+        import mil_equipment as _me
+        conn = _fc_conn()
+        try:
+            return _me.lookup(conn, force)
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("capability lookup failed")
+        return {"known": False, "force": force, "reason": str(e)}
+
+
+@app.get("/api/forecast/scenarios")
+def api_forecast_scenarios(limit: int = 100):
+    import forecast_scenarios as _fs
+    conn = _fc_conn()
+    try:
+        return {"scenarios": _fs.listing(conn, limit)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/forecast/scenarios")
+async def api_forecast_scenario_create(request: Request):
+    import forecast_scenarios as _fs
+    body = await request.json()
+    conn = _fc_conn()
+    try:
+        return _fs.create(
+            conn, name=str(body.get("name") or ""),
+            target=str(body.get("target") or ""),
+            aggressor=str(body.get("aggressor") or ""),
+            target_place=body.get("target_place"),
+            target_lat=body.get("target_lat"), target_lon=body.get("target_lon"),
+            coa=body.get("coa"), analogues=body.get("analogues") or [],
+            note=str(body.get("note") or ""), author=str(body.get("author") or ""))
+    finally:
+        conn.close()
+
+
+@app.patch("/api/forecast/scenarios/{sid}")
+async def api_forecast_scenario_update(sid: str, request: Request):
+    import forecast_scenarios as _fs
+    body = await request.json()
+    conn = _fc_conn()
+    try:
+        return _fs.update(conn, sid, **body)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/forecast/scenarios/{sid}")
+def api_forecast_scenario_delete(sid: str):
+    import forecast_scenarios as _fs
+    conn = _fc_conn()
+    try:
+        return _fs.delete(conn, sid)
+    finally:
+        conn.close()
+
+
 @app.get("/api/forecast/boards")
 def api_forecast_boards(limit: int = Query(40, ge=1, le=200)):
     """Locales with enough recent activity to be worth a scenario board."""

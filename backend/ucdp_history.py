@@ -51,7 +51,16 @@ CREATE TABLE IF NOT EXISTS ucdp_history (
     lat          REAL,
     lon          REAL,
     violence     TEXT NOT NULL,
-    deaths       INTEGER NOT NULL DEFAULT 0
+    deaths       INTEGER NOT NULL DEFAULT 0,
+    -- WHO FOUGHT WHOM. Dropped in the first version as "a feature the
+    -- model cannot use" — true of the escalation model, and wrong about
+    -- everything built on top of it. A dyadic probability ("how often
+    -- has A actually attacked B") is unanswerable without the actors,
+    -- and it is the only honest way to say that Russia attacking Burundi
+    -- is a different proposition from Russia attacking Estonia.
+    side_a       TEXT,
+    side_b       TEXT,
+    dyad         TEXT
 );
 -- The two access patterns a model actually has: "this locale over time"
 -- and "everything in a window". Nothing else is indexed, because every
@@ -63,6 +72,17 @@ CREATE INDEX IF NOT EXISTS ix_ucdph_date   ON ucdp_history(date);
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    # The actor columns arrived after the table shipped, and CREATE TABLE
+    # IF NOT EXISTS leaves a deployed table alone.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(ucdp_history)")}
+    for col in ("side_a", "side_b", "dyad"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE ucdp_history ADD COLUMN {col} TEXT")
+    # Indexed only once the columns are certain to exist.
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_ucdph_dyad"
+                 " ON ucdp_history(dyad, date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_ucdph_sides"
+                 " ON ucdp_history(side_a, side_b)")
     conn.commit()
 
 
@@ -139,10 +159,15 @@ def parse(row: dict) -> dict | None:
     except ValueError:
         return None
 
+    def _s(key):
+        v = (row.get(key) or "").strip()
+        return v or None
+
     return {
         "event_id": eid, "date": date, "year": year,
         "country": country, "adm1": (row.get("adm_1") or "").strip() or None,
         "lat": lat, "lon": lon, "violence": vtype, "deaths": int(deaths),
+        "side_a": _s("side_a"), "side_b": _s("side_b"), "dyad": _s("dyad_name"),
     }
 
 
@@ -184,7 +209,7 @@ def ingest(db_path: str, *, url: str | None = None, timeout: int = 600,
                 continue
             batch.append((rec["event_id"], rec["date"], rec["year"], rec["country"],
                           rec["adm1"], rec["lat"], rec["lon"], rec["violence"],
-                          rec["deaths"]))
+                          rec["deaths"], rec["side_a"], rec["side_b"], rec["dyad"]))
             seen += 1
             if len(batch) >= 5000:
                 _write(conn, batch)
@@ -203,12 +228,14 @@ def ingest(db_path: str, *, url: str | None = None, timeout: int = 600,
 def _write(conn: sqlite3.Connection, batch: list) -> None:
     conn.executemany(
         "INSERT INTO ucdp_history"
-        " (event_id, date, year, country, adm1, lat, lon, violence, deaths)"
-        " VALUES (?,?,?,?,?,?,?,?,?)"
+        " (event_id, date, year, country, adm1, lat, lon, violence, deaths,"
+        "  side_a, side_b, dyad)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(event_id) DO UPDATE SET"
         "  date=excluded.date, year=excluded.year, country=excluded.country,"
         "  adm1=excluded.adm1, lat=excluded.lat, lon=excluded.lon,"
-        "  violence=excluded.violence, deaths=excluded.deaths", batch)
+        "  violence=excluded.violence, deaths=excluded.deaths,"
+        "  side_a=excluded.side_a, side_b=excluded.side_b, dyad=excluded.dyad", batch)
 
 
 def stats(conn: sqlite3.Connection) -> dict:
