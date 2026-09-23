@@ -360,3 +360,101 @@ def test_ensure_schema_is_safe_to_run_twice():
     fb.ensure_schema(c)
     assert fb.add_proposal(c, board="SD", label="X", p=0.2,
                            template="demo")["ok"]
+
+
+# ── The live tail: current to predict from, revised to train on ───────
+
+def _corpora(hist_months=30, cand_months=6):
+    """A db with a revised corpus and a candidate tail beyond it."""
+    import ucdp_history as uh
+    import ucdp_candidate as uc
+    c = sqlite3.connect(":memory:")
+    uh.ensure_schema(c); uc.ensure_schema(c)
+    eid = 0
+    rows = []
+    for k in range(hist_months):
+        y, m = 2023 + k // 12, k % 12 + 1
+        for _ in range(10):
+            eid += 1
+            rows.append((eid, f"{y:04d}-{m:02d}-05", y, "Sudan", None, None,
+                         None, "state-based conflict", 1))
+    c.executemany("INSERT INTO ucdp_history (event_id,date,year,country,adm1,"
+                  "lat,lon,violence,deaths) VALUES (?,?,?,?,?,?,?,?,?)", rows)
+    last = 2023 * 12 + (hist_months - 1)
+    crows = []
+    for k in range(cand_months):
+        i = last + 1 + k
+        y, m = i // 12, i % 12 + 1
+        for _ in range(10):
+            eid += 1
+            crows.append((eid, f"{y:04d}-{m:02d}-05", y, "Sudan", None, None,
+                          None, "state-based conflict", 1, f"{y%100:02d}_0_{m}"))
+    c.executemany("INSERT INTO ucdp_candidate (event_id,date,year,country,adm1,"
+                  "lat,lon,violence,deaths,release) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  crows)
+    c.commit()
+    return c
+
+
+def test_the_tail_extends_the_panel_the_model_predicts_from():
+    c = _corpora()
+    train = fb._panel(c)
+    pred, meta = fb._predict_panel(c, train)
+    k = ("Sudan", "state-based conflict")
+    assert meta["tail"] is True
+    assert meta["tail_months"] == 6
+    assert len(pred[k]) == len(train[k]) + 6
+    assert pred[k][-1]["m"] == train[k][-1]["m"] + 6
+    c.close()
+
+
+def test_candidate_rows_never_reach_the_training_panel():
+    # Revision removes about a third of one-sided violence, so a corpus
+    # with a candidate tail would teach the model that the right-hand
+    # edge of every series is busier than it is — and judging the
+    # right-hand edge is the model's entire job.
+    c = _corpora()
+    train = fb._panel(c)
+    pred, _ = fb._predict_panel(c, train)
+    k = ("Sudan", "state-based conflict")
+    assert train[k][-1]["m"] < pred[k][-1]["m"]
+    # _panel is what train() is handed, and it is recomputed from
+    # ucdp_history alone — adding candidate rows must not move it.
+    before = len(train[k])
+    c.execute("INSERT INTO ucdp_candidate (event_id,date,year,country,adm1,lat,"
+              "lon,violence,deaths,release) VALUES"
+              " (999999,'2030-01-05',2030,'Sudan',NULL,NULL,NULL,"
+              "'state-based conflict',1,'30_0_1')")
+    c.commit()
+    assert len(fb._panel(c)[k]) == before
+    c.close()
+
+
+def test_a_missing_tail_falls_back_and_says_so():
+    # A board nine months behind and honest about it beats a board that
+    # is current and quietly wrong.
+    c = _corpora(cand_months=0)
+    train = fb._panel(c)
+    pred, meta = fb._predict_panel(c, train)
+    assert meta["tail"] is False
+    assert pred is train
+    assert meta["corpus_to"] is not None
+
+
+def test_the_basis_states_where_the_recent_months_came_from():
+    c = _corpora()
+    train = fb._panel(c)
+    _, meta = fb._predict_panel(c, train)
+    lines = " | ".join(fb._basis(train, {"skill": 0.2}, meta))
+    assert "candidate" in lines
+    assert "not used to train" in lines
+    assert meta["corpus_to"] in lines
+    c.close()
+
+
+def test_the_basis_says_so_when_there_is_no_tail_at_all():
+    c = _corpora(cand_months=0)
+    _, meta = fb._predict_panel(c, fb._panel(c))
+    lines = " | ".join(fb._basis({}, {"skill": 0.2}, meta))
+    assert "no live tail" in lines
+    c.close()

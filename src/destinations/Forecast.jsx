@@ -187,6 +187,16 @@ export default function Forecast() {
                                     {board.name}
                                 </h2>
                                 <span style={tagS}>{board.horizon}</span>
+                                {/* Where the numbers stop. A forecast whose
+                                    reader cannot tell how current it is will
+                                    be read as current, and this corpus is
+                                    revised annually. */}
+                                {board.as_of_month ? (
+                                    <span style={tagS} title={asOfTitle(board)}>
+                                        to {board.as_of_month}
+                                        {board.tail?.tail ? " · provisional" : ""}
+                                    </span>
+                                ) : null}
                                 <span style={{ marginLeft: "auto", font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
                                     escalation against this locale's own rate
                                 </span>
@@ -240,6 +250,34 @@ function Bar({ s, selected, onSelect }) {
 }
 
 /* ── the detail (F6) ──────────────────────────────────────────── */
+/**
+ * Why the as-of month reads the way it does. Not decoration: the last
+ * months of the series are preliminary UCDP data, corrected onto revised
+ * levels, and a reader who knows that reads the same number differently.
+ */
+export function asOfTitle(board) {
+    const t = board?.tail
+    if (!t?.tail) {
+        return `Revised UCDP data to ${board?.as_of_month || "unknown"}. `
+             + "No live tail, so the window is measured from there."
+    }
+    const base = `Revised UCDP data to ${t.corpus_to}, then ${t.tail_months} `
+               + `month${t.tail_months === 1 ? "" : "s"} of preliminary `
+               + `candidate data to ${t.as_of}. The tail is not used to train `
+               + "the model."
+    if (!t.calibrated) {
+        return base + " It is uncorrected: too little overlap with the revised "
+             + "corpus to measure the difference."
+    }
+    const worst = Object.entries(t.factors || {})
+        .sort((a, b) => a[1] - b[1])[0]
+    return base + (worst
+        ? ` Candidate months are rescaled onto revised levels (largest `
+        + `correction: ${worst[0]} ×${worst[1]}), because revision removes `
+        + "events rather than only adding them."
+        : "")
+}
+
 function Detail({ s, board }) {
     const inds = safeArray(s.indicators)
     return (

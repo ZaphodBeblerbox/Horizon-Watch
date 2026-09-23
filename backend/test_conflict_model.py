@@ -118,3 +118,17 @@ def test_predictions_carry_their_arithmetic():
 
 def test_an_unfitted_model_predicts_nothing_rather_than_guessing():
     assert cm.predict_latest({}, {"available": False}) == []
+
+
+def test_month_label_inverts_month_index():
+    # The board reported the raw index as its as-of date, which reads as
+    # a serial number rather than a month — and telling a reader how
+    # current the forecast is was the entire purpose of the field.
+    for ym in ("1989-01", "2019-06", "2025-12", "2026-01", "2026-08"):
+        assert cm.month_label(cm.month_index(ym)) == ym
+
+
+def test_month_label_handles_the_december_january_boundary():
+    # Where an off-by-one in the modulo shows up as year 2025 month 13.
+    assert cm.month_label(cm.month_index("2025-12")) == "2025-12"
+    assert cm.month_label(cm.month_index("2025-12") + 1) == "2026-01"

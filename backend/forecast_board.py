@@ -37,6 +37,7 @@ import time
 
 import conflict_model as cm
 import ucdp_history as uh
+import ucdp_candidate as uc
 
 #: Fitting takes ~11s over 65,000 rows. It must never happen on a
 #: request — see tonight's notification endpoint, which recomputed a
@@ -95,7 +96,56 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # ── The fitted model, cached ──────────────────────────────────────────
 
 def _panel(conn: sqlite3.Connection) -> dict:
+    """The panel the model is TRAINED on: revised GED only.
+
+    Candidate rows are deliberately absent. Revision removes about a
+    third of one-sided violence, so a corpus with a candidate tail would
+    teach the model that the right-hand edge of every series is busier
+    than it really is — and the model's whole job is to judge the
+    right-hand edge.
+    """
     return cm.to_panel(uh.monthly_counts(conn))
+
+
+def _predict_panel(conn: sqlite3.Connection, train_panel: dict) -> tuple:
+    """The panel the model PREDICTS from: revised, plus the live tail.
+
+    Returns (panel, meta). The revised corpus lags its own subject by the
+    better part of a year — 2025-12-31 while this was running in
+    September 2026 — and a board built on it answers "the next three
+    months" with a distribution about last January. That is a mislabelled
+    window rather than a stale number, and a mislabelled one invites no
+    suspicion at all.
+
+    Falls back to the training panel, and says so in `meta`, whenever the
+    tail is missing or unusable. A board nine months behind and honest
+    about it beats a board that is current and quietly wrong.
+    """
+    meta = {"tail": False, "tail_months": 0, "calibrated": False,
+            "factors": {}, "as_of": None, "corpus_to": None}
+    try:
+        last = conn.execute("SELECT MAX(substr(date,1,7)) FROM ucdp_history").fetchone()[0]
+    except sqlite3.Error:
+        last = None
+    meta["corpus_to"] = meta["as_of"] = last
+    if not last:
+        return train_panel, meta
+    try:
+        factors = uc.calibration(conn)
+        rows = uc.monthly_counts(conn, after=last, calibrate=True)
+    except sqlite3.Error:
+        return train_panel, meta
+    if not rows:
+        return train_panel, meta
+
+    merged = cm.to_panel(uh.monthly_counts(conn) + list(rows))
+    meta.update(
+        tail=True,
+        tail_months=len({r[2] for r in rows}),
+        calibrated=bool(factors),
+        factors={k: round(v, 4) for k, v in factors.items()},
+        as_of=max(r[2] for r in rows))
+    return merged, meta
 
 
 def fitted(conn: sqlite3.Connection, *, force: bool = False) -> dict:
@@ -121,9 +171,45 @@ def fitted(conn: sqlite3.Connection, *, force: bool = False) -> dict:
                 return got
         panel = _panel(conn)
         fit = cm.train(panel)
-        built = {"panel": panel, "fit": fit}
+        pred_panel, tail = _predict_panel(conn, panel)
+        built = {"panel": pred_panel, "train_panel": panel,
+                 "fit": fit, "tail": tail}
         _fit_cache["fit"] = (time.monotonic(), built)
         return built
+
+
+def _basis(panel: dict, fit: dict, tail: dict) -> list:
+    """What the board is standing on, including where it is weakest.
+
+    The tail line is not a footnote. The revised corpus lags by months,
+    and the live tail that closes the gap is preliminary and corrected
+    before it is used. Both facts change how the number should be read,
+    so both are on the board.
+    """
+    out = [
+        f"UCDP GED, {len(panel)} locale series, 1989 onward",
+        f"escalation measured against a {cm.BASELINE_M}-month trailing baseline",
+        f"model skill {fit.get('skill')} against the base rate on held-out time",
+    ]
+    if not tail.get("tail"):
+        out.append(f"revised corpus only, ending {tail.get('corpus_to') or 'unknown'}"
+                   " — no live tail available, so the window is measured from there")
+        return out
+    out.append(
+        f"revised corpus to {tail.get('corpus_to')}, then {tail.get('tail_months')} "
+        f"months of UCDP candidate data to {tail.get('as_of')} — preliminary, and "
+        f"not used to train the model")
+    if tail.get("calibrated"):
+        worst = min(tail["factors"].items(), key=lambda kv: kv[1], default=None)
+        if worst:
+            out.append(
+                f"candidate months rescaled onto revised levels from the overlap "
+                f"the two datasets share (largest correction: {worst[0]} "
+                f"x{worst[1]}) — revision removes events, it does not only add them")
+    else:
+        out.append("candidate months are uncorrected: too little overlap with the "
+                   "revised corpus to measure the difference")
+    return out
 
 
 def _sid(board: str, violence: str) -> str:
@@ -370,12 +456,12 @@ def get_board(conn: sqlite3.Connection, bid: str) -> dict:
             "n_train": fit.get("n_train"), "n_test": fit.get("n_test"),
             "reliability": fit.get("reliability"),
         },
-        "basis": [
-            f"UCDP GED, {len(panel)} locale series, 1989 onward",
-            f"escalation measured against a {cm.BASELINE_M}-month trailing baseline",
-            f"model skill {fit.get('skill')} against the base rate on held-out time",
-        ],
-        "as_of_month": last_month,
+        "basis": _basis(panel, fit, built.get("tail") or {}),
+        "as_of_month": cm.month_label(last_month) if last_month is not None else None,
+        # The provenance of the most recent months, stated rather than
+        # folded in. A reader who knows the tail is preliminary reads the
+        # same number differently, which is the point.
+        "tail": built.get("tail") or {},
         "caveat": ("Probabilities are for escalation beyond this locale's own "
                    "recent rate, not for any specific named event. The residual "
                    "is what none of the listed scenarios covers, and it is "

@@ -11044,6 +11044,60 @@ class _LiveCached(Exception):
     """Control-flow marker: the derived block was served from cache."""
 
 
+async def _forecast_tail_loop():
+    """Keep the forecast's live tail current.
+
+    UCDP publishes the revised GED annually and a candidate release
+    monthly. Without the candidate tail the board answers "the next three
+    months" using a corpus that ended the previous December, which is a
+    mislabelled window rather than a stale number — and a mislabelled one
+    invites no suspicion.
+
+    Daily. The releases are monthly, so this mostly re-fetches the same
+    eight small CSVs; that is cheaper than the bookkeeping to avoid it,
+    and it picks up re-codings of months already held. It runs on the
+    maintenance executor because it is network-bound and must never sit
+    on the event loop — a blocked loop is how this service 502s.
+
+    A failure here leaves the previous tail in place. The ingest replaces
+    the table only once it has rows in hand, so an outage cannot blank it
+    and silently take every board back nine months.
+    """
+    await asyncio.sleep(300)
+    while True:
+        try:
+            import ucdp_candidate as _uc
+            loop_ = asyncio.get_event_loop()
+            out = await loop_.run_in_executor(
+                _maintenance_executor, lambda: _uc.ingest(_akili_db_path()))
+            if out.get("ok"):
+                print(f"[forecast] tail: {out.get('events')} candidate events "
+                      f"to {out.get('last')} from {len(out.get('releases') or [])} releases")
+                # The fit memoises the panel, so a refreshed tail is not
+                # visible until it is rebuilt.
+                try:
+                    import forecast_board as _fb
+                    import sqlite3 as _sq
+
+                    def _refit():
+                        c = _sq.connect(_akili_db_path())
+                        try:
+                            return _fb.fitted(c, force=True)["tail"]
+                        finally:
+                            c.close()
+
+                    t = await loop_.run_in_executor(_maintenance_executor, _refit)
+                    print(f"[forecast] refit on tail to {t.get('as_of')}, "
+                          f"calibrated={t.get('calibrated')}")
+                except Exception as e:                       # noqa: BLE001
+                    print(f"[forecast] refit after tail failed: {e}")
+            else:
+                print(f"[forecast] tail unchanged: {out.get('error')}")
+        except Exception as e:                               # noqa: BLE001
+            print(f"[forecast] tail refresh failed: {e}")
+        await asyncio.sleep(86400)
+
+
 async def _forecast_publish_loop():
     """Write material forecasts into the alert stream, for the briefing.
 
@@ -13820,6 +13874,7 @@ async def startup_event():
     # ever produced the 1,014 rows somebody once made by hand.
     asyncio.create_task(_vessel_resolution_loop())
     asyncio.create_task(_risk_index_warm_loop())
+    asyncio.create_task(_forecast_tail_loop())
     asyncio.create_task(_forecast_publish_loop())
     asyncio.create_task(_ais_coverage_warm_loop())
     asyncio.create_task(_findings_warm_loop())

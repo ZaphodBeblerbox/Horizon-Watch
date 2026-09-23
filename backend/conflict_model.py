@@ -55,6 +55,17 @@ def month_index(ym: str) -> int:
     return int(y) * 12 + int(m) - 1
 
 
+def month_label(i: int) -> str:
+    """The inverse of month_index: 24319 -> '2026-08'.
+
+    The board reported the raw index as its as-of date, which reads as a
+    serial number rather than a month. The whole purpose of that field is
+    to tell a reader how current the forecast is, so an unreadable one
+    was worse than none.
+    """
+    return f"{i // 12:04d}-{i % 12 + 1:02d}"
+
+
 def to_panel(rows) -> dict:
     """UCDP monthly aggregates to a dense per-locale monthly panel.
 
