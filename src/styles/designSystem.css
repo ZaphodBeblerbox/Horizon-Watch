@@ -1128,3 +1128,41 @@ table.grid .dim { color: var(--txt-4); }
     pointer-events: none; paint-order: stroke; stroke: var(--bg-0); stroke-width: 2.2px;
 }
 .mm-city-dot { fill: var(--txt-4); pointer-events: none; }
+
+/* ═══════════ forecast board (spec addendum F9) ═══════════
+   The bar is the probability, the tick on it is the base rate. Every
+   scenario is read as a departure from history, never as an absolute. */
+.fcstack{padding:12px 14px;display:grid;gap:7px}
+.fcbar{display:grid;grid-template-columns:54px 168px minmax(0,1fr);gap:11px;align-items:center;
+  width:100%;text-align:left;padding:8px 10px;border:1px solid var(--line);background:var(--bg-1);
+  cursor:pointer}
+.fcbar:hover{background:var(--bg-2);border-color:var(--line-strong)}
+.fcbar[aria-selected="true"]{border-color:var(--acc-line,var(--line-strong));background:var(--acc-dim,var(--bg-2))}
+.fcbar .p{font-family:var(--mono);font-size:16px;color:var(--txt);text-align:right}
+.fcbar .b{position:relative;height:9px;background:var(--bg-3);display:block}
+.fcbar .b>i{display:block;height:100%;background:var(--steel)}
+.fcbar .b>em{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--txt-2)}
+.fcbar .b>em::after{content:'';position:absolute;top:-3px;left:-2px;width:5px;height:3px;background:var(--txt-2)}
+.fcbar .l{font-size:12.5px;color:var(--txt);min-width:0;line-height:1.35}
+/* the base rate is the module's whole argument — it must not be the least
+   legible thing on the board */
+.fcbar .l em{display:block;font-style:normal;font-size:10.5px;color:var(--txt-3);margin-top:2px}
+/* the residual is a first-class row, not a footnote */
+.fcbar.res{border-style:dashed;cursor:default}
+.fcbar.res .p{color:var(--amber)}
+.fcbar.res .b>i{background:var(--amber);opacity:.75}
+.fcbar.mine{border-left:3px solid var(--acc-hi)}
+.mtag{display:inline-block;font-style:normal;font-family:var(--mono);font-size:9px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--acc-hi);border:1px solid var(--acc-line,var(--line-strong));
+  padding:0 4px;margin-left:6px;vertical-align:1px}
+
+.fcind{display:grid;grid-template-columns:16px minmax(0,1fr) 84px 74px 34px;gap:8px;align-items:center;
+  padding:5px 0;border-bottom:1px solid var(--line-soft);font-size:12px}
+.fcind:last-of-type{border-bottom:0}
+.fcind .d{font-size:9px;text-align:center}
+.fcind .d.up{color:var(--red)} .fcind .d.down{color:var(--green)}
+.fcind .n{color:var(--txt-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fcind .src{font-family:var(--mono);font-size:10px;color:var(--txt-3)}
+.fcind .t{height:4px;background:var(--bg-3);display:block}
+.fcind .t>i{display:block;height:100%;background:var(--steel)}
+.fcind .v{font-family:var(--mono);font-size:10.5px;color:var(--txt-3);text-align:right}

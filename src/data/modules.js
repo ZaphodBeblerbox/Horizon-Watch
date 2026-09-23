@@ -49,6 +49,10 @@ export const MODULES = [
     { key: "replay",    label: "Replay",    icon: "i-clock",    built: true, set: "watch" },
     { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: true, set: "watch" },
     { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: true, set: "watch" },
+    // Scenario board (spec addendum F2) — between Imagery and Briefings.
+    // A forecast belongs next to the evidence it rests on and before the
+    // document it ends up in.
+    { key: "forecast",  label: "Forecast",  icon: "i-orb",     built: true, set: "watch" },
     { key: "briefings", label: "Briefings", icon: "i-read",    built: true, set: "watch" },
     // Workstation modules — §7.1. "My work" reuses the bell/inbox-style
     // icon family already established; Mail/Cases/Team get their own real

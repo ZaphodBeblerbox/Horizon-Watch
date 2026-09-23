@@ -36,13 +36,13 @@ import { MODULES } from "./data/modules.js"
 const MODULE_TO_TAB_TYPE = {
     situation: "situation", inbox: "watchlists", dossiers: "dossiers",
     analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
-    ontology: "ontology", imagery: "imagery",
+    ontology: "ontology", imagery: "imagery", forecast: "forecast",
     mywork: "mywork", mail: "mail", cases: "cases", team: "team",
 }
 const TAB_TYPE_TO_MODULE = {
     situation: "situation", watchlists: "inbox", dossiers: "dossiers",
     analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
-    ontology: "ontology", imagery: "imagery",
+    ontology: "ontology", imagery: "imagery", forecast: "forecast",
     mywork: "mywork", mail: "mail", cases: "cases", team: "team",
 }
 // Mode, not modules (§7.1) — which real module keys a tab type routes to
@@ -78,6 +78,7 @@ import Dossiers from "./destinations/Dossiers.jsx"
 import Ontology from "./destinations/Ontology.jsx"
 import Replay from "./destinations/Replay.jsx"
 import Imagery from "./destinations/Imagery.jsx"
+import Forecast from "./destinations/Forecast.jsx"
 import MyWork from "./destinations/MyWork.jsx"
 import Mail from "./destinations/Mail.jsx"
 import Cases from "./destinations/Cases.jsx"
@@ -1387,6 +1388,12 @@ export default function App() {
                 {tabs.some(t => t.type === "imagery") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "imagery" ? "flex" : "none", flexDirection: "column" }}>
                         <Imagery onOpenGenerate={() => openTab("generate")} />
+                    </div>
+                )}
+
+                {tabs.some(t => t.type === "forecast") && (
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "forecast" ? "flex" : "none", flexDirection: "column" }}>
+                        <Forecast />
                     </div>
                 )}
 
