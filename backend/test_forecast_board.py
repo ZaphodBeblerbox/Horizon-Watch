@@ -536,3 +536,28 @@ def test_the_caveat_says_the_rows_are_not_alternatives():
     src = inspect.getsource(fb.get_board)
     assert "not alternatives to each other" in src
     assert "do not sum to 100" in src
+
+
+# ── The corpus bootstrap: forecast was inert in production ────────────
+#
+# Every production board answered {"available": false, "error": "no such
+# table: ucdp_history"}. The model, boards, signals and templates all
+# worked locally and did nothing where anyone would see them.
+
+def test_a_truncated_corpus_is_detected_not_trusted():
+    # A partial ingest is worse than none: the model would train on it
+    # and report skill for a corpus that is missing most of its history.
+    import re, pathlib
+    src = pathlib.Path("main.py").read_text()
+    fn = src[src.index("def _forecast_corpus_bootstrap"):]
+    fn = fn[:fn.index("\nasync def ")]
+    assert "have > 300_000" in fn, "no completeness floor on the existing corpus"
+    assert "re-ingesting" in fn
+    # and it must not sit on the event loop or the single-worker pool
+    assert "_maintenance_executor" not in fn.split('"""')[2]
+
+
+def test_the_tail_is_skipped_without_a_corpus():
+    import pathlib
+    src = pathlib.Path("main.py").read_text()
+    assert "skipping tail: no training corpus" in src

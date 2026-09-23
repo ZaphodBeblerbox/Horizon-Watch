@@ -127,3 +127,33 @@ def test_an_archive_with_no_csv_is_an_error_not_an_empty_success(tmp_path):
         assert "CSV" in str(e)
     else:
         raise AssertionError("an archive with no CSV must raise")
+
+
+def test_ingest_commits_in_batches_not_once_at_the_end():
+    """A single 417,968-row transaction is too much to hold open.
+
+    On the production database — 60GB, WAL, on a network volume — an open
+    write transaction stops the WAL being checkpointed and lets it grow
+    for the whole ingest. Per-batch commits bound both, and make a run
+    interrupted midway resumable rather than lost.
+    """
+    import inspect
+    src = inspect.getsource(uh.ingest)
+    loop = src[src.index("for raw in _rows_from_zip"):src.index("if batch:")]
+    assert "conn.commit()" in loop, "the batch loop never commits"
+
+
+def test_a_resumed_ingest_does_not_duplicate_rows():
+    # Idempotent on UCDP's own event id, which is what lets the caller
+    # re-run a partial ingest by checking the row count rather than a flag.
+    import os, tempfile
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    try:
+        blob = _zip([_row(id=1), _row(id=2, date_start="2011-03-15")])
+        assert uh.ingest(path, blob=blob)["ingested"] == 2
+        assert uh.ingest(path, blob=blob)["ingested"] == 2
+        c = sqlite3.connect(path)
+        assert c.execute("SELECT COUNT(*) FROM ucdp_history").fetchone()[0] == 2
+        c.close()
+    finally:
+        os.unlink(path)

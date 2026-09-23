@@ -152,6 +152,16 @@ def ingest(db_path: str, *, url: str | None = None, timeout: int = 600,
 
     `blob` exists so the parsing and storage can be tested without
     downloading 39MB; nothing else passes it.
+
+    COMMITTED PER BATCH, NOT ONCE AT THE END. 417,968 rows in a single
+    transaction is a very large write to hold open, and on the
+    production database — 60GB, WAL, on a network volume — an open write
+    transaction stops the WAL being checkpointed and lets it grow for the
+    duration. Committing every 5,000 rows costs extra fsyncs on a job
+    that runs once in the life of a deployment, and bounds both the
+    transaction and the WAL. A partial ingest interrupted midway is also
+    then resumable rather than lost, and the caller re-runs it because it
+    checks the row count, not a flag.
     """
     src = url or latest_ged_url()
     if not src and blob is None:
@@ -178,6 +188,7 @@ def ingest(db_path: str, *, url: str | None = None, timeout: int = 600,
             seen += 1
             if len(batch) >= 5000:
                 _write(conn, batch)
+                conn.commit()
                 batch = []
         if batch:
             _write(conn, batch)

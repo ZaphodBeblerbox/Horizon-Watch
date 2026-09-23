@@ -11044,6 +11044,66 @@ class _LiveCached(Exception):
     """Control-flow marker: the derived block was served from cache."""
 
 
+def _forecast_corpus_bootstrap():
+    """Put the training corpus on a deployment that has never had one.
+
+    The forecast module was completely inert in production: every board
+    answered {"available": false, "error": "no such table: ucdp_history"}.
+    The model, the boards, the signals, the templates all worked locally
+    and did nothing at all where anyone would see them, because the full
+    GED had only ever been ingested onto a laptop.
+
+    ONE SHOT, AND ONLY WHEN THERE IS NOTHING THERE. The full GED is 39MB
+    compressed and 417,968 rows; re-fetching it on every boot would be a
+    daily 39MB download to discover nothing changed. UCDP revises it
+    annually, so a corpus that exists is a corpus that is current enough,
+    and the monthly candidate tail is what keeps the boards up to date.
+
+RUN OFF THE DEFAULT EXECUTOR, NOT _maintenance_executor. That pool has a
+    single worker shared with the risk-index warm and the forecast loops,
+    and this is a multi-minute network-and-disk job that would block them
+    all. It must never touch the event loop either: a container that
+    cannot answer a healthcheck gets killed, which is exactly how this
+    service spent a morning today.
+    """
+    import sqlite3 as _sq
+    import ucdp_history as _uh
+    try:
+        conn = _sq.connect(_akili_db_path())
+        try:
+            try:
+                have = conn.execute(
+                    "SELECT COUNT(*) FROM ucdp_history").fetchone()[0]
+            except _sq.OperationalError:
+                have = 0          # table absent, which is the case this exists for
+        finally:
+            conn.close()
+        # A partial ingest is worse than none: the model would train on a
+        # truncated corpus and report skill for it. The full GED is ~418k
+        # rows, so anything far below that did not finish.
+        if have > 300_000:
+            print(f"[forecast] corpus present: {have} historical events")
+            return {"ok": True, "skipped": True, "events": have}
+
+        if have:
+            print(f"[forecast] corpus looks truncated ({have} rows) — re-ingesting")
+        else:
+            print("[forecast] no training corpus — ingesting the full UCDP GED "
+                  "(39MB, ~418k events, one time)")
+        t0 = time.monotonic()
+        out = _uh.ingest(_akili_db_path())
+        if not out.get("available"):
+            print(f"[forecast] corpus ingest failed: {out.get('error')}")
+            return {"ok": False, "error": out.get("error")}
+        st = out.get("stats") or {}
+        print(f"[forecast] corpus ingested in {time.monotonic() - t0:.0f}s: "
+              f"{out.get('ingested')} events, {st.get('first')} to {st.get('last')}")
+        return {"ok": True, "skipped": False, "events": out.get("ingested")}
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[forecast] corpus bootstrap failed: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 async def _forecast_tail_loop():
     """Keep the forecast's live tail current.
 
@@ -11064,6 +11124,17 @@ async def _forecast_tail_loop():
     and silently take every board back nine months.
     """
     await asyncio.sleep(300)
+    # The candidate tail is useless without the revised corpus: the
+    # calibration that puts it on the same scale is measured against the
+    # overlap between them, and without that overlap the tail is refused
+    # outright rather than used uncorrected.
+    try:
+        boot = await asyncio.get_event_loop().run_in_executor(
+            None, _forecast_corpus_bootstrap)
+        if not boot.get("ok"):
+            print("[forecast] skipping tail: no training corpus")
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[forecast] corpus bootstrap error: {e}")
     while True:
         try:
             import ucdp_candidate as _uc
