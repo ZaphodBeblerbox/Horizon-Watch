@@ -20,6 +20,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
+import ForecastTemplate from "./ForecastTemplate.jsx"
+import { TEMPLATE_KEYS, TEMPLATE_LABEL } from "./forecastTemplate.js"
 import { safeArray } from "../utils/safeArray.js"
 import { pct, rows, departure, tickLeft, barWidth, residualOf } from "./forecastBars.js"
 
@@ -291,6 +293,13 @@ function Detail({ s, board }) {
                 <P>{s.falsifier || "No falsifier stated. A forecast that cannot be wrong is not a forecast."}</P>
             </div>
 
+            {/* F8 — only where the scenario DECLARES a doctrine. The
+                model's escalation rows do not, and drawing one for them
+                would invent an axis of advance out of arithmetic. It sits
+                below the falsifier deliberately: the reader meets the
+                claim and its disproof before meeting the picture. */}
+            {s.template ? <ForecastTemplate templateKey={s.template} window={s.window} /> : null}
+
             <P style={{ color: "var(--txt-4)" }}>{board.caveat}</P>
         </div>
     )
@@ -334,6 +343,7 @@ function ProposeForm({ boardId, onAdded, onCancel }) {
     const [window_, setWindow] = useState("0-3 months")
     const [obs, setObs] = useState("")
     const [fals, setFals] = useState("")
+    const [tpl, setTpl] = useState("")
     const [busy, setBusy] = useState(false)
     const [err, setErr] = useState(null)
 
@@ -345,14 +355,16 @@ function ProposeForm({ boardId, onAdded, onCancel }) {
             method: "POST", credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ board: boardId, label, p: p / 100,
-                                   window: window_, indicators, falsifier: fals }),
+                                   window: window_, indicators, falsifier: fals,
+                                   template: tpl || null }),
         })
             .then((r) => r.json())
             .then((d) => {
                 if (!d?.ok) { setErr(d?.error || "could not save"); return }
                 onAdded({ id: d.id, origin: "analyst", mine: true, label,
                           p: p / 100, base: null, window: window_,
-                          indicators, falsifier: fals || null })
+                          indicators, falsifier: fals || null,
+                          template: tpl || null })
             })
             .catch((e) => setErr(String(e.message || e)))
             .finally(() => setBusy(false))
@@ -374,6 +386,18 @@ function ProposeForm({ boardId, onAdded, onCancel }) {
                       value={obs} onChange={(e) => setObs(e.target.value)} />
             <input className="input" placeholder="What would prove you wrong" value={fals}
                    onChange={(e) => setFals(e.target.value)} />
+            {/* F8 — optional, and off by default. A template is a claim
+                about HOW something would happen, and most scenarios do
+                not make one. Defaulting to a doctrine would attach an
+                axis of advance to every forecast whether or not the
+                author meant one. */}
+            <select className="input" value={tpl}
+                    onChange={(e) => setTpl(e.target.value)}>
+                <option value="">No doctrinal template</option>
+                {TEMPLATE_KEYS.map((k) => (
+                    <option key={k} value={k}>{TEMPLATE_LABEL[k]}</option>
+                ))}
+            </select>
             {err ? <div style={{ font: "400 10px var(--font)", color: "var(--amber)" }}>{err}</div> : null}
             <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn sm primary" disabled={busy || !label.trim()} onClick={submit}>

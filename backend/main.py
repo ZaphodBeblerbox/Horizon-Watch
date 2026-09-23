@@ -3717,7 +3717,8 @@ async def api_forecast_propose(request: Request):
                 p=body.get("p"), window=str(body.get("window") or ""),
                 indicators=body.get("indicators") or [],
                 falsifier=str(body.get("falsifier") or ""),
-                author=str(body.get("author") or ""))
+                author=str(body.get("author") or ""),
+                template=body.get("template") or None)
             return out
         finally:
             conn.close()

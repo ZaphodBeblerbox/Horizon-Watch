@@ -1,0 +1,113 @@
+/**
+ * The non-negotiables of F8, tested.
+ *
+ * WHY STATIC MARKUP AND NOT A DOM. This repo has no jsdom and no
+ * testing-library, and adding both for one component would be a large
+ * change to its test posture for a small gain. renderToStaticMarkup
+ * uses the react-dom already present and proves the things that fail
+ * SILENTLY — a missing stamp still renders a beautiful picture. The one
+ * rule it cannot observe, the playback clock, is asserted against the
+ * source instead, which is where that bug would actually live.
+ */
+import { describe, it, expect } from "vitest"
+import { readFileSync } from "node:fs"
+import { renderToStaticMarkup as html } from "react-dom/server"
+import ForecastTemplate, { Schematic, Geographic } from "./ForecastTemplate.jsx"
+import { TEMPLATE_KEYS, TPL } from "./forecastTemplate.js"
+
+const STAMP = "DOCTRINAL TEMPLATE · NOT AN OBSERVED MOVEMENT"
+// The CODE, with comments stripped. The prose in that file discusses
+// setInterval and dismissal precisely in order to forbid them, so a
+// naive grep over the whole file fails on its own documentation.
+const SRC = readFileSync("src/destinations/ForecastTemplate.jsx", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+
+describe("the doctrinal template, rendered", () => {
+    it("stamps the schematic face of every template, at every t", () => {
+        for (const k of TEMPLATE_KEYS) {
+            for (const t of [0, 0.5, 1]) {
+                expect(html(<Schematic tpl={TPL[k]} t={t} />), `${k}@${t}`).toContain(STAMP)
+            }
+        }
+    })
+
+    it("stamps the geographic face too", () => {
+        expect(html(<Geographic />)).toContain(STAMP)
+    })
+
+    it("puts the stamp inside the picture, not over it", () => {
+        // So a screenshot, a print stylesheet or a stacking-context bug
+        // cannot separate the warning from the thing it warns about.
+        const m = html(<Schematic tpl={TPL.incursion} t={0} />)
+        expect(m.indexOf(STAMP)).toBeLessThan(m.lastIndexOf("</svg>"))
+    })
+
+    it("pins the stamp's width so the warning cannot be truncated", () => {
+        // It WAS truncated — "…NOT AN OBSERVED MOVEM" — on the first
+        // machine it was drawn on, because the box was sized against
+        // assumed font metrics. A clipped warning is the exact failure
+        // this component exists to prevent, and it varies by font stack,
+        // so it would not have reproduced everywhere.
+        const m = html(<Schematic tpl={TPL.incursion} t={0} />)
+        expect(m).toContain('lengthAdjust="spacingAndGlyphs"')
+        const tl = /textLength="(\d+)"/.exec(m)
+        const w = /<rect[^>]*width="(\d+)"[^>]*stroke="#FF9F0A"/.exec(m)
+        expect(tl, "stamp text has no pinned length").toBeTruthy()
+        expect(w, "stamp box not found").toBeTruthy()
+        expect(Number(tl[1])).toBeLessThan(Number(w[1]))
+    })
+
+    it("offers no way to dismiss the stamp", () => {
+        expect(SRC).not.toMatch(/dismiss|setShowStamp|hideStamp|acknowledg/i)
+    })
+
+    it("draws at t = 0 on selection, before anything is played", () => {
+        // A bordered box containing only a warning label is a
+        // quarter-pane of dead space, and dead space is where a reader
+        // stops reading warnings.
+        const m = html(<ForecastTemplate templateKey="incursion" window="0-3 months" />)
+        expect((m.match(/<path/g) || []).length).toBeGreaterThan(4)
+        expect(m).toContain("T+0d")
+        expect(m).toContain(">play<")
+    })
+
+    it("names the doctrine under the frame", () => {
+        const m = html(<ForecastTemplate templateKey="hybrid" />)
+        expect(m).toContain("Doctrine.")
+        expect(m).toContain(TPL.hybrid.doctrine.slice(0, 40))
+    })
+
+    it("says in words, not in a badge, that nothing here was observed", () => {
+        expect(html(<ForecastTemplate templateKey="incursion" />))
+            .toContain("Nothing above has been observed")
+    })
+
+    it("plays on requestAnimationFrame against a wall clock, never setInterval", () => {
+        // setInterval drifts under load and keeps firing in a
+        // backgrounded tab, so the six-second run silently becomes
+        // something else and two readers see different speeds.
+        expect(SRC).toContain("requestAnimationFrame")
+        expect(SRC).toContain("performance.now()")
+        expect(SRC).not.toContain("setInterval")
+        expect(SRC).toContain("cancelAnimationFrame")
+    })
+
+    it("renders nothing for a template it does not know", () => {
+        // Rather than an empty frame, which reads as "no doctrine"
+        // instead of "typo".
+        expect(html(<ForecastTemplate templateKey="blitzkrieg" />)).toBe("")
+        expect(html(<ForecastTemplate templateKey={null} />)).toBe("")
+    })
+
+    it("does not claim terrain it cannot draw", () => {
+        expect(html(<Geographic />)).toContain("no geographic face yet")
+    })
+
+    it("never reaches for Cesium", () => {
+        // "Do not render templated units as Cesium entities on the live
+        // globe: that is the one place they would be mistaken for
+        // tracks."
+        expect(SRC).not.toMatch(/from "cesium"|from "resium"/)
+    })
+})

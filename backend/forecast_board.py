@@ -50,6 +50,12 @@ _fit_lock = threading.Lock()
 #: it the model is extrapolating from silence.
 MIN_RECENT_EVENTS = 3
 
+#: The doctrinal templates the console can actually draw. Declared
+#: here so an unknown key is refused at the door rather than
+#: rendering an empty frame, which reads as 'no doctrine' instead of
+#: 'typo'. Kept in step with src/destinations/forecastTemplate.js.
+TEMPLATES = ("incursion", "hybrid", "demo", "reroute", "strike")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS forecast_proposals (
     id          TEXT PRIMARY KEY,
@@ -60,7 +66,8 @@ CREATE TABLE IF NOT EXISTS forecast_proposals (
     indicators  TEXT,          -- JSON list of observables
     falsifier   TEXT,
     author      TEXT,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    template    TEXT           -- doctrinal template key, or NULL
 );
 CREATE TABLE IF NOT EXISTS forecast_resolutions (
     scenario_id TEXT PRIMARY KEY,
@@ -76,6 +83,12 @@ CREATE INDEX IF NOT EXISTS ix_fcres_board ON forecast_resolutions(board);
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    # The column arrived after the table shipped; CREATE TABLE IF NOT
+    # EXISTS silently leaves an existing table alone, so the ALTER is
+    # the only thing that reaches a deployed database.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(forecast_proposals)")}
+    if "template" not in cols:
+        conn.execute("ALTER TABLE forecast_proposals ADD COLUMN template TEXT")
     conn.commit()
 
 
@@ -246,7 +259,8 @@ def _model_scenarios(panel: dict, fit: dict, country: str) -> list:
 def _proposals(conn: sqlite3.Connection, board: str) -> list:
     try:
         rows = conn.execute(
-            "SELECT id, label, p, window, indicators, falsifier, author, created_at"
+            "SELECT id, label, p, window, indicators, falsifier, author, created_at,"
+            " template"
             " FROM forecast_proposals WHERE board = ? ORDER BY created_at", (board,)).fetchall()
     except sqlite3.Error:
         return []
@@ -264,6 +278,7 @@ def _proposals(conn: sqlite3.Connection, board: str) -> list:
             # F7: a proposal that cannot be watched must say so.
             "falsifier": r[5] or None,
             "author": r[6], "created_at": r[7], "mine": True,
+            "template": r[8] if len(r) > 8 else None,
         })
     return out
 
@@ -370,7 +385,8 @@ def get_board(conn: sqlite3.Connection, bid: str) -> dict:
 
 def add_proposal(conn: sqlite3.Connection, *, board: str, label: str, p: float,
                  window: str = "", indicators: list | None = None,
-                 falsifier: str = "", author: str = "") -> dict:
+                 falsifier: str = "", author: str = "",
+                 template: str | None = None) -> dict:
     """Store an analyst scenario. Scored separately from the model's.
 
     An analyst's 30% and a model's 30% are different objects with
@@ -388,17 +404,21 @@ def add_proposal(conn: sqlite3.Connection, *, board: str, label: str, p: float,
     # The spec's own 1-80% slider: 0 and 100 are not forecasts.
     if not (0.01 <= p <= 0.80):
         return {"ok": False, "error": "probability must be between 1% and 80%"}
+    template = (template or "").strip() or None
+    if template is not None and template not in TEMPLATES:
+        return {"ok": False, "error": f"unknown template {template!r}"}
 
     import datetime as _dt
     pid = "SC-P" + hashlib.sha1(
         f"{board}|{label}|{time.time()}".encode()).hexdigest()[:9]
     conn.execute(
         "INSERT INTO forecast_proposals"
-        " (id, board, label, p, window, indicators, falsifier, author, created_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?)",
+        " (id, board, label, p, window, indicators, falsifier, author,"
+        "  created_at, template)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
         (pid, board, label, p, window or None,
          json.dumps(indicators or []), falsifier or None, author or None,
-         _dt.datetime.now(_dt.timezone.utc).isoformat()))
+         _dt.datetime.now(_dt.timezone.utc).isoformat(), template))
     conn.commit()
     return {"ok": True, "id": pid}
 

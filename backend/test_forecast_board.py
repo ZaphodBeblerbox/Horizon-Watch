@@ -297,3 +297,66 @@ def test_a_malformed_indicator_is_skipped_not_stored():
                    indicators=[["ok", "UCDP", "up", 0.4], ["too", "short"], [], None, ["  ", "x", "up", 1]])
     assert out["created"] == 1
     assert c.execute("SELECT COUNT(*) FROM rule_configs").fetchone()[0] == 1
+
+
+# ── F8: the declared doctrinal template ───────────────────────────────
+#
+# A scenario carries a template only when it DECLARES one. The model's
+# escalation rows have no doctrine behind them — they are a probability
+# derived from counts — so giving them a template would be inventing an
+# axis of advance out of arithmetic. That is precisely the failure the
+# spec calls "the single most dangerous object in this module", so the
+# field is opt-in and validated.
+
+def _fresh():
+    c = sqlite3.connect(":memory:")
+    fb.ensure_schema(c)
+    return c
+
+
+def test_a_proposal_may_declare_a_template():
+    c = _fresh()
+    r = fb.add_proposal(c, board="SD", label="Cross-border push", p=0.3,
+                        template="incursion")
+    assert r["ok"], r
+    assert fb._proposals(c, "SD")[0]["template"] == "incursion"
+
+
+def test_a_proposal_without_one_carries_none_not_a_default():
+    c = _fresh()
+    fb.add_proposal(c, board="SD", label="Something", p=0.3)
+    assert fb._proposals(c, "SD")[0]["template"] is None
+
+
+def test_an_unknown_template_is_refused_at_the_door():
+    # Rendering an unknown key would show an empty frame, which reads as
+    # "no doctrine" rather than "typo".
+    c = _fresh()
+    r = fb.add_proposal(c, board="SD", label="X", p=0.3, template="blitzkrieg")
+    assert not r["ok"]
+    assert "unknown template" in r["error"]
+    assert fb._proposals(c, "SD") == []
+
+
+def test_the_column_is_added_to_a_table_that_predates_it():
+    # CREATE TABLE IF NOT EXISTS leaves a deployed table alone, so the
+    # ALTER is the only thing that reaches production.
+    old = sqlite3.connect(":memory:")
+    old.execute("CREATE TABLE forecast_proposals (id TEXT PRIMARY KEY,"
+                " board TEXT NOT NULL, label TEXT NOT NULL, p REAL NOT NULL,"
+                " window TEXT, indicators TEXT, falsifier TEXT, author TEXT,"
+                " created_at TEXT NOT NULL)")
+    old.commit()
+    fb.ensure_schema(old)
+    cols = {r[1] for r in old.execute("PRAGMA table_info(forecast_proposals)")}
+    assert "template" in cols
+    assert fb.add_proposal(old, board="SD", label="X", p=0.2,
+                           template="hybrid")["ok"]
+    old.close()
+
+
+def test_ensure_schema_is_safe_to_run_twice():
+    c = _fresh()
+    fb.ensure_schema(c)
+    assert fb.add_proposal(c, board="SD", label="X", p=0.2,
+                           template="demo")["ok"]
