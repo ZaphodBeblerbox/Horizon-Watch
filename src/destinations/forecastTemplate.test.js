@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest"
 import fs from "node:fs"
 import { FRAME, SIZE, TPL, AFFILIATIONS, TEMPLATE_KEYS, TEMPLATE_LABEL,
-         isMoving, positionAt, chevron, elapsedLabel } from "./forecastTemplate.js"
+         isMoving, positionAt, chevron, elapsedLabel,
+         legsOf, localT, phaseAt } from "./forecastTemplate.js"
 import { DOMAINS, ICONS } from "./forecastSymbols.js"
 
 describe("the doctrinal template", () => {
@@ -110,6 +111,73 @@ describe("the doctrinal template", () => {
         for (const k of TEMPLATE_KEYS) {
             const sea = TPL[k].units.filter((u) => u.domain === "sea")
             if (sea.length) expect(k).toBe("reroute")
+        }
+    })
+
+    it("holds a unit at its line of departure until its own start", () => {
+        // Formations do not all step off together, and drawing them as
+        // though they do is what made this read as a diagram.
+        const u = { x: 0, y: 0, to: [100, 0], start: 0.4, end: 0.8 }
+        expect(localT(u, 0)).toBe(0)
+        expect(localT(u, 0.4)).toBe(0)
+        expect(positionAt(u, 0.2).x).toBe(0)
+        expect(localT(u, 0.6)).toBeCloseTo(0.5, 6)
+        expect(localT(u, 0.9)).toBe(1)
+    })
+
+    it("holds a unit at its objective once arrived, never drifting past", () => {
+        const u = { x: 0, y: 0, to: [100, 0], start: 0, end: 0.5 }
+        expect(positionAt(u, 0.5).x).toBeCloseTo(100, 6)
+        expect(positionAt(u, 1).x).toBeCloseTo(100, 6)
+    })
+
+    it("walks a multi-leg route by distance, not per leg", () => {
+        // Equal time per leg makes a formation sprint a short leg and
+        // crawl a long one, which reads as acceleration nobody claimed.
+        const u = { x: 0, y: 0, via: [[10, 0]], to: [110, 0] }
+        expect(legsOf(u)).toHaveLength(3)
+        // Half the TOTAL 110 is 55, which is along the second leg.
+        expect(positionAt(u, 0.5).x).toBeCloseTo(55, 6)
+    })
+
+    it("points the chevron along the leg the unit is actually on", () => {
+        const u = { x: 0, y: 0, via: [[100, 0]], to: [100, 100] }
+        const early = chevron(u, 0.2)        // heading east
+        const late = chevron(u, 0.8)         // heading south
+        expect(early).toBeTruthy()
+        expect(late).toBeTruthy()
+        expect(early).not.toBe(late)
+    })
+
+    it("shows no chevron before a unit starts or after it arrives", () => {
+        const u = { x: 0, y: 0, to: [100, 0], start: 0.3, end: 0.7 }
+        expect(chevron(u, 0.1)).toBeNull()
+        expect(chevron(u, 0.95)).toBeNull()
+        expect(chevron(u, 0.5)).toBeTruthy()
+    })
+
+    it("gives every template named phases that advance in order", () => {
+        for (const k of TEMPLATE_KEYS) {
+            const ph = TPL[k].phases
+            expect(ph, k).toBeTruthy()
+            expect(ph.length, k).toBeGreaterThan(1)
+            for (let i = 1; i < ph.length; i++) {
+                expect(ph[i].at, `${k}[${i}]`).toBeGreaterThan(ph[i - 1].at)
+                expect(ph[i].label, `${k}[${i}]`).toBeTruthy()
+            }
+            expect(phaseAt(TPL[k], 0), k).toBeTruthy()
+            expect(phaseAt(TPL[k], 1).label, k).toBe(ph[ph.length - 1].label)
+        }
+    })
+
+    it("keeps every unit's window inside the run", () => {
+        for (const k of TEMPLATE_KEYS) {
+            for (const u of TPL[k].units) {
+                const a = u.start ?? 0, b = u.end ?? 1
+                expect(a, `${k}/${u.id}`).toBeGreaterThanOrEqual(0)
+                expect(b, `${k}/${u.id}`).toBeLessThanOrEqual(1)
+                expect(b, `${k}/${u.id}`).toBeGreaterThan(a)
+            }
         }
     })
 })

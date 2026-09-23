@@ -55,3 +55,43 @@ describe("APP-6 symbology", () => {
         expect(tintFor(null)).toBe(TINT.unknown)
     })
 })
+
+describe("APP-6 colour and installation coding", () => {
+    it("uses the standard's own affiliation colours, not approximations", async () => {
+        const { APP6 } = await import("./forecastSymbols.js")
+        // An approximately-red frame is a claim about affiliation that a
+        // trained reader will act on.
+        expect(APP6.friendly.fill).toBe("#80E0FF")
+        expect(APP6.hostile.fill).toBe("#FF8080")
+        expect(APP6.neutral.fill).toBe("#AAFFAA")
+        expect(APP6.unknown.fill).toBe("#FFFF80")
+        // Every affiliation gets a distinct, saturated frame.
+        const frames = Object.values(APP6).map((a) => a.frame)
+        expect(new Set(frames).size).toBe(4)
+    })
+
+    it("gives every facility kind a glyph and falls back safely", async () => {
+        const { FACILITY_KINDS, facilityIcon } = await import("./forecastSymbols.js")
+        expect(FACILITY_KINDS).toContain("airfield")
+        expect(FACILITY_KINDS).toContain("port")
+        for (const k of FACILITY_KINDS) expect(facilityIcon(k), k).toMatch(/^M/)
+        expect(facilityIcon("wormhole")).toBe("")
+        expect(facilityIcon(null)).toBe("")
+    })
+
+    it("marks installations with the top tab that separates them from units", async () => {
+        const { INSTALLATION_TAB } = await import("./forecastSymbols.js")
+        // Without it an airfield is drawn as though it were a formation
+        // standing on the spot.
+        expect(INSTALLATION_TAB).toMatch(/^M/)
+        expect(INSTALLATION_TAB).toMatch(/Z$/)
+    })
+
+    it("fills and frames differ, because both carry information", async () => {
+        const { fillFor, tintFor } = await import("./forecastSymbols.js")
+        for (const aff of ["friendly", "hostile", "neutral", "unknown"]) {
+            expect(fillFor({ aff })).not.toBe(tintFor({ aff }))
+        }
+        expect(fillFor(null)).toBe("#FFFF80")
+    })
+})

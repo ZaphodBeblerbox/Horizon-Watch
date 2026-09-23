@@ -74,10 +74,61 @@ export const ICONS = {
 
 export const AFFILIATIONS = ["friendly", "hostile", "neutral", "unknown"]
 
-/** Affiliation colours. Deliberately not the globe's track colours. */
+/**
+ * APP-6 / MIL-STD-2525 affiliation colours, as specified rather than as
+ * they looked nice.
+ *
+ * The standard gives a light fill and a saturated frame per affiliation,
+ * and the pairing is the point: the fill carries at a glance and across
+ * a dark or a light background, the frame keeps the edge legible. These
+ * are the standard's own values.
+ *
+ *   friendly  cyan    128,224,255   frame 0,168,224
+ *   hostile   red     255,128,128   frame 255,48,48
+ *   neutral   green   170,255,170   frame 0,196,0
+ *   unknown   yellow  255,255,128   frame 225,200,0
+ *
+ * Getting these approximately right would be worse than not attempting
+ * them: an approximately-red frame is a claim about affiliation that a
+ * trained reader will act on.
+ */
+export const APP6 = {
+    friendly: { fill: "#80E0FF", frame: "#00A8E0" },
+    hostile:  { fill: "#FF8080", frame: "#FF3030" },
+    neutral:  { fill: "#AAFFAA", frame: "#00C400" },
+    unknown:  { fill: "#FFFF80", frame: "#E1C800" },
+}
+
+/** Back-compat alias: the frame colour is what callers used as "tint". */
 export const TINT = {
-    friendly: "#5AC8FA", hostile: "#FF6B6B",
-    neutral:  "#8E8E93", unknown: "#FFD166",
+    friendly: APP6.friendly.frame, hostile: APP6.hostile.frame,
+    neutral: APP6.neutral.frame, unknown: APP6.unknown.frame,
+}
+
+/**
+ * Installation symbols. In APP-6 an installation is its affiliation
+ * frame with a small filled rectangle centred on the top edge — that
+ * modifier is what separates a FACILITY from a unit, and without it an
+ * airfield is drawn as though it were a formation standing there.
+ */
+export const INSTALLATION_TAB = "M-4,-14 h8 v5 h-8 Z"
+
+/** Facility glyphs, drawn inside an installation frame. */
+export const FACILITY_ICONS = {
+    airfield: "M-8,1 h16 M-4,-4 h8 M0,-4 v9",
+    port:     "M0,-6 v11 M-6,1 q6,7 12,0 M-3,-6 h6",
+    rail:     "M-7,-4 v9 M7,-4 v9 M-9,-1 h18 M-9,3 h18",
+    nuclear:  "M0,0 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 M0,-7 l3,5 h-6 Z",
+    oil:      "M0,6 V-2 q0,-6 5,-6 M-5,6 h10",
+    depot:    "M-7,-5 h14 v10 h-14 Z",
+    city:     "M-7,5 v-7 h5 v-4 h4 v11 Z",
+}
+
+export const FACILITY_KINDS = Object.keys(FACILITY_ICONS)
+
+/** The fill colour for a unit's affiliation. */
+export function fillFor(unit) {
+    return (APP6[unit?.aff] || APP6.unknown).fill
 }
 
 /** The frame for a unit, falling back to ground rather than throwing. */
@@ -92,7 +143,12 @@ export function iconFor(unit) {
     return ICONS[unit?.icon] ?? ""
 }
 
-/** Colour for a unit's affiliation. */
+/** Frame colour for a unit's affiliation. */
 export function tintFor(unit) {
-    return TINT[unit?.aff] || TINT.unknown
+    return (APP6[unit?.aff] || APP6.unknown).frame
+}
+
+/** The glyph for a facility kind, or "" when unknown. */
+export function facilityIcon(kind) {
+    return FACILITY_ICONS[kind] ?? ""
 }

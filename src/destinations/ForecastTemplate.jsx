@@ -34,9 +34,13 @@ import {
 import {
     matchCountry, bboxOf, viewFor, project, pathFor,
 } from "./forecastTerrain.js"
-import { frameFor, iconFor, tintFor, SIZE as ECHELON } from "./forecastSymbols.js"
+import {
+    frameFor, iconFor, tintFor, fillFor, SIZE as ECHELON,
+    INSTALLATION_TAB, facilityIcon,
+} from "./forecastSymbols.js"
 import { unproject } from "./forecastTerrain.js"
 import { checkUnit } from "./forecastFeasibility.js"
+import { phaseAt } from "./forecastTemplate.js"
 
 const W = 560, H = 240
 
@@ -73,24 +77,62 @@ function Stamp() {
  * and is open at the base. Drawing everything in a land frame, which is
  * what this did first, says every movement is a march.
  */
-function Unit({ u, t }) {
+function Unit({ u, t, zoom = 1 }) {
     const { x, y } = positionAt(u, t)
     const tint = tintFor(u)
     const frame = frameFor(u)
     const icon = iconFor(u)
+    // The symbol is counter-scaled against the map's zoom. A military
+    // symbol is a glyph, not a footprint: it marks a position and says
+    // nothing about how much ground the formation covers, so growing it
+    // with the zoom would invent an area claim and, at 8x, bury the
+    // terrain it exists to be checked against.
     return (
-        <g transform={`translate(${x},${y})`}>
+        <g transform={`translate(${x},${y}) scale(${1 / zoom})`}>
+            {/* APP-6 pairs a light fill with a saturated frame: the fill
+                carries at a glance over dark or light ground, the frame
+                keeps the edge. An air frame is open, so it is not filled. */}
             <path d={frame.d}
-                  fill={frame.closed ? "rgba(10,12,16,0.85)" : "none"}
+                  fill={frame.closed ? fillFor(u) : "none"}
+                  fillOpacity={frame.closed ? 0.9 : 0}
                   stroke={tint} strokeWidth="1.6" strokeLinejoin="round" />
             {icon ? (
-                <path d={icon} fill={u.icon === "artillery" ? tint : "none"}
-                      stroke={tint} strokeWidth="1.2" opacity="0.95" />
+                <path d={icon} fill={u.icon === "artillery" ? "#101318" : "none"}
+                      stroke="#101318" strokeWidth="1.3" opacity="0.9" />
             ) : null}
             <text x={0} y={-16} textAnchor="middle" fill={tint}
                   fontSize="9" fontWeight="700">{ECHELON[u.size] || ""}</text>
             <text x={0} y={19} textAnchor="middle" fill={tint}
                   fontSize="8.5" fontWeight="600" opacity="0.85">{u.id}</text>
+        </g>
+    )
+}
+
+/**
+ * A facility as an APP-6 INSTALLATION: the affiliation frame plus a small
+ * filled tab on its top edge. That tab separates a PLACE from a
+ * FORMATION; without it an airfield is drawn as though a unit were
+ * standing on it.
+ *
+ * Drawn only in forecast, and only while a scenario is on the map. An
+ * APP-6 frame asserts an affiliation, and an airport is not a belligerent
+ * outside a scenario — coding every airfield on the live globe that way
+ * would be a claim nobody made.
+ */
+function Facility({ f, x, y, zoom = 1 }) {
+    const u = { aff: f.aff || "neutral", domain: "ground" }
+    const frame = frameFor(u)
+    const tint = tintFor(u)
+    return (
+        <g className="fc-facility"
+           transform={`translate(${x},${y}) scale(${0.58 / zoom})`}>
+            <path d={frame.d} fill={fillFor(u)} fillOpacity="0.85"
+                  stroke={tint} strokeWidth="2" strokeLinejoin="round" />
+            <path d={INSTALLATION_TAB} fill={tint} stroke="none" />
+            {facilityIcon(f.kind) ? (
+                <path d={facilityIcon(f.kind)} fill="none" stroke="#101318"
+                      strokeWidth="1.8" />
+            ) : null}
         </g>
     )
 }
@@ -145,10 +187,19 @@ export function Schematic({ tpl, t }) {
  * these for locations has been misled, so the caption says it plainly
  * and the stamp is here too.
  */
-export function Geographic({ tpl, t, country }) {
+export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
     const [world, setWorld] = useState(null)
     const [fields, setFields] = useState(null)
     const [failed, setFailed] = useState(false)
+    // Pan and zoom are a TRANSFORM over the drawn box, never a refit of
+    // the projection: refitting would move the units relative to the
+    // ground, and their position relative to the ground is the only
+    // thing on this face worth trusting.
+    const [zoom, setZoom] = useState(1)
+    const [pan, setPan] = useState({ x: 0, y: 0 })
+    const drag = useRef(null)
+
+    useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [country, tpl])
 
     useEffect(() => {
         let dead = false
@@ -231,6 +282,25 @@ export function Geographic({ tpl, t, country }) {
     })
     const impossible = verdicts.filter((v) => v.status === "impossible")
 
+    const phase = phaseAt(tpl, t)
+    const kmAcross = Math.round((view.maxLon - view.minLon) * 111 *
+        Math.cos((view.cLat * Math.PI) / 180))
+
+    // Facilities inside the frame, as APP-6 installations. Capped,
+    // because 49,260 airfields projected into one pane is not a map, it
+    // is a texture — and the ones that matter here are the larger fields
+    // an air movement could actually originate from.
+    const shownFacilities = (fields || [])
+        .filter((f) => f.lon >= view.minLon && f.lon <= view.maxLon
+                    && f.lat >= view.minLat && f.lat <= view.maxLat)
+        .slice(0, 40)
+        .map((f) => {
+            const xy = project(f.lon, f.lat, view)
+            return xy ? { kind: "airfield", aff: "neutral", name: f.name,
+                          px: xy[0], py: xy[1] } : null
+        })
+        .filter(Boolean)
+
     return (
         <div>
             {/* The house locator minimap, reference_src A4.4: 196px,
@@ -243,41 +313,92 @@ export function Geographic({ tpl, t, country }) {
                 cropped was the stamp. The warning text stayed in the DOM
                 the whole time, so a test that only looked for the string
                 passed while it was invisible on screen. */}
-            <svg viewBox={`0 0 ${W} ${H}`} width="100%"
-                 style={{ display: "block", height: 196, background: "#12161a",
-                          border: "1px solid #1C1F26", borderRadius: 3 }}
-                 preserveAspectRatio="xMidYMid meet"
-                 role="img"
-                 aria-label={`Doctrinal template over ${country}. Not an observed movement.`}>
-                <rect x={0} y={0} width={W} height={H} fill="#12161a" />
-                {others.map((f, i) => {
-                    const d = pathFor(f.geometry, view)
-                    return d ? <path key={i} d={d} fill="#242b31" stroke="#2f373e"
-                                     strokeWidth="0.5"
-                                     vectorEffect="non-scaling-stroke" /> : null
-                })}
-                <path d={pathFor(feature.geometry, view)} fill="#2b343c"
-                      stroke="#47525c" strokeWidth="1.1"
-                      vectorEffect="non-scaling-stroke" />
+            <div className="fcmap" style={{ height: big ? 520 : 240 }}>
+                <div className="fcmap-bar">
+                    {onToggleBig ? (
+                        <button className="fcmap-btn" onClick={onToggleBig}>
+                            {big ? "shrink" : "enlarge"}
+                        </button>
+                    ) : null}
+                    <button className="fcmap-btn" title="zoom in"
+                            onClick={() => setZoom((z) => Math.min(8, z * 1.5))}>+</button>
+                    <button className="fcmap-btn" title="zoom out"
+                            onClick={() => setZoom((z) => Math.max(1, z / 1.5))}>−</button>
+                    <button className="fcmap-btn"
+                            onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }}>reset</button>
+                </div>
+                {phase ? <div className="fcmap-phase">{phase.label}</div> : null}
+                <div className="fcmap-scale">{Math.round(kmAcross / zoom)} km across</div>
 
-                {tpl.units.map((u, i) => (!isMoving(u) ? null : (
-                    <g key={`a${i}`}>
-                        <line x1={u.x} y1={u.y} x2={u.to[0]} y2={u.to[1]}
-                              stroke={verdicts[i].status === "impossible"
-                                  ? "#FF3B30" : tintFor(u)}
-                              strokeWidth={verdicts[i].status === "impossible" ? 1.4 : 1}
-                              strokeDasharray={verdicts[i].status === "impossible"
-                                  ? "1 3" : "3 5"}
-                              opacity={verdicts[i].status === "impossible" ? 0.95 : 0.45} />
-                        {chevron(u, t) ? (
-                            <path d={chevron(u, t)} stroke={tintFor(u)}
-                                  strokeWidth="1.6" fill="none" opacity="0.9" />
-                        ) : null}
+                <svg viewBox={`0 0 ${W} ${H}`} height="100%"
+                     preserveAspectRatio="xMidYMid meet"
+                     onWheel={(e) => setZoom((z) => Math.max(1, Math.min(8,
+                         z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))))}
+                     onPointerDown={(e) => {
+                         drag.current = { sx: e.clientX, sy: e.clientY,
+                                          px: pan.x, py: pan.y }
+                         e.currentTarget.setPointerCapture(e.pointerId)
+                         e.currentTarget.classList.add("dragging")
+                     }}
+                     onPointerMove={(e) => {
+                         if (!drag.current) return
+                         // Screen pixels into viewBox units, so a drag
+                         // tracks the pointer at any zoom or pane width.
+                         const r = e.currentTarget.getBoundingClientRect()
+                         const k = W / (r.width || W)
+                         setPan({
+                             x: drag.current.px + (e.clientX - drag.current.sx) * k,
+                             y: drag.current.py + (e.clientY - drag.current.sy) * k,
+                         })
+                     }}
+                     onPointerUp={(e) => {
+                         drag.current = null
+                         e.currentTarget.classList.remove("dragging")
+                     }}
+                     role="img"
+                     aria-label={`Doctrinal template over ${country}. Not an observed movement.`}>
+                    <rect x={0} y={0} width={W} height={H} className="fc-sea" />
+                    <g transform={`translate(${pan.x},${pan.y}) `
+                                + `translate(${W / 2},${H / 2}) scale(${zoom}) `
+                                + `translate(${-W / 2},${-H / 2})`}>
+                        {others.map((f, i) => {
+                            const d = pathFor(f.geometry, view)
+                            return d ? <path key={i} d={d} className="fc-neighbour" /> : null
+                        })}
+                        <path d={pathFor(feature.geometry, view)} className="fc-subject" />
+
+                        {/* Facilities: APP-6 installations, only here and
+                            only while a scenario is on the map. */}
+                        {shownFacilities.map((f, i) => (
+                            <Facility key={`f${i}`} f={f} x={f.px} y={f.py} zoom={zoom} />
+                        ))}
+
+                        {tpl.units.map((u, i) => (!isMoving(u) ? null : (
+                            <g key={`a${i}`}>
+                                <line x1={u.x} y1={u.y}
+                                      x2={(u.to || [u.x, u.y])[0]} y2={(u.to || [u.x, u.y])[1]}
+                                      stroke={verdicts[i].status === "impossible"
+                                          ? "#FF3030" : tintFor(u)}
+                                      strokeWidth={verdicts[i].status === "impossible" ? 1.4 : 1}
+                                      strokeDasharray={verdicts[i].status === "impossible"
+                                          ? "1 3" : "3 5"}
+                                      vectorEffect="non-scaling-stroke"
+                                      opacity={verdicts[i].status === "impossible" ? 0.95 : 0.4} />
+                                {chevron(u, t) ? (
+                                    <path d={chevron(u, t)} stroke={tintFor(u)}
+                                          strokeWidth="1.6" fill="none" opacity="0.9"
+                                          vectorEffect="non-scaling-stroke" />
+                                ) : null}
+                            </g>
+                        )))}
+                        {tpl.units.map((u, i) => (
+                            <Unit key={i} u={u} t={t} zoom={zoom} />
+                        ))}
                     </g>
-                )))}
-                {tpl.units.map((u, i) => <Unit key={i} u={u} t={t} />)}
-                <Stamp />
-            </svg>
+                    <Stamp />
+                </svg>
+            </div>
+
             {/* Refusals are named, not just drawn red. A dotted line the
                 reader has to interpret is not a finding. */}
             {impossible.length ? (
@@ -419,6 +540,7 @@ export default function ForecastTemplate({ templateKey, window: window_ = "",
                                            country = "" }) {
     const tpl = TPL[templateKey]
     const [face, setFace] = useState("terrain")
+    const [big, setBig] = useState(false)
     const [t, setT] = useState(0)
     const [playing, setPlaying] = useState(false)
     const raf = useRef(0)
@@ -505,7 +627,8 @@ export default function ForecastTemplate({ templateKey, window: window_ = "",
 
             {face === "schematic"
                 ? <Schematic tpl={tpl} t={t} />
-                : <Geographic tpl={tpl} t={t} country={country} />}
+                : <Geographic tpl={tpl} t={t} country={country}
+                              big={big} onToggleBig={() => setBig((b) => !b)} />}
 
             <Legend units={tpl.units} />
 

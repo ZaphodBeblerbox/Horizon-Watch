@@ -118,15 +118,38 @@ describe("the doctrinal template, rendered", () => {
         // overflow. It cut the stamp off the top of the minimap, and the
         // text was still in the DOM, so a test that only checked for the
         // string passed while the warning was invisible on screen.
-        expect(SRC).not.toContain("slice")
+        // Precisely the attribute, not the substring: Array.slice is
+        // not a cropping bug.
         expect(SRC).toContain('preserveAspectRatio="xMidYMid meet"')
+        expect(SRC).not.toMatch(/preserveAspectRatio\s*=\s*"[^"]*slice/)
     })
 
-    it("follows the house minimap, not a second map of its own", () => {
-        // reference_src A4.4: 196px, mm-land #242b31 on #12161a.
-        expect(SRC).toContain("height: 196")
-        expect(SRC).toContain("#242b31")
-        expect(SRC).toContain("#12161a")
+    it("takes its colours from the theme, not from hardcoded hex", () => {
+        // The map has to work in light and dark, so land, sea and borders
+        // are theme tokens. The ONE exception is the APP-6 affiliation
+        // colours, which are fixed by the standard: an affiliation that
+        // changes colour with the UI is an affiliation nobody can trust.
+        expect(SRC).toContain("fc-neighbour")
+        expect(SRC).toContain("fc-subject")
+        expect(SRC).toContain("fc-sea")
+        // No hardcoded map backgrounds left behind.
+        expect(SRC).not.toContain("#12161a")
+        expect(SRC).not.toContain("#242b31")
+    })
+
+    it("can be zoomed, panned and enlarged", () => {
+        expect(SRC).toContain("onWheel")
+        expect(SRC).toContain("onPointerDown")
+        expect(SRC).toContain("setPointerCapture")
+        expect(SRC).toMatch(/onToggleBig/)
+        // Pan/zoom is a transform over the drawn box, never a refit of
+        // the projection — refitting moves the units relative to the
+        // ground, which is the only thing on this face worth trusting.
+        expect(SRC).toMatch(/scale\(\$\{zoom\}\)/)
+        // Symbols are counter-scaled: a military symbol is a glyph, not
+        // a footprint, so growing it with the zoom invents an area claim
+        // and at 8x buries the terrain it exists to be checked against.
+        expect(SRC).toContain("scale(\${1 / zoom})")
     })
 
     it("plays on requestAnimationFrame against a wall clock, never setInterval", () => {
