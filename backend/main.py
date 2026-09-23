@@ -3657,6 +3657,100 @@ def api_graph_search(q: str = Query(...), limit: int = Query(20, ge=1, le=100)):
         return {"available": False, "error": str(e)[:200], "results": []}
 
 
+def _fc_conn():
+    import sqlite3 as _sq
+    return _sq.connect(_akili_db_path())
+
+
+@app.get("/api/forecast/boards")
+def api_forecast_boards(limit: int = Query(40, ge=1, le=200)):
+    """Locales with enough recent activity to be worth a scenario board."""
+    try:
+        import forecast_board as _fb
+        conn = _fc_conn()
+        try:
+            return {"available": True, "boards": _fb.list_boards(conn, limit=limit)}
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("forecast boards failed")
+        return {"available": False, "error": str(e)[:200], "boards": []}
+
+
+@app.get("/api/forecast/boards/{board_id}")
+def api_forecast_board(board_id: str):
+    """One board: scenarios, the computed residual, and the model's record.
+
+    The residual is computed here and never authored. Three named
+    scenarios summing to 100% is a lie, and a board that cannot say
+    "something nobody listed" trains people to pick from a menu.
+    """
+    try:
+        import forecast_board as _fb
+        conn = _fc_conn()
+        try:
+            _fb.ensure_schema(conn)
+            return _fb.get_board(conn, board_id)
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("forecast board failed")
+        return {"available": False, "error": str(e)[:200]}
+
+
+@app.post("/api/forecast/proposals")
+async def api_forecast_propose(request: Request):
+    """An analyst scenario. Scored separately from the model's, always.
+
+    An analyst's 30% and a model's 30% are different objects with
+    different track records; averaging them destroys the calibration
+    line the whole board depends on.
+    """
+    try:
+        import forecast_board as _fb
+        body = await request.json()
+        conn = _fc_conn()
+        try:
+            out = _fb.add_proposal(
+                conn, board=str(body.get("board") or ""),
+                label=str(body.get("label") or ""),
+                p=body.get("p"), window=str(body.get("window") or ""),
+                indicators=body.get("indicators") or [],
+                falsifier=str(body.get("falsifier") or ""),
+                author=str(body.get("author") or ""))
+            return out
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("forecast proposal failed")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+@app.post("/api/forecast/scenarios/{scenario_id}/resolve")
+async def api_forecast_resolve(scenario_id: str, request: Request):
+    """What actually happened. The only thing that ever moves the record.
+
+    Without this the model's Brier score is decoration: a forecast that
+    is never resolved can never be wrong.
+    """
+    try:
+        import forecast_board as _fb
+        body = await request.json()
+        conn = _fc_conn()
+        try:
+            return _fb.resolve(
+                conn, scenario_id=scenario_id,
+                board=str(body.get("board") or ""),
+                p=float(body.get("p") or 0.0),
+                origin=str(body.get("origin") or "model"),
+                outcome=int(body.get("outcome") or 0))
+        finally:
+            conn.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("forecast resolve failed")
+        return {"ok": False, "error": str(e)[:200]}
+
+
 @app.get("/api/forecast/events")
 def api_forecast_events(horizon: int = Query(14, ge=1, le=60),
                         limit: int = Query(50, ge=1, le=200),
@@ -10974,6 +11068,25 @@ async def _risk_index_warm_loop():
                 return len(_live_notification_sources(48, force=True))
 
             await loop_.run_in_executor(_maintenance_executor, _warm_risk)
+            await asyncio.sleep(1)
+
+            # The conflict model takes ~11s to fit over 65,000 rows and
+            # must never be fitted on a request path.
+            def _warm_forecast():
+                import sqlite3 as _sq
+                import forecast_board as _fb
+                c = _sq.connect(f"file:{_akili_db_path()}?mode=ro", uri=True)
+                try:
+                    return len(_fb.list_boards(c, limit=40))
+                finally:
+                    c.close()
+
+            try:
+                nb = await loop_.run_in_executor(_maintenance_executor, _warm_forecast)
+                print(f"[forecast] model warm; {nb} boards ready")
+            except Exception as fe:                          # noqa: BLE001
+                print(f"[forecast] warm failed: {fe}")
+            await asyncio.sleep(1)
             await asyncio.sleep(1)
             n = await loop_.run_in_executor(_maintenance_executor, _warm_sources)
             print(f"[notifications] warmed in {time.monotonic() - t0:.1f}s; "
