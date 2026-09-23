@@ -32,8 +32,9 @@ describe("the doctrinal template, rendered", () => {
         }
     })
 
-    it("stamps the geographic face too", () => {
-        expect(html(<Geographic />)).toContain(STAMP)
+    it("stamps the geographic face too, before the map has loaded", () => {
+        expect(html(<Geographic tpl={TPL.incursion} t={0} country="Sudan" />))
+            .toContain(STAMP)
     })
 
     it("puts the stamp inside the picture, not over it", () => {
@@ -100,8 +101,18 @@ describe("the doctrinal template, rendered", () => {
         expect(html(<ForecastTemplate templateKey={null} />)).toBe("")
     })
 
-    it("does not claim terrain it cannot draw", () => {
-        expect(html(<Geographic />)).toContain("no geographic face yet")
+    it("states every reason there might be no map, rather than drawing around it", () => {
+        // A blank panel on this face reads as "no land here", which is a
+        // claim about the terrain rather than about the fetch.
+        expect(html(<Geographic tpl={TPL.incursion} t={0} country="Sudan" />))
+            .toContain("Loading country outlines")
+    })
+
+    it("does not present the symbols as surveyed positions", () => {
+        // The template is doctrine laid over real ground; a reader who
+        // takes these for locations has been misled.
+        const src = readFileSync("src/destinations/ForecastTemplate.jsx", "utf8")
+        expect(src).toContain("not at surveyed positions")
     })
 
     it("never reaches for Cesium", () => {

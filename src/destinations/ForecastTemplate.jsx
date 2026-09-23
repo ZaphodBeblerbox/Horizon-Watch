@@ -29,6 +29,9 @@ import { useEffect, useRef, useState } from "react"
 import {
     FRAME, SIZE, TPL, RUN_MS, isMoving, positionAt, chevron, elapsedLabel,
 } from "./forecastTemplate.js"
+import {
+    matchCountry, bboxOf, viewFor, project, pathFor,
+} from "./forecastTerrain.js"
 
 const W = 560, H = 240
 
@@ -112,43 +115,107 @@ export function Schematic({ tpl, t }) {
 }
 
 /**
- * The geographic face. The spec asks for coastlines under the symbols,
- * because a schematic can be elegant and geographically impossible.
+ * The geographic face: the same doctrine, over real ground.
  *
- * WHY THIS SAYS SO INSTEAD OF DRAWING IT. Real coastlines need a
- * projection library and a world topology file, neither of which this
- * bundle carries. Drawing an INVENTED coastline would be strictly worse
- * than drawing none: the whole purpose of this face is to let the
- * reader check the schematic against real ground, and a decorative
- * outline would answer that check with a lie. So the face states its
- * own absence, and shows the coordinates the template does have.
+ * A schematic can be elegant and geographically impossible. Axes that
+ * read beautifully as relationships may, on the ground, run into a sea
+ * or across a border that is not where the diagram implies. This face
+ * exists so the reader can see that, and it is drawn from the country
+ * outlines the app already ships — no projection library, because
+ * equirectangular is linear and "is this axis in the sea" is the only
+ * question this face is asked.
+ *
+ * WHAT IT DOES NOT CLAIM, AND SAYS SO. The units are not at surveyed
+ * positions. The template is generic doctrine; the board supplies a
+ * country; the diagram is laid over that country at operational scale so
+ * its geometry can be judged against real coastline. A reader who takes
+ * these for locations has been misled, so the caption says it plainly
+ * and the stamp is here too.
  */
-export function Geographic() {
+export function Geographic({ tpl, t, country }) {
+    const [world, setWorld] = useState(null)
+    const [failed, setFailed] = useState(false)
+
+    useEffect(() => {
+        let dead = false
+        fetch("/data/world-countries.json")
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (!dead) (d ? setWorld(d) : setFailed(true)) })
+            .catch(() => { if (!dead) setFailed(true) })
+        return () => { dead = true }
+    }, [])
+
+    const feature = world ? matchCountry(country, world.features) : null
+    const view = feature ? viewFor(bboxOf(feature.geometry), { w: W, h: H }) : null
+
+    // Every reason there might be no map is stated, never drawn around.
+    const why = failed ? "The country outlines could not be loaded."
+        : !world ? null
+        : !country ? "This scenario is not attached to a country."
+        : !feature ? `No outline for ${country} in the country file.`
+        : null
+
+    if (why || !view) {
+        return (
+            <div style={{ padding: "14px", background: "#0A0C10", borderRadius: 4,
+                          border: "1px solid #1C1F26" }}>
+                <svg viewBox={`0 0 ${W} 34`} width="100%" style={{ display: "block" }}>
+                    <Stamp />
+                </svg>
+                <p style={{ color: "#9AA0AA", fontSize: 12, lineHeight: 1.55,
+                            margin: "10px 0 0" }}>
+                    {why || "Loading country outlines…"}
+                    {why ? " Without it you cannot check the schematic against real"
+                         + " ground — the axes there are relationships, not routes,"
+                         + " and nothing asserts the terrain permits them." : ""}
+                </p>
+            </div>
+        )
+    }
+
+    // Neighbours first and faint, the subject country picked out: the
+    // border that matters is the one the template is about.
+    const others = world.features.filter((f) => f !== feature)
+
     return (
-        <div style={{ padding: "14px 14px 16px", background: "#0A0C10",
-                      borderRadius: 4, border: "1px solid #1C1F26" }}>
-            <svg viewBox={`0 0 ${W} 34`} width="100%" style={{ display: "block" }}>
+        <div>
+            <svg viewBox={`0 0 ${W} ${H}`} width="100%"
+                 style={{ display: "block", background: "#05080C", borderRadius: 4 }}
+                 role="img"
+                 aria-label={`Doctrinal template over ${country}. Not an observed movement.`}>
+                <rect x={0} y={0} width={W} height={H} fill="#05080C" />
+                {others.map((f, i) => {
+                    const d = pathFor(f.geometry, view)
+                    return d ? <path key={i} d={d} fill="#151B24" stroke="#2A3340"
+                                     strokeWidth="0.7" /> : null
+                })}
+                <path d={pathFor(feature.geometry, view)} fill="#1E2833"
+                      stroke="#5A6678" strokeWidth="1.4" />
+
+                {tpl.units.filter(isMoving).map((u, i) => (
+                    <line key={`a${i}`} x1={u.x} y1={u.y} x2={u.to[0]} y2={u.to[1]}
+                          stroke={TINT[u.aff] || TINT.unknown} strokeWidth="1"
+                          strokeDasharray="3 5" opacity="0.4" />
+                ))}
+                {tpl.units.map((u, i) => <Unit key={i} u={u} t={t} />)}
                 <Stamp />
             </svg>
-            <p style={{ color: "#9AA0AA", fontSize: 12, lineHeight: 1.55,
-                        margin: "10px 0 0" }}>
-                This template has no geographic face yet. It is drawn
-                schematically only, which means you cannot check it
-                against the ground — the axes above are relationships,
-                not routes, and nothing here asserts that the terrain
-                permits them.
-            </p>
             <p style={{ color: "#6B7280", fontSize: 11, lineHeight: 1.5,
                         margin: "8px 0 0" }}>
-                Terrain requires a projection and a coastline dataset the
-                console does not carry. An invented outline would defeat
-                the purpose of the check, so none is drawn.
+                {country}, about {Math.round((view.maxLon - view.minLon) * 111 *
+                    Math.cos((view.cLat * Math.PI) / 180))} km across, so the symbols
+                are <b>not to scale and not at surveyed positions</b>. The template is
+                doctrine laid over real ground: it is here to show you whether its
+                geometry is possible at all — where the coast is, which border it
+                crosses, what it would have to traverse. If an axis runs into the sea,
+                that is the check working.
             </p>
         </div>
     )
 }
 
-export default function ForecastTemplate({ templateKey, window: window_ = "" }) {
+export default function ForecastTemplate({ templateKey, window: window_ = "",
+                                           country = "" }) {
     const tpl = TPL[templateKey]
     const [face, setFace] = useState("schematic")
     const [t, setT] = useState(0)
@@ -208,7 +275,7 @@ export default function ForecastTemplate({ templateKey, window: window_ = "" }) 
 
             {face === "schematic"
                 ? <Schematic tpl={tpl} t={t} />
-                : <Geographic />}
+                : <Geographic tpl={tpl} t={t} country={country} />}
 
             {/* Rule 2: the doctrine, named, under the frame. */}
             <p style={{ color: "#8A909B", fontSize: 11, lineHeight: 1.55,

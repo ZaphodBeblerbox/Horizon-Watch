@@ -349,7 +349,8 @@ function Detail({ s, board }) {
                 would invent an axis of advance out of arithmetic. It sits
                 below the falsifier deliberately: the reader meets the
                 claim and its disproof before meeting the picture. */}
-            {s.template ? <ForecastTemplate templateKey={s.template} window={s.window} /> : null}
+            {s.template ? <ForecastTemplate templateKey={s.template} window={s.window}
+                                            country={board.name} /> : null}
 
             <P style={{ color: "var(--txt-4)" }}>{board.caveat}</P>
         </div>
