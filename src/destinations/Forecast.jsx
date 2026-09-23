@@ -168,20 +168,14 @@ export default function Forecast() {
                                 history did not.
                             </P>
                             <P>
-                                The rows are <b>not alternatives to one another</b>.
-                                Escalation in state-based conflict, in non-state
-                                conflict and against civilians are three separate
-                                questions about the same quarter, and several can come
-                                true together — so the bars do not add up to 100%, and
-                                are not meant to.
+                                The rows are <b>not alternatives</b> — several can come
+                                true at once, so they do not add up to 100%.
                             </P>
                             <P>
-                                <b>None of these</b> is a real row and usually the
-                                largest: the chance that not one of them happens. It is
-                                a floor rather than an estimate, because violence of
-                                these kinds tends to move together — what flares
-                                together also stays quiet together — so a quiet quarter
-                                is at least as likely as that row says.
+                                <b>None of these</b> is the chance that not one happens,
+                                and a floor rather than an estimate: these kinds of
+                                violence move together, so a quiet quarter is at least
+                                that likely.
                             </P>
                         </Sect>
                     </>
@@ -223,11 +217,9 @@ export default function Forecast() {
 
                         <p style={{ padding: "0 14px", font: "400 11px var(--font)",
                                     color: "var(--txt-3)", lineHeight: 1.5, margin: "2px 0 10px" }}>
-                            Each bar is a probability; the tick on it is how often that has
-                            happened here before. Read every bar as a departure from
-                            history, never as an absolute — and read the rows as
-                            separate questions, not as a menu: they can all be true at
-                            once, so they do not sum to 100%.
+                            Each bar is a probability; the tick is how often that has
+                            happened here before. The rows are separate questions, not a
+                            menu — they can all be true at once, so they do not sum to 100%.
                         </p>
 
                         {selected

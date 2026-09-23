@@ -94,11 +94,11 @@ function Unit({ u, t, zoom = 1 }) {
                 keeps the edge. An air frame is open, so it is not filled. */}
             <path d={frame.d}
                   fill={frame.closed ? fillFor(u) : "none"}
-                  fillOpacity={frame.closed ? 0.9 : 0}
+                  fillOpacity={frame.closed ? 0.22 : 0}
                   stroke={tint} strokeWidth="1.6" strokeLinejoin="round" />
             {icon ? (
-                <path d={icon} fill={u.icon === "artillery" ? "#101318" : "none"}
-                      stroke="#101318" strokeWidth="1.3" opacity="0.9" />
+                <path d={icon} fill={u.icon === "artillery" ? tint : "none"}
+                      stroke={tint} strokeWidth="1.2" opacity="0.95" />
             ) : null}
             <text x={0} y={-16} textAnchor="middle" fill={tint}
                   fontSize="9" fontWeight="700">{ECHELON[u.size] || ""}</text>
@@ -126,12 +126,12 @@ function Facility({ f, x, y, zoom = 1 }) {
     return (
         <g className="fc-facility"
            transform={`translate(${x},${y}) scale(${0.58 / zoom})`}>
-            <path d={frame.d} fill={fillFor(u)} fillOpacity="0.85"
+            <path d={frame.d} fill={fillFor(u)} fillOpacity="0.2"
                   stroke={tint} strokeWidth="2" strokeLinejoin="round" />
             <path d={INSTALLATION_TAB} fill={tint} stroke="none" />
             {facilityIcon(f.kind) ? (
-                <path d={facilityIcon(f.kind)} fill="none" stroke="#101318"
-                      strokeWidth="1.8" />
+                <path d={facilityIcon(f.kind)} fill="none" stroke={tint}
+                      strokeWidth="1.6" />
             ) : null}
         </g>
     )
@@ -293,13 +293,22 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
     const shownFacilities = (fields || [])
         .filter((f) => f.lon >= view.minLon && f.lon <= view.maxLon
                     && f.lat >= view.minLat && f.lat <= view.maxLat)
-        .slice(0, 40)
         .map((f) => {
             const xy = project(f.lon, f.lat, view)
             return xy ? { kind: "airfield", aff: "neutral", name: f.name,
                           px: xy[0], py: xy[1] } : null
         })
         .filter(Boolean)
+        // Thinned by SCREEN distance, not count. Forty airfields inside
+        // one frame overlap into clumps of glyphs that read as one large
+        // unreadable object, which is worse than showing fewer.
+        .reduce((keep, f) => {
+            if (keep.every((k) => Math.hypot(k.px - f.px, k.py - f.py) > 26)) {
+                keep.push(f)
+            }
+            return keep
+        }, [])
+        .slice(0, 18)
 
     return (
         <div>
@@ -420,13 +429,9 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
             ) : null}
             <p style={{ color: "#6B7280", fontSize: 11, lineHeight: 1.5,
                         margin: "8px 0 0" }}>
-                {country}, about {Math.round((view.maxLon - view.minLon) * 111 *
-                    Math.cos((view.cLat * Math.PI) / 180))} km across, so the symbols
-                are <b>not to scale and not at surveyed positions</b>. The template is
-                doctrine laid over real ground: it is here to show you whether its
-                geometry is possible at all — where the coast is, which border it
-                crosses, what it would have to traverse. If an axis runs into the sea,
-                that is the check working.
+                Doctrine over real ground. Symbols are <b>not to scale and not
+                surveyed positions</b> — the map is here so you can see whether the
+                geometry is possible at all.
             </p>
         </div>
     )
@@ -508,9 +513,7 @@ function Legend({ units }) {
                     </Row>
                     <p style={{ color: "#6B7280", fontSize: 10.5, lineHeight: 1.5,
                                 margin: 0 }}>
-                        A red dotted axis is a movement this terrain will not permit —
-                        it is drawn so you can see the template being wrong, not hidden
-                        so the picture stays tidy.
+                        A red dotted axis is a movement this ground will not permit.
                     </p>
                 </div>
             )}
@@ -642,12 +645,8 @@ export default function ForecastTemplate({ templateKey, window: window_ = "",
                 badge is skimmed and a sentence is read. */}
             <p style={{ color: "#FF9F0A", fontSize: 11, lineHeight: 1.55,
                         margin: "6px 0 0", opacity: 0.85 }}>
-                Nothing above has been observed. These are the positions
-                the doctrine would produce if this scenario happened, drawn
-                so you can compare them against what you actually see. If
-                the real movement does not look like this, the scenario is
-                not confirmed — the template is wrong, or the scenario is.
-            </p>
+                Nothing here has been observed. It is what the doctrine would produce —
+                compare it against what you actually see.</p>
         </div>
     )
 }

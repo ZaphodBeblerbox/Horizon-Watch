@@ -57,17 +57,20 @@ describe("APP-6 symbology", () => {
 })
 
 describe("APP-6 colour and installation coding", () => {
-    it("uses the standard's own affiliation colours, not approximations", async () => {
+    it("keeps APP-6 meaning in the app's own muted palette", async () => {
         const { APP6 } = await import("./forecastSymbols.js")
-        // An approximately-red frame is a claim about affiliation that a
-        // trained reader will act on.
-        expect(APP6.friendly.fill).toBe("#80E0FF")
-        expect(APP6.hostile.fill).toBe("#FF8080")
-        expect(APP6.neutral.fill).toBe("#AAFFAA")
-        expect(APP6.unknown.fill).toBe("#FFFF80")
-        // Every affiliation gets a distinct, saturated frame.
-        const frames = Object.values(APP6).map((a) => a.frame)
-        expect(new Set(frames).size).toBe(4)
+        // Red is hostile and blue is friendly — the standard's meaning —
+        // but expressed in the tokens Analytics uses, because four
+        // fluorescent colours in a muted console is decoration.
+        expect(APP6.hostile.frame).toContain("--red")
+        expect(APP6.friendly.frame).toContain("--acc")
+        // No raw hex left: the map has to follow the theme.
+        for (const a of Object.values(APP6)) {
+            expect(a.fill).toMatch(/^var\(--/)
+            expect(a.frame).toMatch(/^var\(--/)
+        }
+        // Affiliations stay distinguishable.
+        expect(new Set(Object.values(APP6).map((a) => a.frame)).size).toBe(4)
     })
 
     it("gives every facility kind a glyph and falls back safely", async () => {
@@ -87,11 +90,12 @@ describe("APP-6 colour and installation coding", () => {
         expect(INSTALLATION_TAB).toMatch(/Z$/)
     })
 
-    it("fills and frames differ, because both carry information", async () => {
+    it("returns a theme token for any input, never undefined", async () => {
         const { fillFor, tintFor } = await import("./forecastSymbols.js")
-        for (const aff of ["friendly", "hostile", "neutral", "unknown"]) {
-            expect(fillFor({ aff })).not.toBe(tintFor({ aff }))
+        for (const aff of ["friendly", "hostile", "neutral", "unknown", "nonsense"]) {
+            expect(fillFor({ aff })).toMatch(/^var\(--/)
+            expect(tintFor({ aff })).toMatch(/^var\(--/)
         }
-        expect(fillFor(null)).toBe("#FFFF80")
+        expect(fillFor(null)).toMatch(/^var\(--/)
     })
 })

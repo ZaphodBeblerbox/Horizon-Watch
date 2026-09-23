@@ -529,13 +529,16 @@ def test_it_stays_inside_the_unit_interval_for_any_input():
 def test_the_caveat_says_the_rows_are_not_alternatives():
     # A reader who thinks the bars are alternatives will read every one
     # of them wrong, and they no longer sum to 100%.
-    c = _corpora()
-    built = {"panel": fb._panel(c), "fit": {"skill": 0.2}, "tail": {}}
-    c.close()
-    import inspect
+    # Asserted on the JOINED literal, not the raw source: the caveat is
+    # built from several adjacent string literals, so "do not sum to
+    # 100" is never a contiguous substring of the file even though it is
+    # exactly what the board sends.
+    import inspect, re
     src = inspect.getsource(fb.get_board)
-    assert "not alternatives to each other" in src
-    assert "do not sum to 100" in src
+    caveat = "".join(re.findall(r'"([^"]*)"', src[src.index('"caveat"'):]))
+    assert "not alternatives" in caveat
+    assert "do not sum to 100" in caveat
+    assert "floor, not an estimate" in caveat
 
 
 # ── The corpus bootstrap: forecast was inert in production ────────────

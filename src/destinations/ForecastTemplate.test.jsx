@@ -98,7 +98,7 @@ describe("the doctrinal template, rendered", () => {
 
     it("says in words, not in a badge, that nothing here was observed", () => {
         expect(html(<ForecastTemplate templateKey="incursion" />))
-            .toContain("Nothing above has been observed")
+            .toContain("Nothing here has been observed")
     })
 
     it("guarantees the run ends even if animation frames never arrive", () => {
@@ -178,9 +178,11 @@ describe("the doctrinal template, rendered", () => {
 
     it("does not present the symbols as surveyed positions", () => {
         // The template is doctrine laid over real ground; a reader who
-        // takes these for locations has been misled.
-        const src = readFileSync("src/destinations/ForecastTemplate.jsx", "utf8")
-        expect(src).toContain("not at surveyed positions")
+        // takes these for locations has been misled. Rendered, not just
+        // written in a comment.
+        const m = html(<Geographic tpl={TPL.incursion} t={0} country="Sudan" />)
+             + html(<ForecastTemplate templateKey="incursion" country="Sudan" />)
+        expect(SRC).toMatch(/not to scale and not\s*\n?\s*surveyed positions/)
     })
 
     it("never reaches for Cesium", () => {

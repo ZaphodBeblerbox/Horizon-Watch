@@ -523,13 +523,9 @@ def get_board(conn: sqlite3.Connection, bid: str) -> dict:
         # folded in. A reader who knows the tail is preliminary reads the
         # same number differently, which is the point.
         "tail": built.get("tail") or {},
-        "caveat": ("Probabilities are for escalation beyond this locale's own "
-                   "recent rate, not for any specific named event. The rows are "
-                   "not alternatives to each other — several can happen in the "
-                   "same quarter — so they do not sum to 100%. The residual is "
-                   "the chance that none of them does, and because these events "
-                   "tend to move together it is a floor rather than an estimate: "
-                   "the real chance of a quiet quarter is at least that."),
+        "caveat": ("Escalation beyond this locale's own recent rate, not any "
+                   "named event. The rows are not alternatives, so they do not "
+                   "sum to 100%. The residual is a floor, not an estimate."),
     }
 
 

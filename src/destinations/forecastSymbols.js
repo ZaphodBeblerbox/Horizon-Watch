@@ -75,28 +75,29 @@ export const ICONS = {
 export const AFFILIATIONS = ["friendly", "hostile", "neutral", "unknown"]
 
 /**
- * APP-6 / MIL-STD-2525 affiliation colours, as specified rather than as
- * they looked nice.
+ * Affiliation colours: APP-6 semantics in the app's own palette.
  *
- * The standard gives a light fill and a saturated frame per affiliation,
- * and the pairing is the point: the fill carries at a glance and across
- * a dark or a light background, the frame keeps the edge legible. These
- * are the standard's own values.
+ * APP-6 specifies saturated cyan/red/green/yellow, and using them
+ * literally put four fluorescent colours into a console whose whole
+ * palette is muted. This takes the standard's MEANING — red is hostile,
+ * blue is friendly, and nothing else may be either — and expresses it in
+ * the tokens Analytics already uses. A reader loses nothing: affiliation
+ * is carried by hue and by frame shape, both intact.
  *
- *   friendly  cyan    128,224,255   frame 0,168,224
- *   hostile   red     255,128,128   frame 255,48,48
- *   neutral   green   170,255,170   frame 0,196,0
- *   unknown   yellow  255,255,128   frame 225,200,0
+ * These are CSS variables, so they follow the theme. That is safe here
+ * in a way it would not be for an arbitrary colour: --red and --acc are
+ * red and blue in BOTH themes, tuned only for contrast, so affiliation
+ * never changes meaning — which was the real requirement, not literal
+ * hex stability.
  *
- * Getting these approximately right would be worse than not attempting
- * them: an approximately-red frame is a claim about affiliation that a
- * trained reader will act on.
+ * No glow, no gradient, no fill beyond a flat wash. A symbol that
+ * glows is decoration pretending to be emphasis.
  */
 export const APP6 = {
-    friendly: { fill: "#80E0FF", frame: "#00A8E0" },
-    hostile:  { fill: "#FF8080", frame: "#FF3030" },
-    neutral:  { fill: "#AAFFAA", frame: "#00C400" },
-    unknown:  { fill: "#FFFF80", frame: "#E1C800" },
+    hostile:  { fill: "var(--red)",      frame: "var(--red)" },
+    friendly: { fill: "var(--acc-hi)",   frame: "var(--acc)" },
+    neutral:  { fill: "var(--txt-4)",    frame: "var(--txt-3)" },
+    unknown:  { fill: "var(--amber)",    frame: "var(--amber)" },
 }
 
 /** Back-compat alias: the frame colour is what callers used as "tint". */
