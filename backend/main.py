@@ -11044,6 +11044,77 @@ class _LiveCached(Exception):
     """Control-flow marker: the derived block was served from cache."""
 
 
+def _graph_store_bootstrap():
+    """Build the FollowTheMoney graph on a deployment that has never had one.
+
+    The same defect as the forecast corpus, in a different module and
+    found the same way — by asking production instead of assuming.
+    /api/graph/stats returned a 500 with "no such table: ftm_things", and
+    /api/ontology/findings returned an empty list with available:true,
+    so the Ontology pane told the reader "No routes cleared the filters".
+    That sentence is true and completely misleading: nothing cleared the
+    filters because there was no graph to filter. Locally the same code
+    has 102,409 things and 86,479 edges.
+
+    ftm_loader was never scheduled anywhere. It had only ever been run by
+    hand, on a laptop, which is why the feature worked in development and
+    did not exist in production.
+
+    Guarded, one-shot and off the event loop for the same reasons as the
+    corpus bootstrap. load_all() already streams the download rather than
+    buffering it and commits every 25,000 entities, so the transaction
+    and the WAL stay bounded on a 60GB database.
+    """
+    import sqlite3 as _sq
+    try:
+        conn = _sq.connect(_akili_db_path())
+        try:
+            try:
+                have = conn.execute(
+                    "SELECT COUNT(*) FROM ftm_things").fetchone()[0]
+            except _sq.OperationalError:
+                have = 0          # table absent, which is the case this exists for
+        finally:
+            conn.close()
+        # A partial load is worse than none here too: the ontology would
+        # report routes over a fraction of the graph and look authoritative.
+        if have > 50_000:
+            print(f"[graph] store present: {have} things")
+            return {"ok": True, "skipped": True, "things": have}
+
+        if have:
+            print(f"[graph] store looks truncated ({have} things) — rebuilding")
+        else:
+            print("[graph] no graph store — loading OpenSanctions as FtM "
+                  "(one time; the Ontology pane is empty without it)")
+        import ftm_loader as _fl
+        t0 = time.monotonic()
+        stats = _fl.load_all(_akili_db_path())
+        things = sum(x.get("things", 0) for x in stats)
+        edges = sum(x.get("edges", 0) for x in stats)
+        print(f"[graph] store built in {time.monotonic() - t0:.0f}s: "
+              f"{things} things, {edges} edges")
+        return {"ok": True, "skipped": False, "things": things, "edges": edges}
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[graph] store bootstrap failed: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+async def _graph_bootstrap_loop():
+    """One shot, well clear of startup and of the forecast bootstrap.
+
+    Staggered behind the corpus so two multi-minute network-and-disk jobs
+    do not contend for the same volume at once — the forecast ingest
+    already produced one 20-second request spike doing this alone.
+    """
+    await asyncio.sleep(900)
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None, _graph_store_bootstrap)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[graph] bootstrap error: {e}")
+
+
 def _forecast_corpus_bootstrap():
     """Put the training corpus on a deployment that has never had one.
 
@@ -13974,6 +14045,7 @@ async def startup_event():
     # ever produced the 1,014 rows somebody once made by hand.
     asyncio.create_task(_vessel_resolution_loop())
     asyncio.create_task(_risk_index_warm_loop())
+    asyncio.create_task(_graph_bootstrap_loop())
     asyncio.create_task(_forecast_tail_loop())
     asyncio.create_task(_forecast_publish_loop())
     asyncio.create_task(_ais_coverage_warm_loop())

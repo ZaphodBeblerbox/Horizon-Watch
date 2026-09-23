@@ -561,3 +561,33 @@ def test_the_tail_is_skipped_without_a_corpus():
     import pathlib
     src = pathlib.Path("main.py").read_text()
     assert "skipping tail: no training corpus" in src
+
+
+# ── The graph store bootstrap ─────────────────────────────────────────
+#
+# Same defect as the corpus, different module: ftm_loader was never
+# scheduled, so /api/graph/stats 500'd on "no such table: ftm_things" and
+# the Ontology pane said "No routes cleared the filters" — true, and
+# completely misleading, because there was no graph to filter.
+
+def test_the_graph_bootstrap_is_guarded_and_staggered():
+    import pathlib
+    src = pathlib.Path("main.py").read_text()
+    fn = src[src.index("def _graph_store_bootstrap"):]
+    fn = fn[:fn.index("\ndef _forecast_corpus_bootstrap")]
+    assert "have > 50_000" in fn, "no completeness floor on the existing store"
+    assert "rebuilding" in fn
+    # Off the event loop and off the single-worker maintenance pool.
+    assert "run_in_executor(\n            None" in fn or "None, _graph_store_bootstrap" in fn
+    # Staggered behind the forecast corpus so two multi-minute
+    # network-and-disk jobs do not hit the same volume together.
+    loop = src[src.index("async def _graph_bootstrap_loop"):]
+    loop = loop[:loop.index("\ndef _forecast_corpus_bootstrap")]
+    assert "asyncio.sleep(900)" in loop
+
+
+def test_both_bootstraps_are_scheduled():
+    import pathlib
+    src = pathlib.Path("main.py").read_text()
+    assert "asyncio.create_task(_graph_bootstrap_loop())" in src
+    assert "asyncio.create_task(_forecast_tail_loop())" in src
