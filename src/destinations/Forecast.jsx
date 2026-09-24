@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
 import ForecastTemplate from "./ForecastTemplate.jsx"
+import ForecastBuilder from "./ForecastBuilder.jsx"
 import { TEMPLATE_KEYS, TEMPLATE_LABEL } from "./forecastTemplate.js"
 import { safeArray } from "../utils/safeArray.js"
 import { pct, rows, departure, tickLeft, barWidth, residualOf } from "./forecastBars.js"
@@ -31,6 +32,8 @@ export default function Forecast() {
     const [board, setBoard] = useState(null)
     const [error, setError] = useState(null)
     const [sel, setSel] = useState(null)
+    const [mode, setMode] = useState("board")
+    const [built, setBuilt] = useState(null)
     const [proposing, setProposing] = useState(false)
     const [local, setLocal] = useState([])     // proposals added this session
 
@@ -87,16 +90,28 @@ export default function Forecast() {
     const selected = useMemo(
         () => scenarios.find((s) => s.id === sel) || null, [scenarios, sel])
 
-    if (error && !board) return <Empty>Could not load the board — {error}</Empty>
-    if (!boards) return <Empty>Reading the model…</Empty>
+    if (error && !board && mode === "board") {
+        return <Empty>Could not load the board — {error}</Empty>
+    }
+    if (!boards && mode === "board") return <Empty>Reading the model…</Empty>
 
     return (
         <div style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
             {/* ── left pane (F3.1) ─────────────────────────────── */}
             <aside style={{ width: 270, flex: "0 0 270px", borderRight: "1px solid var(--line)",
                             overflow: "auto", minHeight: 0 }}>
-                <Head>Forecast<Sub>scenario board</Sub></Head>
+                <Head>Forecast<Sub>{mode === "board" ? "scenario board" : "build a scenario"}</Sub></Head>
 
+                <div style={{ display: "flex", gap: 6, padding: "0 14px 10px" }}>
+                    <button className={`btn sm${mode === "board" ? " primary" : ""}`}
+                            onClick={() => setMode("board")}>board</button>
+                    <button className={`btn sm${mode === "build" ? " primary" : ""}`}
+                            onClick={() => setMode("build")}>build</button>
+                </div>
+
+                {mode === "build" ? <ForecastBuilder onOpen={setBuilt} /> : null}
+                {mode === "board" ? (
+                <>
                 <Sect title="Situation">
                     <select className="input" value={boardId || ""}
                             onChange={(e) => setBoardId(e.target.value)}
@@ -179,6 +194,8 @@ export default function Forecast() {
                             </P>
                         </Sect>
                     </>
+                ) : null}
+                </>
                 ) : null}
             </aside>
 

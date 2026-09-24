@@ -78,6 +78,31 @@ def _get(url: str, timeout: int = _TIMEOUT):
         return json.load(r)
 
 
+#: A national force is split across several Wikipedia lists — ground,
+#: air, navy — and asking only for "X Armed Forces" lands on whichever
+#: one the search prefers. For Russia that is the GROUND forces page,
+#: which has no aircraft section, so Russia came back with no air arm and
+#: every air course of action was refused for a country that flies more
+#: combat aircraft than most alliances. The branches are queried
+#: separately and their capabilities unioned.
+BRANCH_SUFFIXES = ("Armed Forces", "Ground Forces", "Air Force", "Navy")
+
+
+def find_pages(force: str, timeout: int = _TIMEOUT) -> list:
+    """Every equipment list that belongs to this force, across branches."""
+    base = re.sub(r"\b(armed forces|defence forces|ground forces|air force|navy)\b",
+                  "", (force or ""), flags=re.I).strip()
+    if not base:
+        return []
+    seen, out = set(), []
+    for suffix in BRANCH_SUFFIXES:
+        page = find_page(f"{base} {suffix}", timeout)
+        if page and page not in seen:
+            seen.add(page)
+            out.append(page)
+    return out
+
+
 def find_page(force: str, timeout: int = _TIMEOUT) -> str | None:
     """The equipment page for a force, or None.
 
@@ -177,7 +202,8 @@ def lookup(conn: sqlite3.Connection, force: str, *, force_refresh: bool = False,
                     "capabilities": caps, "sections": json.loads(row[2] or "[]"),
                     "cached": True}
 
-    page = find_page(key, timeout)
+    pages = find_pages(key, timeout)
+    page = pages[0] if pages else None
     if not page:
         conn.execute("INSERT OR REPLACE INTO mil_equipment"
                      " (force, page, caps, sections, fetched_at) VALUES (?,?,?,?,?)",
@@ -186,11 +212,13 @@ def lookup(conn: sqlite3.Connection, force: str, *, force_refresh: bool = False,
         return {"known": False, "force": key,
                 "reason": "no equipment list published for this force"}
 
-    secs = sections_of(_wikitext(page, timeout))
+    secs = []
+    for pg in pages:
+        secs.extend(sections_of(_wikitext(pg, timeout)))
     caps = capabilities_from(secs)
     conn.execute("INSERT OR REPLACE INTO mil_equipment"
                  " (force, page, caps, sections, fetched_at) VALUES (?,?,?,?,?)",
                  (key, page, json.dumps(caps), json.dumps(secs), time.time()))
     conn.commit()
-    return {"known": bool(caps), "force": key, "page": page,
+    return {"known": bool(caps), "force": key, "page": page, "pages": pages,
             "capabilities": caps, "sections": secs, "cached": False}

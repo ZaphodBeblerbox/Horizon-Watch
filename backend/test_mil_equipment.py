@@ -76,10 +76,13 @@ def test_the_result_is_cached(monkeypatch):
                         lambda *a, **k: (calls.append(1), "P")[1])
     monkeypatch.setattr(me, "_wikitext", lambda *a, **k: "== Artillery ==")
     me.lookup(c, "X Armed Forces")
+    first = len(calls)
     me.lookup(c, "X Armed Forces")
-    # A scenario that waits on four network round-trips is one nobody
-    # runs twice.
-    assert len(calls) == 1
+    # A scenario that waits on network round-trips is one nobody runs
+    # twice. The first lookup queries each branch; the second must query
+    # nothing at all.
+    assert first >= 1
+    assert len(calls) == first
     assert me.lookup(c, "X Armed Forces")["cached"] is True
     c.close()
 
@@ -104,4 +107,35 @@ def test_an_empty_force_name_is_refused():
     c = sqlite3.connect(":memory:")
     assert me.lookup(c, "")["known"] is False
     assert me.lookup(c, None)["known"] is False
+    c.close()
+
+
+def test_branches_are_queried_separately_and_unioned(monkeypatch):
+    """A national force is split across ground, air and navy lists.
+
+    Asking only for "X Armed Forces" lands on whichever the search
+    prefers — for Russia that is the GROUND forces page, which has no
+    aircraft section. Russia therefore came back with no air arm and
+    every air course of action was refused for a country that flies more
+    combat aircraft than most alliances.
+    """
+    c = sqlite3.connect(":memory:")
+    pages = {"Ruritanian Ground Forces": "== Armoured vehicles ==",
+             "Ruritanian Air Force": "== Aircraft ==",
+             "Ruritanian Navy": "== Ships =="}
+    monkeypatch.setattr(me, "find_page",
+                        lambda q, *a, **k: next((p for p in pages if
+                                                 p.split()[-2:] == q.split()[-2:]), None))
+    monkeypatch.setattr(me, "_wikitext", lambda pg, *a, **k: pages.get(pg, ""))
+    out = me.lookup(c, "Ruritanian Armed Forces")
+    assert "armour" in out["capabilities"]
+    assert "aircraft" in out["capabilities"]
+    assert "naval" in out["capabilities"]
+    c.close()
+
+
+def test_a_force_with_no_branch_pages_is_still_unknown(monkeypatch):
+    c = sqlite3.connect(":memory:")
+    monkeypatch.setattr(me, "find_page", lambda *a, **k: None)
+    assert me.lookup(c, "Ruritanian Armed Forces")["known"] is False
     c.close()
