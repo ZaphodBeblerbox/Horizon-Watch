@@ -3662,6 +3662,40 @@ def _fc_conn():
     return _sq.connect(_akili_db_path())
 
 
+@app.get("/api/forecast/places")
+def api_forecast_places(q: str, limit: int = 8):
+    """Place lookup for the scenario builder, from data we already hold.
+
+    NOT /geocode. That proxies Nominatim and timed out at 90 seconds
+    here, and a builder that stalls on every keystroke is a builder
+    nobody uses. The airports table carries 27,998 distinct
+    municipalities with coordinates — Narva, Kharkiv and Nyala all
+    resolve — which is a local, instant answer and good enough to place
+    an objective.
+    """
+    query = (q or "").strip()
+    if len(query) < 2:
+        return {"places": []}
+    import sqlite3 as _sq
+    conn = _fc_conn()
+    try:
+        rows = conn.execute(
+            "SELECT municipality, country_code, country_name,"
+            "       AVG(latitude), AVG(longitude), COUNT(*)"
+            " FROM airports"
+            " WHERE municipality LIKE ? AND latitude IS NOT NULL"
+            " GROUP BY municipality, country_code"
+            " ORDER BY (CASE WHEN lower(municipality)=lower(?) THEN 0 ELSE 1 END),"
+            "          length(municipality) LIMIT ?",
+            (query + "%", query, max(1, min(25, limit)))).fetchall()
+    except _sq.Error:
+        rows = []
+    finally:
+        conn.close()
+    return {"places": [{"name": r[0], "country_code": r[1], "country": r[2],
+                        "lat": r[3], "lon": r[4]} for r in rows]}
+
+
 @app.get("/api/forecast/dyad-risk")
 def api_forecast_dyad_risk(a: str, b: str, contiguous: bool = False,
                            tension: float = 0.0, months: int = 3):
