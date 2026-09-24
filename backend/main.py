@@ -16079,7 +16079,9 @@ function evaluatePixel(s) {
 
 
 async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
-                                        width: int | None = None, height: int | None = None) -> dict:
+                                        width: int | None = None, height: int | None = None,
+                                        date_from: str | None = None,
+                                        date_to: str | None = None) -> dict:
     """Core Sentinel-1 GRD Process API fetch — SAR counterpart of
     _fetch_sentinel_image_bytes. Requests VV/VH bands with sigma-nought
     (SIGMA0_ELLIPSOID) radiometric calibration and orthorectification done
@@ -16116,6 +16118,16 @@ async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
         # before and an after, and "the last N days ending now" can only
         # ever express the after — so without this the pre-event stack
         # could not be fetched at all.
+        #
+        # THESE TWO PARAMETERS WERE USED HERE BEFORE THEY EXISTED. The
+        # same window was added to the raw-bands fetch below and the body
+        # edit landed here as well, on a function that never declared
+        # them — so every call to /api/sentinel/sar-imagery raised
+        # NameError, was caught by the handler's own except, and came
+        # back as {"error": "name 'date_from' is not defined"}. SAR
+        # imagery has not loaded once since. The file already carries a
+        # comment about the mirror-image version of this mistake landing
+        # on the wrong function; this is the other half of it.
         "from": (f"{date_from}T00:00:00Z" if date_from
                  else (now - timedelta(days=max_age_days)).strftime("%Y-%m-%dT00:00:00Z")),
         "to":   (f"{date_to}T23:59:59Z" if date_to
