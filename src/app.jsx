@@ -86,7 +86,8 @@ import Team from "./destinations/Team.jsx"
 import API_BASE from "./apiBase.js"
 import ProfilePanel from "./components/ProfilePanel.jsx"
 import NewsReels from "./components/NewsReels.jsx"
-import { mergeNotificationItems } from "./components/notificationsNormalize.js"
+import { mergeNotificationItems, mergeNotificationFeed } from "./components/notificationsNormalize.js"
+import { buildWatchQueueRows } from "./destinations/dashboardLogic.js"
 import OverwatchSidebar, { loadSavedScans, persistSavedScans, loadSavedImages, persistSavedImages } from "./components/OverwatchSidebar.jsx"
 import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
 import NewsTicker from "./components/NewsTicker.jsx"
@@ -497,11 +498,19 @@ export default function App() {
         const t = setInterval(load, 60000)
         return () => { cancelled = true; clearInterval(t) }
     }, [profile])
+    // /api/notifications rows, NOT FusionEvents. Running them through the
+    // fusion normaliser dropped every id, flattened every severity and
+    // threw away `reason` — the sentence that says why the thing fired.
     const notifItems = useMemo(
-        () => mergeNotificationItems(surfaceItems, fusionEvents),
+        () => mergeNotificationFeed(surfaceItems, fusionEvents),
         [surfaceItems, fusionEvents]
     )
     const unreadCount = notifItems.filter(i => !readIds.has(i.id)).length
+    // The inbox counts SIGNALS waiting in it, which is a different
+    // question from how many alerts are unread in the tray. They were
+    // the same number, so the inbox badge reported the wrong surface.
+    const inboxCount = useMemo(
+        () => buildWatchQueueRows(surfaceItems || []).length, [surfaceItems])
 
     // ── What actually becomes a notification ─────────────────────────────
     // Source of truth is /api/notifications, NOT the surface pool. The
@@ -1276,6 +1285,7 @@ export default function App() {
                         activeModule={TAB_TYPE_TO_MODULE[activeTabType] || "situation"}
                         onSelectModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
                         unreadCount={unreadCount}
+                        inboxCount={inboxCount}
                         systemHealth={systemHealth}
                         onOpenPalette={() => openOverlay("overlay:palette")}
                         mode={mode}

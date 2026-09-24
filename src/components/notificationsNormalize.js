@@ -99,3 +99,63 @@ export function normalizeFusionEvents(fusions) {
 export function mergeNotificationItems(alertItems = [], rawFusions = []) {
     return [...(alertItems || []), ...normalizeFusionEvents(rawFusions)]
 }
+
+
+/**
+ * Normalise one row of GET /api/notifications.
+ *
+ * WHY THIS EXISTS SEPARATELY. app.jsx was feeding /api/notifications
+ * rows through normalizeFusionEvent, which reads a FusionEvent:
+ * fusion_id, severity, confidence, domains. A notification carries none
+ * of those. It carries id, title, sev, reason, kind, source, region,
+ * created_at.
+ *
+ * The result was not an error. Every one of the 60 rows came out with
+ * `id: undefined` — so React had nothing to key on and nothing could be
+ * marked read — with `sev: "moderate"` flattened to the default
+ * "medium", and with `reason` dropped entirely. `reason` is the single
+ * most useful field on the object: it is the sentence saying WHY the
+ * thing fired, which is exactly what a tray full of one-line alerts
+ * needs and exactly what was being thrown away.
+ *
+ * The endpoint's own shape is documented by backend/main.py's
+ * /api/notifications handler.
+ */
+export function normalizeNotification(n = {}) {
+    const ts = n.created_at || n.published_at || null
+    return {
+        id: n.id ?? null,
+        kind: n.kind || "alert",
+        title: n.title || "Alert",
+        // The reason IS the subtitle. It is written for a reader.
+        subtitle: n.reason || "",
+        narrative: n.reason || "",
+        severity: n.sev || n.severity || "info",
+        source: n.source || "",
+        region_id: n.region ?? null,
+        lat: n.lat ?? null,
+        lon: n.lon ?? null,
+        timestamp: ts,
+        published_at: ts,
+        status: "active",
+    }
+}
+
+export function normalizeNotifications(rows = []) {
+    return (Array.isArray(rows) ? rows : [])
+        .map(normalizeNotification)
+        // An item with no id cannot be keyed, deduplicated or marked
+        // read, so it is dropped rather than rendered as a ghost.
+        .filter((n) => n.id)
+}
+
+/** Alert/surface items plus real notifications, ready for the tray. */
+export function mergeNotificationFeed(alertItems = [], notifications = []) {
+    const out = [...(alertItems || []), ...normalizeNotifications(notifications)]
+    const seen = new Set()
+    return out.filter((i) => {
+        if (!i?.id || seen.has(i.id)) return false
+        seen.add(i.id)
+        return true
+    })
+}

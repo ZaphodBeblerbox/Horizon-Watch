@@ -19,6 +19,7 @@ export default function TopBar({
     activeModule,
     onSelectModule,
     unreadCount = 0,
+    inboxCount = 0,
     systemHealth = { status: "operational", detail: "ALL FEEDS LIVE" },
     onOpenPalette,
     mode = "watch",
@@ -115,14 +116,19 @@ export default function TopBar({
                         >
                             <span style={{ position: "relative" }}>
                                 <svg className="icon" style={{ width: 15, height: 15 }}><use href={`#${m.icon}`} /></svg>
-                                {m.key === "inbox" && unreadCount > 0 && (
+                                {/* The INBOX's own count, not the
+                                    notification tray's. These were the
+                                    same number, so the inbox badge
+                                    reported how many alerts were
+                                    unread in a different surface. */}
+                                {m.key === "inbox" && inboxCount > 0 && (
                                     <span style={{
                                         position: "absolute", top: -4, right: -8, minWidth: 12, height: 12,
                                         borderRadius: "50%", background: "var(--red)", color: "#fff",
                                         font: "400 8.5px var(--mono)", display: "flex", alignItems: "center",
                                         justifyContent: "center", lineHeight: 1, padding: "0 2px",
                                     }}>
-                                        {unreadCount > 99 ? "99+" : unreadCount}
+                                        {inboxCount > 99 ? "99+" : inboxCount}
                                     </span>
                                 )}
                             </span>

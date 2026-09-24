@@ -147,3 +147,53 @@ describe("mergeNotificationItems", () => {
         expect(mergeNotificationItems()).toEqual([])
     })
 })
+
+describe("real /api/notifications rows", () => {
+    const REAL = {
+        id: "risk-ZAF-2-3", title: "ZAF country risk rose to band 3",
+        sev: "moderate", reason: "band 2 → 3 (score 42.2) on the GDELT risk index",
+        notify: true, kind: "escalate", source: "risk index",
+        lat: null, lon: null, region: "ZAF",
+        created_at: "2026-09-24T06:23:27.795333+00:00",
+    }
+
+    it("keeps the id, so the tray can key and mark it read", async () => {
+        // Run through the FUSION normaliser every row came out with
+        // id: undefined — nothing to key on, nothing markable as read.
+        const { normalizeNotification } = await import("./notificationsNormalize.js")
+        expect(normalizeNotification(REAL).id).toBe("risk-ZAF-2-3")
+    })
+
+    it("keeps the severity it was given", async () => {
+        const { normalizeNotification } = await import("./notificationsNormalize.js")
+        expect(normalizeNotification(REAL).severity).toBe("moderate")
+    })
+
+    it("keeps `reason`, which is the whole point of the row", async () => {
+        // It is the sentence saying WHY the thing fired — exactly what a
+        // tray of one-line alerts needs, and exactly what was dropped.
+        const { normalizeNotification } = await import("./notificationsNormalize.js")
+        const n = normalizeNotification(REAL)
+        expect(n.subtitle).toContain("band 2")
+        expect(n.narrative).toContain("GDELT risk index")
+    })
+
+    it("drops a row with no id rather than rendering a ghost", async () => {
+        const { normalizeNotifications } = await import("./notificationsNormalize.js")
+        expect(normalizeNotifications([REAL, { title: "no id" }])).toHaveLength(1)
+    })
+
+    it("deduplicates by id when merging", async () => {
+        const { mergeNotificationFeed } = await import("./notificationsNormalize.js")
+        const merged = mergeNotificationFeed(
+            [{ id: "risk-ZAF-2-3", title: "already here" }], [REAL])
+        expect(merged).toHaveLength(1)
+    })
+
+    it("survives an empty or malformed feed", async () => {
+        const { normalizeNotifications, mergeNotificationFeed } =
+            await import("./notificationsNormalize.js")
+        expect(normalizeNotifications(null)).toEqual([])
+        expect(mergeNotificationFeed(null, null)).toEqual([])
+    })
+})
