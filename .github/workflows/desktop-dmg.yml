@@ -81,11 +81,22 @@ jobs:
           path: ${{ steps.find.outputs.path }}
           if-no-files-found: error
 
+      # Published to the PUBLIC releases repo, not this one. A private
+      # repo's release assets need a token to download, so a link to one
+      # is useless to the people it is sent to. Source stays private;
+      # only the binary is public.
+      #
+      # RELEASES_TOKEN is a fine-grained PAT with Contents: read & write
+      # on ZaphodBeblerbox/parallax-releases and nothing else. The
+      # workflow's own GITHUB_TOKEN cannot reach another repository, and
+      # a personal CLI token would carry far more scope than a release
+      # upload needs.
       - name: Publish a release with the DMG attached
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           gh release create "v${{ inputs.version }}" "${{ steps.find.outputs.path }}" \
+            --repo ZaphodBeblerbox/parallax-releases \
             --title "Parallax ${{ inputs.version }}" \
             --notes "$(cat <<'NOTES'
           Download the `.dmg`, open it, and drag Parallax to Applications.
