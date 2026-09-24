@@ -258,7 +258,7 @@ export function Schematic({ tpl, t }) {
  * and the stamp is here too.
  */
 export function Geographic({ tpl, t, country, big = false, onToggleBig,
-                             aggressorForce = null }) {
+                             aggressorForce = null, bboxOverride = null }) {
     const [world, setWorld] = useState(null)
     const [fields, setFields] = useState(null)
     const [failed, setFailed] = useState(false)
@@ -323,16 +323,27 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig,
     }, [])
 
     const feature = world ? matchCountry(country, world.features) : null
-    const view = feature ? viewFor(bboxOf(feature.geometry), { w: W, h: H }) : null
+    // A generated scenario frames its OWN operational area — the contact,
+    // the origins and the objectives — because fitting the whole country
+    // draws formations that span a thousand kilometres.
+    const view = bboxOverride
+        ? viewFor(bboxOverride, { w: W, h: H })
+        : (feature ? viewFor(bboxOf(feature.geometry), { w: W, h: H }) : null)
 
     // Every reason there might be no map is stated, never drawn around.
     const why = failed ? "The country outlines could not be loaded."
         : !world ? null
         : !country ? "This scenario is not attached to a country."
-        : !feature ? `No outline for ${country} in the country file.`
+        // With an explicit frame the map can draw without matching the
+        // subject country — the neighbours and the coast are still real.
+        : (!feature && !bboxOverride) ? `No outline for ${country} in the country file.`
         : null
 
-    if (why || !view) {
+    // `world` is required, not merely usual: with an explicit frame a
+    // view exists before the outlines have loaded, so the old guard let
+    // the render through and the feasibility pass read .features off
+    // null.
+    if (why || !view || !world) {
         return (
             <div style={{ padding: "14px", background: "#0A0C10", borderRadius: 4,
                           border: "1px solid #1C1F26" }}>
@@ -352,7 +363,7 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig,
 
     // Neighbours first and faint, the subject country picked out: the
     // border that matters is the one the template is about.
-    const others = world.features.filter((f) => f !== feature)
+    const others = (world?.features || []).filter((f) => f !== feature)
 
     // THE CHECK THE WHOLE FACE IS FOR. Each unit's schematic axis is
     // turned back into real coordinates and asked whether that movement
@@ -361,7 +372,7 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig,
     // open water. Ground trafficability comes back "unknown" and says
     // so — there is no road network loaded, and pretending otherwise
     // would be a lie about the hardest part of the question.
-    const verdicts = tpl.units.map((u) => {
+    const verdicts = (tpl?.units || []).map((u) => {
         const from = unproject(u.x, u.y, view)
         const to = unproject(u.to[0], u.to[1], view)
         return checkUnit(u, { from, to }, world.features, fields || [])
@@ -475,7 +486,9 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig,
                             const d = pathFor(f.geometry, view)
                             return d ? <path key={i} d={d} className="fc-neighbour" /> : null
                         })}
-                        <path d={pathFor(feature.geometry, view)} className="fc-subject" />
+                        {feature ? (
+                            <path d={pathFor(feature.geometry, view)} className="fc-subject" />
+                        ) : null}
 
                         {/* Facilities: APP-6 installations, only here and
                             only while a scenario is on the map. Labelled,

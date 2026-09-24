@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
 import ForecastTemplate from "./ForecastTemplate.jsx"
 import ForecastBuilder from "./ForecastBuilder.jsx"
+import ForecastScenarioView from "./ForecastScenarioView.jsx"
 import { TEMPLATE_KEYS, TEMPLATE_LABEL } from "./forecastTemplate.js"
 import { safeArray } from "../utils/safeArray.js"
 import { pct, rows, departure, tickLeft, barWidth, residualOf } from "./forecastBars.js"
@@ -201,7 +202,10 @@ export default function Forecast() {
 
             {/* ── main pane (F3.2) ─────────────────────────────── */}
             <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
-                {!board ? <Empty>Building the board…</Empty> : (
+                {built ? (
+                    <ForecastScenarioView scenario={built}
+                                          onBack={() => setBuilt(null)} />
+                ) : !board ? <Empty>Building the board…</Empty> : (
                     <>
                         <div style={{ padding: "12px 14px 0" }}>
                             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>

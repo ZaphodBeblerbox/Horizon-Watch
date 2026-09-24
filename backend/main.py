@@ -3658,8 +3658,21 @@ def api_graph_search(q: str = Query(...), limit: int = Query(20, ge=1, le=100)):
 
 
 def _fc_conn():
+    """A forecast connection that waits its turn instead of failing.
+
+    Without a busy timeout a write lands on "database is locked" the
+    moment any background loop is mid-write, and this database has many.
+    Saving a scenario failed intermittently for exactly that reason —
+    not an error the user could act on, and not one that reproduced on
+    the next attempt, which is the worst kind.
+    """
     import sqlite3 as _sq
-    return _sq.connect(_akili_db_path())
+    conn = _sq.connect(_akili_db_path(), timeout=15)
+    try:
+        conn.execute("PRAGMA busy_timeout = 15000")
+    except _sq.Error:
+        pass
+    return conn
 
 
 @app.get("/api/forecast/places")
@@ -24870,6 +24883,47 @@ def get_sanctions_mmsi_list(_=None):
     mmsi_list = list(sanctions_loader._sanctions_by_mmsi.keys()) \
         if hasattr(sanctions_loader, "_sanctions_by_mmsi") else []
     return {"mmsi_list": mmsi_list, "count": len(mmsi_list)}
+
+
+@app.get("/api/sanctions/confirmed")
+def get_sanctions_confirmed(_=None):
+    """Sanctioned vessels we can stand behind, for the map and the signal.
+
+    THE BAR, AND WHY IT IS HIGH. A red hull on the map is an accusation.
+    It has to rest on a registry-number match — the vessel's MMSI is
+    itself on a sanctions list — and not on a name, because vessel names
+    are short and reused ("STAR", "OCEAN GLORY") and a substring hit
+    against one is how Rhine barges got flagged as sanctioned tankers.
+
+    It also has to name an OWNER. "This hull is sanctioned" without
+    saying whose it is cannot be checked or acted on, and an accusation
+    nobody can verify is worse than silence.
+
+    Everything weaker still exists — it goes to the alert stream as a
+    reviewable "possible" match — but it does not get drawn.
+    """
+    by_mmsi = getattr(sanctions_loader, "_sanctions_by_mmsi", {}) or {}
+    confirmed, no_owner = [], 0
+    for mmsi, rec in by_mmsi.items():
+        owner = (rec.get("owner") or rec.get("operator") or "").strip()
+        if not owner:
+            no_owner += 1
+            continue
+        confirmed.append({
+            "mmsi": str(mmsi),
+            "name": rec.get("name") or rec.get("vessel_name") or "",
+            "owner": owner,
+            "flag": rec.get("flag") or "",
+            "imo": rec.get("imo") or "",
+        })
+    return {
+        "confirmed": confirmed,
+        "count": len(confirmed),
+        "withheld_no_owner": no_owner,
+        "basis": "MMSI on a sanctions list AND a named owner. Name-only "
+                 "matches are excluded: they are how unrelated vessels get "
+                 "flagged, and a red hull on the map is an accusation.",
+    }
 
 
 @app.get("/api/sanctions/stats")

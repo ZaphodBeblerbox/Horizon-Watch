@@ -268,7 +268,13 @@ export default function ForecastBuilder({ onOpen }) {
                                 onClick={save}>save scenario</button>
                         {coa && onOpen ? (
                             <button className="btn sm"
-                                    onClick={() => onOpen({ ...built, coa, prior })}>
+                                    onClick={() => onOpen({
+                                        id: "draft", name: `${objective?.name || target} — ${coa}`,
+                                        target, aggressor, coa,
+                                        target_place: objective?.name || null,
+                                        target_lat: objective?.lat ?? null,
+                                        target_lon: objective?.lon ?? null,
+                                    })}>
                                 animate
                             </button>
                         ) : null}
@@ -283,15 +289,9 @@ export default function ForecastBuilder({ onOpen }) {
                         <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center",
                                                  marginBottom: 3 }}>
                             <button className="btn sm" style={{ flex: 1, textAlign: "left" }}
-                                    onClick={() => {
-                                        setTarget(s.target); setAggressor(s.aggressor)
-                                        setCoa(s.coa)
-                                        if (s.target_lat != null) {
-                                            setObjective({ name: s.target_place,
-                                                           lat: s.target_lat, lon: s.target_lon })
-                                            setPlaceQ(s.target_place || "")
-                                        }
-                                    }}>{s.name}</button>
+                                    onClick={() => (onOpen ? onOpen(s) : null)}>
+                                {s.name}
+                            </button>
                             <button className="btn sm"
                                     onClick={() => fetch(
                                         `${API_BASE}/api/forecast/scenarios/${s.id}`,
