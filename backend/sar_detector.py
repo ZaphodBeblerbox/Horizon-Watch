@@ -297,6 +297,62 @@ def preprocess_safe_product(safe_dir: str) -> dict:
     }
 
 
+#: The attribute head predicts heading in 16 buckets, so each is 22.5°.
+HEADING_BUCKETS = 16
+
+
+def oriented_footprint(lat: float, lon: float, length_m: float, width_m: float,
+                       heading_deg: float) -> list | None:
+    """The four corners of a vessel's hull, oriented along its heading.
+
+    WHY THIS EXISTS. The detector already knows a contact's length, its
+    beam and which way it is pointing, and then reported a bare
+    centroid — so the map drew every detection as the same axis-aligned
+    square. A 300m tanker and a 20m fishing boat came out identical, and
+    both were drawn square-on to north regardless of which way they were
+    actually lying.
+
+    A rectangle from the model's own length, beam and heading is not a
+    traced outline and does not pretend to be one; it is the footprint
+    those three numbers describe. That is a great deal more honest than a
+    square nobody measured, and it is the difference between "something
+    is here" and "something this big, lying this way, is here".
+
+    Returns [[lat, lon], ...] anticlockwise, or None when the model gave
+    nothing usable.
+    """
+    try:
+        L = float(length_m or 0.0)
+        Wd = float(width_m or 0.0)
+        hd = float(heading_deg or 0.0)
+        la, lo = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None
+    if not (L > 0 and Wd > 0) or not (-90 <= la <= 90):
+        return None
+
+    # Clamp absurd model output rather than drawing a hull across a bay.
+    L = min(L, 500.0)
+    Wd = min(Wd, 120.0)
+
+    half_l, half_w = L / 2.0, Wd / 2.0
+    th = math.radians(hd)
+    cos_t, sin_t = math.cos(th), math.sin(th)
+
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lon = 111_320.0 * max(0.05, math.cos(math.radians(la)))
+
+    corners = []
+    # Along-track first, then across-track, in hull order.
+    for dl, dw in ((half_l, half_w), (half_l, -half_w),
+                   (-half_l, -half_w), (-half_l, half_w)):
+        # Heading is degrees clockwise from north: north is +lat, east +lon.
+        north = dl * cos_t - dw * sin_t
+        east = dl * sin_t + dw * cos_t
+        corners.append([la + north / m_per_deg_lat, lo + east / m_per_deg_lon])
+    return corners
+
+
 def _pixel_to_lonlat(transform, col: float, row: float, src_crs: str = "EPSG:3857") -> tuple:
     """Real pixel->lon/lat conversion for either real input-acquisition
     path: the SAFE-product path's transform is in EPSG:3857 (meters, real
@@ -594,13 +650,23 @@ def _run_detection_on_prep(
 
             lon, lat = _pixel_to_lonlat(prep["transform"], d["col"], d["row"], src_crs=prep.get("crs", "EPSG:3857"))
 
+            length_m = max(0.0, 100 * out[0].item())
+            width_m = max(0.0, 100 * out[1].item())
+            heading_deg = (360.0 / HEADING_BUCKETS) * heading_bucket_i
+
             detections.append({
                 "instrument": "SAR",
                 "lat": float(lat),
                 "lon": float(lon),
+                # The hull the model's own length, beam and heading
+                # describe. The map prefers this over a square built from
+                # a bare centroid.
+                "corners": oriented_footprint(lat, lon, length_m, width_m,
+                                              heading_deg),
+                "heading_deg": heading_deg,
                 "score": d["score"],
-                "vessel_length_m": max(0.0, 100 * out[0].item()),
-                "vessel_width_m": max(0.0, 100 * out[1].item()),
+                "vessel_length_m": length_m,
+                "vessel_width_m": width_m,
                 "vessel_speed_k": out[18].item(),
                 "heading_bucket_i": heading_bucket_i,
                 "heading_confidence": float(heading_probs[heading_bucket_i].item()),
