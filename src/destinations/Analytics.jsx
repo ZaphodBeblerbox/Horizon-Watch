@@ -181,6 +181,13 @@ function VolumeChart({ timeseries }) {
         <div className="panelbox">
             <div className="head"><span className="caption">Signal volume</span></div>
             <div className="body" ref={ref}>
+                <PanelNote>
+                    How many signals arrived over the window, by hour. This is
+                    ARRIVAL, not occurrence: a quiet stretch can mean a quiet
+                    world or a feed that stopped, and the two look identical
+                    here. Check the freshness indicator in the top bar before
+                    reading a dip as calm.
+                </PanelNote>
                 {points.length === 0 ? (
                     <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>No signals in this window.</div>
                 ) : (
@@ -243,6 +250,11 @@ function Donut({ label, items, colorFor }) {
         <div className="panelbox" style={{ flex: 1, minWidth: 0 }}>
             <div className="head"><span className="caption">{label}</span></div>
             <div className="body" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                <PanelNote>
+                    Share of the {total.toLocaleString("en-GB")} signals in this
+                    window. Proportions only — a slice that doubles because the
+                    total halved has not grown.
+                </PanelNote>
                 <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
                     <g transform={`translate(${size / 2},${size / 2})`}>
                         {rendered.map((d) => (
@@ -481,6 +493,14 @@ function SignalsTable({ rows, onBriefAll }) {
                 </button>
             </div>
             <div className="body" style={{ padding: 0, maxHeight: 340, overflow: "auto" }}>
+                <div style={{ padding: "8px 11px 0" }}>
+                    <PanelNote>
+                        Critical and high signals only, newest first. Click a
+                        column to sort, a row to open it on the map, or the
+                        clock to replay what led up to it. "Brief these" writes
+                        the visible set into a briefing.
+                    </PanelNote>
+                </div>
                 {sorted.length === 0 ? (
                     <div style={{ padding: 11, font: "400 12px var(--font)", color: "var(--txt-3)" }}>
                         No critical/high-severity signals in this window.
