@@ -591,8 +591,12 @@ export default function Situation({ onOpenDossier }) {
     // setTimeout rather than requestAnimationFrame per the build spec's own
     // §2.1 guidance against relying on rAF for anything layout-adjacent.
     const [entered, setEntered] = useState(false)
-    const [leftMin, setLeftMin] = useState(false)
-    const [rightMin, setRightMin] = useState(false)
+    // BOTH PANES START CLOSED (v4.3 §2). The map is the product; two
+    // panes open on load leave a strip of it visible and make the first
+    // action a reader takes "close things". They reopen from their edge
+    // tabs and the state is theirs from then on.
+    const [leftMin, setLeftMin] = useState(true)
+    const [rightMin, setRightMin] = useState(true)
     useEffect(() => {
         const t = setTimeout(() => setEntered(true), 20)
         return () => clearTimeout(t)
@@ -1570,7 +1574,15 @@ export default function Situation({ onOpenDossier }) {
                         entityType={inspectorPopup.entityType}
                         entityId={inspectorPopup.entityId}
                         data={inspectorPopup.data}
-                        onClose={() => { inspectorPopup.onClose?.(); setInspectorPopup(null) }}
+                        // Esc and ✕ CLEAR THE SELECTION, not just the
+                        // panel (v4.3 §2). Closing the inspector while the
+                        // map stays selected leaves a highlighted contact
+                        // with nothing explaining why it is highlighted.
+                        onClose={() => {
+                            inspectorPopup.onClose?.()
+                            setInspectorPopup(null)
+                            setSelected(null)
+                        }}
                         onSelectRelated={inspectorPopup.onSelectRelated}
                         onJumpToLocation={inspectorPopup.onJumpToLocation}
                         onTrackEntity={inspectorPopup.onTrackEntity}

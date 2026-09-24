@@ -32,3 +32,25 @@ describe("default map layers", () => {
         expect(ctx).not.toMatch(/:\s*true/)
     })
 })
+
+describe("v4.3 shell defaults", () => {
+    it("opens with both side panes closed", () => {
+        // The map is the product. Two panes open on load leave a strip of
+        // it visible and make the reader's first action "close things".
+        expect(SRC).toContain("const [leftMin, setLeftMin] = useState(true)")
+        expect(SRC).toContain("const [rightMin, setRightMin] = useState(true)")
+    })
+
+    it("clears the map selection when the inspector closes", () => {
+        // Otherwise a highlighted contact is left on the map with
+        // nothing on screen explaining why it is highlighted.
+        const close = SRC.slice(SRC.indexOf("inspectorPopup.onClose?.()"))
+        expect(close.slice(0, 200)).toContain("setSelected(null)")
+    })
+
+    it("shows the what-changed card on the map", () => {
+        expect(SRC).toContain("<WhatChanged")
+        // and offsets it clear of the Layers pane
+        expect(SRC).toMatch(/offsetLeft=\{leftMin \? \d+ : \d+\}/)
+    })
+})
