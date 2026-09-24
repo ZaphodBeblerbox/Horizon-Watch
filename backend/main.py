@@ -3675,6 +3675,40 @@ def _fc_conn():
     return conn
 
 
+@app.get("/api/sync/signals")
+def api_sync_signals(cursor: str | None = None, limit: int = 200):
+    """Everything after `cursor`, for a client that keeps its own copy.
+
+    THE POINT IS RESUMPTION. "The last 48 hours" re-sends the window on
+    every poll and cannot resume after a dropped connection; a cursor
+    costs only the rows that were in flight. The cursor is opaque so its
+    shape can change without a client migration.
+
+    WHAT IS SENT. Detected signals and their context — not the raw
+    firehose. Millions of AIS pings would not fit on a laptop and would
+    not be read if they did.
+    """
+    import sqlite3 as _sq
+    import sync_cursor as _sc
+    conn = _fc_conn()
+    try:
+        cols = ["id", "created_at", "title", "severity", "domain", "source",
+                "lat", "lon", "location", "summary"]
+        try:
+            have = {r[1] for r in conn.execute("PRAGMA table_info(alerts)")}
+        except _sq.Error:
+            have = set()
+        cols = [c for c in cols if c in have] or ["id", "created_at"]
+        out = _sc.page(conn, table="alerts", ts_col="created_at", id_col="id",
+                       columns=cols, cursor=cursor, limit=limit)
+        out["server_time"] = datetime.now(timezone.utc).isoformat()
+        # The client shows this, so it must come from the server rather
+        # than from the laptop's own clock, which may be wrong or paused.
+        return out
+    finally:
+        conn.close()
+
+
 @app.get("/api/forecast/places")
 def api_forecast_places(q: str, limit: int = 8):
     """Place lookup for the scenario builder, from data we already hold.
