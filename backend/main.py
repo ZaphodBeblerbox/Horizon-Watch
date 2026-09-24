@@ -12685,15 +12685,33 @@ def _convert_overwatch_detections(raw_dets: list, band_type: str = "TRUE_COLOR")
 
         geo_geometry = est_length_m = est_width_m = area_m2 = None
         if corners:
-            lats = [c[0] for c in corners]; lons = [c[1] for c in corners]
-            ring = [[min(lons), min(lats)], [max(lons), min(lats)],
-                    [max(lons), max(lats)], [min(lons), max(lats)], [min(lons), min(lats)]]
+            # THE DETECTOR'S OWN ORIENTED BOX, NOT AN ENVELOPE AROUND IT.
+            # DOTA models emit a ROTATED box, and this took min/max of
+            # those four corners and drew an axis-aligned rectangle round
+            # the outside. A vessel lying diagonally therefore rendered as
+            # a large square — which is what "detections are little
+            # squares instead of polygons that surround the object" was
+            # describing — and its area and length were inflated to the
+            # envelope's, not the hull's. A 30m beam on an 80m hull at 45
+            # degrees became roughly 80 by 80.
+            ring = [[float(c[1]), float(c[0])] for c in corners]
+            if ring[0] != ring[-1]:
+                ring.append(ring[0])
             geo_geometry = _j.dumps({"type": "Polygon", "coordinates": [ring]})
-            lat_m = _hav(min(lats), min(lons), max(lats), min(lons))
-            lon_m = _hav(min(lats), min(lons), min(lats), max(lons))
-            area_m2      = round(lat_m * lon_m, 1)
-            est_length_m = round(max(lat_m, lon_m), 1)
-            est_width_m  = round(min(lat_m, lon_m), 1)
+
+            # Sides of the oriented box, so length and beam are the
+            # vessel's, not the bounding envelope's.
+            sides = []
+            for i in range(len(corners)):
+                a = corners[i]
+                b = corners[(i + 1) % len(corners)]
+                sides.append(_hav(a[0], a[1], b[0], b[1]))
+            sides = [x for x in sides if x > 0]
+            if len(sides) >= 2:
+                sides.sort()
+                est_width_m  = round(sides[0], 1)
+                est_length_m = round(sides[-1], 1)
+                area_m2      = round(est_length_m * est_width_m, 1)
 
         sev        = "high"      if conf > 0.7 else ("medium" if conf > 0.4 else "info")
         alert_tier = "immediate" if conf > 0.7 and obj_type == "vessel" else (
