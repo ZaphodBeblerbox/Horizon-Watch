@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS mil_equipment (
     page       TEXT,
     caps       TEXT NOT NULL,      -- JSON list of capability keys
     sections   TEXT NOT NULL,      -- JSON list of raw section titles
+    items      TEXT,               -- JSON {capability: [equipment, ...]}
     fetched_at REAL NOT NULL
 );
 """
@@ -69,6 +70,9 @@ CAP_PATTERNS = [
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(mil_equipment)")}
+    if "items" not in cols:
+        conn.execute("ALTER TABLE mil_equipment ADD COLUMN items TEXT")
     conn.commit()
 
 
@@ -157,6 +161,67 @@ def _wikitext(title: str, timeout: int = _TIMEOUT) -> str:
     return d.get("parse", {}).get("wikitext", {}).get("*", "") or ""
 
 
+#: Link text that is a CLASS of thing rather than a piece of equipment.
+#: "Assault rifle" in an equipment table is the column describing what the
+#: adjacent model is, and listing it as kit would tell a reader the army
+#: fields a generic assault rifle.
+_GENERIC = re.compile(
+    r"^(handgun|pistol|rifle|assault rifle|battle rifle|sniper rifle|carbine|"
+    r"submachine gun|machine gun|light machine gun|heavy machine gun|"
+    r"general-purpose machine gun|designated marksman rifle|shotgun|"
+    r"grenade launcher|rocket launcher|recoilless rifle|anti-tank|mortar|"
+    r"howitzer|missile|naval mine|torpedo|military truck|truck|motorcycle|"
+    r"all-terrain vehicle|utility vehicle|bolt action|semi-automatic pistol|"
+    r"armoured personnel carrier|infantry fighting vehicle|main battle tank|"
+    r"helicopter|aircraft|unmanned aerial vehicle|drone)$", re.I)
+
+
+def items_of(wikitext: str) -> dict:
+    """{section title: [equipment]} from the tables on an equipment page.
+
+    The first wiki link in a table row is the item itself in these
+    tables; the rest of the row is calibre, origin and counts. Generic
+    class names are dropped — "Assault rifle" is the column header's
+    answer, not a weapon an army fields — and so are calibres, which
+    look like links but are ammunition.
+    """
+    out = {}
+    parts = re.split(r"^==+\s*([^=]+?)\s*==+\s*$", wikitext or "", flags=re.M)
+    for i in range(1, len(parts) - 1, 2):
+        title = parts[i].strip()
+        found = []
+        for row in re.split(r"\n\|-", parts[i + 1]):
+            m = re.search(r"\|\s*\[\[([^\]|#]+)", row)
+            if not m:
+                continue
+            v = m.group(1).strip()
+            if len(v) < 3 or v.lower().startswith(("file:", "image:")):
+                continue
+            if re.match(r"^\d", v) or re.search(r"\bmm\b|NATO$", v):
+                continue
+            if _GENERIC.match(v):
+                continue
+            found.append(v)
+        if found:
+            out[title] = list(dict.fromkeys(found))[:8]
+    return out
+
+
+def items_by_capability(items: dict) -> dict:
+    """Equipment keyed by capability rather than by section title."""
+    out = {}
+    for title, kit in (items or {}).items():
+        low = title.lower()
+        for cap, pat in CAP_PATTERNS:
+            if re.search(pat, low):
+                out.setdefault(cap, [])
+                for k in kit:
+                    if k not in out[cap]:
+                        out[cap].append(k)
+                break
+    return {k: v[:8] for k, v in out.items()}
+
+
 def sections_of(wikitext: str) -> list:
     return [s.strip() for s in re.findall(r"^==+\s*([^=]+?)\s*==+", wikitext, re.M)]
 
@@ -194,31 +259,38 @@ def lookup(conn: sqlite3.Connection, force: str, *, force_refresh: bool = False,
 
     if not force_refresh:
         row = conn.execute(
-            "SELECT page, caps, sections, fetched_at FROM mil_equipment WHERE force=?",
-            (key,)).fetchone()
+            "SELECT page, caps, sections, fetched_at, items FROM mil_equipment"
+            " WHERE force=?", (key,)).fetchone()
         if row and time.time() - row[3] < TTL_S:
             caps = json.loads(row[1] or "[]")
             return {"known": bool(caps), "force": key, "page": row[0],
                     "capabilities": caps, "sections": json.loads(row[2] or "[]"),
-                    "cached": True}
+                    "items": json.loads(row[4] or "{}"), "cached": True}
 
     pages = find_pages(key, timeout)
     page = pages[0] if pages else None
     if not page:
         conn.execute("INSERT OR REPLACE INTO mil_equipment"
-                     " (force, page, caps, sections, fetched_at) VALUES (?,?,?,?,?)",
-                     (key, None, "[]", "[]", time.time()))
+                     " (force, page, caps, sections, items, fetched_at)"
+                     " VALUES (?,?,?,?,?,?)",
+                     (key, None, "[]", "[]", "{}", time.time()))
         conn.commit()
         return {"known": False, "force": key,
                 "reason": "no equipment list published for this force"}
 
-    secs = []
+    secs, raw_items = [], {}
     for pg in pages:
-        secs.extend(sections_of(_wikitext(pg, timeout)))
+        text = _wikitext(pg, timeout)
+        secs.extend(sections_of(text))
+        raw_items.update(items_of(text))
     caps = capabilities_from(secs)
+    kit = items_by_capability(raw_items)
     conn.execute("INSERT OR REPLACE INTO mil_equipment"
-                 " (force, page, caps, sections, fetched_at) VALUES (?,?,?,?,?)",
-                 (key, page, json.dumps(caps), json.dumps(secs), time.time()))
+                 " (force, page, caps, sections, items, fetched_at)"
+                 " VALUES (?,?,?,?,?,?)",
+                 (key, page, json.dumps(caps), json.dumps(secs),
+                  json.dumps(kit), time.time()))
     conn.commit()
     return {"known": bool(caps), "force": key, "page": page, "pages": pages,
-            "capabilities": caps, "sections": secs, "cached": False}
+            "capabilities": caps, "sections": secs, "items": kit,
+            "cached": False}

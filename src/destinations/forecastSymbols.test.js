@@ -99,3 +99,41 @@ describe("APP-6 colour and installation coding", () => {
         expect(fillFor(null)).toMatch(/^var\(--/)
     })
 })
+
+describe("what a unit is, in words", () => {
+    it("gives a strength RANGE, never a single number", async () => {
+        // A brigade is not 4,000 people. A single figure would be
+        // invented precision on top of a symbol that is doctrinal
+        // rather than observed.
+        const { strengthOf } = await import("./forecastSymbols.js")
+        expect(strengthOf("bde")).toMatch(/–/)
+        expect(strengthOf("coy")).toMatch(/–/)
+        expect(strengthOf("nonsense")).toBeNull()
+        expect(strengthOf(null)).toBeNull()
+    })
+
+    it("orders echelons so a bigger formation is bigger", async () => {
+        const { ECHELON_STRENGTH } = await import("./forecastSymbols.js")
+        const order = ["team", "squad", "plt", "coy", "bn", "regt", "bde", "div", "corps"]
+        for (let i = 1; i < order.length; i++) {
+            expect(ECHELON_STRENGTH[order[i]][0], order[i])
+                .toBeGreaterThan(ECHELON_STRENGTH[order[i - 1]][0])
+        }
+    })
+
+    it("draws a unit's kit from the matching arm, not the whole army", async () => {
+        // An artillery symbol should show howitzers, not pistols.
+        const { equipmentFor } = await import("./forecastSymbols.js")
+        const items = { artillery: ["K9 Thunder", "CAESAR"], small_arms: ["Glock 19"] }
+        expect(equipmentFor({ icon: "artillery" }, items)).toContain("K9 Thunder")
+        expect(equipmentFor({ icon: "artillery" }, items)).not.toContain("Glock 19")
+        expect(equipmentFor({ icon: "infantry" }, items)).toEqual(["Glock 19"])
+    })
+
+    it("returns nothing rather than guessing when the arm has no kit listed", async () => {
+        const { equipmentFor } = await import("./forecastSymbols.js")
+        expect(equipmentFor({ icon: "none" }, { armour: ["x"] })).toEqual([])
+        expect(equipmentFor({ icon: "armour" }, null)).toEqual([])
+        expect(equipmentFor(null, {})).toEqual([])
+    })
+})

@@ -36,7 +36,7 @@ import {
 } from "./forecastTerrain.js"
 import {
     frameFor, iconFor, tintFor, fillFor, SIZE as ECHELON,
-    INSTALLATION_TAB, facilityIcon,
+    INSTALLATION_TAB, facilityIcon, strengthOf, equipmentFor,
 } from "./forecastSymbols.js"
 import { unproject } from "./forecastTerrain.js"
 import { checkUnit } from "./forecastFeasibility.js"
@@ -77,7 +77,7 @@ function Stamp() {
  * and is open at the base. Drawing everything in a land frame, which is
  * what this did first, says every movement is a march.
  */
-function Unit({ u, t, zoom = 1 }) {
+function Unit({ u, t, zoom = 1, onSelect = null, selected = false }) {
     const { x, y } = positionAt(u, t)
     const tint = tintFor(u)
     const frame = frameFor(u)
@@ -88,7 +88,16 @@ function Unit({ u, t, zoom = 1 }) {
     // with the zoom would invent an area claim and, at 8x, bury the
     // terrain it exists to be checked against.
     return (
-        <g transform={`translate(${x},${y}) scale(${1 / zoom})`}>
+        <g transform={`translate(${x},${y}) scale(${1 / zoom})`}
+           onClick={onSelect ? (e) => { e.stopPropagation(); onSelect(u) } : undefined}
+           style={onSelect ? { cursor: "pointer" } : undefined}>
+            {/* A hit target larger than the glyph. A 26px diamond is a
+                hard thing to hit on a map you are also dragging. */}
+            {onSelect ? <circle r="17" fill="transparent" /> : null}
+            {selected ? (
+                <circle r="19" fill="none" stroke={tintFor(u)} strokeWidth="1"
+                        strokeDasharray="2 2" opacity="0.9" />
+            ) : null}
             {/* APP-6 pairs a light fill with a saturated frame: the fill
                 carries at a glance over dark or light ground, the frame
                 keeps the edge. An air frame is open, so it is not filled. */}
@@ -105,6 +114,67 @@ function Unit({ u, t, zoom = 1 }) {
             <text x={0} y={19} textAnchor="middle" fill={tint}
                   fontSize="8.5" fontWeight="600" opacity="0.85">{u.id}</text>
         </g>
+    )
+}
+
+/**
+ * What the reader clicked.
+ *
+ * A symbol is a compressed sentence and most readers cannot decompress
+ * it. This says the same thing in words — what the formation is, roughly
+ * how many people that echelon means, and what that army actually fields
+ * for that arm — so the map is readable by someone who does not speak
+ * APP-6.
+ *
+ * The strength is a RANGE and the equipment is what Wikipedia lists for
+ * that force, named as such. Neither is a claim about this formation:
+ * there is no such formation. It is what one would be.
+ */
+function UnitDetail({ u, items, force, onClose }) {
+    const kit = equipmentFor(u, items)
+    const strength = strengthOf(u.size)
+    return (
+        <div style={{ marginTop: 8, padding: "9px 11px", background: "var(--bg-1)",
+                      border: "1px solid var(--line)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <b style={{ font: "600 12px var(--font)", color: "var(--txt)" }}>
+                    {u.id} · {u.domain}
+                </b>
+                <span style={{ flex: 1 }} />
+                <button className="fcmap-btn" onClick={onClose}>close</button>
+            </div>
+            {u.what ? (
+                <div style={{ font: "400 11px var(--font)", color: "var(--txt-2)",
+                              marginTop: 4, lineHeight: 1.45 }}>{u.what}</div>
+            ) : null}
+            <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-3)",
+                          marginTop: 5 }}>
+                {strength ? <>Typically <b>{strength}</b> personnel at this echelon. </> : null}
+                {u.icon && u.icon !== "none" ? <>Arm: {u.icon}.</> : null}
+            </div>
+            {kit.length ? (
+                <div style={{ marginTop: 6 }}>
+                    <div style={{ font: "600 9.5px var(--font)", letterSpacing: ".06em",
+                                  textTransform: "uppercase", color: "var(--txt-4)" }}>
+                        What {force || "this force"} fields for this arm
+                    </div>
+                    <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-2)",
+                                  marginTop: 2, lineHeight: 1.5 }}>
+                        {kit.join(" · ")}
+                    </div>
+                    <div style={{ font: "400 9.5px var(--font)", color: "var(--txt-4)",
+                                  marginTop: 3 }}>
+                        From this force's published equipment list — what the army
+                        has, not what this formation carries.
+                    </div>
+                </div>
+            ) : (
+                <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)",
+                              marginTop: 6 }}>
+                    No published equipment list for this arm.
+                </div>
+            )}
+        </div>
     )
 }
 
@@ -187,7 +257,8 @@ export function Schematic({ tpl, t }) {
  * these for locations has been misled, so the caption says it plainly
  * and the stamp is here too.
  */
-export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
+export function Geographic({ tpl, t, country, big = false, onToggleBig,
+                             aggressorForce = null }) {
     const [world, setWorld] = useState(null)
     const [fields, setFields] = useState(null)
     const [failed, setFailed] = useState(false)
@@ -197,9 +268,24 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
     // thing on this face worth trusting.
     const [zoom, setZoom] = useState(1)
     const [pan, setPan] = useState({ x: 0, y: 0 })
+    const [picked, setPicked] = useState(null)
+    const [items, setItems] = useState(null)
     const drag = useRef(null)
 
-    useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [country, tpl])
+    useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); setPicked(null) }, [country, tpl])
+
+    // What this force fields, so a clicked symbol can say more than its
+    // own glyph. Absent is fine: the panel then says so.
+    useEffect(() => {
+        if (!aggressorForce) { setItems(null); return }
+        let dead = false
+        fetch(`${API_BASE}/api/forecast/capabilities?force=${encodeURIComponent(aggressorForce)}`,
+              { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (!dead) setItems(d?.items || null) })
+            .catch(() => { if (!dead) setItems(null) })
+        return () => { dead = true }
+    }, [aggressorForce])
 
     useEffect(() => {
         let dead = false
@@ -344,13 +430,24 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
                      onWheel={(e) => setZoom((z) => Math.max(1, Math.min(8,
                          z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))))}
                      onPointerDown={(e) => {
+                         // NO POINTER CAPTURE YET. Capturing here sends
+                         // every later event to the svg, so the click
+                         // never reaches the symbol under the cursor and
+                         // units simply could not be selected. Capture
+                         // starts when a DRAG does.
                          drag.current = { sx: e.clientX, sy: e.clientY,
-                                          px: pan.x, py: pan.y }
-                         e.currentTarget.setPointerCapture(e.pointerId)
-                         e.currentTarget.classList.add("dragging")
+                                          px: pan.x, py: pan.y, moved: false }
                      }}
                      onPointerMove={(e) => {
                          if (!drag.current) return
+                         if (!drag.current.moved) {
+                             const far = Math.hypot(e.clientX - drag.current.sx,
+                                                    e.clientY - drag.current.sy) > 3
+                             if (!far) return
+                             drag.current.moved = true
+                             e.currentTarget.setPointerCapture(e.pointerId)
+                             e.currentTarget.classList.add("dragging")
+                         }
                          // Screen pixels into viewBox units, so a drag
                          // tracks the pointer at any zoom or pane width.
                          const r = e.currentTarget.getBoundingClientRect()
@@ -361,6 +458,10 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
                          })
                      }}
                      onPointerUp={(e) => {
+                         if (drag.current?.moved) {
+                             try { e.currentTarget.releasePointerCapture(e.pointerId) }
+                             catch { /* already released */ }
+                         }
                          drag.current = null
                          e.currentTarget.classList.remove("dragging")
                      }}
@@ -377,9 +478,21 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
                         <path d={pathFor(feature.geometry, view)} className="fc-subject" />
 
                         {/* Facilities: APP-6 installations, only here and
-                            only while a scenario is on the map. */}
+                            only while a scenario is on the map. Labelled,
+                            because an unlabelled installation symbol tells
+                            a reader there is something there and refuses
+                            to say what. */}
                         {shownFacilities.map((f, i) => (
-                            <Facility key={`f${i}`} f={f} x={f.px} y={f.py} zoom={zoom} />
+                            <g key={`f${i}`}>
+                                <Facility f={f} x={f.px} y={f.py} zoom={zoom} />
+                                {zoom > 1.6 ? (
+                                    <text x={f.px} y={f.py + 13 / zoom}
+                                          textAnchor="middle" className="fc-label"
+                                          style={{ fontSize: 7.5 / zoom }}>
+                                        {f.name}
+                                    </text>
+                                ) : null}
+                            </g>
                         ))}
 
                         {tpl.units.map((u, i) => (!isMoving(u) ? null : (
@@ -401,12 +514,19 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig }) {
                             </g>
                         )))}
                         {tpl.units.map((u, i) => (
-                            <Unit key={i} u={u} t={t} zoom={zoom} />
+                            <Unit key={i} u={u} t={t} zoom={zoom}
+                                  onSelect={setPicked}
+                                  selected={picked?.id === u.id && picked?.icon === u.icon} />
                         ))}
                     </g>
                     <Stamp />
                 </svg>
             </div>
+
+            {picked ? (
+                <UnitDetail u={picked} items={items} force={aggressorForce}
+                            onClose={() => setPicked(null)} />
+            ) : null}
 
             {/* Refusals are named, not just drawn red. A dotted line the
                 reader has to interpret is not a finding. */}
@@ -540,7 +660,7 @@ function Row({ title, children }) {
 }
 
 export default function ForecastTemplate({ templateKey, window: window_ = "",
-                                           country = "" }) {
+                                           country = "", aggressorForce = null }) {
     const tpl = TPL[templateKey]
     const [face, setFace] = useState("terrain")
     const [big, setBig] = useState(false)
@@ -631,7 +751,8 @@ export default function ForecastTemplate({ templateKey, window: window_ = "",
             {face === "schematic"
                 ? <Schematic tpl={tpl} t={t} />
                 : <Geographic tpl={tpl} t={t} country={country}
-                              big={big} onToggleBig={() => setBig((b) => !b)} />}
+                              big={big} onToggleBig={() => setBig((b) => !b)}
+                              aggressorForce={aggressorForce} />}
 
             <Legend units={tpl.units} />
 

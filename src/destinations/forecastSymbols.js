@@ -153,3 +153,58 @@ export function tintFor(unit) {
 export function facilityIcon(kind) {
     return FACILITY_ICONS[kind] ?? ""
 }
+
+/**
+ * Probable strength for an echelon.
+ *
+ * Ranges, never a number. A brigade is not 4,000 people; it is a
+ * formation that is usually somewhere between three and five thousand,
+ * and which arm it is moves that more than which army it belongs to. A
+ * single figure here would be invented precision on top of a symbol that
+ * is already doctrinal rather than observed.
+ */
+export const ECHELON_STRENGTH = {
+    team:   [4, 12],
+    squad:  [8, 14],
+    plt:    [25, 55],
+    coy:    [80, 250],
+    bn:     [300, 1000],
+    regt:   [1000, 2500],
+    bde:    [3000, 5500],
+    div:    [10000, 18000],
+    corps:  [30000, 60000],
+}
+
+/** "about 3,000–5,500" for an echelon, or null when unknown. */
+export function strengthOf(size) {
+    const r = ECHELON_STRENGTH[size]
+    if (!r) return null
+    const fmt = (n) => n.toLocaleString("en-GB")
+    return `${fmt(r[0])}–${fmt(r[1])}`
+}
+
+/**
+ * Which capability a unit's arm draws its equipment from.
+ *
+ * The map between what a symbol SAYS it is and which Wikipedia section
+ * would list its kit. An artillery symbol should show howitzers, not the
+ * army's pistols.
+ */
+export const ICON_CAPABILITY = {
+    infantry: "small_arms",
+    armour: "armour",
+    artillery: "artillery",
+    recon: "vehicles",
+    air: "aircraft",
+    rotary: "rotary",
+    naval: "naval",
+    missile: "missiles",
+    none: null,
+}
+
+/** Equipment this unit would plausibly field, from a capability map. */
+export function equipmentFor(unit, items) {
+    const cap = ICON_CAPABILITY[unit?.icon]
+    if (!cap || !items) return []
+    return Array.isArray(items[cap]) ? items[cap] : []
+}
