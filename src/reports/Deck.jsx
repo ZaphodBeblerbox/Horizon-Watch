@@ -48,6 +48,16 @@ const PALETTES = {
     light: { bg: "#f4f2ee", ink: "#1b1f24", dim: "#5a6270", panel: "#f4f2ee", line: "#d7d2c9", accent: "#3f6fa8" },
 }
 
+// A PRINTED DECK IS A DOCUMENT, NOT A PHOTOGRAPH OF THE SCREEN. The theme
+// toggle exists so a deck can be *presented* on a dark projector; paper is
+// not a projector. Printing the dark palette failed twice over: the browser
+// drops background fills unless asked (see print-color-adjust below), so
+// the #0d1013 panel became white while the #e7ebef ink stayed pale grey —
+// unreadable — and wherever a fill did survive, the sheet read as a
+// screenshot of the UI rather than a briefing. The print flow therefore
+// pins the light palette regardless of what `theme` is set to on screen.
+const PRINT_PAL = PALETTES.light
+
 function SlideLabel({ children, pal }) {
     return <div style={{ ...TYPE.eyebrow, color: pal.accent, marginBottom: 18 }}>{children}</div>
 }
@@ -328,6 +338,10 @@ const PRESENT_PRINT_CSS = `
   .view#view-deck{display:block!important;overflow:visible;height:auto}
   .deck-interactive{display:none!important}
   .deck-print-flow{display:block!important}
+  /* COLOUR HAS TO BE ASKED FOR — same reason as PrintLayout.jsx. Without
+     this the light panel fill, the accent rules and every severity swatch
+     print as bare white and the slide loses its structure. */
+  .deck-print-flow *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .deck-print-flow .deck-print-slide{
     position:relative!important;transform:none!important;width:100%!important;height:100vh!important;
     break-after:page;overflow:hidden;
@@ -495,8 +509,8 @@ export default function Deck({ reportId, onBack }) {
                     const R = SLIDE_RENDERERS[s.kind]
                     return (
                         <div key={s.id} className="deck-print-slide">
-                            <div style={{ position: "absolute", top: "50%", left: "50%", width: 1920, height: 1080, transform: `translate(-50%,-50%) scale(${PRINT_PAGE_SCALE})`, transformOrigin: "center center", background: pal.panel }}>
-                                {R && <R s={s} pal={pal} />}
+                            <div style={{ position: "absolute", top: "50%", left: "50%", width: 1920, height: 1080, transform: `translate(-50%,-50%) scale(${PRINT_PAGE_SCALE})`, transformOrigin: "center center", background: PRINT_PAL.panel }}>
+                                {R && <R s={s} pal={PRINT_PAL} />}
                             </div>
                         </div>
                     )
