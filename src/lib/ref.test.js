@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest"
 import { parseRef, resolve, label, REF_KINDS } from "./ref.js"
 
 // Real end-to-end test against the live backend (http://localhost:8000) —
@@ -10,7 +10,25 @@ import { parseRef, resolve, label, REF_KINDS } from "./ref.js"
 // genuinely has no real record of that kind available right now (e.g. no
 // vessel currently transmitting) — never silently assumed to pass.
 
+// Both budgets are raised together: the setup fans out to eight
+// endpoints and two POSTs, and individual resolves are themselves real
+// round trips — /api/dossiers/entities alone takes about 9 seconds cold
+// and longer while the rest of the suite hammers the same process. At
+// the defaults this file passed alone and failed in a full run, which
+// trained everyone reading it to re-run rather than look, and hid two
+// genuine failures sitting beside it.
+vi.setConfig({ testTimeout: 90000, hookTimeout: 180000 })
+
 const API = "http://localhost:8000"
+
+// WHY THE HOOK BUDGET IS 180s AND NOT 30s. This suite deliberately talks
+// to the live backend, and the setup fans out to eight endpoints plus two
+// POSTs. One of them, /api/dossiers/entities, takes about 11 seconds cold
+// and rather longer when the rest of the suite is hammering the same
+// process in parallel. At 30s it passed alone and failed in a full run,
+// which is the worst kind of red: it trained everyone reading it to
+// re-run rather than look, and it masked real failures sitting next to
+// it. The work is genuinely slow, so the budget should say so.
 
 async function getJSON(path) {
     const r = await fetch(`${API}${path}`)
@@ -61,7 +79,7 @@ beforeAll(async () => {
         const testRfi = await postJSON("/api/rfis", { case_id: realIds.case, from_user_id: uid, to_user_id: uid, question: "ref.test.js — disposable test question" })
         realIds.rfi = testRfi?.rfi_id
     }
-}, 30000)
+}, 180000)   // real network, not a unit test's budget — see note above
 
 // Real cleanup — this disposable test case (and its cascade-deleted RFI)
 // shouldn't accumulate forever in the real dev database on every test run.

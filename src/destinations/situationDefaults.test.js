@@ -50,7 +50,12 @@ describe("v4.3 shell defaults", () => {
 
     it("shows the what-changed card on the map", () => {
         expect(SRC).toContain("<WhatChanged")
-        // and offsets it clear of the Layers pane
-        expect(SRC).toMatch(/offsetLeft=\{leftMin \? \d+ : \d+\}/)
+    })
+
+    it("lets CSS place the card, not a prop", () => {
+        // The card insets itself with the map's own --map-inset-l, so it
+        // tracks the pane token instead of a literal copied into JSX that
+        // drifts the moment the token changes.
+        expect(SRC).not.toMatch(/offsetLeft=/)
     })
 })
