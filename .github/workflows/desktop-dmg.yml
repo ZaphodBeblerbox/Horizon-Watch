@@ -1,0 +1,104 @@
+# Builds the macOS .dmg on GitHub's machines.
+#
+# WHY NOT LOCALLY. Producing a DMG means compiling the whole Rust app
+# from source, which writes several gigabytes of intermediate objects.
+# The finished DMG is ~15-30MB; it is the build that needs the room. The
+# dev machine is at 100% disk, and its 8.4GB working database is not
+# something to delete to make space for a build artefact.
+#
+# DELIBERATELY MANUAL. macOS runners bill at 10x on a private repo, so
+# 2,000 free minutes a month is about 200 macOS minutes — roughly a dozen
+# builds. Running this on every push would burn the allowance on commits
+# nobody is going to download.
+#
+# UNSIGNED, ON PURPOSE. There is no Apple Developer account and one is
+# not wanted. Recipients will see "Apple could not verify this app is
+# free of malware" and must right-click the app and choose Open, or allow
+# it once under System Settings > Privacy & Security. The release notes
+# say so plainly rather than leaving people to meet it cold.
+name: Build macOS DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for the release tag, e.g. 1.0.0"
+        required: true
+        default: "1.0.0"
+
+jobs:
+  dmg:
+    runs-on: macos-14          # Apple silicon
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The Rust build is the slow part; caching it is the difference
+      # between a 25-minute build and a 5-minute one.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Stamp the version into the bundle
+        run: |
+          python3 - "$VERSION" <<'PY'
+          import json, sys, pathlib
+          p = pathlib.Path("src-tauri/tauri.conf.json")
+          c = json.loads(p.read_text())
+          c["version"] = sys.argv[1]
+          p.write_text(json.dumps(c, indent=2) + "\n")
+          print("bundle version ->", c["version"])
+          PY
+        env:
+          VERSION: ${{ inputs.version }}
+
+      - name: Build the app and bundle the DMG
+        run: npx tauri build --bundles dmg
+
+      - name: Find the DMG
+        id: find
+        run: |
+          DMG=$(find src-tauri/target -name "*.dmg" -print -quit)
+          test -n "$DMG" || { echo "no dmg produced"; exit 1; }
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$DMG")" >> "$GITHUB_OUTPUT"
+          ls -lh "$DMG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parallax-dmg
+          path: ${{ steps.find.outputs.path }}
+          if-no-files-found: error
+
+      - name: Publish a release with the DMG attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ inputs.version }}" "${{ steps.find.outputs.path }}" \
+            --title "Parallax ${{ inputs.version }}" \
+            --notes "$(cat <<'NOTES'
+          Download the `.dmg`, open it, and drag Parallax to Applications.
+
+          **The first launch will warn you.** The app is not signed with an
+          Apple Developer certificate, so macOS says it cannot verify the
+          developer. To open it:
+
+          1. Right-click Parallax in Applications and choose **Open**
+          2. Click **Open** again in the dialog
+
+          You only need to do this once. If the dialog gives you no Open
+          option, go to **System Settings > Privacy & Security**, scroll to
+          the message about Parallax, and click **Open Anyway**.
+          NOTES
+          )"
