@@ -64,6 +64,15 @@ jobs:
           VERSION: ${{ inputs.version }}
 
       - name: Build the app and bundle the DMG
+        # The Vite bundle includes Cesium and needs more heap than the
+        # runner gives Node by default — the first attempt died with
+        # "Reached heap limit Allocation failed - JavaScript heap out of
+        # memory" inside the frontend build, before Rust was reached at
+        # all. It builds locally because this machine's default heap is
+        # larger, which is exactly the kind of difference that only shows
+        # up in CI.
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: npx tauri build --bundles dmg
 
       - name: Find the DMG
