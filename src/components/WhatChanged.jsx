@@ -13,14 +13,14 @@
 import { useEffect, useMemo, useState } from "react"
 import {
     windowFor, changedItems, summarise, readLastSeen, writeLastSeen,
+    groupByKind, quietReason,
 } from "./whatChanged.js"
 
 const SEV_TINT = {
     critical: "var(--red)", high: "var(--amber)", elevated: "var(--amber)",
 }
 
-export default function WhatChanged({ items = [], onSelect, onOpenInbox,
-                                      offsetLeft = 12 }) {
+export default function WhatChanged({ items = [], onSelect, onOpenInbox }) {
     const [min, setMin] = useState(false)
     const [lastSeen] = useState(() => readLastSeen(
         typeof localStorage === "undefined" ? null : localStorage))
@@ -40,7 +40,7 @@ export default function WhatChanged({ items = [], onSelect, onOpenInbox,
 
     if (min) {
         return (
-            <button className="wc-pill" style={{ left: offsetLeft }}
+            <button className="wc-pill"
                     onClick={() => setMin(false)}
                     title="What changed since you last looked">
                 ◆ {changed.length} new
@@ -49,12 +49,23 @@ export default function WhatChanged({ items = [], onSelect, onOpenInbox,
     }
 
     return (
-        <div className="wc" style={{ left: offsetLeft }}>
+        <div className="wc">
             <div className="wc-head">
                 <span>{win.label}</span>
                 <button onClick={() => setMin(true)} title="Minimise">–</button>
             </div>
             <div className="wc-sum">{summarise(changed)}</div>
+
+            {/* WHAT HAPPENED, not a tour of the furniture. A first-run
+                guide teaches a reader where the buttons are; this tells
+                them what they missed, which is the only thing they came
+                back for. It is a sentence, not a walkthrough, and it goes
+                away on its own once there is nothing to say. */}
+            {changed.length ? (
+                <div className="wc-brief">{groupByKind(changed)}</div>
+            ) : (
+                <div className="wc-brief quiet">{quietReason(win)}</div>
+            )}
             {top.map((i) => (
                 <button key={i.id} className="wc-row"
                         onClick={() => onSelect && onSelect(i)}>

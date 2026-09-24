@@ -1387,7 +1387,6 @@ export default function Situation({ onOpenDossier }) {
                         open, so it never sits on top of it. */}
                     <WhatChanged
                         items={windowRows}
-                        offsetLeft={leftMin ? 12 : 262}
                         onSelect={(i) => setSelected?.(i)}
                         onOpenInbox={() => window.dispatchEvent(
                             new CustomEvent("akili:open-module", { detail: "inbox" }))}

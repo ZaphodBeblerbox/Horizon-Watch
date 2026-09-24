@@ -1221,7 +1221,14 @@ table.grid .dim { color: var(--txt-4); }
 /* ── "What changed" card (v4.3 §2) ─────────────────────────────────────
    Sits over the map, top-left, and offsets right of the Layers panel
    when that panel is open. */
-.wc { position: absolute; top: 12px; z-index: 6; width: 268px;
+/* Positioned with the map's own chrome convention, and BELOW the
+   basemap-health bar rather than on top of it: both were absolutely
+   placed near the top-left and the card simply covered it. */
+/* BELOW the panes, which are z-index 3 and overlay the canvas. At 6 the
+   card sat on top of an open pane and covered its header — including the
+   button that collapses it, so the sidebar could not be closed. */
+.wc { position: absolute; top: 40px; left: calc(var(--map-inset-l, 0px) + 12px);
+    z-index: 2; width: 268px;
     background: var(--bg-1); border: 1px solid var(--line); border-radius: 3px;
     padding: 8px 9px; }
 .wc-head { display: flex; align-items: center; gap: 6px;
@@ -1240,8 +1247,12 @@ table.grid .dim { color: var(--txt-4); }
 .wc-foot { display: flex; align-items: center; justify-content: space-between;
     margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--line);
     font: 400 10px var(--font); color: var(--txt-4); }
-.wc-pill { position: absolute; top: 12px; z-index: 6;
+.wc-pill { position: absolute; top: 40px;
+    left: calc(var(--map-inset-l, 0px) + 12px); z-index: 2;
     background: var(--bg-1); border: 1px solid var(--line); border-radius: 3px;
     color: var(--txt-3); font: 400 10.5px var(--font); padding: 4px 9px;
     cursor: pointer; }
 .wc-pill:hover { color: var(--txt); }
+.wc-brief { font: 400 10.5px var(--font); color: var(--txt-3); line-height: 1.45;
+    margin: 4px 0 2px; }
+.wc-brief.quiet { color: var(--txt-4); }
