@@ -1286,6 +1286,7 @@ export default function App() {
                         onSelectModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
                         unreadCount={unreadCount}
                         inboxCount={inboxCount}
+                        dataUpdatedAt={surfaceUpdatedAt}
                         systemHealth={systemHealth}
                         onOpenPalette={() => openOverlay("overlay:palette")}
                         mode={mode}

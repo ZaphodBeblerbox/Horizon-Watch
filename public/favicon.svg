@@ -1,19 +1,17 @@
-<svg width="32" height="32" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-  <rect width="48" height="48" rx="8" fill="#0a0e14"/>
-  <!-- Outer ring -->
-  <circle cx="24" cy="24" r="21" stroke="#0d9488" stroke-width="1.2" fill="none" opacity="0.5"/>
-  <!-- Globe latitude lines -->
-  <ellipse cx="24" cy="24" rx="21" ry="9" stroke="#0d9488" stroke-width="0.8" fill="none" opacity="0.25"/>
-  <ellipse cx="24" cy="24" rx="11" ry="21" stroke="#0d9488" stroke-width="0.8" fill="none" opacity="0.2"/>
-  <!-- Horizon line -->
-  <line x1="3" y1="24" x2="45" y2="24" stroke="#0d9488" stroke-width="1.8" opacity="0.9"/>
-  <!-- Eye element -->
-  <ellipse cx="24" cy="24" rx="6.5" ry="4" stroke="#e8edf2" stroke-width="1.4" fill="none"/>
-  <circle cx="24" cy="24" r="2.2" fill="#0d9488"/>
-  <circle cx="24" cy="24" r="0.9" fill="#e8edf2"/>
-  <!-- Cardinal dots -->
-  <circle cx="24" cy="3.5" r="1" fill="#0d9488" opacity="0.6"/>
-  <circle cx="44.5" cy="24" r="1" fill="#0d9488" opacity="0.6"/>
-  <circle cx="24" cy="44.5" r="1" fill="#0d9488" opacity="0.6"/>
-  <circle cx="3.5" cy="24" r="1" fill="#0d9488" opacity="0.6"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+     stroke-width="2.6" stroke-linecap="butt">
+  <!-- Echo X (v4.3 §1). Adapts to the OS scheme: a favicon is drawn on
+       the browser's chrome, not on ours, so it cannot follow the app's
+       own theme token. The X sits 1 unit left so the mark reads centred
+       once the echoes are counted as part of it. -->
+  <style>
+    .ink  { stroke: #26231e; }
+    .echo { stroke: #2f5c90; }
+    @media (prefers-color-scheme: dark) {
+      .ink  { stroke: #d5dae0; }
+      .echo { stroke: #5f95d0; }
+    }
+  </style>
+  <path class="ink"  d="M3 4L14 20M14 4L3 20"/>
+  <path class="echo" d="M18 4L12.5 12M22 4L19.25 8"/>
 </svg>

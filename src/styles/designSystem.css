@@ -1202,3 +1202,46 @@ table.grid .dim { color: var(--txt-4); }
 .fcmap .fc-label { fill: var(--txt-3); font-family: var(--mono);
     paint-order: stroke; stroke: var(--bg-0); stroke-width: 2.2px;
     pointer-events: none; }
+
+/* ── Brand: Echo X (v4.3 §1) ───────────────────────────────────────────
+   Only the echoes carry the accent. Recolouring the letters with it, or
+   rounding the terminals, breaks the mark — see the spec's don't list. */
+.brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.brand .glyph { width: 17px; height: 17px; flex: none; color: var(--txt);
+    display: none; overflow: visible; }
+.brand .wm { height: 10px; width: auto; flex: none; color: var(--txt);
+    overflow: visible; display: block; }
+.brand .echo { stroke: var(--acc-hi); }
+[data-theme="light"] .brand .echo { stroke: var(--acc); }
+@media (max-width: 960px) {
+    .brand .wm { display: none; }
+    .brand .glyph { display: block; }
+}
+
+/* ── "What changed" card (v4.3 §2) ─────────────────────────────────────
+   Sits over the map, top-left, and offsets right of the Layers panel
+   when that panel is open. */
+.wc { position: absolute; top: 12px; z-index: 6; width: 268px;
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 3px;
+    padding: 8px 9px; }
+.wc-head { display: flex; align-items: center; gap: 6px;
+    font: 600 9.5px var(--font); letter-spacing: .07em; color: var(--txt-4); }
+.wc-head span { flex: 1; }
+.wc-head button, .wc-foot button { background: transparent; border: 0;
+    color: var(--txt-3); cursor: pointer; font: 400 11px var(--font); padding: 0 3px; }
+.wc-head button:hover, .wc-foot button:hover { color: var(--txt); }
+.wc-sum { font: 400 11.5px var(--font); color: var(--txt-2); margin: 5px 0 6px; }
+.wc-row { display: flex; align-items: center; gap: 6px; width: 100%;
+    background: transparent; border: 0; padding: 3px 0; cursor: pointer;
+    text-align: left; font: 400 11px var(--font); color: var(--txt-2); }
+.wc-row:hover { color: var(--txt); }
+.wc-row .dot { width: 5px; height: 5px; border-radius: 50%; flex: none; }
+.wc-row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wc-foot { display: flex; align-items: center; justify-content: space-between;
+    margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--line);
+    font: 400 10px var(--font); color: var(--txt-4); }
+.wc-pill { position: absolute; top: 12px; z-index: 6;
+    background: var(--bg-1); border: 1px solid var(--line); border-radius: 3px;
+    color: var(--txt-3); font: 400 10.5px var(--font); padding: 4px 9px;
+    cursor: pointer; }
+.wc-pill:hover { color: var(--txt); }

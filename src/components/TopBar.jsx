@@ -1,3 +1,5 @@
+import { Wordmark, Glyph } from "../ui/Wordmark.jsx"
+import Freshness from "./Freshness.jsx"
 import { useState, useEffect } from "react"
 import { WATCH_MODULES, WORK_MODULES } from "../data/modules.js"
 import { STATUS_COLOR_TOKEN, STATUS_WORD } from "../utils/systemHealth.js"
@@ -20,6 +22,7 @@ export default function TopBar({
     onSelectModule,
     unreadCount = 0,
     inboxCount = 0,
+    dataUpdatedAt = null,
     systemHealth = { status: "operational", detail: "ALL FEEDS LIVE" },
     onOpenPalette,
     mode = "watch",
@@ -74,17 +77,14 @@ export default function TopBar({
                 width: 196, flexShrink: 0, display: "flex", alignItems: "center", gap: 8,
                 padding: "0 12px", borderRight: "1px solid var(--line)",
             }}>
-                <svg className="icon" style={{ width: 17, height: 17, color: "var(--txt-2)", flexShrink: 0 }}>
-                    <use href="#i-globe" />
-                </svg>
-                <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                    <span style={{ font: "600 12.5px var(--font)", color: "var(--txt)", whiteSpace: "nowrap" }}>
-                        Parallax
-                    </span>
-                    <span style={{ font: "400 10px var(--font)", color: "var(--txt-4)", whiteSpace: "nowrap" }}>
-                        v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "—"}
-                    </span>
+                <div className="brand">
+                    <Glyph />
+                    <Wordmark />
                 </div>
+                <span style={{ font: "400 10px var(--font)", color: "var(--txt-4)",
+                               whiteSpace: "nowrap" }}>
+                    ops console {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : ""}
+                </span>
             </div>
 
             {/* Module rail — real set filtered by mode, with `hidden` modules
@@ -161,6 +161,11 @@ export default function TopBar({
                 >
                     <svg className="icon sm"><use href="#i-plus" /></svg>
                 </button>
+                {/* How old is what you are looking at. The status bar is
+                    gone and this is the one fact it carried that a reader
+                    needs (v4.3 §2). */}
+                <Freshness updatedAt={dataUpdatedAt} />
+
                 {/* The bell is the notification TRAY trigger (spec §1.1), not
                     a second route into the Inbox — the rail already goes
                     there, and two controls for one destination is how a bell
