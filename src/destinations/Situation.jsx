@@ -358,10 +358,15 @@ export default function Situation({ onOpenDossier }) {
     // group to true; severity floor/time window are filter settings, not
     // layer toggles, and keep their own sensible defaults since they don't
     // clutter an empty map on their own.
-    const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(LAYER_GROUPS.map((g) => [g.key, false])))
+    // DEFAULT MAP STATE: news, GDELT and country risk on; everything
+    // else off. A globe that opens with every layer lit is not a map of
+    // anything — the reader has to turn things OFF to find the picture,
+    // which is backwards.
+    const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(
+        LAYER_GROUPS.map((g) => [g.key, g.key === "news"])))
     // Default OFF. Machine-coded pins are opt-in: the reader should choose
     // to accept them, not discover them mixed in with verified events.
-    const [gdeltOn, setGdeltOn] = useState(false)
+    const [gdeltOn, setGdeltOn] = useState(true)
     // Which CAMEO codings to draw. Starts as every kind rather than a
     // curated subset: a reader who has not chosen yet should see the whole
     // feed, not a silently narrowed one.
@@ -369,16 +374,16 @@ export default function Situation({ onOpenDossier }) {
     // Default ON: a thermal anomaly is a real instrument reading and it is
     // what decides where imagery gets tasked, so hiding it by default
     // conceals the system's own reasoning.
-    const [firesOn, setFiresOn] = useState(true)
+    const [firesOn, setFiresOn] = useState(false)
     // Which theatres the frontline layer should draw. Ukraine is the only
     // one with an open control feed today; the roster comes from the
     // backend so adding a source later needs no frontend change.
     // Ukraine defaults on; the point-based theatres do not, because
     // Syria alone carries 7,576 marks and turning them all on unasked
     // would bury the rest of the map.
-    const [theatresOn, setTheatresOn] = useState({ ukraine: true })
+    const [theatresOn, setTheatresOn] = useState({})
     const [frontlineTheatres, setFrontlineTheatres] = useState([])
-    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+    const [contextOn, setContextOn] = useState({ risk: true, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     // Global Fishing Watch events, per kind. Off by default: they are
     // days old by nature and belong on the map only when asked for.
     const [gfwOn, setGfwOn] = useState({

@@ -29,10 +29,25 @@ export const BANDS = [
  */
 export const FLOOR = 8
 
+/**
+ * Below this BAND a country is not tinted at all.
+ *
+ * The score floor alone was not enough. On the live index every one of
+ * 123 scored countries clears it — the lowest is 10.4 — so toggling the
+ * layer painted the entire world red and said nothing. The bands are
+ * where the index actually separates: 24 countries in band 1, 84 in band
+ * 2, and only 15 in bands 3 and 4 together.
+ *
+ * Painting the 15 is a finding. Painting all 123 is a colour.
+ */
+export const MIN_BAND = 3
+
 /** Alpha rises with score above the floor, and only there. */
 export function riskAlpha(score, band) {
     const s = Number(score)
     if (!Number.isFinite(s) || s < FLOOR) return 0
+    const b = Number(band)
+    if (!Number.isFinite(b) || b < MIN_BAND) return 0
     // Normalised across the band the score actually sits in, so a 100 reads
     // clearly hotter than a 78 rather than both pinning at the top.
     const t = Math.min(1, (s - FLOOR) / (100 - FLOOR))

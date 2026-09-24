@@ -88,3 +88,23 @@ describe("the Philippines arrives twice", () => {
         expect(byIso.get("PHL").score).toBe(78.57)
     })
 })
+
+describe("the band floor", () => {
+    it("paints nothing below band 3", async () => {
+        // Every one of 123 scored countries clears the SCORE floor — the
+        // lowest is 10.4 — so the layer painted the whole world red and
+        // said nothing. 24 sit in band 1 and 84 in band 2; only 15 reach
+        // bands 3 and 4.
+        const { riskAlpha, MIN_BAND } = await import("./riskChoropleth.js")
+        expect(MIN_BAND).toBe(3)
+        expect(riskAlpha(61.9, 1)).toBe(0)
+        expect(riskAlpha(61.9, 2)).toBe(0)
+        expect(riskAlpha(61.9, 3)).toBeGreaterThan(0)
+        expect(riskAlpha(61.9, 4)).toBeGreaterThan(0)
+    })
+
+    it("still refuses a country with no band at all", () => {
+        expect(riskAlpha(50, null)).toBe(0)
+        expect(riskAlpha(50, undefined)).toBe(0)
+    })
+})
