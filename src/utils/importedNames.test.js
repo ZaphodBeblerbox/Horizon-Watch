@@ -28,14 +28,31 @@ function walk(dir, out = []) {
     return out
 }
 
-/** Comments and string/template literals removed, so prose cannot match. */
+/** Comments and string/template literals removed, so prose cannot match.
+ *
+ * ONE LEFT-TO-RIGHT PASS, NOT FIVE. Run as separate passes, the block
+ * comment strip went first and happily treated the `/*` inside a LINE
+ * comment as an opener. authStore.js line 2 mentions `/api/auth/*`, so
+ * everything from there to the next `*\/` — sixty lines, including every
+ * import in the file — was deleted before the import scan ever ran, and
+ * this test then reported those imports as missing. The same class of bug
+ * runs the other way too: a `//` inside a block comment, or either
+ * sequence inside a string.
+ *
+ * A single alternation fixes it by construction. The regex engine scans
+ * left to right, so whichever construct genuinely starts first consumes
+ * the rest — which is exactly how a real tokenizer behaves.
+ */
 function stripNoise(src) {
-    return src
-        .replace(/\/\*[\s\S]*?\*\//g, " ")
-        .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ")
-        .replace(/`(?:[^`\\]|\\[\s\S])*`/g, "``")
-        .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-        .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    return src.replace(
+        /\/\*[\s\S]*?\*\/|(^|[^:])\/\/[^\n]*|`(?:[^`\\]|\\[\s\S])*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g,
+        (m, before) => {
+            if (m.startsWith("/*")) return " "
+            if (m.startsWith("`")) return "``"
+            if (m.startsWith('"')) return '""'
+            if (m.startsWith("'")) return "''"
+            return (before ?? "") + " "          // line comment
+        })
 }
 
 const files = walk("src")

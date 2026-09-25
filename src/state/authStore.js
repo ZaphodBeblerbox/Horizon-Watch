@@ -7,6 +7,20 @@
 // real source of "who is this" — see MissionProfilePanel.jsx's own
 // removal note for that decision.
 import API_BASE from "../apiBase.js"
+import { enrol, offlineLogin, forgetEnrolment } from "../lib/offlineAuth.js"
+import { indexedDbStore, memoryStore } from "../lib/offlineCache.js"
+
+// One store for the enrolment record, created lazily so importing this
+// module in a test environment never touches IndexedDB.
+let _store = null
+function _enrolStore() {
+    if (!_store) {
+        _store = (typeof window !== "undefined" && window.indexedDB)
+            ? indexedDbStore(window.indexedDB)
+            : memoryStore()
+    }
+    return _store
+}
 
 let _currentUser = null
 let _authChecked = false
@@ -21,6 +35,8 @@ let _authChecked = false
 // that case so app.jsx can show a real "reconnecting" state instead of
 // silently discarding a session that was never actually invalid.
 let _authTransientError = false
+// True when the session was granted by offlineAuth rather than the server.
+let _offlineSession = false
 const _listeners = new Set()
 
 function _publish() {
@@ -126,15 +142,57 @@ export async function checkSession() {
     return _currentUser
 }
 
+/** True when the current session was granted locally, with no server. */
+export function isOfflineSession() { return _offlineSession }
+
 export async function login(email, password) {
-    const user = await req("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) })
-    _currentUser = user
-    _publish()
-    return user
+    try {
+        const user = await req("/api/auth/login", {
+            method: "POST", body: JSON.stringify({ email, password }),
+        })
+        _currentUser = user
+        _offlineSession = false
+        // Remember this machine so the same person can get in when the
+        // server cannot be reached. Enrolment is deliberately tied to a
+        // SUCCESSFUL server login and to nothing else.
+        try {
+            await enrol({ email, password, user, store: _enrolStore(), crypto: window.crypto })
+        } catch { /* a machine that cannot enrol still logged in fine */ }
+        _publish()
+        return user
+    } catch (e) {
+        // A SERVER THAT ANSWERED IS THE AUTHORITY. A 401 means the
+        // password is wrong, and falling back to a local check would turn
+        // a rejection into an acceptance. Only a request that reached
+        // nobody may fall back.
+        if (!_reachedNobody(e)) throw e
+
+        const r = await offlineLogin({ email, password, store: _enrolStore(), crypto: window.crypto })
+        if (!r.ok) throw new Error(r.reason)
+        _currentUser = r.user
+        _offlineSession = true
+        _authChecked = true
+        _publish()
+        return r.user
+    }
+}
+
+/** Did this error mean "nobody answered", as opposed to "the server said no"? */
+function _reachedNobody(e) {
+    // req() throws Error("HTTP 401") / Error(detail) for a real response,
+    // and fetch throws TypeError/AbortError when the request never landed.
+    if (e instanceof TypeError) return true
+    if (e?.name === "AbortError") return true
+    return /failed to fetch|networkerror|load failed|timed out/i.test(e?.message || "")
 }
 
 export async function logout() {
     try { await req("/api/auth/logout", { method: "POST" }) } catch { /* real network hiccup — clear local state anyway */ }
+    // Signing out is explicit, so it also withdraws this machine's
+    // permission to sign in offline. Leaving the enrolment behind would
+    // let the next person at the laptop back in with the old password.
+    await forgetEnrolment(_enrolStore())
     _currentUser = null
+    _offlineSession = false
     _publish()
 }

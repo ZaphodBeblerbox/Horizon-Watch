@@ -6,6 +6,33 @@ import './styles/designSystem.css'
 import { initPushNotifications } from './utils/pushNotifications.js'
 import { registerSW } from 'virtual:pwa-register'
 import { reloadOnceForStaleChunk } from './utils/staleChunkRecovery.js'
+import API_BASE from './apiBase.js'
+import { isDesktop } from './apiBase.js'
+import { installOfflineCache, indexedDbStore, pruneCache } from './lib/offlineCache.js'
+
+// THE APP MUST OPEN WHETHER OR NOT ANYTHING ANSWERS. Installed before
+// React mounts, so the very first screen's requests are covered too — a
+// cache that arrives after the dashboard has already fired its fetches
+// protects nothing that matters.
+//
+// In the desktop build the frontend itself is local (Tauri serves the
+// bundled files, not the network), so this is only ever about the data:
+// the last good response for each API GET is kept and served when the
+// server cannot be reached.
+try {
+    if (typeof window !== 'undefined' && window.indexedDB) {
+        const store = indexedDbStore(window.indexedDB)
+        installOfflineCache({ win: window, apiBase: API_BASE, store })
+        // Sweep what is past its usable age on launch rather than on a
+        // timer — a desktop app can sit closed for a week.
+        pruneCache(store).catch(() => {})
+    }
+} catch (e) {
+    // A webview with storage disabled still gets a working app, just
+    // without the cache.
+    console.warn('[offline] cache unavailable:', e?.message || e)
+}
+if (typeof window !== 'undefined') window.__parallaxDesktop = isDesktop()
 
 // Register service worker and listen for notification-click messages
 initPushNotifications().then(({ supported }) => {
