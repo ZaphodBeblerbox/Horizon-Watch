@@ -50,3 +50,43 @@ describe("freshness", () => {
             .toContain("Offline")
     })
 })
+
+
+describe("what the fetch layer actually saw outranks navigator.onLine", () => {
+    // The case this exists for: Railway restarting. The browser still has
+    // a network, so navigator.onLine stays true, while every request fails
+    // and offlineCache serves the last good body. A green dot over data
+    // nothing is updating is the exact dishonesty this component prevents.
+    const CACHED_AT = new Date("2026-09-25T14:00:00Z").toISOString()
+    const NOW = new Date("2026-09-25T14:30:00Z").getTime()
+
+    it("says the server is unreachable even when the browser thinks it is online", () => {
+        const s = freshnessState(CACHED_AT, NOW, true, { state: "cached", cachedAt: CACHED_AT })
+        expect(s.tone).toBe("offline")
+        expect(s.text).toMatch(/Server unreachable/)
+    })
+
+    it("names how old the stored data is", () => {
+        const s = freshnessState(CACHED_AT, NOW, true, { state: "cached", cachedAt: CACHED_AT })
+        expect(s.text).toContain("14:00Z")
+        expect(s.text).toContain("30m ago")
+    })
+
+    it("still says something honest when the cache has no timestamp", () => {
+        const s = freshnessState(CACHED_AT, NOW, true, { state: "cached", cachedAt: null })
+        expect(s.tone).toBe("offline")
+        expect(s.text).toBe("Server unreachable · showing stored data")
+    })
+
+    it("goes back to normal once the server answers again", () => {
+        const fresh = new Date(NOW - 60000).toISOString()
+        const s = freshnessState(fresh, NOW, true, { state: "live", cachedAt: null })
+        expect(s.tone).toBe("fresh")
+        expect(s.text).not.toMatch(/unreachable/)
+    })
+
+    it("is unchanged when the fetch layer has said nothing yet", () => {
+        const fresh = new Date(NOW - 60000).toISOString()
+        expect(freshnessState(fresh, NOW, true, null).tone).toBe("fresh")
+    })
+})

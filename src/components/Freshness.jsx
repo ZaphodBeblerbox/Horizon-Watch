@@ -13,6 +13,7 @@
  * how a disconnected console goes on looking alive.
  */
 import { useEffect, useState } from "react"
+import { CACHE_EVENT } from "../lib/offlineCache.js"
 
 /** Past this many minutes the reading is amber rather than green. */
 export const STALE_MIN = 60
@@ -36,7 +37,32 @@ export function ago(ms) {
 }
 
 /** The whole readout, as data, so the states are testable without a DOM. */
-export function freshnessState(updatedAt, now = Date.now(), online = true) {
+/**
+ * `online` is not the same question as "is the server answering".
+ *
+ * navigator.onLine only reports whether the browser believes it has a
+ * network. With Railway restarting — which is the case this console most
+ * needs to be honest about — it stays TRUE while every request fails and
+ * offlineCache serves the last good body instead. The readout would then
+ * show a green dot over data that is not being updated by anything, which
+ * is precisely the thing this component exists to prevent.
+ *
+ * So `cache` carries what the fetch layer actually observed: "cached" once
+ * a response has been served from the local store, "live" when the server
+ * answered. It outranks navigator.onLine, because it is evidence rather
+ * than a guess.
+ */
+export function freshnessState(updatedAt, now = Date.now(), online = true, cache = null) {
+    if (cache && cache.state === "cached") {
+        const at = cache.cachedAt ? new Date(cache.cachedAt) : null
+        const known = at && !Number.isNaN(at.getTime())
+        return {
+            tone: "offline",
+            text: known
+                ? `Server unreachable · showing data from ${zulu(at)} · ${ago(now - at.getTime())}`
+                : "Server unreachable · showing stored data",
+        }
+    }
     const d = updatedAt ? new Date(updatedAt) : null
     const valid = d && !Number.isNaN(d.getTime())
     if (!valid) {
@@ -61,6 +87,9 @@ export default function Freshness({ updatedAt }) {
     const [, tick] = useState(0)
     const [online, setOnline] = useState(
         () => (typeof navigator === "undefined" ? true : navigator.onLine))
+    // What the fetch layer actually saw, rather than what the browser
+    // believes about its network. See freshnessState.
+    const [cache, setCache] = useState(null)
 
     useEffect(() => {
         // Re-ticks on its own: the timestamp does not change but its AGE
@@ -69,16 +98,19 @@ export default function Freshness({ updatedAt }) {
         const t = setInterval(() => tick((n) => n + 1), 30000)
         const on = () => setOnline(true)
         const off = () => setOnline(false)
+        const onCache = (e) => setCache(e?.detail || null)
         window.addEventListener("online", on)
         window.addEventListener("offline", off)
+        window.addEventListener(CACHE_EVENT, onCache)
         return () => {
             clearInterval(t)
             window.removeEventListener("online", on)
             window.removeEventListener("offline", off)
+            window.removeEventListener(CACHE_EVENT, onCache)
         }
     }, [])
 
-    const s = freshnessState(updatedAt, Date.now(), online)
+    const s = freshnessState(updatedAt, Date.now(), online, cache)
     const tone = TONE[s.tone] || TONE.unknown
     return (
         <div title="Age of the newest data on screen"
