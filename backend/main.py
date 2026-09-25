@@ -61,6 +61,23 @@ class CappedDict(OrderedDict):
 # 1ms trades a little throughput on those background jobs, which nobody is
 # waiting on, for five times lower worst-case latency on the loop, which
 # every request is waiting on. That is the right way round for this app.
+import process_role as _role
+
+
+def _spawn(fn, *args, **kwargs):
+    """Start a background loop, if this process is the one that owns it.
+
+    Every background loop goes through here rather than calling
+    asyncio.create_task directly, so "which process runs what" is one
+    lookup in process_role.WORKER_ONLY instead of a condition repeated at
+    forty call sites. Returns None when the loop belongs elsewhere.
+    """
+    name = getattr(fn, "__name__", "")
+    if not _role.runs_here(name):
+        return None
+    return asyncio.create_task(fn(*args, **kwargs))
+
+
 import sys as _sys_gil
 _sys_gil.setswitchinterval(0.001)
 
@@ -712,7 +729,16 @@ def _load_static_infra_datasets() -> None:
     print(f"[static_infra] Loaded {len(_STATIC_AIRPORTS)} airports, "
           f"{len(_STATIC_PORTS)} ports, {len(_STATIC_POWERPLANTS)} power plants")
 
-_load_static_infra_datasets()
+# SKIPPED IN THE WORKER. These lists hold ~49,000 airports and ~11,700
+# ports in memory purely so the API can serve them; verified by walking
+# the call graph, not one loop in process_role.WORKER_ONLY reaches them.
+# Loading them in both processes cost ~900MB of the ~914MB the split
+# added, which on a memory-limited container is the difference between
+# this being viable and not.
+if _role.ROLE != "worker":
+    _load_static_infra_datasets()
+else:
+    print("[static_infra] skipped — worker role serves no map layers")
 
 # ── Surface pool ──────────────────────────────────────────────────────────────
 _SURFACE_POOL: list = []
@@ -14428,9 +14454,13 @@ async def startup_event():
 
         threading.Thread(target=_restore_fusion_signals, name="fusion-restore",
                          daemon=True).start()
-        asyncio.create_task(_fusion_expire_loop())
-        asyncio.create_task(_fusion_drain_loop())
-        asyncio.create_task(_loop_lag_watchdog())
+        print(f"[startup] process role: {_role.describe()}")
+        if _role.ROLE == "web":
+            print(f"[startup] deferred to the worker: "
+                  f"{len(_role.WORKER_ONLY)} loop(s)")
+        _spawn(_fusion_expire_loop)
+        _spawn(_fusion_drain_loop)
+        _spawn(_loop_lag_watchdog)
 
     # RSS retired for real (fix/geoconfirmed-real-backbone) — GeoConfirmed
     # is now the real source for news/conflict signals everywhere these two
@@ -14446,34 +14476,34 @@ async def startup_event():
     # shared helpers deserves its own careful pass rather than a rushed one
     # here. The operational requirement — RSS ingestion never runs again —
     # is fully satisfied either way: this function is never invoked again.
-    asyncio.create_task(_surface_pool_loop())
+    _spawn(_surface_pool_loop)
     # _daily_briefing_loop removed — briefings are generated on demand only
-    asyncio.create_task(_oref_loop())
-    asyncio.create_task(_usgs_loop())
-    asyncio.create_task(_gdacs_loop())
-    asyncio.create_task(_gdelt_loop())
-    asyncio.create_task(_frontline_change_loop())
-    asyncio.create_task(_facilities_ingest_loop())
+    _spawn(_oref_loop)
+    _spawn(_usgs_loop)
+    _spawn(_gdacs_loop)
+    _spawn(_gdelt_loop)
+    _spawn(_frontline_change_loop)
+    _spawn(_facilities_ingest_loop)
     # The sanctions bridge. Registered here because the resolver it runs
     # was never called by anything — complete machinery that had only
     # ever produced the 1,014 rows somebody once made by hand.
-    asyncio.create_task(_vessel_resolution_loop())
-    asyncio.create_task(_risk_index_warm_loop())
-    asyncio.create_task(_graph_bootstrap_loop())
-    asyncio.create_task(_forecast_tail_loop())
-    asyncio.create_task(_forecast_publish_loop())
-    asyncio.create_task(_imminence_loop())
-    asyncio.create_task(_ais_coverage_warm_loop())
-    asyncio.create_task(_findings_warm_loop())
-    asyncio.create_task(_geo_refresh_loop())
-    asyncio.create_task(_startup_warmup_tasks())
-    asyncio.create_task(_ais_websocket_loop())
-    asyncio.create_task(_prune_history_loop())
-    asyncio.create_task(_wal_checkpoint_loop())
-    asyncio.create_task(_ais_aggregate_loop())
-    asyncio.create_task(_ais_history_flush_loop())
-    asyncio.create_task(_weekly_snapshot_loop())
-    asyncio.create_task(_global_adsb_cache_loop())
+    _spawn(_vessel_resolution_loop)
+    _spawn(_risk_index_warm_loop)
+    _spawn(_graph_bootstrap_loop)
+    _spawn(_forecast_tail_loop)
+    _spawn(_forecast_publish_loop)
+    _spawn(_imminence_loop)
+    _spawn(_ais_coverage_warm_loop)
+    _spawn(_findings_warm_loop)
+    _spawn(_geo_refresh_loop)
+    _spawn(_startup_warmup_tasks)
+    _spawn(_ais_websocket_loop)
+    _spawn(_prune_history_loop)
+    _spawn(_wal_checkpoint_loop)
+    _spawn(_ais_aggregate_loop)
+    _spawn(_ais_history_flush_loop)
+    _spawn(_weekly_snapshot_loop)
+    _spawn(_global_adsb_cache_loop)
     # Forge detection engine
     if _HAS_DETECTORS:
         _weights_file = os.path.join(DATA_DIR, "forge", "forge_weights.json")
@@ -14483,9 +14513,9 @@ async def startup_event():
             print(f"[forge] loaded saved weights: {_threat_engine.weights}")
         except Exception:
             print("[forge] using default threat weights")
-        asyncio.create_task(_youtube_reels_loop())
-    asyncio.create_task(_shorts_refresh_loop())
-    asyncio.create_task(_forge_detection_cycle())
+        _spawn(_youtube_reels_loop)
+    _spawn(_shorts_refresh_loop)
+    _spawn(_forge_detection_cycle)
     # COST REDUCTION: paused for pilot phase.
     # Re-confirmed as of the 2026-10 alert/detector audit follow-up — this
     # is a real, working, fully-wired ship-to-ship-transfer detector
@@ -14495,19 +14525,19 @@ async def startup_event():
     # reasons during the pilot phase; no code changes were made here. If a
     # future pass decides to re-enable it, this is the only line to
     # uncomment — the detector itself needs no rebuild.
-    # asyncio.create_task(_sts_detection_loop())
-    asyncio.create_task(_sentinel_zone_scheduler_loop())
-    asyncio.create_task(_auto_ingest_task())
-    asyncio.create_task(_zone_images_warmup_task())
-    asyncio.create_task(_threat_matrix_loop())
+    # _spawn(_sts_detection_loop)
+    _spawn(_sentinel_zone_scheduler_loop)
+    _spawn(_auto_ingest_task)
+    _spawn(_zone_images_warmup_task)
+    _spawn(_threat_matrix_loop)
     # COST REDUCTION: paused for pilot phase
-    # asyncio.create_task(_threat_snapshot_loop())
-    asyncio.create_task(_dirty_region_refresh_loop())
-    asyncio.create_task(_daily_db_purge_loop())
+    # _spawn(_threat_snapshot_loop)
+    _spawn(_dirty_region_refresh_loop)
+    _spawn(_daily_db_purge_loop)
     # COST REDUCTION: paused for pilot phase
-    # asyncio.create_task(_trajectory_loop())
-    asyncio.create_task(_foresight_loop())
-    asyncio.create_task(_startup_snapshot_prefill())
+    # _spawn(_trajectory_loop)
+    _spawn(_foresight_loop)
+    _spawn(_startup_snapshot_prefill)
 
     # Scheduled 24h sanctions refresh loop (first run 5 min after startup)
     async def _sanctions_refresh_loop():
@@ -14522,7 +14552,7 @@ async def startup_event():
             except Exception as _se:
                 print(f"[sanctions] Scheduled refresh failed: {_se}")
             await asyncio.sleep(86400)
-    asyncio.create_task(_sanctions_refresh_loop())
+    _spawn(_sanctions_refresh_loop)
 
     # Scheduled GeoConfirmed re-sync (first run 10 min after startup, then
     # every 30 min — the bulk per-theatre listing is cheap, but real
@@ -14561,7 +14591,7 @@ async def startup_event():
             except Exception as _ge:
                 print(f"[geoconfirmed] Scheduled sync failed: {_ge}")
             await asyncio.sleep(1800)
-    asyncio.create_task(_geoconfirmed_sync_loop())
+    _spawn(_geoconfirmed_sync_loop)
 
     # ── Event bus ─────────────────────────────────────────────────────────
     _evt_loop = asyncio.get_event_loop()

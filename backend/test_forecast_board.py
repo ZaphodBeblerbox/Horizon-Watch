@@ -590,7 +590,16 @@ def test_the_graph_bootstrap_is_guarded_and_staggered():
 
 
 def test_both_bootstraps_are_scheduled():
+    # Registration now goes through _spawn, which asks process_role
+    # whether this process owns the loop, rather than calling
+    # asyncio.create_task directly. Still scheduled — and this asserts the
+    # stronger thing too: that each one actually runs SOMEWHERE, rather
+    # than being listed in a role that never starts it.
     import pathlib
+    import process_role as pr
     src = pathlib.Path("main.py").read_text()
-    assert "asyncio.create_task(_graph_bootstrap_loop())" in src
-    assert "asyncio.create_task(_forecast_tail_loop())" in src
+    for loop in ("_graph_bootstrap_loop", "_forecast_tail_loop"):
+        assert f"_spawn({loop})" in src, f"{loop} is never registered"
+        roles = [r for r in ("web", "worker") if
+                 (loop in pr.WORKER_ONLY) == (r == "worker")]
+        assert len(roles) == 1, f"{loop} runs in {roles}, expected exactly one"
