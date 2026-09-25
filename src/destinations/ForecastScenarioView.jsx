@@ -31,6 +31,7 @@ export default function ForecastScenarioView({ scenario, onBack }) {
     const [prior, setPrior] = useState(null)
     const [t, setT] = useState(0)
     const [playing, setPlaying] = useState(false)
+    const [exportError, setExportError] = useState(null)
 
     useEffect(() => {
         let dead = false
@@ -103,6 +104,58 @@ export default function ForecastScenarioView({ scenario, onBack }) {
                  objectives: lay.objectives, origins: lay.origins }
     }, [built])
 
+    // EXPORT POSTS WHAT THIS PAGE IS SHOWING. The laydown is computed here,
+    // in the browser, from the real border, coastline and airfield list; the
+    // server stores only the scenario's inputs. Re-deriving it in Python for
+    // the PDF would be a second implementation of the same model, and the
+    // first time they drifted the document would disagree with the screen
+    // that produced it. So the page sends its own result and the server
+    // renders it — it still reads the scenario's own fields from the
+    // database, so nothing about the heading can be spoofed from here.
+    const [exporting, setExporting] = useState(false)
+    const exportPdf = async () => {
+        if (!scenario?.id || exporting) return
+        setExporting(true)
+        try {
+            const lay = built?.laydown
+            const res = await fetch(
+                `${API_BASE}/api/forecast/scenarios/${encodeURIComponent(scenario.id)}/export.pdf`,
+                {
+                    method: "POST", credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        prior: prior || null,
+                        assessment: built?.ok ? {
+                            contiguous: built.contiguous,
+                            targetCoastal: built.targetCoastal,
+                            available: built.available,
+                            excluded: built.excluded,
+                            capabilities: built.capabilities,
+                        } : {},
+                        laydown: lay?.ok ? {
+                            doctrine: lay.doctrine, phases: lay.phases,
+                            units: lay.units, objectives: lay.objectives,
+                            origins: lay.origins,
+                        } : {},
+                    }),
+                })
+            if (!res.ok) throw new Error(`export failed (${res.status})`)
+            const blob = await res.blob()
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = `scenario-${scenario.name || scenario.id}.pdf`
+            a.click()
+            URL.revokeObjectURL(url)
+        } catch (e) {
+            // A failed export says so where the analyst is looking, rather
+            // than leaving a button that appears to have done nothing.
+            setExportError(e.message || "export failed")
+        } finally {
+            setExporting(false)
+        }
+    }
+
     useEffect(() => { setT(0); setPlaying(false) }, [scenario?.id, drawn?.units?.length])
 
     useEffect(() => {
@@ -148,7 +201,15 @@ export default function ForecastScenarioView({ scenario, onBack }) {
                         {pct(prior.p)}
                     </span>
                 ) : null}
+                <button className="btn sm" onClick={exportPdf} disabled={exporting}
+                        title="Download this scenario as a plain document — the prior, the courses of action, and the laydown">
+                    {exporting ? "building…" : "export pdf"}
+                </button>
             </div>
+            {exportError ? (
+                <div style={{ font: "400 10.5px var(--font)", color: "var(--amber)",
+                              marginTop: 4 }}>{exportError}</div>
+            ) : null}
             {prior ? (
                 <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-3)",
                               marginTop: 2 }}>

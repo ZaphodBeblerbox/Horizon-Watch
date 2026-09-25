@@ -523,6 +523,33 @@ export default function Imagery({ onOpenGenerate }) {
         window.addEventListener("pointerup", onUp)
     }
 
+    // The scene as a document, built server-side. Nothing is sent up: the
+    // frame, the detections and the comparison are all already in the
+    // database, so posting the browser's copy would only create a way for
+    // the PDF and the screen to disagree.
+    const [exportingScene, setExportingScene] = useState(false)
+    const exportScene = async () => {
+        if (!selectedScanId || exportingScene) return
+        setExportingScene(true)
+        try {
+            const res = await fetch(
+                `${API_BASE}/api/imagery/scenes/${encodeURIComponent(selectedScanId)}/export.pdf`,
+                { credentials: "include" })
+            if (!res.ok) throw new Error(`export failed (${res.status})`)
+            const blob = await res.blob()
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = `scene-${selectedScanId.slice(0, 8)}.pdf`
+            a.click()
+            URL.revokeObjectURL(url)
+        } catch (e) {
+            alert(e.message || "export failed")
+        } finally {
+            setExportingScene(false)
+        }
+    }
+
     const sceneChanges = (scene?.changes || []).filter((c) => c.conf >= confFloor && kinds[c.type] !== false && !(c.type === "removed" && !kinds.removed))
 
     // Radar change regions, drawn in the same overlay as optical detections.
@@ -722,6 +749,11 @@ export default function Imagery({ onOpenGenerate }) {
                     </button>
                     <button className="btn sm" title="Raise a signal from this scene" onClick={raiseSignal}>signal</button>
                     <button className="btn sm" title="Add this scene to the briefing basket" onClick={addToBriefingScene}>brief</button>
+                    <button className="btn sm" disabled={!selectedScanId || exportingScene}
+                        title="Download this scene as a document — the frame, its metadata, every detection at real coordinates, and the change against the reference"
+                        onClick={exportScene}>
+                        {exportingScene ? "…" : "export"}
+                    </button>
                     <button className="btn sm" disabled={!scene || scene.scan.status !== "completed"}
                         title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen — inspect this scan at full size"}
                         aria-pressed={fullscreen} onClick={() => setFullscreen((v) => !v)}>
