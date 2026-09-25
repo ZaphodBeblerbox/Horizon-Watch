@@ -9509,7 +9509,12 @@ async def _startup_warmup_tasks():
 # ══════════════════════════════════════════════════════════════════════════════
 
 _AISSTREAM_KEY   = os.getenv("AISSTREAM_API_KEY", "")
-_AIS_VESSELS: CappedDict = CappedDict(maxsize=10_000)  # keyed by MMSI string
+# 2,000, not CappedDict's 10,000 default: that was the effective cap
+# already, enforced by a hand-rolled O(n) eviction in the websocket
+# loop. Removing that scan without moving the number here would have
+# quietly five-folded the tracked fleet and every vessel payload with
+# it. The cap is unchanged; only its cost is.
+_AIS_VESSELS: CappedDict = CappedDict(maxsize=2000)  # keyed by MMSI string
 _AIS_LOCK        = threading.Lock()
 _sts_candidates:    dict = {}   # (mmsi_a, mmsi_b) → proximity tracking state
 
@@ -10331,10 +10336,20 @@ async def _ais_websocket_loop():
                                 _record_ais_history(mmsi, vessel)
                             except Exception:
                                 pass
-                            # Cap at 2000, evict oldest
-                            if len(_AIS_VESSELS) > 2000:
-                                oldest = min(_AIS_VESSELS, key=lambda k: _AIS_VESSELS[k].get("last_update", 0))
-                                del _AIS_VESSELS[oldest]
+                            # CAPPING IS THE CONTAINER'S JOB, AND IT DOES
+                            # IT IN O(1). _AIS_VESSELS is a CappedDict:
+                            # __setitem__ already move_to_end's on update
+                            # and evicts the least-recently-updated entry
+                            # once maxsize is passed. The hand-rolled cap
+                            # that used to sit here ran
+                            #   min(_AIS_VESSELS, key=lambda k: ...)
+                            # — a full scan of up to 2,000 vessels — on the
+                            # event loop, on EVERY position report, at a
+                            # measured 8,000 messages/60s. It duplicated
+                            # the container's own eviction to do it, and
+                            # disagreed with it about the cap (2,000 here
+                            # vs 10,000 there), so the scan ran constantly
+                            # rather than never.
                         # Sanctions check — fast O(1) in-memory pre-filter, async task only on hit
                         if (mtype == "PositionReport"
                                 and sanctions_loader._sanctions_by_mmsi
@@ -13665,6 +13680,40 @@ async def _zone_images_warmup_task():
         print(f"[zone-images] warmup error: {ex}")
 
 
+async def _loop_lag_watchdog():
+    """Measure how long the event loop is blocked, and say so.
+
+    We have twice now diagnosed an outage by inference — fusion rescoring,
+    then SQLite lock contention — and twice been only partly right, because
+    nothing in the process actually measures the thing that matters. This
+    does: it sleeps a known interval and reports how much longer than that
+    it actually took. Overshoot IS blockage, by definition, because a
+    sleeping coroutine can only be resumed by a loop that is free.
+
+    It costs one wakeup a second and logs nothing while healthy, so it can
+    stay on in production, which is the only place the problem appears.
+    """
+    import time as _t
+    INTERVAL = 1.0
+    WARN_S = 1.0          # report a stall only once it is user-visible
+    worst = 0.0
+    worst_reported = 0.0
+    while True:
+        t0 = _t.monotonic()
+        await asyncio.sleep(INTERVAL)
+        lag = _t.monotonic() - t0 - INTERVAL
+        if lag > worst:
+            worst = lag
+        if lag >= WARN_S:
+            print(f"[loop-lag] event loop blocked {lag:.2f}s "
+                  f"(worst so far {worst:.2f}s)")
+        # A periodic high-water mark, so a stall that happened while
+        # nobody was watching is still visible in the log afterwards.
+        if worst > worst_reported and _t.monotonic() % 300 < INTERVAL:
+            print(f"[loop-lag] worst block in the last window: {worst:.2f}s")
+            worst_reported, worst = worst, 0.0
+
+
 async def _fusion_drain_loop():
     """Evaluate fusion buckets that were throttled during a burst.
 
@@ -14328,6 +14377,7 @@ async def startup_event():
                          daemon=True).start()
         asyncio.create_task(_fusion_expire_loop())
         asyncio.create_task(_fusion_drain_loop())
+        asyncio.create_task(_loop_lag_watchdog())
 
     # RSS retired for real (fix/geoconfirmed-real-backbone) — GeoConfirmed
     # is now the real source for news/conflict signals everywhere these two
@@ -14790,6 +14840,7 @@ async def _gdelt_loop():
             cached = await loop.run_in_executor(_executor, gdelt_events.refresh_cache)
             events = cached.get("events", []) if isinstance(cached, dict) else []
             new_count = 0
+            _gdelt_batch = []
             for ev in events:
                 eid = str(ev.get("event_id") or ev.get("id") or "")
                 if not eid:
@@ -14824,23 +14875,47 @@ async def _gdelt_loop():
                 summary       = str(ev.get("summary") or ev.get("headline") or "")
 
                 if _fusion_engine:
-                    try:
-                        _fusion_engine.on_signal(normalize_signal(
-                            "GDELT",
-                            {
-                                "severity":      severity,
-                                "lat":           lat,
-                                "lon":           lon,
-                                "location_name": location_name,
-                                "country":       country if country and len(country) == 2 else None,
-                                "rule_id":       f"gdelt_{ev.get('event_root_code', '')}",
-                                "rule_name":     rule_name,
-                                "title":         summary,
-                            },
-                        ))
-                        new_count += 1
-                    except Exception as _fe_err:
-                        print(f"[fusion] gdelt signal error: {_fe_err}")
+                    # Collected here, fed to fusion BELOW, off the loop.
+                    _gdelt_batch.append(normalize_signal(
+                        "GDELT",
+                        {
+                            "severity":      severity,
+                            "lat":           lat,
+                            "lon":           lon,
+                            "location_name": location_name,
+                            "country":       country if country and len(country) == 2 else None,
+                            "rule_id":       f"gdelt_{ev.get('event_root_code', '')}",
+                            "rule_name":     rule_name,
+                            "title":         summary,
+                        },
+                    ))
+            # OFF THE EVENT LOOP. on_signal does a SELECT, an INSERT and a
+            # commit per signal, plus geo-key resolution and relevance
+            # scoring. GDELT does not trickle — it lands in bursts of
+            # hundreds at once, and run on the loop that burst was several
+            # seconds during which the process answered no HTTP at all.
+            # Health checks were measured at 8-20s while this ran.
+            #
+            # This is the same fix, and the same reasoning, already applied
+            # to the AIS/sanctions path after the 2026-09 event-loop
+            # starvation incident — see _check_sanctions_on_update. The
+            # pattern is established; GDELT had simply not been moved yet.
+            if _gdelt_batch and _fusion_engine:
+                batch = _gdelt_batch
+
+                def _feed():
+                    fed = 0
+                    for sig in batch:
+                        try:
+                            _fusion_engine.on_signal(sig)
+                            fed += 1
+                        except Exception as _fe_err:
+                            print(f"[fusion] gdelt signal error: {_fe_err}")
+                    return fed
+                new_count += await asyncio.get_event_loop().run_in_executor(
+                    _executor, _feed)
+                _gdelt_batch = []
+
             seeded = True
             with _DS_STATUS_LOCK:
                 _DS_STATUS["gdelt"]["last_poll"]     = datetime.now(timezone.utc).isoformat()
@@ -23733,539 +23808,564 @@ async def _forge_detection_cycle():
     global _forge_alerts, _correlation_assessments, _last_cycle_stats
     await asyncio.sleep(60)  # staggered startup
     while True:
-        try:
-            cycle_start = datetime.now(timezone.utc)
-            # Real per-cycle correlation count via a before/after delta —
-            # correlations are now fed asynchronously by fusion_engine.py's
-            # fire callback (main.py's _fusion_fire_callback) as signals
-            # stream in, not gathered in one batch here anymore, so "how many
-            # new correlations this cycle" has to be measured as a delta on
-            # the same real _correlation_assessments list rather than
-            # returned directly by a single call.
-            _correlations_before_cycle = len(_correlation_assessments)
-
-            # Bootstrap default rules on first run; backfill missing sources on subsequent runs
-            rules = _forge_load("rules.json")
+        # OFF THE EVENT LOOP. Everything between here and the next
+        # sleep is synchronous: it iterates every tracked vessel for
+        # spoofing, runs the wired rule stages, opens its own DB
+        # sessions and writes alerts and snapshots. It contained no
+        # await at all, so for as long as it ran the process could
+        # not accept or answer a single HTTP request.
+        #
+        # This is the cycle a previous incident already caught with
+        # py-spy, stuck in _run_ais_loitering_rules on the MainThread
+        # (see _AIS_LOITERING_ENABLED). That one rule was switched
+        # off; the other five hundred lines around it stayed on the
+        # loop. Measured against production: health checks on an
+        # endpoint that touches nothing took 2-30s.
+        #
+        # Nested so it keeps the enclosing scope, and safe to move
+        # because the body contains no await, return, break or
+        # continue — only the trailing sleep, which stays out here.
+        def _cycle_body():
+            # Rebound below (the prune and the stats write), so the nested
+            # function needs its own declaration — the enclosing coroutine's
+            # `global` does not reach in here, and without this the prunes
+            # would write to locals and silently stop taking effect.
+            global _forge_alerts, _correlation_assessments, _last_cycle_stats
             try:
-                from detectors.default_rules import DEFAULT_RULES as _DR
-                if not rules:
-                    rules = _DR
-                    _forge_save("rules.json", rules)
-                    print("[forge-brain] bootstrapped default rules")
-                else:
-                    default_ids = {r.get("id") for r in _DR}
-                    existing_ids = {r.get("id") for r in rules}
-                    added = [r for r in _DR if r.get("id") not in existing_ids]
-                    if added:
-                        rules = rules + added
+                cycle_start = datetime.now(timezone.utc)
+                # Real per-cycle correlation count via a before/after delta —
+                # correlations are now fed asynchronously by fusion_engine.py's
+                # fire callback (main.py's _fusion_fire_callback) as signals
+                # stream in, not gathered in one batch here anymore, so "how many
+                # new correlations this cycle" has to be measured as a delta on
+                # the same real _correlation_assessments list rather than
+                # returned directly by a single call.
+                _correlations_before_cycle = len(_correlation_assessments)
+
+                # Bootstrap default rules on first run; backfill missing sources on subsequent runs
+                rules = _forge_load("rules.json")
+                try:
+                    from detectors.default_rules import DEFAULT_RULES as _DR
+                    if not rules:
+                        rules = _DR
                         _forge_save("rules.json", rules)
-                        print(f"[forge-brain] backfilled {len(added)} missing default rules: {[r['id'] for r in added]}")
-                    # rules.json only ever grows via the backfill above — nothing here
-                    # ever removes an entry whose id disappeared from DEFAULT_RULES.
-                    # That's exactly how rule_003 ("Speed Anomaly") and rule_006
-                    # ("Ship-to-Ship Proximity") survived — marked "active" and still
-                    # being reported (rule counts, ontology rule nodes) — for months
-                    # after two commits explicitly deleted their detection logic from
-                    # this codebase ("permanently delete Speed Anomaly rule" /
-                    # "permanently delete Ship-to-Ship Proximity rule from all
-                    # layers"). Flag any such orphan going forward instead of silently
-                    # running dead detection logic forever; a human decides whether to
-                    # remove it from rules.json, this code never does that on its own.
-                    orphaned = [r for r in rules if r.get("status") == "active"
-                                and r.get("id") not in default_ids]
-                    if orphaned:
-                        logger.warning(
-                            "[forge-brain] %d active rule(s) in rules.json no longer "
-                            "exist in detectors/default_rules.py — their detection "
-                            "logic may have been removed from the codebase while the "
-                            "rule definition itself was never purged: %s",
-                            len(orphaned), [(r.get("id"), r.get("name")) for r in orphaned],
-                        )
-            except ImportError:
-                if not rules:
-                    rules = []
-            active_rules = [r for r in rules if r.get("status") == "active"]
+                        print("[forge-brain] bootstrapped default rules")
+                    else:
+                        default_ids = {r.get("id") for r in _DR}
+                        existing_ids = {r.get("id") for r in rules}
+                        added = [r for r in _DR if r.get("id") not in existing_ids]
+                        if added:
+                            rules = rules + added
+                            _forge_save("rules.json", rules)
+                            print(f"[forge-brain] backfilled {len(added)} missing default rules: {[r['id'] for r in added]}")
+                        # rules.json only ever grows via the backfill above — nothing here
+                        # ever removes an entry whose id disappeared from DEFAULT_RULES.
+                        # That's exactly how rule_003 ("Speed Anomaly") and rule_006
+                        # ("Ship-to-Ship Proximity") survived — marked "active" and still
+                        # being reported (rule counts, ontology rule nodes) — for months
+                        # after two commits explicitly deleted their detection logic from
+                        # this codebase ("permanently delete Speed Anomaly rule" /
+                        # "permanently delete Ship-to-Ship Proximity rule from all
+                        # layers"). Flag any such orphan going forward instead of silently
+                        # running dead detection logic forever; a human decides whether to
+                        # remove it from rules.json, this code never does that on its own.
+                        orphaned = [r for r in rules if r.get("status") == "active"
+                                    and r.get("id") not in default_ids]
+                        if orphaned:
+                            logger.warning(
+                                "[forge-brain] %d active rule(s) in rules.json no longer "
+                                "exist in detectors/default_rules.py — their detection "
+                                "logic may have been removed from the codebase while the "
+                                "rule definition itself was never purged: %s",
+                                len(orphaned), [(r.get("id"), r.get("name")) for r in orphaned],
+                            )
+                except ImportError:
+                    if not rules:
+                        rules = []
+                active_rules = [r for r in rules if r.get("status") == "active"]
 
-            # Stage 1 — AIS anomaly detection.
-            #
-            # The legacy rules.json-driven "stationary_near_infrastructure"
-            # check (AISAnomalyDetector.check_vessel(), rule_001 "Cable
-            # Loiterer") has been retired from the live cycle: it fired on a
-            # SINGLE AIS snapshot the instant any ping showed speed <=0.5kn
-            # within 10km of a cable, with no duration/cooldown tracking
-            # beyond dedup-by-(rule_id,mmsi,hour) — so it could fire a
-            # separate alert for the same physically-loitering vessel in the
-            # same hour that Stage 1b's DB-backed check also caught.
-            #
-            # DB RuleConfig "Cable Loitering — Global" (AIS_LOITERING_NEAR_INFRA,
-            # target=ALL, enabled) already covers every cable globally via
-            # AISAnomalyDetector.check_loitering() in Stage 1b below, with
-            # real per-(mmsi,cable,rule) state tracking and a proper
-            # min_duration_minutes gate before it fires once — that is now
-            # the ONE real implementation of this concept. check_vessel()
-            # itself is left intact in ais_detector.py (nothing else calls
-            # it); it is simply no longer invoked from this cycle.
-            with _AIS_LOCK:
-                vessels_snap = dict(_AIS_VESSELS)
+                # Stage 1 — AIS anomaly detection.
+                #
+                # The legacy rules.json-driven "stationary_near_infrastructure"
+                # check (AISAnomalyDetector.check_vessel(), rule_001 "Cable
+                # Loiterer") has been retired from the live cycle: it fired on a
+                # SINGLE AIS snapshot the instant any ping showed speed <=0.5kn
+                # within 10km of a cable, with no duration/cooldown tracking
+                # beyond dedup-by-(rule_id,mmsi,hour) — so it could fire a
+                # separate alert for the same physically-loitering vessel in the
+                # same hour that Stage 1b's DB-backed check also caught.
+                #
+                # DB RuleConfig "Cable Loitering — Global" (AIS_LOITERING_NEAR_INFRA,
+                # target=ALL, enabled) already covers every cable globally via
+                # AISAnomalyDetector.check_loitering() in Stage 1b below, with
+                # real per-(mmsi,cable,rule) state tracking and a proper
+                # min_duration_minutes gate before it fires once — that is now
+                # the ONE real implementation of this concept. check_vessel()
+                # itself is left intact in ais_detector.py (nothing else calls
+                # it); it is simply no longer invoked from this cycle.
+                with _AIS_LOCK:
+                    vessels_snap = dict(_AIS_VESSELS)
 
-            # Pre-normalize the entire AIS snapshot
-            normalized_snap = {}
-            for _m, _v in vessels_snap.items():
-                _n = _normalize_vessel(_v, _m)
-                if _n:
-                    normalized_snap[_m] = _n
+                # Pre-normalize the entire AIS snapshot
+                normalized_snap = {}
+                for _m, _v in vessels_snap.items():
+                    _n = _normalize_vessel(_v, _m)
+                    if _n:
+                        normalized_snap[_m] = _n
 
-            new_ais_alerts: list = []
-            vessels_checked = len(normalized_snap)
-            print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels tracked "
-                  f"(rules.json stationary_near_infrastructure retired — see Stage 1b)")
+                new_ais_alerts: list = []
+                vessels_checked = len(normalized_snap)
+                print(f"[forge-brain] Stage1 AIS: {vessels_checked} vessels tracked "
+                      f"(rules.json stationary_near_infrastructure retired — see Stage 1b)")
 
-            # Stage 1c — AIS spoofing / MMSI-integrity anomaly detection.
-            # Always-on background check (like EscalationEngine) — not a
-            # per-region tunable rule, so it is NOT in WIRED_RULE_DISPATCH and
-            # has no RuleConfig entry. See AISSpoofingDetector's docstring for
-            # exactly what this can and can't distinguish.
-            new_spoof_alerts: list = []
-            if _ais_spoofing_detector is not None:
-                for _sp_mmsi, _sp_vessel in normalized_snap.items():
+                # Stage 1c — AIS spoofing / MMSI-integrity anomaly detection.
+                # Always-on background check (like EscalationEngine) — not a
+                # per-region tunable rule, so it is NOT in WIRED_RULE_DISPATCH and
+                # has no RuleConfig entry. See AISSpoofingDetector's docstring for
+                # exactly what this can and can't distinguish.
+                new_spoof_alerts: list = []
+                if _ais_spoofing_detector is not None:
+                    for _sp_mmsi, _sp_vessel in normalized_snap.items():
+                        try:
+                            new_spoof_alerts.extend(
+                                _ais_spoofing_detector.check(_sp_mmsi, _sp_vessel, cycle_start)
+                            )
+                        except Exception:
+                            pass
+                    _ais_spoofing_detector.purge_stale(cycle_start)
+                    new_ais_alerts.extend(new_spoof_alerts)
+                print(f"[forge-brain] Stage1c AIS spoofing: {vessels_checked} vessels → {len(new_spoof_alerts)} alerts")
+
+                # Stages 1b/1e/2b share one query against the wired-rule dispatch table instead
+                # of each running its own hardcoded RuleConfig.rule_name filter.
+                try:
+                    from database import RuleConfig, get_db
+                    with get_db() as _rdb:
+                        _wired_rows = _rdb.query(RuleConfig).filter(
+                            RuleConfig.rule_name.in_(list(WIRED_RULE_DISPATCH.keys())),
+                            RuleConfig.enabled == True,
+                        ).all()
+                except Exception as _wre:
+                    print(f"[forge-brain] wired-rule query error: {_wre}")
+                    _wired_rows = []
+
+                _rows_by_handler: dict = {}
+                for _wr in _wired_rows:
+                    _handler = WIRED_RULE_DISPATCH.get(_wr.rule_name)
+                    if _handler:
+                        _rows_by_handler.setdefault(_handler, []).append(_wr)
+
+                cycle_now = datetime.now(timezone.utc)
+
+                # Dark-ship state tracking must run every cycle regardless of
+                # whether any AIS_DARK_SHIP rule is currently enabled — vessel
+                # last-seen state has to stay continuous across the rule being
+                # toggled off/on, exactly like _ais_spoofing_detector's always-on
+                # per-cycle update. Only build a real region_fn (which costs one
+                # DB query per vessel) when an enabled rule actually needs region
+                # scoping — the seeded/real production rule uses
+                # last_known_region="ALL", which never needs it.
+                if _dark_ship_detector is not None:
                     try:
-                        new_spoof_alerts.extend(
-                            _ais_spoofing_detector.check(_sp_mmsi, _sp_vessel, cycle_start)
+                        import json as _json_dsr
+                        _dark_rule_rows_now = _rows_by_handler.get(_run_dark_ship_rules, [])
+                        _needs_region = any(
+                            str((_json_dsr.loads(_r.params) if isinstance(_r.params, str) else (_r.params or {}))
+                                .get("last_known_region", "ALL") or "ALL").upper() != "ALL"
+                            for _r in _dark_rule_rows_now
                         )
-                    except Exception:
-                        pass
-                _ais_spoofing_detector.purge_stale(cycle_start)
-                new_ais_alerts.extend(new_spoof_alerts)
-            print(f"[forge-brain] Stage1c AIS spoofing: {vessels_checked} vessels → {len(new_spoof_alerts)} alerts")
+                        _dark_ship_detector.update(
+                            normalized_snap, cycle_now,
+                            region_fn=_nearest_port_region_id if _needs_region else None,
+                        )
+                    except Exception as _due:
+                        print(f"[forge-brain] dark-ship update error: {_due}")
 
-            # Stages 1b/1e/2b share one query against the wired-rule dispatch table instead
-            # of each running its own hardcoded RuleConfig.rule_name filter.
-            try:
-                from database import RuleConfig, get_db
-                with get_db() as _rdb:
-                    _wired_rows = _rdb.query(RuleConfig).filter(
-                        RuleConfig.rule_name.in_(list(WIRED_RULE_DISPATCH.keys())),
-                        RuleConfig.enabled == True,
-                    ).all()
-            except Exception as _wre:
-                print(f"[forge-brain] wired-rule query error: {_wre}")
-                _wired_rows = []
-
-            _rows_by_handler: dict = {}
-            for _wr in _wired_rows:
-                _handler = WIRED_RULE_DISPATCH.get(_wr.rule_name)
-                if _handler:
-                    _rows_by_handler.setdefault(_handler, []).append(_wr)
-
-            cycle_now = datetime.now(timezone.utc)
-
-            # Dark-ship state tracking must run every cycle regardless of
-            # whether any AIS_DARK_SHIP rule is currently enabled — vessel
-            # last-seen state has to stay continuous across the rule being
-            # toggled off/on, exactly like _ais_spoofing_detector's always-on
-            # per-cycle update. Only build a real region_fn (which costs one
-            # DB query per vessel) when an enabled rule actually needs region
-            # scoping — the seeded/real production rule uses
-            # last_known_region="ALL", which never needs it.
-            if _dark_ship_detector is not None:
-                try:
-                    import json as _json_dsr
-                    _dark_rule_rows_now = _rows_by_handler.get(_run_dark_ship_rules, [])
-                    _needs_region = any(
-                        str((_json_dsr.loads(_r.params) if isinstance(_r.params, str) else (_r.params or {}))
-                            .get("last_known_region", "ALL") or "ALL").upper() != "ALL"
-                        for _r in _dark_rule_rows_now
-                    )
-                    _dark_ship_detector.update(
-                        normalized_snap, cycle_now,
-                        region_fn=_nearest_port_region_id if _needs_region else None,
-                    )
-                except Exception as _due:
-                    print(f"[forge-brain] dark-ship update error: {_due}")
-
-            # Stage 1b — Loitering near infrastructure (cables + ports)
-            if _AIS_LOITERING_ENABLED:
-                try:
-                    loiter_hits = _run_ais_loitering_rules(
-                        _rows_by_handler.get(_run_ais_loitering_rules, []), normalized_snap, cycle_now
-                    )
-                    new_ais_alerts.extend(loiter_hits)
-                except Exception as _le:
-                    print(f"[forge-brain] loitering check error: {_le}")
-            else:
-                print(f"[forge-brain] Stage1b loitering: {_AIS_LOITERING_DISABLED_MSG}")
-
-            # Stage 1e — Chokepoint activity (transit + loitering inside strategic polygons)
-            new_choke_alerts: list = []
-            try:
-                new_choke_alerts = _run_chokepoint_rules(
-                    _rows_by_handler.get(_run_chokepoint_rules, []), normalized_snap, cycle_now
-                )
-                new_ais_alerts.extend(new_choke_alerts)
-            except Exception as _cke:
-                print(f"[forge-brain] chokepoint check error: {_cke}")
-
-            # Stage 1f — AIS dark-ship (transponder gap) detection. Dark-ship
-            # alerts are folded into new_ais_alerts (not kept separate) so
-            # they flow through the same escalation/correlation/persistence
-            # path as loitering/chokepoint alerts — required for the seeded
-            # "Cable Loitering + Dark Ship" / "Strategic Port Loitering +
-            # Dark Ship" escalation chains to ever actually fire.
-            new_dark_alerts: list = []
-            try:
-                new_dark_alerts = _run_dark_ship_rules(
-                    _rows_by_handler.get(_run_dark_ship_rules, []), normalized_snap, cycle_now
-                )
-                new_ais_alerts.extend(new_dark_alerts)
-            except Exception as _dse:
-                print(f"[forge-brain] dark-ship check error: {_dse}")
-
-            # Stage 2 — ADS-B anomaly detection via _adsb_detector.
-            #
-            # rules.json here is read-only/labeling, not gating: confirmed
-            # that _adsb_detector.check_aircraft()'s actual detection logic
-            # (military-callsign-prefix match, emergency-squawk match) is
-            # 100% hardcoded and fires regardless of any rule content — the
-            # forge_prefixes/emergency_codes built below only ADD extra
-            # prefixes/codes on top of the detector's built-in defaults, and
-            # the per-hit lookup a few lines down only attaches a
-            # rule_id/rule_name/severity label to an alert that would have
-            # fired either way. So this can't produce the Stage-1-style
-            # duplicate-fire bug (there's only ever one code path that
-            # actually decides "alert or not"). Left as-is: a small, harmless
-            # exception rather than a live-detection duplicate.
-            new_adsb_alerts: list = []
-            adsb_forge_rules = [r for r in active_rules if r.get("source") in ("ADSB", "adsb")]
-            # Build combined callsign prefix set from forge rules + detector built-ins
-            forge_prefixes = []
-            for _r in adsb_forge_rules:
-                forge_prefixes.extend(_r.get("params", {}).get("callsign_prefixes", []))
-            emergency_codes = {"7500", "7600", "7700"}
-            for _r in adsb_forge_rules:
-                emergency_codes.update(_r.get("params", {}).get("squawk_codes", []))
-            try:
-                for ac in list(_GLOBAL_ADSB_CACHE.values())[:6000]:
-                    hits = _adsb_detector.check_aircraft(
-                        ac, military_callsigns=forge_prefixes if forge_prefixes else None
-                    )
-                    # Attach rule metadata from matching forge rule where possible
-                    for h in hits:
-                        h["source"] = "ADSB"
-                        if h.get("type") == "emergency_squawk":
-                            rule = next((r for r in adsb_forge_rules if r.get("trigger_type") == "emergency_squawk"), None)
-                        else:
-                            rule = next((r for r in adsb_forge_rules if r.get("trigger_type") == "military_callsign"), None)
-                        if rule:
-                            h["rule_id"]   = rule.get("id")
-                            h["rule_name"] = rule.get("name")
-                            h["severity"]  = rule.get("severity", h.get("severity", "info"))
-                    new_adsb_alerts.extend(hits)
-            except Exception as _ae:
-                print(f"[forge-brain] adsb error: {_ae}")
-
-            # Stage 2b — ADSB loitering near airport (DB-backed rules)
-            new_adsb_loiter_alerts: list = []
-            try:
-                new_adsb_loiter_alerts = _run_adsb_loiter_rules(
-                    _rows_by_handler.get(_run_adsb_loiter_rules, []), cycle_now
-                )
-                new_adsb_alerts.extend(new_adsb_loiter_alerts)
-            except Exception as _ale:
-                print(f"[forge-brain] ADSB loiter check error: {_ale}")
-
-            # Stage 2c — ADSB loitering near strategic maritime chokepoint
-            # (reuses ADSBLoiterDetector as-is — see _run_adsb_chokepoint_rules)
-            new_adsb_chokepoint_alerts: list = []
-            try:
-                new_adsb_chokepoint_alerts = _run_adsb_chokepoint_rules(
-                    _rows_by_handler.get(_run_adsb_chokepoint_rules, []), cycle_now
-                )
-                new_adsb_alerts.extend(new_adsb_chokepoint_alerts)
-            except Exception as _ace:
-                print(f"[forge-brain] ADSB chokepoint check error: {_ace}")
-
-            # Stage 3 — News event scoring (rules.json-driven, kept as-is).
-            #
-            # Audited for redundancy against the DB RuleConfig-backed
-            # NEWS_PATTERN engine (_news_pattern_engine, dispatched from its
-            # own cycle in _run_news_conflict_extraction_sync, reloaded from
-            # RuleConfig.trigger_type == "NEWS_PATTERN" each pass) and found
-            # NOT redundant — the two operate on different data and
-            # different trigger mechanics:
-            #   - This stage fires on a SINGLE es.get_active_events() event
-            #     the instant it matches a keyword list + severity floor
-            #     (rules.json rule_010/011/012, "event_surge").
-            #   - NEWS_PATTERN requires a THRESHOLD COUNT of separate
-            #     articles about the same location within a rolling time
-            #     window (e.g. 5 conflict articles in 6h) before firing, and
-            #     buffers/cooldowns per (rule, location) — a genuinely
-            #     different volume/trend signal, not a duplicate of a
-            #     single-event keyword match.
-            # Left in place per this round's scope (Stage 1's rules.json
-            # duplicate-fire bug was the confirmed must-fix item; Stage 3 is
-            # murkier and lower-risk to leave than to touch).
-            new_news_alerts: list = []
-            news_rules = [r for r in active_rules if r.get("source") in ("NEWS", "news")]
-            news_checked = 0
-            try:
-                raw_events = es.get_active_events()[:100]
-                news_checked = len(raw_events)
-                for ev in raw_events:
-                    sev_raw = ev.get("severity") or ev.get("score", 0)
-                    sev_map = {"critical": 5, "high": 4, "elevated": 3, "medium": 2, "low": 1}
-                    sev_num = sev_map.get(str(sev_raw).lower(), 0) if isinstance(sev_raw, str) else (sev_raw or 0)
-                    title = (ev.get("headline") or ev.get("title") or "").lower()
-                    body  = (ev.get("summary") or ev.get("body") or "").lower()
-                    text  = title + " " + body
-                    for rule in news_rules:
-                        trigger = rule.get("trigger_type", "")
-                        params  = rule.get("params", {})
-                        keywords = params.get("keywords", [])
-                        threshold = params.get("min_severity", 3)
-                        hit = False
-                        if keywords:
-                            hit = any(kw.lower() in text for kw in keywords) and sev_num >= threshold
-                        elif trigger == "event_surge" or not trigger:
-                            hit = sev_num >= max(threshold, 4)
-                        if hit:
-                            new_news_alerts.append({
-                                "rule_id":   rule.get("id"),
-                                "rule_name": rule.get("name"),
-                                "source":    "NEWS",
-                                "severity":  "high" if sev_num >= 4 else "medium",
-                                "message":   f"News match: '{(ev.get('headline') or ev.get('title') or '')[:70]}'",
-                                "lat":       ev.get("lat"),
-                                "lng":       ev.get("lng") or ev.get("lon"),
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                                "provenance": {
-                                    "source_type": "NEWS",
-                                    "source_entity": ev.get("id") or ev.get("event_id"),
-                                    "detection_rule": rule.get("name"),
-                                    "trigger_reason": trigger,
-                                    "params_at_trigger": params,
-                                },
-                            })
-                            break  # one alert per event per cycle
-            except Exception as _ne:
-                print(f"[forge-brain] news error: {_ne}")
-
-            # 2026-09: the old "Stage 4 — Cross-domain correlation engine"
-            # block used to live here — it re-clustered raw alerts via
-            # CorrelationEngine.correlate() (a cruder proximity pass,
-            # duplicating fusion_engine.py's real scoring) and fed HIGH/
-            # CRITICAL results into _auto_add_correlation_to_ontology().
-            # That's now done directly off fusion_engine.py's own real
-            # scoring, in main.py's _fusion_fire_callback, fired the moment
-            # a real FusionEvent is created/updated rather than re-derived
-            # from scratch every 5-minute cycle. CorrelationEngine.
-            # _assess_cluster()/correlate() were deleted outright (confirmed
-            # zero remaining callers).
-
-            # Auto-wire cable alerts into ontology
-            for alert in new_ais_alerts:
-                if "cable" in (alert.get("message") or "").lower():
-                    _auto_add_ontology_edge(alert)
-
-            # Escalation + Rule-Connection chaining
-            try:
-                if _escalation_engine is not None:
+                # Stage 1b — Loitering near infrastructure (cables + ports)
+                if _AIS_LOITERING_ENABLED:
                     try:
-                        from database import EscalationChain as _EC, RuleConnection as _RC, get_db
-                        import json as _jec
-                        with get_db() as _ecdb:
-                            _chain_rows = _ecdb.query(_EC).all()
-                            _conn_rows  = _ecdb.query(_RC).all()
-                        # Merge EscalationChain + ESCALATION RuleConnection rows into chains list
-                        _chains_input = [
-                            {
-                                "chain_name":          c.chain_name,
-                                "rule_ids":            c.rule_ids,
-                                "escalated_severity":  c.escalated_severity,
-                                "escalated_icon_type": c.escalated_icon_type,
-                                "time_window_minutes": c.time_window_minutes,
-                            }
-                            for c in _chain_rows
-                        ] + [
-                            {
-                                "chain_name":          rc.connection_name,
-                                "rule_ids":            f"{rc.rule_id_a},{rc.rule_id_b}",
-                                "escalated_severity":  rc.escalated_severity or "critical",
-                                "escalated_icon_type": rc.escalated_icon_type or "ESCALATED_DUAL",
-                                "time_window_minutes": rc.time_window_minutes or 30,
-                            }
-                            for rc in _conn_rows if rc.relationship_type == "ESCALATION"
-                        ]
-                        _escalation_engine.reload_chains(_chains_input)
-                        # Index non-ESCALATION connections for post-processing
-                        _seq_conns  = [rc for rc in _conn_rows if rc.relationship_type == "SEQUENCE"]
-                        _supp_conns = [rc for rc in _conn_rows if rc.relationship_type == "SUPPRESSION"]
-                        _corr_conns = [rc for rc in _conn_rows if rc.relationship_type == "CORRELATION"]
-                    except Exception:
-                        _seq_conns = _supp_conns = _corr_conns = []
+                        loiter_hits = _run_ais_loitering_rules(
+                            _rows_by_handler.get(_run_ais_loitering_rules, []), normalized_snap, cycle_now
+                        )
+                        new_ais_alerts.extend(loiter_hits)
+                    except Exception as _le:
+                        print(f"[forge-brain] loitering check error: {_le}")
+                else:
+                    print(f"[forge-brain] Stage1b loitering: {_AIS_LOITERING_DISABLED_MSG}")
 
-                    _cycle_now_esc = datetime.now(timezone.utc)
-                    new_ais_alerts = _escalation_engine.process(new_ais_alerts, _cycle_now_esc)
-
-                    # Apply SEQUENCE, SUPPRESSION, CORRELATION post-escalation
-                    if _seq_conns or _supp_conns or _corr_conns:
-                        # Build per-vessel fired-rule-id index from escalation engine state
-                        _fired: dict = {}  # mmsi → set of rule_id strings
-                        for _mmsi_k, _entries in _escalation_engine._active.items():
-                            _fired[_mmsi_k] = {e["rule_id"] for e in _entries if e["rule_id"]}
-                        _suppressed_ids: set = set()
-                        for _a in new_ais_alerts:
-                            _a_mmsi    = str(_a.get("mmsi") or "")
-                            _a_rule_id = str(_a.get("rule_id") or "")
-                            fired_for_vessel = _fired.get(_a_mmsi, set())
-                            # SEQUENCE: suppress rule_b if rule_a has not fired on same vessel
-                            for _sc in _seq_conns:
-                                if _a_rule_id == str(_sc.rule_id_b):
-                                    if str(_sc.rule_id_a) not in fired_for_vessel:
-                                        _suppressed_ids.add(_a.get("id", ""))
-                            # SUPPRESSION: suppress rule_b when rule_a fires on same vessel
-                            for _sp in _supp_conns:
-                                if _a_rule_id == str(_sp.rule_id_b):
-                                    if str(_sp.rule_id_a) in fired_for_vessel:
-                                        _suppressed_ids.add(_a.get("id", ""))
-                            # CORRELATION: tag both alerts
-                            for _cr in _corr_conns:
-                                if _a_rule_id in (str(_cr.rule_id_a), str(_cr.rule_id_b)):
-                                    _a.setdefault("correlations", []).append(_cr.connection_name)
-                        if _suppressed_ids:
-                            new_ais_alerts = [_a for _a in new_ais_alerts if _a.get("id", "") not in _suppressed_ids]
-            except Exception as _ee:
-                print(f"[forge-brain] escalation error: {_ee}")
-
-            all_new = new_ais_alerts + new_adsb_alerts + new_news_alerts
-            _forge_alerts.extend(all_new)
-            # 2026-09: _correlation_assessments is no longer batch-extended
-            # here — it's appended to directly, per real HIGH/CRITICAL
-            # FusionEvent, by main.py's _fusion_fire_callback as signals
-            # stream in (see that function). Still real, still the same
-            # list routers/forge.py's brain-inspect endpoint reads for the
-            # live "Correlations" stat.
-            # Persist new alerts to DB (write_alert() itself now handles
-            # OntologyLinks — see its docstring)
-            for _aw_alert in all_new:
+                # Stage 1e — Chokepoint activity (transit + loitering inside strategic polygons)
+                new_choke_alerts: list = []
                 try:
-                    _src = "ais" if _aw_alert in new_ais_alerts else ("adsb" if _aw_alert in new_adsb_alerts else "news")
-                    write_alert({**_aw_alert, "source": _src})
-                except Exception as _aw_e:
-                    print(f"[alert-writer] alert persist error: {_aw_e}")
+                    new_choke_alerts = _run_chokepoint_rules(
+                        _rows_by_handler.get(_run_chokepoint_rules, []), normalized_snap, cycle_now
+                    )
+                    new_ais_alerts.extend(new_choke_alerts)
+                except Exception as _cke:
+                    print(f"[forge-brain] chokepoint check error: {_cke}")
 
-            # NOTE: no separate AIS/ADSB fusion feed here — write_alert() above (called
-            # for every entry in all_new, which includes new_ais_alerts/new_adsb_alerts)
-            # already feeds each alert into the fusion engine internally. A second
-            # explicit on_signal() call here previously generated a brand-new random
-            # signal_id for the same semantic signal, inflating FusionSignal row counts
-            # and candidate_pool size used in fusion evaluation.
+                # Stage 1f — AIS dark-ship (transponder gap) detection. Dark-ship
+                # alerts are folded into new_ais_alerts (not kept separate) so
+                # they flow through the same escalation/correlation/persistence
+                # path as loitering/chokepoint alerts — required for the seeded
+                # "Cable Loitering + Dark Ship" / "Strategic Port Loitering +
+                # Dark Ship" escalation chains to ever actually fire.
+                new_dark_alerts: list = []
+                try:
+                    new_dark_alerts = _run_dark_ship_rules(
+                        _rows_by_handler.get(_run_dark_ship_rules, []), normalized_snap, cycle_now
+                    )
+                    new_ais_alerts.extend(new_dark_alerts)
+                except Exception as _dse:
+                    print(f"[forge-brain] dark-ship check error: {_dse}")
 
-            # Trim to 24h
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            _forge_alerts = [a for a in _forge_alerts if a.get("timestamp", "") > cutoff]
-            _correlation_assessments = [a for a in _correlation_assessments if a.get("timestamp", "") > cutoff]
+                # Stage 2 — ADS-B anomaly detection via _adsb_detector.
+                #
+                # rules.json here is read-only/labeling, not gating: confirmed
+                # that _adsb_detector.check_aircraft()'s actual detection logic
+                # (military-callsign-prefix match, emergency-squawk match) is
+                # 100% hardcoded and fires regardless of any rule content — the
+                # forge_prefixes/emergency_codes built below only ADD extra
+                # prefixes/codes on top of the detector's built-in defaults, and
+                # the per-hit lookup a few lines down only attaches a
+                # rule_id/rule_name/severity label to an alert that would have
+                # fired either way. So this can't produce the Stage-1-style
+                # duplicate-fire bug (there's only ever one code path that
+                # actually decides "alert or not"). Left as-is: a small, harmless
+                # exception rather than a live-detection duplicate.
+                new_adsb_alerts: list = []
+                adsb_forge_rules = [r for r in active_rules if r.get("source") in ("ADSB", "adsb")]
+                # Build combined callsign prefix set from forge rules + detector built-ins
+                forge_prefixes = []
+                for _r in adsb_forge_rules:
+                    forge_prefixes.extend(_r.get("params", {}).get("callsign_prefixes", []))
+                emergency_codes = {"7500", "7600", "7700"}
+                for _r in adsb_forge_rules:
+                    emergency_codes.update(_r.get("params", {}).get("squawk_codes", []))
+                try:
+                    for ac in list(_GLOBAL_ADSB_CACHE.values())[:6000]:
+                        hits = _adsb_detector.check_aircraft(
+                            ac, military_callsigns=forge_prefixes if forge_prefixes else None
+                        )
+                        # Attach rule metadata from matching forge rule where possible
+                        for h in hits:
+                            h["source"] = "ADSB"
+                            if h.get("type") == "emergency_squawk":
+                                rule = next((r for r in adsb_forge_rules if r.get("trigger_type") == "emergency_squawk"), None)
+                            else:
+                                rule = next((r for r in adsb_forge_rules if r.get("trigger_type") == "military_callsign"), None)
+                            if rule:
+                                h["rule_id"]   = rule.get("id")
+                                h["rule_name"] = rule.get("name")
+                                h["severity"]  = rule.get("severity", h.get("severity", "info"))
+                        new_adsb_alerts.extend(hits)
+                except Exception as _ae:
+                    print(f"[forge-brain] adsb error: {_ae}")
 
-            # Deduplicate (rule+entity per hour)
-            seen: set = set()
-            deduped: list = []
-            for a in reversed(_forge_alerts):
-                key = f"{a.get('rule_id')}|{a.get('mmsi') or a.get('aircraft') or a.get('message','')[:30]}|{(a.get('timestamp',''))[:13]}"
-                if key not in seen:
-                    seen.add(key)
-                    deduped.append(a)
-            _forge_alerts = list(reversed(deduped))
-            _correlation_assessments = _correlation_assessments[-200:]
+                # Stage 2b — ADSB loitering near airport (DB-backed rules)
+                new_adsb_loiter_alerts: list = []
+                try:
+                    new_adsb_loiter_alerts = _run_adsb_loiter_rules(
+                        _rows_by_handler.get(_run_adsb_loiter_rules, []), cycle_now
+                    )
+                    new_adsb_alerts.extend(new_adsb_loiter_alerts)
+                except Exception as _ale:
+                    print(f"[forge-brain] ADSB loiter check error: {_ale}")
 
-            cycle_s = (datetime.now(timezone.utc) - cycle_start).total_seconds()
-            active_rule_count = len(active_rules)
-            _last_cycle_stats = {
-                "last_cycle":        datetime.now(timezone.utc).isoformat(),
-                "vessels_tracked":   len(normalized_snap),
-                "aircraft_tracked":  len(_GLOBAL_ADSB_CACHE),
-                # Legacy rules.json active-rule count — informational only.
-                # This is NOT what actually gates live detection any more
-                # (see Stage 1 comment above) and must not be confused with
-                # the real count. /api/forge/brain-status intentionally
-                # overwrites the "rules_active" key with _real_rule_stats()'s
-                # DB-backed enabled-RuleConfig count (dict-spread order below
-                # makes that explicit rather than relying on luck), which is
-                # what the Pipeline Canvas's "N rules active" label reads.
-                "rules_json_active": active_rule_count,
-                "ais_alerts":        len(new_ais_alerts),
-                "dark_alerts":       len(new_dark_alerts),
-                "adsb_alerts":       len(new_adsb_alerts),
-                "news_alerts":       len(new_news_alerts),
-                "alerts_24h":        len(_forge_alerts),
-                "weights":           _threat_engine.weights if _threat_engine else {},
-            }
-            # Real per-cycle correlation count: fusion-driven correlations
-            # arrive asynchronously via _fusion_fire_callback as signals are
-            # processed through this very cycle (write_alert() below feeds
-            # each new alert into the fusion engine), so "new this cycle" is
-            # measured as a real before/after delta on _correlation_
-            # assessments rather than a batch return value (see
-            # _correlations_before_cycle at the top of this loop iteration).
-            new_correlations_this_cycle = max(0, len(_correlation_assessments) - _correlations_before_cycle)
-            _cycle_history.append({
-                "ts":          _last_cycle_stats["last_cycle"],
-                "vessels":     len(normalized_snap),
-                "aircraft":    len(_GLOBAL_ADSB_CACHE),
-                "news":        news_checked,
-                "rules":       active_rule_count,
-                "ais_alerts":  len(new_ais_alerts),
-                "adsb_alerts": len(new_adsb_alerts),
-                "news_alerts": len(new_news_alerts),
-                "correlations": new_correlations_this_cycle,
-                "alerts_24h":  len(_forge_alerts),
-            })
-            while len(_cycle_history) > 50:
-                _cycle_history.pop(0)
-            print(
-                f"[forge-brain] {cycle_s:.1f}s — "
-                f"{len(normalized_snap)}v/{len(_GLOBAL_ADSB_CACHE)}ac/{news_checked}nw → "
-                f"{len(new_ais_alerts)}+{len(new_adsb_alerts)}+{len(new_news_alerts)} alerts, "
-                f"{new_correlations_this_cycle} correlations, {len(_forge_alerts)} total"
-            )
-            _write_snapshot_sync("forge_alerts", list(_forge_alerts))
-            # Write alerts_active from DB
-            try:
-                from database import Alert as _AlertSnap, FusionEvent as _FESnap
-                with get_db() as _adb:
-                    _active_alerts = _adb.query(_AlertSnap).filter(
-                        _AlertSnap.status == "active"
-                    ).order_by(_AlertSnap.created_at.desc()).limit(500).all()
-                _write_snapshot_sync("alerts_active", [
-                    {"alert_id": a.alert_id, "source": a.source, "alert_type": a.alert_type,
-                     "title": a.title, "severity": a.severity, "lat": a.lat, "lon": a.lon,
-                     "country_code": a.country_code, "status": a.status,
-                     # See the identical builder near /api/snapshot/alerts_active:
-                     # Alert has no relevance_score column, and reading it aborted
-                     # this snapshot write on every cycle — which is why the inbox
-                     # was never fed. Null, not a score derived from severity.
-                     "relevance_score": None,
-                     "created_at": a.created_at.isoformat() if a.created_at else None}
-                    for a in _active_alerts
-                ])
-                with get_db() as _fedb:
-                    _fe_rows = (_fedb.query(_FESnap)
-                                     .filter(_FESnap.status == "active")
-                                     .order_by(_FESnap.created_at.desc())
-                                     .limit(100).all())
-                _write_snapshot_sync("fusions", [
-                    {"fusion_id": f.fusion_id, "title": f.title, "subtitle": f.subtitle,
-                     "narrative": f.narrative, "severity": f.severity,
-                     "confidence": f.confidence, "lat": f.lat, "lon": f.lon,
-                     "signal_count": f.signal_count, "domains": f.domains,
-                     "key_signals": f.key_signals, "status": f.status,
-                     "created_at": f.created_at.isoformat() if f.created_at else None,
-                     "expires_at": f.expires_at.isoformat() if f.expires_at else None,
-                     "marker_visible": f.marker_visible}
-                    for f in _fe_rows
-                ])
-            except Exception as _ase:
-                print(f"[SNAPSHOT] alerts_active/fusions error: {_ase}")
-        except Exception as _ex:
-            print(f"[forge-brain] cycle error: {_ex}")
+                # Stage 2c — ADSB loitering near strategic maritime chokepoint
+                # (reuses ADSBLoiterDetector as-is — see _run_adsb_chokepoint_rules)
+                new_adsb_chokepoint_alerts: list = []
+                try:
+                    new_adsb_chokepoint_alerts = _run_adsb_chokepoint_rules(
+                        _rows_by_handler.get(_run_adsb_chokepoint_rules, []), cycle_now
+                    )
+                    new_adsb_alerts.extend(new_adsb_chokepoint_alerts)
+                except Exception as _ace:
+                    print(f"[forge-brain] ADSB chokepoint check error: {_ace}")
+
+                # Stage 3 — News event scoring (rules.json-driven, kept as-is).
+                #
+                # Audited for redundancy against the DB RuleConfig-backed
+                # NEWS_PATTERN engine (_news_pattern_engine, dispatched from its
+                # own cycle in _run_news_conflict_extraction_sync, reloaded from
+                # RuleConfig.trigger_type == "NEWS_PATTERN" each pass) and found
+                # NOT redundant — the two operate on different data and
+                # different trigger mechanics:
+                #   - This stage fires on a SINGLE es.get_active_events() event
+                #     the instant it matches a keyword list + severity floor
+                #     (rules.json rule_010/011/012, "event_surge").
+                #   - NEWS_PATTERN requires a THRESHOLD COUNT of separate
+                #     articles about the same location within a rolling time
+                #     window (e.g. 5 conflict articles in 6h) before firing, and
+                #     buffers/cooldowns per (rule, location) — a genuinely
+                #     different volume/trend signal, not a duplicate of a
+                #     single-event keyword match.
+                # Left in place per this round's scope (Stage 1's rules.json
+                # duplicate-fire bug was the confirmed must-fix item; Stage 3 is
+                # murkier and lower-risk to leave than to touch).
+                new_news_alerts: list = []
+                news_rules = [r for r in active_rules if r.get("source") in ("NEWS", "news")]
+                news_checked = 0
+                try:
+                    raw_events = es.get_active_events()[:100]
+                    news_checked = len(raw_events)
+                    for ev in raw_events:
+                        sev_raw = ev.get("severity") or ev.get("score", 0)
+                        sev_map = {"critical": 5, "high": 4, "elevated": 3, "medium": 2, "low": 1}
+                        sev_num = sev_map.get(str(sev_raw).lower(), 0) if isinstance(sev_raw, str) else (sev_raw or 0)
+                        title = (ev.get("headline") or ev.get("title") or "").lower()
+                        body  = (ev.get("summary") or ev.get("body") or "").lower()
+                        text  = title + " " + body
+                        for rule in news_rules:
+                            trigger = rule.get("trigger_type", "")
+                            params  = rule.get("params", {})
+                            keywords = params.get("keywords", [])
+                            threshold = params.get("min_severity", 3)
+                            hit = False
+                            if keywords:
+                                hit = any(kw.lower() in text for kw in keywords) and sev_num >= threshold
+                            elif trigger == "event_surge" or not trigger:
+                                hit = sev_num >= max(threshold, 4)
+                            if hit:
+                                new_news_alerts.append({
+                                    "rule_id":   rule.get("id"),
+                                    "rule_name": rule.get("name"),
+                                    "source":    "NEWS",
+                                    "severity":  "high" if sev_num >= 4 else "medium",
+                                    "message":   f"News match: '{(ev.get('headline') or ev.get('title') or '')[:70]}'",
+                                    "lat":       ev.get("lat"),
+                                    "lng":       ev.get("lng") or ev.get("lon"),
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "provenance": {
+                                        "source_type": "NEWS",
+                                        "source_entity": ev.get("id") or ev.get("event_id"),
+                                        "detection_rule": rule.get("name"),
+                                        "trigger_reason": trigger,
+                                        "params_at_trigger": params,
+                                    },
+                                })
+                                break  # one alert per event per cycle
+                except Exception as _ne:
+                    print(f"[forge-brain] news error: {_ne}")
+
+                # 2026-09: the old "Stage 4 — Cross-domain correlation engine"
+                # block used to live here — it re-clustered raw alerts via
+                # CorrelationEngine.correlate() (a cruder proximity pass,
+                # duplicating fusion_engine.py's real scoring) and fed HIGH/
+                # CRITICAL results into _auto_add_correlation_to_ontology().
+                # That's now done directly off fusion_engine.py's own real
+                # scoring, in main.py's _fusion_fire_callback, fired the moment
+                # a real FusionEvent is created/updated rather than re-derived
+                # from scratch every 5-minute cycle. CorrelationEngine.
+                # _assess_cluster()/correlate() were deleted outright (confirmed
+                # zero remaining callers).
+
+                # Auto-wire cable alerts into ontology
+                for alert in new_ais_alerts:
+                    if "cable" in (alert.get("message") or "").lower():
+                        _auto_add_ontology_edge(alert)
+
+                # Escalation + Rule-Connection chaining
+                try:
+                    if _escalation_engine is not None:
+                        try:
+                            from database import EscalationChain as _EC, RuleConnection as _RC, get_db
+                            import json as _jec
+                            with get_db() as _ecdb:
+                                _chain_rows = _ecdb.query(_EC).all()
+                                _conn_rows  = _ecdb.query(_RC).all()
+                            # Merge EscalationChain + ESCALATION RuleConnection rows into chains list
+                            _chains_input = [
+                                {
+                                    "chain_name":          c.chain_name,
+                                    "rule_ids":            c.rule_ids,
+                                    "escalated_severity":  c.escalated_severity,
+                                    "escalated_icon_type": c.escalated_icon_type,
+                                    "time_window_minutes": c.time_window_minutes,
+                                }
+                                for c in _chain_rows
+                            ] + [
+                                {
+                                    "chain_name":          rc.connection_name,
+                                    "rule_ids":            f"{rc.rule_id_a},{rc.rule_id_b}",
+                                    "escalated_severity":  rc.escalated_severity or "critical",
+                                    "escalated_icon_type": rc.escalated_icon_type or "ESCALATED_DUAL",
+                                    "time_window_minutes": rc.time_window_minutes or 30,
+                                }
+                                for rc in _conn_rows if rc.relationship_type == "ESCALATION"
+                            ]
+                            _escalation_engine.reload_chains(_chains_input)
+                            # Index non-ESCALATION connections for post-processing
+                            _seq_conns  = [rc for rc in _conn_rows if rc.relationship_type == "SEQUENCE"]
+                            _supp_conns = [rc for rc in _conn_rows if rc.relationship_type == "SUPPRESSION"]
+                            _corr_conns = [rc for rc in _conn_rows if rc.relationship_type == "CORRELATION"]
+                        except Exception:
+                            _seq_conns = _supp_conns = _corr_conns = []
+
+                        _cycle_now_esc = datetime.now(timezone.utc)
+                        new_ais_alerts = _escalation_engine.process(new_ais_alerts, _cycle_now_esc)
+
+                        # Apply SEQUENCE, SUPPRESSION, CORRELATION post-escalation
+                        if _seq_conns or _supp_conns or _corr_conns:
+                            # Build per-vessel fired-rule-id index from escalation engine state
+                            _fired: dict = {}  # mmsi → set of rule_id strings
+                            for _mmsi_k, _entries in _escalation_engine._active.items():
+                                _fired[_mmsi_k] = {e["rule_id"] for e in _entries if e["rule_id"]}
+                            _suppressed_ids: set = set()
+                            for _a in new_ais_alerts:
+                                _a_mmsi    = str(_a.get("mmsi") or "")
+                                _a_rule_id = str(_a.get("rule_id") or "")
+                                fired_for_vessel = _fired.get(_a_mmsi, set())
+                                # SEQUENCE: suppress rule_b if rule_a has not fired on same vessel
+                                for _sc in _seq_conns:
+                                    if _a_rule_id == str(_sc.rule_id_b):
+                                        if str(_sc.rule_id_a) not in fired_for_vessel:
+                                            _suppressed_ids.add(_a.get("id", ""))
+                                # SUPPRESSION: suppress rule_b when rule_a fires on same vessel
+                                for _sp in _supp_conns:
+                                    if _a_rule_id == str(_sp.rule_id_b):
+                                        if str(_sp.rule_id_a) in fired_for_vessel:
+                                            _suppressed_ids.add(_a.get("id", ""))
+                                # CORRELATION: tag both alerts
+                                for _cr in _corr_conns:
+                                    if _a_rule_id in (str(_cr.rule_id_a), str(_cr.rule_id_b)):
+                                        _a.setdefault("correlations", []).append(_cr.connection_name)
+                            if _suppressed_ids:
+                                new_ais_alerts = [_a for _a in new_ais_alerts if _a.get("id", "") not in _suppressed_ids]
+                except Exception as _ee:
+                    print(f"[forge-brain] escalation error: {_ee}")
+
+                all_new = new_ais_alerts + new_adsb_alerts + new_news_alerts
+                _forge_alerts.extend(all_new)
+                # 2026-09: _correlation_assessments is no longer batch-extended
+                # here — it's appended to directly, per real HIGH/CRITICAL
+                # FusionEvent, by main.py's _fusion_fire_callback as signals
+                # stream in (see that function). Still real, still the same
+                # list routers/forge.py's brain-inspect endpoint reads for the
+                # live "Correlations" stat.
+                # Persist new alerts to DB (write_alert() itself now handles
+                # OntologyLinks — see its docstring)
+                for _aw_alert in all_new:
+                    try:
+                        _src = "ais" if _aw_alert in new_ais_alerts else ("adsb" if _aw_alert in new_adsb_alerts else "news")
+                        write_alert({**_aw_alert, "source": _src})
+                    except Exception as _aw_e:
+                        print(f"[alert-writer] alert persist error: {_aw_e}")
+
+                # NOTE: no separate AIS/ADSB fusion feed here — write_alert() above (called
+                # for every entry in all_new, which includes new_ais_alerts/new_adsb_alerts)
+                # already feeds each alert into the fusion engine internally. A second
+                # explicit on_signal() call here previously generated a brand-new random
+                # signal_id for the same semantic signal, inflating FusionSignal row counts
+                # and candidate_pool size used in fusion evaluation.
+
+                # Trim to 24h
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+                _forge_alerts = [a for a in _forge_alerts if a.get("timestamp", "") > cutoff]
+                _correlation_assessments = [a for a in _correlation_assessments if a.get("timestamp", "") > cutoff]
+
+                # Deduplicate (rule+entity per hour)
+                seen: set = set()
+                deduped: list = []
+                for a in reversed(_forge_alerts):
+                    key = f"{a.get('rule_id')}|{a.get('mmsi') or a.get('aircraft') or a.get('message','')[:30]}|{(a.get('timestamp',''))[:13]}"
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(a)
+                _forge_alerts = list(reversed(deduped))
+                _correlation_assessments = _correlation_assessments[-200:]
+
+                cycle_s = (datetime.now(timezone.utc) - cycle_start).total_seconds()
+                active_rule_count = len(active_rules)
+                _last_cycle_stats = {
+                    "last_cycle":        datetime.now(timezone.utc).isoformat(),
+                    "vessels_tracked":   len(normalized_snap),
+                    "aircraft_tracked":  len(_GLOBAL_ADSB_CACHE),
+                    # Legacy rules.json active-rule count — informational only.
+                    # This is NOT what actually gates live detection any more
+                    # (see Stage 1 comment above) and must not be confused with
+                    # the real count. /api/forge/brain-status intentionally
+                    # overwrites the "rules_active" key with _real_rule_stats()'s
+                    # DB-backed enabled-RuleConfig count (dict-spread order below
+                    # makes that explicit rather than relying on luck), which is
+                    # what the Pipeline Canvas's "N rules active" label reads.
+                    "rules_json_active": active_rule_count,
+                    "ais_alerts":        len(new_ais_alerts),
+                    "dark_alerts":       len(new_dark_alerts),
+                    "adsb_alerts":       len(new_adsb_alerts),
+                    "news_alerts":       len(new_news_alerts),
+                    "alerts_24h":        len(_forge_alerts),
+                    "weights":           _threat_engine.weights if _threat_engine else {},
+                }
+                # Real per-cycle correlation count: fusion-driven correlations
+                # arrive asynchronously via _fusion_fire_callback as signals are
+                # processed through this very cycle (write_alert() below feeds
+                # each new alert into the fusion engine), so "new this cycle" is
+                # measured as a real before/after delta on _correlation_
+                # assessments rather than a batch return value (see
+                # _correlations_before_cycle at the top of this loop iteration).
+                new_correlations_this_cycle = max(0, len(_correlation_assessments) - _correlations_before_cycle)
+                _cycle_history.append({
+                    "ts":          _last_cycle_stats["last_cycle"],
+                    "vessels":     len(normalized_snap),
+                    "aircraft":    len(_GLOBAL_ADSB_CACHE),
+                    "news":        news_checked,
+                    "rules":       active_rule_count,
+                    "ais_alerts":  len(new_ais_alerts),
+                    "adsb_alerts": len(new_adsb_alerts),
+                    "news_alerts": len(new_news_alerts),
+                    "correlations": new_correlations_this_cycle,
+                    "alerts_24h":  len(_forge_alerts),
+                })
+                while len(_cycle_history) > 50:
+                    _cycle_history.pop(0)
+                print(
+                    f"[forge-brain] {cycle_s:.1f}s — "
+                    f"{len(normalized_snap)}v/{len(_GLOBAL_ADSB_CACHE)}ac/{news_checked}nw → "
+                    f"{len(new_ais_alerts)}+{len(new_adsb_alerts)}+{len(new_news_alerts)} alerts, "
+                    f"{new_correlations_this_cycle} correlations, {len(_forge_alerts)} total"
+                )
+                _write_snapshot_sync("forge_alerts", list(_forge_alerts))
+                # Write alerts_active from DB
+                try:
+                    from database import Alert as _AlertSnap, FusionEvent as _FESnap
+                    with get_db() as _adb:
+                        _active_alerts = _adb.query(_AlertSnap).filter(
+                            _AlertSnap.status == "active"
+                        ).order_by(_AlertSnap.created_at.desc()).limit(500).all()
+                    _write_snapshot_sync("alerts_active", [
+                        {"alert_id": a.alert_id, "source": a.source, "alert_type": a.alert_type,
+                         "title": a.title, "severity": a.severity, "lat": a.lat, "lon": a.lon,
+                         "country_code": a.country_code, "status": a.status,
+                         # See the identical builder near /api/snapshot/alerts_active:
+                         # Alert has no relevance_score column, and reading it aborted
+                         # this snapshot write on every cycle — which is why the inbox
+                         # was never fed. Null, not a score derived from severity.
+                         "relevance_score": None,
+                         "created_at": a.created_at.isoformat() if a.created_at else None}
+                        for a in _active_alerts
+                    ])
+                    with get_db() as _fedb:
+                        _fe_rows = (_fedb.query(_FESnap)
+                                         .filter(_FESnap.status == "active")
+                                         .order_by(_FESnap.created_at.desc())
+                                         .limit(100).all())
+                    _write_snapshot_sync("fusions", [
+                        {"fusion_id": f.fusion_id, "title": f.title, "subtitle": f.subtitle,
+                         "narrative": f.narrative, "severity": f.severity,
+                         "confidence": f.confidence, "lat": f.lat, "lon": f.lon,
+                         "signal_count": f.signal_count, "domains": f.domains,
+                         "key_signals": f.key_signals, "status": f.status,
+                         "created_at": f.created_at.isoformat() if f.created_at else None,
+                         "expires_at": f.expires_at.isoformat() if f.expires_at else None,
+                         "marker_visible": f.marker_visible}
+                        for f in _fe_rows
+                    ])
+                except Exception as _ase:
+                    print(f"[SNAPSHOT] alerts_active/fusions error: {_ase}")
+            except Exception as _ex:
+                print(f"[forge-brain] cycle error: {_ex}")
+        await asyncio.get_event_loop().run_in_executor(
+            _maintenance_executor, _cycle_body)
         await asyncio.sleep(300)
 
 

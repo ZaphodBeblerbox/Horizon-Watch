@@ -8,6 +8,7 @@ never in doubt. The guard must reach that verdict without doing the work,
 and must NOT change which buckets fuse.
 """
 import datetime
+import threading
 import fusion_engine as fe
 
 
@@ -18,6 +19,9 @@ def _sig(sid, domain, rel=50):
 
 
 def _engine():
+    # __new__ on purpose: the real __init__ loads fusions from the DB, and
+    # these tests are about bucket bookkeeping, not persistence. That means
+    # every attribute the methods under test touch has to be set here.
     e = fe.FusionEngine.__new__(fe.FusionEngine)
     e.active_signals = {}
     e._bucket_domains = {}
@@ -25,6 +29,9 @@ def _engine():
     e.min_signals = 3
     e.min_domains = 2
     e.active_fusions = {}
+    e._dirty = {}
+    e._last_eval = {}
+    e._eval_lock = threading.Lock()
     return e
 
 

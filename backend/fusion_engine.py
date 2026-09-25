@@ -218,6 +218,11 @@ class FusionEngine:
 
     def expire_old_signals(self):
         """Prune stale signals and mark DB fusions expired. Call every 15 min."""
+        with self._eval_lock:
+            self._expire_buckets()
+        self._expire_db_fusions()
+
+    def _expire_buckets(self):
         cutoff = datetime.datetime.utcnow() - timedelta(hours=self.fusion_window_hours)
         for geo_key in list(self.active_signals.keys()):
             self.active_signals[geo_key] = [
@@ -236,6 +241,7 @@ class FusionEngine:
                 self._bucket_domains[geo_key] = {
                     s["domain"] for s in self.active_signals[geo_key]}
 
+    def _expire_db_fusions(self):
         try:
             from database import get_db
             from sqlalchemy import text
@@ -305,6 +311,16 @@ class FusionEngine:
         return None
 
     def _add_signal(self, geo_key: str, signal: dict):
+        # GUARDED BECAUSE INGEST IS NO LONGER SINGLE-THREADED. GDELT now
+        # feeds from a worker thread (see main._gdelt_loop) while the drain
+        # evaluates from the maintenance executor. Both touch
+        # active_signals. The lock is taken and released here, and again
+        # separately in _request_fusion_eval — never nested, so a plain
+        # Lock is enough.
+        with self._eval_lock:
+            self._add_signal_locked(geo_key, signal)
+
+    def _add_signal_locked(self, geo_key: str, signal: dict):
         bucket = self.active_signals.setdefault(geo_key, [])
         cutoff = datetime.datetime.utcnow() - timedelta(hours=self.fusion_window_hours)
         # ONE pass, not two. This runs per arriving signal against a

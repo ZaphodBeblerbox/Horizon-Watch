@@ -123,3 +123,18 @@ describe("serving a seeded dataset for a different query", () => {
         expect(hit.body).toBe('"exact"')
     })
 })
+
+describe("where the seed is allowed to run", () => {
+    it("is gated to the desktop build in main.jsx", async () => {
+        // A browser tab is online by definition; if it were not, the page
+        // would not have loaded. Seeding there only cost the server 23 MB
+        // and 49,000 serialised airports per visitor.
+        const { readFileSync } = await import("node:fs")
+        const src = readFileSync("src/main.jsx", "utf8")
+        const call = src.slice(src.indexOf("seedOffline"))
+        expect(src).toMatch(/if \(isDesktop\(\)\) \{/)
+        // The guard must come before the call, not after it.
+        expect(src.indexOf("if (isDesktop()) {")).toBeLessThan(src.indexOf("seedOffline({"))
+        expect(call).toBeTruthy()
+    })
+})

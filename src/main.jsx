@@ -27,14 +27,23 @@ try {
             win: window, apiBase: API_BASE, store,
             wholePaths: WHOLE_DATASET_PATHS,
         })
-        // Pull the reference picture down whenever we are online, so the
-        // app is usable on a machine that has never opened those layers.
-        // Deferred past first paint: 23 MB of downloads competing with the
-        // first screen's own requests would make the app feel broken in
-        // order to make it work later.
-        setTimeout(() => {
-            seedOffline({ apiBase: API_BASE, store }).catch(() => {})
-        }, 4000)
+        // DESKTOP ONLY, AND DELIBERATELY SO. The seed exists because a
+        // packaged app has to work with no network at all. A browser tab
+        // does not: it is online by definition, and if it is not, the page
+        // did not load either.
+        //
+        // Running it everywhere was actively harmful. Every web visitor
+        // pulled 23 MB and made the server serialise 49,000 airports to do
+        // it, which is a self-inflicted load spike on the same backend
+        // whose stability is the point of this work.
+        if (isDesktop()) {
+            // Deferred past first paint: 23 MB competing with the first
+            // screen's own requests would make the app feel broken in
+            // order to make it work later.
+            setTimeout(() => {
+                seedOffline({ apiBase: API_BASE, store }).catch(() => {})
+            }, 4000)
+        }
         // Sweep what is past its usable age on launch rather than on a
         // timer — a desktop app can sit closed for a week.
         pruneCache(store).catch(() => {})
