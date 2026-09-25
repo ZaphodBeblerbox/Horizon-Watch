@@ -5,7 +5,16 @@ from contextlib import contextmanager
 import uuid, datetime, os
 
 DATABASE_URL = f"sqlite:///{os.getenv('DATA_DIR', './data')}/akili.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# timeout is the DBAPI's own lock wait. Its default is 5 seconds, which is
+# what produced the "database is locked" storms in production: this process
+# writes from a dozen background loops at once (alerts, AIS history, fusion,
+# imagery) on a network-backed Railway volume, and a writer that has to wait
+# longer than five seconds for the lock does not wait, it raises. Sixty-two
+# such lines appeared in a two-minute window while the app returned 502.
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
 
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragmas(dbapi_connection, connection_record):
@@ -13,6 +22,18 @@ def _set_sqlite_pragmas(dbapi_connection, connection_record):
     cursor.execute("PRAGMA cache_size = -65536")  # cap page cache at 64 MB
     cursor.execute("PRAGMA journal_mode = WAL")   # WAL reduces lock contention
     cursor.execute("PRAGMA mmap_size = 0")        # disable memory-mapped I/O
+    # THE ONE THAT ACTUALLY MATTERS ON A NETWORK VOLUME. synchronous
+    # defaults to FULL, which fsyncs on every single commit. On Railway's
+    # attached storage an fsync is slow enough that writers queue behind
+    # each other, and everything behind them — including request handlers —
+    # waits. NORMAL is the documented-safe setting *in WAL mode*: a commit
+    # is still durable against a process crash, and the only exposure is a
+    # power loss at the machine level, which on managed infrastructure is
+    # already not the failure we are protecting against.
+    cursor.execute("PRAGMA synchronous = NORMAL")
+    # Belt and braces: the DBAPI timeout above covers the Python driver,
+    # this covers any statement that reaches SQLite by another path.
+    cursor.execute("PRAGMA busy_timeout = 30000")
     cursor.close()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

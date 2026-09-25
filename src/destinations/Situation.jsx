@@ -29,7 +29,6 @@ import MapMeta from "../components/MapMeta.jsx"
 import MapTip from "../components/MapTip.jsx"
 import { LAYER_GROUPS } from "../components/layerRailConfig.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
-import WhatChanged from "../components/WhatChanged.jsx"
 import { summarizeHealth } from "../utils/systemHealth.js"
 import { buildWatchQueueRows, sortRowsBySeverity, timeAgoLabel } from "./dashboardLogic.js"
 import { isSignalVisible, ageHoursSince } from "../lib/signalVisibility.js"
@@ -1380,18 +1379,7 @@ export default function Situation({ onOpenDossier }) {
                         true INSIDE GlobeView itself when omitted, so News being
                         "off" didn't actually turn off precision event markers —
                         it's now explicitly wired to the same real toggle. */}
-                    {/* What happened while you were away — the first
-                        question a reader has on opening a watch console,
-                        and nothing on the map answered it (v4.3 §2). It
-                        offsets right of the Layers pane when that is
-                        open, so it never sits on top of it. */}
-                    <WhatChanged
-                        items={windowRows}
-                        onSelect={(i) => setSelected?.(i)}
-                        onOpenInbox={() => window.dispatchEvent(
-                            new CustomEvent("akili:open-module", { detail: "inbox" }))}
-                    />
-
+                    
                     <GlobeView
                         eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
                         geoConfirmedEnabled={groupsOn.news}

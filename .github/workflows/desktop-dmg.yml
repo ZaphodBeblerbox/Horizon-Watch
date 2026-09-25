@@ -108,12 +108,20 @@ jobs:
           REPO=ZaphodBeblerbox/parallax-releases
           # Re-running the same version replaces the asset instead of
           # failing on an already-existing tag.
+          # A SECOND COPY UNDER A FIXED NAME. The built DMG carries its
+          # version in the filename, so a link to
+          # releases/latest/download/Parallax_1.0.0_aarch64.dmg stops
+          # resolving the moment 1.0.1 ships — which is exactly what a
+          # "always points at the newest build" link must not do. Parallax.dmg
+          # is the same bytes under a name that never changes.
+          cp "${{ steps.find.outputs.path }}" "$RUNNER_TEMP/Parallax.dmg"
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" "${{ steps.find.outputs.path }}" \
-              --repo "$REPO" --clobber
+              "$RUNNER_TEMP/Parallax.dmg" --repo "$REPO" --clobber
             exit 0
           fi
           gh release create "$TAG" "${{ steps.find.outputs.path }}" \
+            "$RUNNER_TEMP/Parallax.dmg" \
             --repo "$REPO" \
             --title "Parallax ${{ inputs.version }}" \
             --notes "$(cat <<'NOTES'

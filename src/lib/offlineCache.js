@@ -105,12 +105,38 @@ export function isCacheable(method, url, apiBase) {
 
 // ── the interceptor ─────────────────────────────────────────────────────
 
+/**
+ * Find a cached entry for this URL, falling back to a seeded copy of the
+ * same whole-dataset path requested with different query params.
+ *
+ * WHY THE FALLBACK IS NARROW. The seed stores /api/airports?limit=9000;
+ * a screen might ask for ?limit=5000. Refusing that would leave the layer
+ * empty with 18 MB of airports sitting on disk. But the same reasoning
+ * applied to a FILTERED endpoint would be a lie — answering
+ * ?country=FR with every country is not "close enough", it is wrong. So
+ * only paths explicitly declared whole datasets participate, and the
+ * query string is ignored for those alone.
+ */
+export async function lookup(store, url, wholePaths = []) {
+    let entry = null
+    try { entry = await store.get(url) } catch { entry = null }
+    if (entry) return entry
+    const path = String(url).split("?")[0]
+    if (!wholePaths.some((p) => path.endsWith(p))) return null
+    let keys = []
+    try { keys = await store.keys() } catch { return null }
+    const sibling = keys.find((k) => String(k).split("?")[0] === path)
+    if (!sibling) return null
+    try { return (await store.get(sibling)) || null } catch { return null }
+}
+
 export function installOfflineCache({
     win = typeof window !== "undefined" ? window : undefined,
     apiBase,
     store,
     maxAgeMs = MAX_AGE_MS,
     timeoutMs = NETWORK_TIMEOUT_MS,
+    wholePaths = [],
     now = () => Date.now(),
 } = {}) {
     if (!win || typeof win.fetch !== "function" || !apiBase) return () => {}
@@ -162,8 +188,7 @@ export function installOfflineCache({
             return res
         } catch (err) {
             if (timer) clearTimeout(timer)
-            let entry = null
-            try { entry = await backing.get(url) } catch { entry = null }
+            const entry = await lookup(backing, url, wholePaths)
             if (!entry || (now() - entry.at) > maxAgeMs) {
                 // Nothing usable. Re-throw the real error rather than
                 // handing back an empty 200, which would read to every

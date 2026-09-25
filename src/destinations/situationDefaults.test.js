@@ -48,14 +48,9 @@ describe("v4.3 shell defaults", () => {
         expect(close.slice(0, 200)).toContain("setSelected(null)")
     })
 
-    it("shows the what-changed card on the map", () => {
-        expect(SRC).toContain("<WhatChanged")
-    })
-
-    it("lets CSS place the card, not a prop", () => {
-        // The card insets itself with the map's own --map-inset-l, so it
-        // tracks the pane token instead of a literal copied into JSX that
-        // drifts the moment the token changes.
-        expect(SRC).not.toMatch(/offsetLeft=/)
+    it("does not put a what-changed card on the map", () => {
+        // Removed at the user's request: it covered the map and repeated
+        // what the inbox already says.
+        expect(SRC).not.toContain("<WhatChanged")
     })
 })

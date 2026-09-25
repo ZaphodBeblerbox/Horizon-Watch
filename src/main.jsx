@@ -9,6 +9,7 @@ import { reloadOnceForStaleChunk } from './utils/staleChunkRecovery.js'
 import API_BASE from './apiBase.js'
 import { isDesktop } from './apiBase.js'
 import { installOfflineCache, indexedDbStore, pruneCache } from './lib/offlineCache.js'
+import { seedOffline, WHOLE_DATASET_PATHS } from './lib/offlineSeed.js'
 
 // THE APP MUST OPEN WHETHER OR NOT ANYTHING ANSWERS. Installed before
 // React mounts, so the very first screen's requests are covered too — a
@@ -22,7 +23,18 @@ import { installOfflineCache, indexedDbStore, pruneCache } from './lib/offlineCa
 try {
     if (typeof window !== 'undefined' && window.indexedDB) {
         const store = indexedDbStore(window.indexedDB)
-        installOfflineCache({ win: window, apiBase: API_BASE, store })
+        installOfflineCache({
+            win: window, apiBase: API_BASE, store,
+            wholePaths: WHOLE_DATASET_PATHS,
+        })
+        // Pull the reference picture down whenever we are online, so the
+        // app is usable on a machine that has never opened those layers.
+        // Deferred past first paint: 23 MB of downloads competing with the
+        // first screen's own requests would make the app feel broken in
+        // order to make it work later.
+        setTimeout(() => {
+            seedOffline({ apiBase: API_BASE, store }).catch(() => {})
+        }, 4000)
         // Sweep what is past its usable age on launch rather than on a
         // timer — a desktop app can sit closed for a week.
         pruneCache(store).catch(() => {})
