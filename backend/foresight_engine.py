@@ -10,6 +10,7 @@ foresight_engine.py — Claude-powered escalation foresight per strategic zone.
 """
 from __future__ import annotations
 
+import asyncio
 import llm_gate
 
 import json
@@ -98,8 +99,15 @@ def _gather_zone_intelligence(zone_id: str, zone_name: str, db) -> dict:
         .all()
     )
     zone_alerts = [
-        {"domain":   a.domain or "",
-         "rule":     a.rule_name or "",
+        # Alert has neither `domain` nor `rule_name`. It never did, so this
+        # raised AttributeError on the first alert every cycle and the
+        # foresight loop had been dead for as long as the field existed —
+        # visible only as "[foresight] loop error: 'Alert' object has no
+        # attribute 'domain'" in the log. The real columns carrying those
+        # two meanings are `source` ("AIS", "GDELT", "NEWS") and
+        # `alert_type` ("Sanctioned Vessel").
+        {"domain":   a.source or "",
+         "rule":     a.alert_type or "",
          "severity": a.severity or "",
          "title":    (a.title or "")[:150],
          "date":     a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else ""}
@@ -258,7 +266,22 @@ async def run_foresight_analysis(
 
     print(f"[foresight] Analysing {zone_name} (score={current_score:.0f})...")
 
-    intel = _gather_zone_intelligence(zone_id, zone_name, db)
+    # OFF THE LOOP. This reads seven days of alerts and thirty days of
+    # articles with .all(), then filters them in Python, for up to three
+    # zones a cycle — measured at ~9s per zone on the event loop, which
+    # the loop-lag watchdog caught directly.
+    #
+    # Worth stating plainly: fixing the AttributeError above made this
+    # WORSE before it made it better. While foresight crashed on the first
+    # alert it never reached the news query at all, so repairing the field
+    # names uncovered the full cost of a function that had never actually
+    # run to completion in production.
+    #
+    # Passing the session across the await is safe here and only here:
+    # the loop thread does not touch it while the worker runs, and the
+    # engine is created with check_same_thread=False. Nothing else shares
+    # this session.
+    intel = await asyncio.to_thread(_gather_zone_intelligence, zone_id, zone_name, db)
 
     model = "claude-opus-4-8" if current_score >= 55 else "claude-sonnet-4-6"
 

@@ -47,6 +47,23 @@ class CappedDict(OrderedDict):
             oldest = next(iter(self))
             del self[oldest]
 
+# HOW OFTEN A CPU-BOUND THREAD MUST HAND THE GIL BACK.
+#
+# Moving work off the event loop is necessary but not sufficient: a thread
+# doing pure-Python CPU work still holds the GIL, and the loop thread can
+# only run when it is handed over. CPython's default switch interval is
+# 5ms, so a loop waiting behind several busy background threads inherits
+# their convoy. This app runs a lot of them — vessel resolution over
+# 33,000 rows, the notifications warm, the detection cycle, fusion — and
+# the loop-lag watchdog measured blocks of seconds while every one of them
+# was nominally "off the loop".
+#
+# 1ms trades a little throughput on those background jobs, which nobody is
+# waiting on, for five times lower worst-case latency on the loop, which
+# every request is waiting on. That is the right way round for this app.
+import sys as _sys_gil
+_sys_gil.setswitchinterval(0.001)
+
 # Master pause flag — set True to pause heavy background feeds without redeploy
 HEAVY_FEEDS_PAUSED = False
 from datetime import datetime, timedelta, timezone
@@ -870,6 +887,23 @@ _sanctions_executor = ThreadPoolExecutor(max_workers=2,
 # requests somebody is.
 _maintenance_executor = ThreadPoolExecutor(max_workers=1,
                                            thread_name_prefix="maintenance")
+
+#: The 5-minute detection cycle, on its own worker.
+#:
+#: It was moved onto _maintenance_executor to get it off the event loop,
+#: which was right about the loop and wrong about the pool: that executor
+#: has ONE worker and already carries the derived-data warm, which
+#: production measured at 156s. The two then serialised, so a single
+#: thread ran CPU-bound Python almost continuously — and because of the
+#: GIL that starves the loop just as effectively as being on it. The
+#: loop-lag watchdog measured a 75s block the moment the cycle landed
+#: behind the warm.
+#:
+#: Separating them does not make the work cheaper. It stops one long job
+#: queueing behind another and turning two periodic stalls into one
+#: continuous one.
+_detection_executor = ThreadPoolExecutor(max_workers=1,
+                                         thread_name_prefix="detection")
 
 #: How many sanctions checks may be in flight before new ones are shed.
 #:
@@ -11608,7 +11642,16 @@ async def _risk_index_warm_loop():
                 # throughout.
                 return len(_live_notification_sources(48, force=True))
 
+            # PER-STEP TIMING, BECAUSE THE TOTAL IS NO LONGER TRUE.
+            # The comment above budgets this warm at ~16s. Production
+            # logged "warmed in 156.1s" — ten times that, every 720s, so a
+            # GIL-holding thread is now running about a fifth of the time
+            # and the loop-lag watchdog sees it. A single total cannot say
+            # which of the three steps grew, and guessing has already cost
+            # this investigation two wrong answers.
+            _t_risk = time.monotonic()
             await loop_.run_in_executor(_maintenance_executor, _warm_risk)
+            _d_risk = time.monotonic() - _t_risk
             await asyncio.sleep(1)
 
             # The conflict model takes ~11s to fit over 65,000 rows and
@@ -11622,16 +11665,22 @@ async def _risk_index_warm_loop():
                 finally:
                     c.close()
 
+            _t_fc = time.monotonic()
+            _d_fc = 0.0
             try:
                 nb = await loop_.run_in_executor(_maintenance_executor, _warm_forecast)
+                _d_fc = time.monotonic() - _t_fc
                 print(f"[forecast] model warm; {nb} boards ready")
             except Exception as fe:                          # noqa: BLE001
                 print(f"[forecast] warm failed: {fe}")
             await asyncio.sleep(1)
             await asyncio.sleep(1)
+            _t_src = time.monotonic()
             n = await loop_.run_in_executor(_maintenance_executor, _warm_sources)
+            _d_src = time.monotonic() - _t_src
             print(f"[notifications] warmed in {time.monotonic() - t0:.1f}s; "
-                  f"{n} items ready")
+                  f"{n} items ready "
+                  f"{{risk {_d_risk:.1f}s, forecast {_d_fc:.1f}s, sources {_d_src:.1f}s}}")
         except Exception as e:                               # noqa: BLE001
             print(f"[notifications] warm failed: {e}")
         await asyncio.sleep(DERIVED_WARM_INTERVAL_S)
@@ -11677,8 +11726,12 @@ async def _vessel_resolution_loop():
         try:
             import ftm_resolve
             loop_ = asyncio.get_event_loop()
+            # NOT _executor. That pool is shared with request handling, and
+            # this walks 33,000+ vessels — exactly the "fire-hose work must
+            # not share a pool with work a user is waiting on" rule that the
+            # sanctions path already had to learn.
             stats = await loop_.run_in_executor(
-                _executor, lambda: ftm_resolve.resolve_all(_akili_db_path()))
+                _maintenance_executor, lambda: ftm_resolve.resolve_all(_akili_db_path()))
             print(f"[ontology] vessel resolution: examined {stats.get('examined')}, "
                   f"linked {stats.get('linked')}, for review {stats.get('for_review')}")
         except Exception as e:                               # noqa: BLE001
@@ -24365,7 +24418,7 @@ async def _forge_detection_cycle():
             except Exception as _ex:
                 print(f"[forge-brain] cycle error: {_ex}")
         await asyncio.get_event_loop().run_in_executor(
-            _maintenance_executor, _cycle_body)
+            _detection_executor, _cycle_body)
         await asyncio.sleep(300)
 
 
