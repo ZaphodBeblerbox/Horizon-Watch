@@ -3837,6 +3837,49 @@ def api_forecast_scenario_delete(sid: str):
         conn.close()
 
 
+@app.post("/api/forecast/scenarios/{sid}/export.pdf")
+async def api_forecast_scenario_pdf(sid: str, request: Request):
+    """One saved scenario as a plain white document.
+
+    The scenario's own fields are read from the database, never taken from
+    the request — the caller cannot relabel someone else's scenario on its
+    way to paper. What the caller does supply is the laydown and the prior
+    it was displaying, because those are computed in the browser from the
+    real border, coastline and airfield list (see scenario_export.py's
+    module docstring on why re-deriving them here would be a second
+    implementation of the same model)."""
+    import forecast_scenarios as _fs
+    import scenario_export as _sx
+
+    conn = _fc_conn()
+    try:
+        row = _fs.get(conn, sid)
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, f"scenario {sid} not found")
+
+    try:
+        body = await request.json()
+    except Exception:                                        # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    payload = {
+        "scenario": row,
+        "assessment": body.get("assessment") or {},
+        "prior": body.get("prior") or {},
+        "laydown": body.get("laydown") or {},
+    }
+    pdf_bytes = _sx.build_pdf(payload)
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", (row.get("name") or sid)).strip("-") or sid
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="scenario-{safe}.pdf"'},
+    )
+
+
 @app.get("/api/forecast/boards")
 def api_forecast_boards(limit: int = Query(40, ge=1, le=200)):
     """Locales with enough recent activity to be worth a scenario board."""
@@ -7835,13 +7878,16 @@ def _prefetch_event_infra(item: dict) -> list:
             except Exception as ex:
                 print(f"[prefetch] chokepoints error: {ex}")
 
+        # Imported here, not at module scope: routers.infrastructure imports
+        # main back, so a top-level import would be circular.
+        from routers.infrastructure import get_infrastructure as _get_infrastructure
         osm_map = {"hospitals": "medical", "military": "military", "pipelines": "pipelines"}
         for cat in cats:
             if cat not in osm_map:
                 continue
             osm_cat = osm_map[cat]
             try:
-                data = get_infrastructure(category=osm_cat, bbox=bbox_str)
+                data = _get_infrastructure(category=osm_cat, bbox=bbox_str)
                 for feat in data.get("features", []):
                     coords = _feature_coords(feat)
                     if not coords:
@@ -11909,10 +11955,10 @@ async def escalate_alert(alert_id: str, request: Request):
     with _gdb_esc() as db:
         row = db.query(_AlertRow).filter(_AlertRow.alert_id == alert_id).first()
         if row:
-            tags = json.loads(row.tags or "[]")
+            tags = _json.loads(row.tags or "[]")
             if "escalated" not in tags:
                 tags.append("escalated")
-            row.tags = json.dumps(tags)
+            row.tags = _json.dumps(tags)
             db.commit()
     if not in_memory_hit and not row:
         return JSONResponse({"error": "Alert not found"}, status_code=404)
@@ -13223,7 +13269,7 @@ async def _firms_trigger_pass() -> None:
         return          # nothing to task; do not burn the FIRMS quota either
 
     from database import WatchZone, get_db as _gdb_firms
-    loop = _asyncio_sched.get_running_loop()
+    loop = asyncio.get_running_loop()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     cutoff = now - timedelta(hours=_firms.REPEAT_SUPPRESS_HOURS)
     global _FIRMS_RECENT
@@ -13610,6 +13656,27 @@ async def _zone_images_warmup_task():
         print(f"[zone-images] warmup error: {ex}")
 
 
+async def _fusion_drain_loop():
+    """Evaluate fusion buckets that were throttled during a burst.
+
+    fusion_engine coalesces evaluation per geo bucket (see
+    _request_fusion_eval): a burst of hundreds of GDELT signals into one
+    bucket evaluates once rather than hundreds of times. A bucket that
+    goes quiet mid-throttle needs someone to come back for it, which is
+    this. It runs in the maintenance executor because the evaluation it
+    triggers opens DB sessions, and that must not happen on the loop.
+    """
+    await asyncio.sleep(20)
+    while True:
+        try:
+            if _fusion_engine:
+                await asyncio.get_event_loop().run_in_executor(
+                    _maintenance_executor, _fusion_engine.drain_pending_evaluations)
+        except Exception as _fde:
+            print(f"[fusion] drain loop error: {_fde}")
+        await asyncio.sleep(20)
+
+
 async def _fusion_expire_loop():
     """Prune stale fusion signals and surge events every 15 minutes."""
     await asyncio.sleep(30)
@@ -13737,6 +13804,7 @@ def _backfill_alert_context_once(budget_s: int | None = None) -> dict:
     so a killed pass is simply resumed by the next one and a completed pass
     finds nothing. Runs in a worker thread, never on the event loop."""
     import notification_context as _nc
+    from alert_writer import _float as _aw_float
     from sqlalchemy import or_ as _or_
     from database import Alert as _A, get_db as _gdb
 
@@ -13766,7 +13834,7 @@ def _backfill_alert_context_once(budget_s: int | None = None) -> dict:
                     if r.lon is None:
                         _lat, _lon = _nc._coords(
                             {"lat": r.lat, "lon": None}, raw)
-                        lon = _float(_lon)
+                        lon = _aw_float(_lon)
                         r.lon = lon
                         if lon is not None:
                             stats["lon"] += 1
@@ -14250,6 +14318,7 @@ async def startup_event():
         threading.Thread(target=_restore_fusion_signals, name="fusion-restore",
                          daemon=True).start()
         asyncio.create_task(_fusion_expire_loop())
+        asyncio.create_task(_fusion_drain_loop())
 
     # RSS retired for real (fix/geoconfirmed-real-backbone) — GeoConfirmed
     # is now the real source for news/conflict signals everywhere these two
@@ -21201,6 +21270,59 @@ def api_imagery_scene(scan_id: str):
             "zone": _zone_row_to_dict(zone),
             **comparison,
         }
+
+
+@app.get("/api/imagery/scenes/{scan_id}/export.pdf")
+def api_imagery_scene_pdf(scan_id: str):
+    """One satellite scene as a plain document: the frame, its metadata,
+    every detection at real coordinates, and the change against the
+    reference scene.
+
+    Reads everything from the database rather than taking a payload — the
+    image bytes, the detections and the comparison are all already here,
+    so accepting them from the browser would only create a way for the
+    document and the screen to disagree."""
+    from database import SentinelScan, SentinelDetection, WatchZone, get_db as _gdb_ix
+    import imagery_pipeline
+    import imagery_export as _ix
+
+    with _gdb_ix() as db:
+        scan = db.query(SentinelScan).filter(SentinelScan.scan_id == scan_id).first()
+        if not scan:
+            raise HTTPException(404, f"scene {scan_id} not found")
+        zone = db.query(WatchZone).filter(WatchZone.id == scan.zone_id).first()
+        if not zone:
+            raise HTTPException(500, f"scene {scan_id}'s zone no longer exists")
+
+        comparison = imagery_pipeline.compare_scans(db, zone, scan) if scan.status == "completed" else {
+            "reference_scan_id": None, "reference_date": None, "counts": [], "changes": [],
+        }
+        ref_image_b64 = None
+        if comparison.get("reference_scan_id"):
+            ref_row = db.query(SentinelScan).filter(
+                SentinelScan.scan_id == comparison["reference_scan_id"]).first()
+            ref_image_b64 = ref_row.image_b64 if ref_row else None
+
+        dets = (db.query(SentinelDetection)
+                  .filter(SentinelDetection.scan_id == scan_id)
+                  .order_by(SentinelDetection.confidence.desc())
+                  .all())
+        scene = {
+            "scan": _scan_row_to_dict(scan), "image_b64": scan.image_b64,
+            "reference_image_b64": ref_image_b64,
+            "zone": _zone_row_to_dict(zone),
+            "detections": [_detection_row_to_dict(d) for d in dets],
+            **comparison,
+        }
+        # Read inside the session: `zone` is detached once the `with` exits.
+        zone_name = zone.name or scan_id
+
+    pdf_bytes = _ix.build_pdf(scene)
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", zone_name).strip("-") or scan_id
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="scene-{safe}-{scan_id[:8]}.pdf"'},
+    )
 
 
 def _oriented_rect_corners(lat: float, lon: float, length_m: float, width_m: float, heading_deg: float) -> list:
