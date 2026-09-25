@@ -261,6 +261,15 @@ app.add_middleware(
         "http://localhost:3000",
         "https://horizon-watch.vercel.app",
         "https://horizon-watch-production.up.railway.app",
+        # The packaged desktop app. A Tauri webview does not serve the page
+        # over https from a domain we own — on macOS the origin is literally
+        # "tauri://localhost" and on Windows "http://tauri.localhost". Both
+        # have to be named here: allow_credentials rules out a wildcard, so
+        # an unnamed origin means every request from the DMG is refused by
+        # the browser before it reaches any route. That, together with the
+        # API base pointing at localhost, is why the DMG reached no backend.
+        "tauri://localhost",
+        "http://tauri.localhost",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
