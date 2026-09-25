@@ -257,10 +257,24 @@ async def run_foresight_analysis(
     if not force:
         from database import ForesightAssessment
         cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=FORESIGHT_COOLDOWN_HOURS)
-        existing = (db.query(ForesightAssessment)
-                    .filter(ForesightAssessment.zone_id == zone_id,
-                            ForesightAssessment.generated_at >= cutoff)
-                    .first())
+        # SHORT SESSION, NOT THE CALLER'S.
+        #
+        # A reader's snapshot pins every WAL page newer than it, so a
+        # session held open across an await stops SQLite checkpointing for
+        # as long as it lives. This function awaits an LLM call in the
+        # middle, for up to three zones a cycle, and the caller's session
+        # used to span all of it — WAL measured at 85MB with
+        # "database is locked" appearing at the moment of each checkpoint.
+        #
+        # This got worse, not better, when the AttributeError above was
+        # fixed: while foresight crashed on the first alert its session was
+        # released almost immediately. Making it work made it a WAL pin.
+        from database import get_db as _gdb
+        with _gdb() as _d:
+            existing = (_d.query(ForesightAssessment)
+                        .filter(ForesightAssessment.zone_id == zone_id,
+                                ForesightAssessment.generated_at >= cutoff)
+                        .first())
         if existing:
             return None
 
@@ -281,7 +295,14 @@ async def run_foresight_analysis(
     # the loop thread does not touch it while the worker runs, and the
     # engine is created with check_same_thread=False. Nothing else shares
     # this session.
-    intel = await asyncio.to_thread(_gather_zone_intelligence, zone_id, zone_name, db)
+    def _gather():
+        # Opened and closed inside the thread, so no read snapshot
+        # outlives the gather itself.
+        from database import get_db as _gdb
+        with _gdb() as _d:
+            return _gather_zone_intelligence(zone_id, zone_name, _d)
+
+    intel = await asyncio.to_thread(_gather)
 
     model = "claude-opus-4-8" if current_score >= 55 else "claude-sonnet-4-6"
 
@@ -321,7 +342,10 @@ async def run_foresight_analysis(
 
         # Persist
         from database import ForesightAssessment
-        db.add(ForesightAssessment(
+        from database import get_db as _gdb_w
+        # Built first, written inside a with-block that cannot leak the
+        # session if anything below raises.
+        _row = ForesightAssessment(
             zone_id                    = zone_id,
             zone_name                  = zone_name,
             score_at_generation        = current_score,
@@ -339,8 +363,10 @@ async def run_foresight_analysis(
             full_assessment            = json.dumps(assessment),
             generated_at               = datetime.datetime.utcnow(),
             expires_at                 = datetime.datetime.utcnow() + datetime.timedelta(hours=12),
-        ))
-        db.commit()
+        )
+        with _gdb_w() as _wdb:
+            _wdb.add(_row)
+            _wdb.commit()
 
         ep = assessment.get("escalation_probability", {}).get("30_days", 0)
         print(f"[foresight] {zone_name} — escalation_30d: {ep:.0%}, "
@@ -362,7 +388,16 @@ async def run_foresight_cycle(db, forge_alerts: list = None) -> None:
     """
     from threat_matrix import compute_all_zone_scores
 
-    zones = compute_all_zone_scores(db, forge_alerts)
+    # `db` is accepted for the endpoint that still passes one, but the
+    # scheduled loop passes None deliberately: nothing may hold a session
+    # open across the awaits below, because a reader pins the WAL and
+    # blocks checkpointing for the length of the whole cycle.
+    if db is not None:
+        zones = compute_all_zone_scores(db, forge_alerts)
+    else:
+        from database import get_db as _gdb_z
+        with _gdb_z() as _zdb:
+            zones = compute_all_zone_scores(_zdb, forge_alerts)
 
     def _priority(z: dict) -> int:
         traj = z.get("trajectory", "")

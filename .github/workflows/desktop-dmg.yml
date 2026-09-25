@@ -127,15 +127,24 @@ jobs:
             --notes "$(cat <<'NOTES'
           Download the `.dmg`, open it, and drag Parallax to Applications.
 
-          **The first launch will warn you.** The app is not signed with an
-          Apple Developer certificate, so macOS says it cannot verify the
-          developer. To open it:
+          **Then run this once, in Terminal:**
 
-          1. Right-click Parallax in Applications and choose **Open**
-          2. Click **Open** again in the dialog
+          ```
+          xattr -cr /Applications/Parallax.app
+          ```
 
-          You only need to do this once. If the dialog gives you no Open
-          option, go to **System Settings > Privacy & Security**, scroll to
-          the message about Parallax, and click **Open Anyway**.
+          That clears the quarantine flag macOS puts on anything
+          downloaded. The app is not signed with an Apple Developer
+          certificate, so without it macOS refuses to open the app and
+          says it cannot verify the developer.
+
+          Recent macOS removed the old right-click-and-choose-Open
+          shortcut for unsigned apps, so the Terminal command above is the
+          reliable way. If you would rather not use Terminal: try to open
+          the app, then go to **System Settings > Privacy & Security**,
+          scroll down to the message about Parallax and click
+          **Open Anyway**.
+
+          You only need to do this once per install.
           NOTES
           )"

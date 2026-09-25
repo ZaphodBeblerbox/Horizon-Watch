@@ -14121,8 +14121,19 @@ async def _foresight_loop():
     while True:
         try:
             import foresight_engine
-            with get_db() as _fdb:
-                await foresight_engine.run_foresight_cycle(_fdb, list(_forge_alerts))
+            # NO SESSION HELD ACROSS THE CYCLE.
+            #
+            # This `with get_db()` used to wrap the whole thing, and the
+            # cycle awaits an LLM call per zone for up to three zones. A
+            # reader's snapshot pins every WAL page newer than it, so that
+            # session stopped SQLite checkpointing for minutes at a time —
+            # the WAL reached 85MB and "database is locked" appeared at the
+            # moment of each checkpoint. _wal_checkpoint_loop's own
+            # docstring already named this loop as the worst offender.
+            #
+            # run_foresight_analysis now opens its own short sessions
+            # around each database span, so nothing outlives an await.
+            await foresight_engine.run_foresight_cycle(None, list(_forge_alerts))
             # Write foresight_latest snapshot
             try:
                 from database import ForesightAssessment as _FA
@@ -24989,11 +25000,15 @@ async def api_foresight_trigger(zone_id: str):
     try:
         import foresight_engine
         from threat_matrix import compute_threat_score
+        # The session closes before the await. run_foresight_analysis
+        # opens its own short ones; holding this one open across an LLM
+        # call would pin the WAL for the length of the request, which is
+        # what _wal_checkpoint_loop's docstring warns about.
         with get_db() as _db:
             score = compute_threat_score(zone_id, _db).get("threat_score", 0.0)
-            assessment = await foresight_engine.run_foresight_analysis(
-                zone_id, zone_id, float(score), _db, force=True
-            )
+        assessment = await foresight_engine.run_foresight_analysis(
+            zone_id, zone_id, float(score), None, force=True
+        )
         return {"triggered": True, "zone_id": zone_id, "assessment": assessment}
     except Exception as e:
         import traceback; traceback.print_exc()
