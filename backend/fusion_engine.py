@@ -14,6 +14,8 @@ Module-level singleton: fusion_engine = FusionEngine()
 
 import json
 import re
+import time
+import threading
 import uuid
 import math
 import datetime
@@ -25,6 +27,11 @@ import correlation_scoring as _cs
 FUSION_WINDOW_HOURS   = 2
 MIN_DOMAINS_FOR_FUSION = 2
 MIN_SIGNALS_FOR_FUSION = 2
+
+# How often one geo bucket may be evaluated, in seconds. This is a
+# throttle, not a delay: the first signal into a quiet bucket still
+# evaluates immediately. It only bounds what a burst can cost.
+EVAL_MIN_INTERVAL_S = 15.0
 
 # Real cost-control fix (2026-09 spend audit): _generate_haiku_assessment()
 # was completely unmetered and unthrottled — _update_fusion() re-fired it on
@@ -110,6 +117,17 @@ class FusionEngine:
         self.signal_to_fusion: dict = {}
         # Recent signal log (last 200, for /api/signals/recent)
         self._recent_signals: list = []
+        #: Coalescing state. A bucket is evaluated at most once per
+        #: EVAL_MIN_INTERVAL_S; signals that arrive inside that window mark
+        #: it dirty instead, and the drain picks it up. See
+        #: _request_fusion_eval for why this is the difference between a
+        #: server that answers and one that does not.
+        self._dirty: dict     = {}
+        self._last_eval: dict = {}
+        #: _evaluate_fusion mutates active_fusions and writes rows. It is
+        #: reached both from on_signal (any ingest thread) and from the
+        #: drain (the maintenance executor), so it needs a lock.
+        self._eval_lock = threading.Lock()
         # Fusion settings (mutable by operator)
         self.fusion_window_hours    = FUSION_WINDOW_HOURS
         self.min_domains            = MIN_DOMAINS_FOR_FUSION
@@ -193,14 +211,7 @@ class FusionEngine:
         if not correlatable:
             return
 
-        # Logged only for buckets that can actually fuse — see
-        # _evaluate_fusion. This line fired once per arriving signal and
-        # built a set over the whole bucket to do it.
-        current = self.active_signals.get(geo_key, [])
-        if self._domain_count(geo_key, current) >= 2:
-            print(f"[FUSION] Active signals for {geo_key}: {len(current)} | "
-                  f"domains={self._bucket_domains.get(geo_key) or '?'}")
-        self._evaluate_fusion(geo_key)
+        self._request_fusion_eval(geo_key)
 
     def get_recent_signals(self, limit: int = 50) -> list:
         return list(reversed(self._recent_signals[-limit:]))
@@ -216,6 +227,11 @@ class FusionEngine:
             if not self.active_signals[geo_key]:
                 del self.active_signals[geo_key]
                 self._bucket_domains.pop(geo_key, None)
+                # The coalescing bookkeeping is keyed by geo_key too, and
+                # nothing else ever removes an entry — every country and
+                # zone that has ever seen a signal would keep one forever.
+                self._dirty.pop(geo_key, None)
+                self._last_eval.pop(geo_key, None)
             else:
                 self._bucket_domains[geo_key] = {
                     s["domain"] for s in self.active_signals[geo_key]}
@@ -325,6 +341,59 @@ class FusionEngine:
                 break
         return len(seen)
 
+    def _request_fusion_eval(self, geo_key: str):
+        """Evaluate this bucket, but not more than once per interval.
+
+        WHY THIS EXISTS. _evaluate_fusion is not cheap and _update_fusion,
+        which it calls for any already-fused bucket, is expensive: it opens
+        a DB session, runs score_cluster (two more DB queries), and may
+        call the narrative model. All of that ran ONCE PER ARRIVING SIGNAL.
+
+        GDELT does not arrive one signal at a time; it arrives in bursts of
+        hundreds into the same geo bucket. In production zone:SZONE-004
+        held 635 signals and climbing, and every one of those arrivals
+        re-scored the whole bucket against the database on the event loop.
+        The process stayed alive and kept logging while answering no HTTP
+        at all — the signature is FUSION lines still streaming in the logs
+        next to health checks that never complete.
+
+        Coalescing costs nothing in fidelity. The evaluation that runs
+        after a burst sees the same bucket the 300 skipped ones would have
+        seen, only more of it. What it removes is 299 redundant re-scores
+        of a verdict that had not changed.
+        """
+        now = time.monotonic()
+        last = self._last_eval.get(geo_key)
+        if last is not None and (now - last) < EVAL_MIN_INTERVAL_S:
+            self._dirty[geo_key] = True
+            return
+        self._last_eval[geo_key] = now
+        self._dirty.pop(geo_key, None)
+        with self._eval_lock:
+            self._evaluate_fusion(geo_key)
+
+    def drain_pending_evaluations(self, max_buckets: int = 100) -> int:
+        """Evaluate buckets that went dirty while throttled.
+
+        Without this a bucket that stops receiving signals mid-throttle
+        would never be evaluated again — the burst would be silently
+        dropped rather than deferred. Called off the event loop.
+        """
+        now = time.monotonic()
+        ready = [k for k in list(self._dirty)
+                 if (now - self._last_eval.get(k, 0.0)) >= EVAL_MIN_INTERVAL_S]
+        for geo_key in ready[:max_buckets]:
+            self._dirty.pop(geo_key, None)
+            self._last_eval[geo_key] = now
+            try:
+                with self._eval_lock:
+                    self._evaluate_fusion(geo_key)
+            except Exception as e:                           # noqa: BLE001
+                # One bad bucket must not stop the drain, or a single
+                # poisoned geo_key freezes fusion for every other one.
+                print(f"[FUSION] drain error on {geo_key}: {e}")
+        return min(len(ready), max_buckets)
+
     def _evaluate_fusion(self, geo_key: str):
         signals = self.active_signals.get(geo_key, [])
         if not signals:
@@ -350,6 +419,12 @@ class FusionEngine:
         # returned here anyway.
         if self._domain_count(geo_key, signals) < 2:
             return
+
+        # Once per evaluation, not once per arriving signal. This is the
+        # line that shows a bucket growing without bound, so it is worth
+        # keeping — at the coalesced rate it cannot itself flood the log.
+        print(f"[FUSION] Active signals for {geo_key}: {len(signals)} | "
+              f"domains={self._bucket_domains.get(geo_key) or '?'}")
 
         # Prioritise strategically relevant signals when scoring
         high_relevance = [s for s in signals if s.get("relevance_score", 0) >= 30]
