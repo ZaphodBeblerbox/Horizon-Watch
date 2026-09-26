@@ -1619,9 +1619,11 @@ def get_health_detailed():
             "name":      "Global Energy Monitor Pipelines (GOPIT)",
             "type":      "infrastructure",
             "last_fetch": _PIPELINES_DATA.get("last_updated"),
-            "status":    "degraded" if _PIPELINES_DATA.get("error") else "ok",
+            # AGE, NOT JUST "degraded". A reader cannot tell a blip from
+            # six months of nothing, and those call for different actions.
+            "status":    _pipelines_status(),
             "record_count": len(_PIPELINES_DATA.get("pipelines", [])),
-            "message":   _PIPELINES_DATA.get("error"),
+            "message":   _pipelines_message(),
         },
     ]
 
@@ -14424,6 +14426,15 @@ def _fusion_fire_callback(fusion_dict: dict, suppressed_alert_ids: list):
 async def startup_event():
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
+    # RETRY THE PIPELINE SOURCE. _refresh_pipelines_from_remote() was only
+    # ever reachable through an explicit ?refresh=true on the search
+    # endpoint, which nothing sends — so the cache sat at its last
+    # successful fetch (2026-03-20) with a recorded 404 and never tried
+    # again. A feed that cannot retry is not degraded, it is abandoned.
+    # Backgrounded, because a 30s timeout per URL must not delay the port
+    # binding and fail the healthcheck.
+    threading.Thread(target=_refresh_pipelines_from_remote, daemon=True).start()
+
     print(f"[startup] *** HORIZON WATCH STARTING — env='{os.getenv('RAILWAY_ENVIRONMENT','local')}' DATA_DIR={DATA_DIR} ***")
 
     # CREATE ANY TABLE THE CODE KNOWS ABOUT AND THE DATABASE DOES NOT.
@@ -19216,6 +19227,30 @@ def _mil_enrich_match(name: str) -> dict | None:
         if el and (el in nl or nl in el):
             return entry
     return None
+
+def _pipelines_age_days():
+    ts = (_PIPELINES_DATA or {}).get("last_updated")
+    if not ts:
+        return None
+    try:
+        return (datetime.utcnow() - datetime.fromisoformat(str(ts)[:19])).days
+    except Exception:
+        return None
+
+def _pipelines_status():
+    if not (_PIPELINES_DATA or {}).get("error"):
+        return "ok"
+    age = _pipelines_age_days()
+    # A source that has produced nothing for a month is not "degraded" in
+    # any useful sense — it is down, and saying so is what gets it fixed.
+    return "error" if age is not None and age > 30 else "degraded"
+
+def _pipelines_message():
+    err = (_PIPELINES_DATA or {}).get("error")
+    if not err:
+        return None
+    age = _pipelines_age_days()
+    return f"{err} — last successful fetch {age} days ago" if age is not None else err
 
 # ── Pipeline dataset ──────────────────────────────────────────────────────────
 _PIPELINES_DATA:   dict  = {}

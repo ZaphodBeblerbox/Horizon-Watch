@@ -1,3 +1,4 @@
+import Tutorial from "./ui/Tutorial.jsx"
 import { isTextEntry } from "./utils/isTextEntry.js"
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
 import { REGION_COORDS } from "./data/regionCoords.js"
@@ -1338,6 +1339,7 @@ export default function App() {
                     />
                 </>
             )}
+            <Tutorial />
             <ToastHost />
             <NotificationStack
                 onOpen={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {

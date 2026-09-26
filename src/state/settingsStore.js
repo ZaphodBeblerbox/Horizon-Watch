@@ -84,6 +84,14 @@ export const DEFAULTS = {
     // Do not disturb — suppresses notification CARDS. The tray still
     // records everything and the bell still counts.
     dnd: false,
+
+    // The guided walkthrough. On until it is finished or skipped, which is
+    // why it is a tri-state rather than a boolean: "never opened it" and
+    // "turned it off" are different, and only the second should mean the
+    // app stays quiet about its own features forever.
+    //   null   — never run (show it)
+    //   "done" — completed or skipped (do not show)
+    tutorial: null,
 }
 
 let _settings = { ...DEFAULTS }
