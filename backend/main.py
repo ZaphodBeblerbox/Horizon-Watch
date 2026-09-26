@@ -135,6 +135,27 @@ w8OYINpr7eTh+lAh7ARnAMvU0CShRANCAATqXQyqJfz9pQC4GLtN8m1ybdgjVzYG
 jqn+AMFKug9IJvJSs8ivbu1NfjVPIHeNuwsxeDknR8HEyLNQwntQ+MdP
 -----END PRIVATE KEY-----"""
 _VAPID_CLAIMS     = {"sub": "mailto:admin@trifectatechnologies.co"}
+# ── Background-loop error visibility ─────────────────────────────────────
+# A swallowed exception in a background loop disables a whole feature and
+# says nothing. It has happened repeatedly here: history stops recording,
+# or a snapshot is written with an empty event list, and the first anyone
+# knows is that a chart has been flat for a week.
+#
+# Printing every occurrence is not the answer either — a failure that
+# repeats per AIS message at ~3,000/min is its own outage, via log-rate
+# backpressure. So: the first one is always reported, then every 500th,
+# with the running count, which is enough to see both that it started and
+# that it is still going.
+_LOOP_ERR_COUNTS: dict = {}
+_LOOP_ERR_LOCK = threading.Lock()
+
+def _loop_error(key: str, exc: Exception, every: int = 500) -> None:
+    with _LOOP_ERR_LOCK:
+        n = _LOOP_ERR_COUNTS.get(key, 0) + 1
+        _LOOP_ERR_COUNTS[key] = n
+    if n == 1 or n % every == 0:
+        print(f"[{key}] error (occurrence {n}): {type(exc).__name__}: {exc}")
+
 # Push subscriptions live in the database (PushSubscription), not here —
 # a dict does not survive a restart, so every deploy silently unsubscribed
 # everyone while their browsers still believed they were subscribed.
@@ -4584,8 +4605,11 @@ def get_adsb(
     # Record to history (throttled — only new records, once per aircraft per minute)
     try:
         _record_adsb_history(aircraft)
-    except Exception:
-        pass
+    except Exception as _e:
+        # Second call site — the viewport endpoint, not the global cache
+        # loop. Both were silent, so aircraft history could stop recording
+        # from either direction with nothing said.
+        _loop_error("adsb-history/viewport", _e)
     return {"aircraft": aircraft}
 
 
@@ -10458,8 +10482,8 @@ async def _ais_websocket_loop():
                             # Record to history (throttled)
                             try:
                                 _record_ais_history(mmsi, vessel)
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _loop_error("ais-history", _e)
                             # CAPPING IS THE CONTAINER'S JOB, AND IT DOES
                             # IT IN O(1). _AIS_VESSELS is a CappedDict:
                             # __setitem__ already move_to_end's on update
@@ -10484,7 +10508,11 @@ async def _ais_websocket_loop():
                         _AIS_STATUS["vessel_count"] = len(_AIS_VESSELS)
                         _AIS_STATUS["last_msg"]     = time.strftime("%H:%M:%S", time.gmtime())
                         _AIS_STATUS["last_poll"]    = datetime.now(timezone.utc).isoformat()
-                    except Exception:
+                    except Exception as _e:
+                        # One malformed message must not kill the socket,
+                        # but dropping every message in silence looks
+                        # identical to a quiet sea.
+                        _loop_error("ais-message", _e, every=2000)
                         continue
         except Exception as ex:
             _AIS_STATUS["connected"] = False
@@ -11882,8 +11910,8 @@ async def _global_adsb_cache_loop():
                            for ac in aircraft_raw if ac.get("lat") is not None]
                 try:
                     _record_adsb_history(mapped)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _loop_error("adsb-history", _e)
                 # adsb.lol is free and rate-limited, and these are
                 # 3,000nm queries. Ten of them two seconds apart earned a
                 # 429 across the board; six seconds apart does not.
@@ -14229,8 +14257,11 @@ async def _threat_snapshot_loop():
             active_events = []
             try:
                 active_events = es.get_active_events()
-            except Exception:
-                pass
+            except Exception as _e:
+                # NOT just a missing log line: the snapshot below is
+                # written regardless, so a failure here silently records an
+                # hour as having had no active events at all.
+                _loop_error("threat-snapshot/active-events", _e, every=20)
             with _gdb_ts() as _ts_db:
                 n = threat_matrix.save_hourly_snapshot(_ts_db, list(_forge_alerts), active_events)
             print(f"[threat-snapshot] wrote {n} hourly rows")
@@ -14276,8 +14307,8 @@ async def _dirty_region_refresh_loop():
                 active_events = []
                 try:
                     active_events = es.get_active_events()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _loop_error("dirty-region/active-events", _e, every=20)
 
                 # OFF THE LOOP. This wakes every 30 seconds and rescores
                 # every region an alert has touched, against a DB session
