@@ -159,6 +159,18 @@ function useImageryEnabled() {
 // top-bar icon; the Layers pane's own "Event domains" → "Imagery" row
 // (DomainRow, driven by the same LAYER_GROUPS/groupsOn state) is the one
 // real, unchanged home for it now.
+/** Height of the filter/status bar that sits under the top bar.
+ *
+ * THE PANES MUST CLEAR IT. They are absolutely positioned with top:0 in
+ * the same container, at a LOWER z-index than this bar — so the bar drew
+ * over their top 28px, which is exactly where a pane's header and its
+ * close button live. The pane looked like it ran under the top bar and
+ * could not be closed.
+ *
+ * Declared once and read by both, so the bar cannot change height without
+ * the panes following it. */
+const FILTER_BAR_H = 28
+
 const QUICK_LAYERS = [
     { key: "maritime", label: "Maritime", icon: "i-ship" },
     { key: "air", label: "Air", icon: "i-plane" },
@@ -845,7 +857,7 @@ export default function Situation({ onOpenDossier }) {
     // the time strip starts, so the strip is never underneath them and is
     // never covered; --strip-h tracks which face the strip is showing.
     const leftPaneStyle = {
-        position: "absolute", left: 0, top: 0, bottom: "var(--strip-h, 0px)", zIndex: 3,
+        position: "absolute", left: 0, top: FILTER_BAR_H, bottom: "var(--strip-h, 0px)", zIndex: 3,
         width: "var(--pane-l)", borderRight: "1px solid var(--line)",
         display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(-14px)",
@@ -858,7 +870,7 @@ export default function Situation({ onOpenDossier }) {
         // this is also now the Inspector's real width when a map marker is
         // clicked (see the pane content below), so one token now drives
         // Layers, this pane's default view, AND the marker-click Inspector.
-        position: "absolute", right: 0, top: 0, bottom: "var(--strip-h, 0px)", zIndex: 3,
+        position: "absolute", right: 0, top: FILTER_BAR_H, bottom: "var(--strip-h, 0px)", zIndex: 3,
         width: "var(--pane-r)", borderLeft: "1px solid var(--line)",
         display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(14px)",
@@ -1343,7 +1355,7 @@ export default function Situation({ onOpenDossier }) {
                     scroll region instead of rendering them underneath a
                     glass pane where they'd be unclickable and invisible. */}
                 <div style={{
-                    height: 28, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)",
+                    height: FILTER_BAR_H, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)",
                     display: "flex", alignItems: "center", gap: 10, padding: "0 12px", zIndex: 4, position: "relative",
                     minWidth: 0, overflowX: "auto",
                 }}>
