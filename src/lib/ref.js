@@ -150,13 +150,18 @@ const OPENERS = {
     brf:  (id, r, lbl) => navigate("briefings", `brf:${id}`, lbl),
     trk:  (id, r, lbl) => { navigate("situation"); if (r?.lat != null) flyTo(r.lat, r.lon) },
     loc:  (id, r, lbl) => { navigate("situation"); if (r?.lat != null) flyTo(r.lat, r.lon) },
-    // Real Workstation-module records (§7.2) — navigate("cases"/"mywork")
-    // routes through app.jsx's real openTab(), whose own mode-routing
-    // correction (§7.1) switches Watch -> Workstation automatically when
-    // one of these opens from anywhere in Watch mode.
+    // Real Workstation-module records (§7.2) — navigate("cases") routes
+    // through app.jsx's real openTab(), whose own mode-routing correction
+    // (§7.1) switches Watch -> Workstation automatically when one of these
+    // opens from anywhere in Watch mode.
+    //
+    // RFIs and mail both used to have their own modules. Cases absorbed
+    // them, so all three land there rather than at a module that no longer
+    // exists — a ref that navigates nowhere is worse than one that lands
+    // somewhere adjacent, because the click looks broken.
     case: (id, r, lbl) => navigate("cases", `case:${id}`, lbl),
-    rfi:  (id, r, lbl) => navigate("mywork", `rfi:${id}`, lbl),
-    mail: (id, r, lbl) => navigate("mail", `mail:${id}`, lbl),
+    rfi:  (id, r, lbl) => navigate("cases", `rfi:${id}`, lbl),
+    mail: (id, r, lbl) => navigate("cases", `mail:${id}`, lbl),
 }
 
 // ── The three real functions ─────────────────────────────────────────────

@@ -16,6 +16,8 @@ import { label, open as openRef } from "../lib/ref.js"
 import { can, requireCapability, currentUserId } from "../lib/capabilities.js"
 import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+import CaseFiles from "../cases/CaseFiles.jsx"
+import CaseSharing from "../cases/CaseSharing.jsx"
 
 const PRIORITY_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-high)", moderate: "var(--sev-moderate)", low: "var(--sev-low)" }
 const STAGES = ["draft", "review", "approved", "issued"]
@@ -23,7 +25,7 @@ const STAGE_GATE = { approved: "approve", issued: "issue" }  // next-stage -> re
 const LEDGER_KINDS = [
     { kind: "sig", label: "Signals" }, { kind: "ent", label: "Entities" },
     { kind: "scn", label: "Scenes" }, { kind: "aoi", label: "AOIs" },
-    { kind: "onto", label: "Onto" }, { kind: "mail", label: "Mail" },
+    { kind: "onto", label: "Onto" },
 ]
 
 function PriorityDiamond({ priority }) {
@@ -238,7 +240,7 @@ export default function Cases() {
                     </div>
 
                     <div style={{ display: "flex", gap: 4, marginTop: 16, borderBottom: "1px solid var(--line)" }}>
-                        {["overview", "records", "rfis", "timeline", "briefing"].map((t) => (
+                        {["overview", "files", "records", "rfis", "timeline", "briefing", "sharing"].map((t) => (
                             <button
                                 key={t} onClick={() => setTab(t)}
                                 style={{
@@ -250,6 +252,18 @@ export default function Cases() {
                     </div>
 
                     <div style={{ marginTop: 12 }}>
+                        {/* The case's own contents: folders, subfolders,
+                            documents and uploaded evidence. Given its own
+                            height because a file tree in a short box is
+                            unusable. */}
+                        {tab === "files" && (
+                            <div style={{ height: "calc(100vh - 290px)", minHeight: 420 }}>
+                                <CaseFiles caseId={activeCaseId} />
+                            </div>
+                        )}
+
+                        {tab === "sharing" && <CaseSharing caseId={activeCaseId} />}
+
                         {tab === "overview" && (
                             <div>
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 8 }}>

@@ -54,11 +54,9 @@ export const MODULES = [
     // document it ends up in.
     { key: "forecast",  label: "Forecast",  icon: "i-orb",     built: true, set: "watch" },
     { key: "briefings", label: "Briefings", icon: "i-read",    built: true, set: "watch" },
-    // Workstation modules — §7.1. "My work" reuses the bell/inbox-style
-    // icon family already established; Mail/Cases/Team get their own real
-    // icons (added to IconSprite.jsx alongside this).
-    { key: "mywork",    label: "My work",   icon: "i-mywork",  built: true, set: "work" },
-    { key: "mail",      label: "Mail",      icon: "i-mail",    built: true, set: "work" },
+    // Workstation modules — §7.1. Cases absorbed "My work" and "Mail":
+    // three windows over the same job meant an analyst had to remember
+    // which of them a document, a message or a file had been left in.
     { key: "cases",     label: "Cases",     icon: "i-case",    built: true, set: "work" },
     { key: "team",      label: "Team",      icon: "i-team",    built: true, set: "work" },
 ]

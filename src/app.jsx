@@ -36,13 +36,13 @@ const MODULE_TO_TAB_TYPE = {
     situation: "situation", inbox: "watchlists", dossiers: "dossiers",
     analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
     ontology: "ontology", imagery: "imagery", forecast: "forecast",
-    mywork: "mywork", mail: "mail", cases: "cases", team: "team",
+    cases: "cases", team: "team",
 }
 const TAB_TYPE_TO_MODULE = {
     situation: "situation", watchlists: "inbox", dossiers: "dossiers",
     analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
     ontology: "ontology", imagery: "imagery", forecast: "forecast",
-    mywork: "mywork", mail: "mail", cases: "cases", team: "team",
+    cases: "cases", team: "team",
 }
 // Mode, not modules (§7.1) — which real module keys a tab type routes to
 // belongs to which mode's rail. Opening a tab whose module is work-mode
@@ -50,7 +50,7 @@ const TAB_TYPE_TO_MODULE = {
 // exactly like the doc's own HWX.onModule-equivalent correction — guarded
 // by MODE_SWITCH_GUARD_MS below so the mode-setter and any other effect
 // reacting to the same tab change can't fight each other.
-const WORK_MODULE_KEYS = new Set(["mywork", "mail", "cases", "team"])
+const WORK_MODULE_KEYS = new Set(["cases", "team"])
 const MODE_STORAGE_KEY = "akili-mode-v1"
 import MapControlStack from "./components/MapControlStack.jsx"
 import { DESTINATION_KEYS } from "./data/destinations.js"
@@ -78,8 +78,6 @@ import Ontology from "./destinations/Ontology.jsx"
 import Replay from "./destinations/Replay.jsx"
 import Imagery from "./destinations/Imagery.jsx"
 import Forecast from "./destinations/Forecast.jsx"
-import MyWork from "./destinations/MyWork.jsx"
-import Mail from "./destinations/Mail.jsx"
 import Cases from "./destinations/Cases.jsx"
 import Team from "./destinations/Team.jsx"
 import API_BASE from "./apiBase.js"
@@ -330,7 +328,7 @@ export default function App() {
             if (e.metaKey || e.ctrlKey) return
 
             if (e.key === "w" || e.key === "W" || e.code === "KeyW") { e.preventDefault(); setMode(mode === "work" ? "watch" : "work") }
-            else if (e.key === "g" || e.key === "G" || e.code === "KeyG") { e.preventDefault(); setMode("work"); openTab(MODULE_TO_TAB_TYPE.mywork) }
+            else if (e.key === "g" || e.key === "G" || e.code === "KeyG") { e.preventDefault(); setMode("work"); openTab(MODULE_TO_TAB_TYPE.cases) }
             // Alt+T cycles auto -> light -> dark -> auto (PARALLAX spec §4.4).
             // Auto is first in the cycle because it is the default state the
             // other two are departures from.
@@ -1476,16 +1474,6 @@ export default function App() {
                 {/* Workstation modules (§7.1) — same kept-mounted,
                     display:none-when-inactive pattern as every other tab
                     type above. */}
-                {tabs.some(t => t.type === "mywork") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "mywork" ? "flex" : "none", flexDirection: "column" }}>
-                        <MyWork />
-                    </div>
-                )}
-                {tabs.some(t => t.type === "mail") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "mail" ? "flex" : "none", flexDirection: "column" }}>
-                        <Mail />
-                    </div>
-                )}
                 {tabs.some(t => t.type === "cases") && (
                     <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "cases" ? "flex" : "none", flexDirection: "column" }}>
                         <Cases />
