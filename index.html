@@ -259,7 +259,11 @@
 
             --top: 40px;
             --tabs: 32px;
-            --status: 24px;
+            /* 0 because the status bar was removed. Kept as a token, not
+               deleted, because every docked panel and map overlay is
+               positioned against it — and a token that still exists can be
+               given a height again without hunting down its consumers. */
+            --status: 0px;
             /* Collapsed, the bar keeps only its grip — see the rule below. */
 
             /* Situation glass panel widths (build spec v2, §3/§4.6/§4.7) —
@@ -642,6 +646,9 @@
            every consumer of --status (docked panels, the notification
            stack, the map chrome) reclaims the space rather than floating
            above a gap. */
+        /* The status bar itself was removed; this rule is kept only so a
+           future bar can collapse the same way the time strip does. It
+           matches nothing today. */
         html:has(#statusbar.collapsed) { --status: 14px; }
 
         /* ── Real Settings round, General section: density ─────────────────

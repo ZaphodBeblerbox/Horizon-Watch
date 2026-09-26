@@ -202,6 +202,15 @@ export default function TopBar({
                 >
                     <svg className="icon sm"><use href={isFullscreen ? "#i-fullscreen-exit" : "#i-fullscreen-enter"} /></svg>
                 </button>
+                {/* WHERE THE MAP'S OWN TOOLS GO. Situation portals its
+                    layer toggles, export and camera presets in here, so
+                    they sit in the chrome instead of floating over the
+                    geography they are for. A slot rather than props:
+                    the controls need Situation's state, and threading that
+                    up through app.jsx to come back down again would make
+                    two components own one toolbar. */}
+                <div id="topbar-map-tools" style={{ display: "flex", alignItems: "center", gap: 2 }} />
+
                 {/* Moved off the tab strip when that row was removed —
                     session mode is a top-level control, not a tab. */}
                 {sessionControl}

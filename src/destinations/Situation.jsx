@@ -18,6 +18,7 @@
  * disagree.
  */
 import { useChrome, getStartupLayers, saveStartupLayers, clearStartupLayers } from "../state/useChrome.js"
+import { createPortal } from "react-dom"
 import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
@@ -25,7 +26,6 @@ import GlobeView from "../components/GlobeView.jsx"
 import { GDELT_EVENT_TYPES } from "../globe/GlobeGdeltLayer.jsx"
 import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
-import LiveTape from "../components/LiveTape.jsx"
 import MapMeta from "../components/MapMeta.jsx"
 import MapTip from "../components/MapTip.jsx"
 import { LAYER_GROUPS } from "../components/layerRailConfig.js"
@@ -159,17 +159,25 @@ function useImageryEnabled() {
 // top-bar icon; the Layers pane's own "Event domains" → "Imagery" row
 // (DomainRow, driven by the same LAYER_GROUPS/groupsOn state) is the one
 // real, unchanged home for it now.
-/** Height of the filter/status bar that sits under the top bar.
+/** Puts its children in the top bar's slot, or nowhere if there isn't one.
  *
- * THE PANES MUST CLEAR IT. They are absolutely positioned with top:0 in
- * the same container, at a LOWER z-index than this bar — so the bar drew
- * over their top 28px, which is exactly where a pane's header and its
- * close button live. The pane looked like it ran under the top bar and
- * could not be closed.
- *
- * Declared once and read by both, so the bar cannot change height without
- * the panes following it. */
-const FILTER_BAR_H = 28
+ * The map's tools belong in the chrome rather than floating over the
+ * geography they operate on, but they need Situation's state — so the DOM
+ * moves and the ownership does not. Rendering null when the slot is absent
+ * means a destination without a top bar (presentation mode, mobile) simply
+ * does not show them, rather than crashing. */
+function MapToolsPortal({ children }) {
+    const [slot, setSlot] = useState(null)
+    useEffect(() => {
+        const find = () => setSlot(document.getElementById("topbar-map-tools"))
+        find()
+        // The top bar mounts in the same commit; one retry covers the race
+        // without a polling loop.
+        const t = setTimeout(find, 0)
+        return () => clearTimeout(t)
+    }, [])
+    return slot ? createPortal(children, slot) : null
+}
 
 const QUICK_LAYERS = [
     { key: "maritime", label: "Maritime", icon: "i-ship" },
@@ -857,7 +865,7 @@ export default function Situation({ onOpenDossier }) {
     // the time strip starts, so the strip is never underneath them and is
     // never covered; --strip-h tracks which face the strip is showing.
     const leftPaneStyle = {
-        position: "absolute", left: 0, top: FILTER_BAR_H, bottom: "var(--strip-h, 0px)", zIndex: 3,
+        position: "absolute", left: 0, top: 0, bottom: "var(--strip-h, 0px)", zIndex: 3,
         width: "var(--pane-l)", borderRight: "1px solid var(--line)",
         display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(-14px)",
@@ -870,7 +878,7 @@ export default function Situation({ onOpenDossier }) {
         // this is also now the Inspector's real width when a map marker is
         // clicked (see the pane content below), so one token now drives
         // Layers, this pane's default view, AND the marker-click Inspector.
-        position: "absolute", right: 0, top: FILTER_BAR_H, bottom: "var(--strip-h, 0px)", zIndex: 3,
+        position: "absolute", right: 0, top: 0, bottom: "var(--strip-h, 0px)", zIndex: 3,
         width: "var(--pane-r)", borderLeft: "1px solid var(--line)",
         display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(14px)",
@@ -1354,36 +1362,17 @@ export default function Situation({ onOpenDossier }) {
                     so a long live-count string can push controls into a
                     scroll region instead of rendering them underneath a
                     glass pane where they'd be unclickable and invisible. */}
-                <div style={{
-                    height: FILTER_BAR_H, flexShrink: 0, background: "var(--bg-2)", borderBottom: "1px solid var(--line)",
-                    display: "flex", alignItems: "center", gap: 10, padding: "0 12px", zIndex: 4, position: "relative",
-                    minWidth: 0, overflowX: "auto",
-                }}>
-                    <span style={{ flex: "none", whiteSpace: "nowrap", font: "400 11.5px var(--font)", color: "var(--txt-2)" }}>{visibleRows.length} signals · {timeWindow} window</span>
-                    {surfaceUpdatedAt && (
-                        <span title="Real GET /api/surface updated_at — may be a persisted snapshot rather than a freshly-built pool (e.g. right after a cold backend start)" style={{ flex: "none", whiteSpace: "nowrap", font: "400 11px var(--mono)", color: "var(--txt-4)" }}>
-                            as of {timeAgoLabel(surfaceUpdatedAt, nowMs)}
-                        </span>
-                    )}
-                    {/* The tape. Everything left of it is a summary of a
-                        window; this is the only thing on the page that
-                        says what just happened. */}
-                    <div style={{ flex: 1, minWidth: 0,
-                                  borderLeft: "1px solid var(--line)" }}>
-                        <LiveTape />
-                    </div>
+                {/* THE FILTER BAR IS GONE. It carried a signal count, an
+                    "as of" stamp and the live tape — a summary of a window,
+                    a restatement of something the status line already said,
+                    and a ticker. None of them were things anyone acted on,
+                    and together they cost a 28px band across the top of the
+                    map and put the side panes underneath themselves.
 
-                    {/* The annotation toolbar that used to sit in this band has
-                        moved onto the map itself, as PARALLAX §10.1's vertical
-                        `.annobar` (top-left, 28px buttons). The earlier comment
-                        here asserted these controls must "never float on the map
-                        surface" — true when the side panes were translucent
-                        overlays a floating control could end up unreachable
-                        under, but the panes are opaque grid columns now and §10
-                        is explicit about the placement. */}
-                    {/* Quick-layer buttons — immediately next to the annotation
-                        toolbar, same shared groupsOn state the Layers pane's
-                        domain rows use (one real toggle, never a duplicate). */}
+                    Its map tools survive, portalled into the top bar: they
+                    belong in the chrome, not floating over the geography
+                    they operate on. */}
+                <MapToolsPortal>
                     <div style={{ display: "flex", alignItems: "center", flex: "none" }}>
                         {QUICK_LAYERS.map((l, i) => (
                             <button
@@ -1403,7 +1392,6 @@ export default function Situation({ onOpenDossier }) {
                         ))}
                     </div>
 
-                    <div style={{ flex: 1 }} />
                     {/* The imagery entry point is now the single `#t-imagery`
                         control in `.annobar` — §10.1 calls out by name that
                         there must be ONE imagery icon, not two. */}
@@ -1427,7 +1415,8 @@ export default function Situation({ onOpenDossier }) {
                             >{p.label}</button>
                         ))}
                     </div>
-                </div>
+                </MapToolsPortal>
+
                 <div style={{
                     flex: 1, minHeight: 0, position: "relative",
                     // The map chrome positions itself against the VISIBLE map,

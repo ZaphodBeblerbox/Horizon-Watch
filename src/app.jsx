@@ -1821,7 +1821,17 @@ export default function App() {
                 retired along with the rest of the old mobile chrome; the
                 real isMobile detection elsewhere in this file (unrelated
                 layout adaptations) is untouched. */}
-            {!showAutoMode && !presenting && <StatusBar health={healthData} taskCount={taskCount} />}
+            {/* THE STATUS BAR IS GONE. Connection, data volume, latency,
+                task count — a row of numbers nobody acted on, permanently
+                occupying the bottom of every screen. What mattered in it
+                (a feed that has gone stale, a backend that is down) belongs
+                in the health panel where it can be read properly, and the
+                notification tray already raises the cases that need
+                attention.
+
+                --status now resolves to 0 (index.html), so every panel
+                pinned to bottom:var(--status) reclaims the space rather
+                than floating above a gap where the bar used to be. */}
         </div>
     )
 }
