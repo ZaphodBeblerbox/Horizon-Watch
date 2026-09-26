@@ -45,6 +45,19 @@
       "minimumSystemVersion": "11.0"
     },
     "shortDescription": "Parallax \u2014 intelligence console",
-    "longDescription": "Parallax reads its own local database, so the map, the inbox and the workspace keep working without a connection. A sync engine moves data to and from the server whenever there is one."
+    "longDescription": "Parallax reads its own local database, so the map, the inbox and the workspace keep working without a connection. A sync engine moves data to and from the server whenever there is one.",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4M0M4QzEwNzU1RTE5RjQKUldUMEdWNTFFSXc4cUwyMmlRQkhkZ0hlb3dZakNvSW5vV2t2MERJSm5RRk1aY3NwRU40N0RFL0cK",
+      "endpoints": [
+        "https://github.com/trifecta-technologies/parallax/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -50,3 +50,4 @@ backend/data/gdelt_events_cache.json
 
 # Tauri build output — the .app and .dmg are artefacts, not source.
 src-tauri/target/
+tauri-keys/

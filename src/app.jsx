@@ -1,3 +1,4 @@
+import UpdateBanner from "./desktop/UpdateBanner.jsx"
 import Tutorial from "./ui/Tutorial.jsx"
 import { isTextEntry } from "./utils/isTextEntry.js"
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
@@ -1340,6 +1341,7 @@ export default function App() {
                 </>
             )}
             <Tutorial />
+            <UpdateBanner />
             <ToastHost />
             <NotificationStack
                 onOpen={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
