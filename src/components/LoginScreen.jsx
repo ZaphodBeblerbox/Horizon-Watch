@@ -14,7 +14,7 @@ import { ParallaxMark } from "../print/PageFrame.jsx"
 
 const FADE_MS = 620
 
-export default function LoginScreen({ onLoggedIn }) {
+export default function LoginScreen({ onLoggedIn, offline = false }) {
     const [email, setEmail] = useState("")
     const [password, setPassword] = useState("")
     const [error, setError] = useState(null)
@@ -38,7 +38,10 @@ export default function LoginScreen({ onLoggedIn }) {
             setLeaving(true)
             setTimeout(() => onLoggedIn?.(user), FADE_MS)
         } catch (err) {
-            setError(err?.message || "Login failed.")
+            const msg = err?.message || "Login failed."
+            setError(offline && /enrol|expired|no record/i.test(msg)
+                ? "This machine can't sign you in offline — connect to the server once first."
+                : msg)
             setSubmitting(false)
         }
         // NOT in a finally: on success the button must stay in its
@@ -83,6 +86,22 @@ export default function LoginScreen({ onLoggedIn }) {
                 }}>
                     Trifecta Technologies
                 </div>
+
+                {/* SAY THAT THE SERVER IS NOT THERE. Without this the form
+                    looks like an ordinary login that happens to accept the
+                    password, and the reader has no idea they are on a local
+                    grant with stale data behind it. */}
+                {offline && (
+                    <div style={{
+                        font: "400 11px/1.55 var(--font)", color: "var(--txt-3, #818c96)",
+                        background: "var(--bg-0, #171b20)", border: "1px solid var(--line, #30373f)",
+                        borderRadius: 3, padding: "8px 10px", marginBottom: 4,
+                    }}>
+                        <b style={{ color: "var(--txt-2, #b6bec6)" }}>Working offline.</b> The server
+                        cannot be reached, so this signs you in against this machine&rsquo;s stored
+                        credentials. You&rsquo;ll see the data this machine already has.
+                    </div>
+                )}
 
                 <input
                     type="email" placeholder="Email" value={email} autoFocus

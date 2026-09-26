@@ -13,7 +13,7 @@ import { pushNotification, unreadCount as notifUnread, subscribeNotifications } 
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
-import { checkSession, subscribeAuth, isAuthTransientError } from "./state/authStore.js"
+import { checkSession, subscribeAuth, isAuthTransientError, canLoginOffline } from "./state/authStore.js"
 import { reconcileTheme, getThemeMode, setThemeMode } from "./state/themeStore.js"
 import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from "./state/settingsStore.js"
 import StatusBar from "./components/StatusBar.jsx"
@@ -207,6 +207,10 @@ export default function App() {
     // login screen (the confirmed root cause of "closing the tab forces a
     // re-login").
     const [authTransientError, setAuthTransientError] = useState(false)
+    // Whether this machine can sign in with no server at all. Resolved
+    // once, asynchronously, because it reads IndexedDB.
+    const [offlineLoginAvailable, setOfflineLoginAvailable] = useState(false)
+    useEffect(() => { canLoginOffline().then(setOfflineLoginAvailable).catch(() => {}) }, [])
     const runAuthCheck = useCallback(() => {
         checkSession().then((u) => {
             setAuthUser(u)
@@ -1272,19 +1276,36 @@ export default function App() {
     // the login screen — it shows this honest, real "couldn't reach the
     // server" state instead, since the real session cookie may still be
     // perfectly valid.
-    if (!authUser && authTransientError) {
+    // THE SERVER IS UNREACHABLE. This used to be a dead end: a message and
+    // a Retry button, with no way forward. On a machine that has signed in
+    // before, that made every piece of offline machinery below unreachable
+    // — the user could never get past this screen to use it, which is the
+    // whole "the desktop app does not work offline" report. The capability
+    // existed and had no door.
+    //
+    // So when this machine holds a valid enrolment, offer the login screen
+    // instead: it signs in locally against the stored digest. Only a
+    // machine that has never reached the server sees the dead end, and for
+    // that one it is true — there is genuinely nothing to sign in against.
+    if (!authUser && authTransientError && !offlineLoginAvailable) {
         return (
             <div style={{
                 position: "fixed", inset: 0, display: "flex", flexDirection: "column",
                 alignItems: "center", justifyContent: "center", gap: "var(--space-3)",
                 background: "var(--bg-0)", color: "var(--txt-2)", font: "400 13px var(--font)",
+                textAlign: "center", padding: 24,
             }}>
                 <div>Couldn't reach the server — your session may still be valid.</div>
+                <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", maxWidth: 380, lineHeight: 1.6 }}>
+                    This machine has not signed in before, so there is nothing stored to
+                    sign in against offline. Connect once and it will work without a
+                    server afterwards.
+                </div>
                 <button className="btn primary sm" onClick={runAuthCheck}>Retry</button>
             </div>
         )
     }
-    if (!authUser) return <LoginScreen onLoggedIn={setAuthUser} />
+    if (!authUser) return <LoginScreen onLoggedIn={setAuthUser} offline={authTransientError} />
 
     // Real structural swap (not a fluid reflow) — below the phone breakpoint,
     // the four-tab mobile shell renders in place of the entire ten-module

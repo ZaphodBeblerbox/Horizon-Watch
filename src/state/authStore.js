@@ -7,7 +7,7 @@
 // real source of "who is this" — see MissionProfilePanel.jsx's own
 // removal note for that decision.
 import API_BASE from "../apiBase.js"
-import { enrol, offlineLogin, forgetEnrolment } from "../lib/offlineAuth.js"
+import { enrol, offlineLogin, forgetEnrolment, enrolmentFor, OFFLINE_GRACE_MS } from "../lib/offlineAuth.js"
 import { indexedDbStore, memoryStore } from "../lib/offlineCache.js"
 
 // One store for the enrolment record, created lazily so importing this
@@ -144,6 +144,28 @@ export async function checkSession() {
 
 /** True when the current session was granted locally, with no server. */
 export function isOfflineSession() { return _offlineSession }
+
+/**
+ * Can this machine sign in without a server?
+ *
+ * The boot gate needs this to decide what to show when GET /api/auth/me
+ * cannot be reached. Without it the app showed a dead-end "couldn't reach
+ * the server" screen and never rendered the login form — which made every
+ * piece of offline machinery below it unreachable, because the user could
+ * never get past that screen to use it. That is the whole "the desktop app
+ * does not work offline" report: the capability existed and had no door.
+ */
+export async function canLoginOffline(now = Date.now()) {
+    try {
+        const rec = await enrolmentFor(_enrolStore())
+        if (!rec?.digest) return false
+        // Same expiry the offline login itself enforces. Offering a door
+        // that is going to refuse is worse than not offering one.
+        return (now - (rec.lastServerLoginAt || rec.enrolledAt || 0)) < OFFLINE_GRACE_MS
+    } catch {
+        return false
+    }
+}
 
 export async function login(email, password) {
     try {
