@@ -34,9 +34,29 @@ up somewhere that survives a laptop.
 2. Build, with the key in the environment:
 
    ```sh
-   export TAURI_SIGNING_PRIVATE_KEY_PATH=/path/to/parallax.key
+   export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.parallax-signing/parallax.key)"
    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
-   npx tauri build --bundles dmg updater
+   npx tauri build --bundles app
+   ```
+
+   The key goes in as its CONTENTS, not as a path.
+   `TAURI_SIGNING_PRIVATE_KEY_PATH` is documented but the bundler does not
+   read it — the build compiles for several minutes and only then fails
+   with "A public key has been found, but no private key".
+
+   `--bundles app` rather than `dmg`: Tauri's DMG step drives Finder over
+   AppleScript to lay out the window, which never returns unless a real
+   logged-in Finder session is driving it. It hangs at 0% CPU with the
+   staging image left mounted. Build the .app, then make the disk image
+   directly:
+
+   ```sh
+   B=src-tauri/target/release/bundle
+   STAGE=$(mktemp -d)
+   cp -R "$B/macos/Parallax.app" "$STAGE/"
+   ln -s /Applications "$STAGE/Applications"
+   hdiutil create -volname Parallax -srcfolder "$STAGE" -ov -format UDZO \
+     "$B/dmg/Parallax_1.0.0_aarch64.dmg"
    ```
 
    `createUpdaterArtifacts` is on, so this produces both the installable
@@ -56,7 +76,7 @@ up somewhere that survives a laptop.
      "platforms": {
        "darwin-aarch64": {
          "signature": "<contents of Parallax.app.tar.gz.sig>",
-         "url": "https://github.com/<org>/<repo>/releases/download/v1.0.1/Parallax.app.tar.gz"
+         "url": "https://github.com/ZaphodBeblerbox/Horizon-Watch/releases/download/v1.0.1/Parallax.app.tar.gz"
        }
      }
    }
@@ -72,13 +92,16 @@ up somewhere that survives a laptop.
 The endpoint the app polls is in `tauri.conf.json`:
 
 ```
-https://github.com/trifecta-technologies/parallax/releases/latest/download/latest.json
+https://github.com/ZaphodBeblerbox/Horizon-Watch/releases/latest/download/latest.json
 ```
 
-**Change that to the real repository before the first release.** It is a
-placeholder — a plausible URL is not a working one, and the failure is
-silent: the check fails, the app shrugs, and nobody is told there was an
-update.
+`releases/latest/download/<name>` always resolves to the newest published
+release, so the endpoint never has to change when you cut a new version —
+only the `latest.json` attached to that release does.
+
+Note this URL is baked into the binary at compile time. Changing it means
+rebuilding and redistributing; copies already installed keep polling
+whatever they were built with.
 
 ## Notarisation
 

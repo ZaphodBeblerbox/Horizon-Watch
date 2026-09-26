@@ -53,7 +53,7 @@
       "active": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4M0M4QzEwNzU1RTE5RjQKUldUMEdWNTFFSXc4cUwyMmlRQkhkZ0hlb3dZakNvSW5vV2t2MERJSm5RRk1aY3NwRU40N0RFL0cK",
       "endpoints": [
-        "https://github.com/trifecta-technologies/parallax/releases/latest/download/latest.json"
+        "https://github.com/ZaphodBeblerbox/Horizon-Watch/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
