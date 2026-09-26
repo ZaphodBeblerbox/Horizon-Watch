@@ -80,8 +80,27 @@ export function getNotifications() { return snapshot() }
  * people to dismiss without reading and then loses the fusion point in the
  * noise it made itself.
  */
-export function interrupts(n) {
+/**
+ * How old an event may be and still interrupt you.
+ *
+ * A notification says "this is happening". Something that happened five
+ * hours ago is not happening — it is a record, and it belongs in the tray
+ * where records go. Raising a card for it trains the reader that cards are
+ * not urgent, which costs them the one that is.
+ *
+ * Fifteen minutes is the window because that is roughly how long an
+ * ingest, geocode and fusion pass can take before a genuinely live event
+ * reaches the interface. Beyond it, lateness is no longer the pipeline.
+ */
+export const MAX_INTERRUPT_AGE_MS = 15 * 60 * 1000
+
+export function interrupts(n, now = Date.now()) {
     if (state.muted) return false
+
+    // WHEN IT HAPPENED, NOT WHEN WE HEARD. `ts` is the event's own time.
+    // Only what is actually current may take the screen.
+    const ts = Number(n?.ts)
+    if (Number.isFinite(ts) && now - ts > MAX_INTERRUPT_AGE_MS) return false
     return n.sev === "critical"
         || n.kind === "escalate" || n.kind === "assign" || n.kind === "rfi"
         || n.kind === "surge" || n.kind === "fusion"

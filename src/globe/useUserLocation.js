@@ -11,20 +11,49 @@ import { useEffect, useState } from "react"
 
 let cachedPromise = null
 
+/**
+ * Where the machine is, roughly, with no permission and no network.
+ *
+ * The system timezone offset IS a longitude: the earth turns 15 degrees an
+ * hour, so an offset of -300 minutes is 75 degrees west. It is accurate to
+ * about half a zone, which is far better than nothing and costs nothing.
+ *
+ * Latitude cannot be derived this way, and it is what sunrise actually
+ * depends on — so this is explicitly marked approximate, and the caller
+ * can say so rather than presenting a guess as a fix. 40 degrees is used
+ * as a mid-northern default because that is where most of the timezone
+ * offsets in use actually sit; it gives a day/night cycle that is roughly
+ * right rather than one stuck at equatorial twelve-hour days.
+ */
+export function approximateLocationFromClock(now = new Date()) {
+    // getTimezoneOffset is minutes BEHIND UTC, so it is negated here.
+    const offsetMin = -now.getTimezoneOffset()
+    const lon = Math.max(-180, Math.min(180, offsetMin / 4))
+    return { lat: 40, lon, approximate: true }
+}
+
 function requestLocation() {
     if (cachedPromise) return cachedPromise
     cachedPromise = new Promise((resolve) => {
-        if (typeof navigator === "undefined" || !("geolocation" in navigator)) { resolve(null); return }
+        if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
+            resolve(approximateLocationFromClock()); return
+        }
+        // A DENIAL IS NOT AN ABSENCE OF INFORMATION. This used to resolve
+        // null on refusal or timeout, which turned off the automatic
+        // day/night cycle entirely — so someone who declined once, or who
+        // was on a build where the prompt never appeared at all, got a
+        // theme frozen at whatever the default was. The clock still knows
+        // roughly where the machine is.
         navigator.geolocation.getCurrentPosition(
-            (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-            () => resolve(null),
+            (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, approximate: false }),
+            () => resolve(approximateLocationFromClock()),
             { maximumAge: 5 * 60_000, timeout: 8000 },
         )
     })
     return cachedPromise
 }
 
-/** @returns {?{lat:number, lon:number}} null until resolved (or if unavailable/denied) */
+/** @returns {?{lat:number, lon:number, approximate:boolean}} null until resolved. */
 export function useUserLocation() {
     const [loc, setLoc] = useState(null)
     useEffect(() => {

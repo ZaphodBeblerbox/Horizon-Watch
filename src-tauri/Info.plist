@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- WITHOUT THIS KEY macOS DOES NOT ASK, IT REFUSES.
+
+         navigator.geolocation.getCurrentPosition() in a packaged app is
+         gated on the bundle declaring why it wants location. With no
+         usage description the system denies the request outright and
+         shows the user nothing — which is indistinguishable, from inside
+         the app, from the user having said no. That is why the DMG never
+         prompted.
+
+         The string is shown verbatim in the system dialog, so it says
+         what the location is actually for rather than "this app would
+         like to use your location". -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Parallax uses your location to set local time and to follow the real sunrise and sunset where you are, so the map and the interface match the light outside. It is never sent anywhere.</string>
+
+    <key>NSLocationUsageDescription</key>
+    <string>Parallax uses your location to set local time and to follow the real sunrise and sunset where you are. It is never sent anywhere.</string>
+</dict>
+</plist>

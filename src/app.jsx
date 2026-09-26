@@ -687,7 +687,13 @@ export default function App() {
                 // it rather than guessing at one.
                 sub: [i.reason, i.region].filter(Boolean).join(" · "),
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
-                ts: Date.parse(i.created_at || "") || Date.now(),
+                // WHEN IT HAPPENED, in the order the fields mean it.
+                // created_at is when the ROW was written, which for a
+                // backfilled or late-ingested event is now — and an event
+                // from five hours ago would then look current and take the
+                // screen. published_at/occurred_at are the event's own
+                // time; created_at is the last resort.
+                ts: Date.parse(i.occurred_at || i.published_at || i.created_at || "") || Date.now(),
             })
         }
     }, [notifFeed])
