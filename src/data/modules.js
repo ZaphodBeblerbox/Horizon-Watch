@@ -47,17 +47,24 @@ export const MODULES = [
     // and openTab() can still reach it; `hidden` only removes the rail button.
     { key: "generate",  label: "Generate",  icon: "i-spark",   built: true, set: "watch", hidden: true },
     { key: "replay",    label: "Replay",    icon: "i-clock",    built: true, set: "watch" },
-    { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: true, set: "watch" },
     { key: "imagery",   label: "Imagery",   icon: "i-sat",     built: true, set: "watch" },
-    // Scenario board (spec addendum F2) — between Imagery and Briefings.
-    // A forecast belongs next to the evidence it rests on and before the
-    // document it ends up in.
-    { key: "forecast",  label: "Forecast",  icon: "i-orb",     built: true, set: "watch" },
     { key: "briefings", label: "Briefings", icon: "i-read",    built: true, set: "watch" },
     // Workstation modules — §7.1. Cases absorbed "My work" and "Mail":
     // three windows over the same job meant an analyst had to remember
     // which of them a document, a message or a file had been left in.
     { key: "cases",     label: "Cases",     icon: "i-case",    built: true, set: "work" },
+    // Where documents are written. Separate from Cases because writing is
+    // not always filing: a draft does not yet belong to a case, and
+    // choosing one before you can start typing puts the filing decision
+    // before the work.
+    { key: "editor",    label: "Editor",    icon: "i-read",    built: true, set: "work" },
+    // Moved out of Watch. Watch is what you monitor; an ontology is built
+    // and edited, which is work, and it is what cases are reasoned over.
+    { key: "ontology",  label: "Ontology",  icon: "i-onto",    built: true, set: "work" },
+    // Moved out of Watch for the same reason as Ontology: a scenario board
+    // is built, not monitored. It sits beside the ontology it reasons over
+    // and the editor the forecast ends up written in.
+    { key: "forecast",  label: "Forecast",  icon: "i-orb",     built: true, set: "work" },
     { key: "team",      label: "Team",      icon: "i-team",    built: true, set: "work" },
 ]
 
