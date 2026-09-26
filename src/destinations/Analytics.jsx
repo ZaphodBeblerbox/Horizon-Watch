@@ -220,7 +220,7 @@ function VolumeChart({ timeseries }) {
 // §5 — the four donuts. Arc sweep animates via the shared rAF-safe helper
 // (applyTransition) on data change; if rAF is unavailable/throttled the new
 // angles are applied in one synchronous step instead of freezing mid-sweep.
-function Donut({ label, items, colorFor }) {
+function Donut({ label, items, colorFor, onPick = null, selected = null }) {
     const outerR = 40, innerR = 26, size = 96
     const pieGen = useMemo(() => d3pie().value((d) => d.value).sort(null), [])
     const arcGen = useMemo(() => d3arc().innerRadius(innerR).outerRadius(outerR), [])
@@ -258,16 +258,33 @@ function Donut({ label, items, colorFor }) {
                 </PanelNote>
                 <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
                     <g transform={`translate(${size / 2},${size / 2})`}>
-                        {rendered.map((d) => (
+                        {rendered.map((d) => {
                             // Real fix — the documented SVG-theming trap: a
                             // bare fill={...} attribute holding a var(--x)
                             // string doesn't reliably resolve CSS custom
                             // properties in every rendering path; `style`
                             // always resolves correctly via the real CSS cascade.
-                            <path key={d.data.key} d={arcGen(d) || undefined} style={{ fill: colorFor(d.data) }}>
-                                <title>{d.data.label}: {d.data.value.toLocaleString()}</title>
-                            </path>
-                        ))}
+                            const isSel = selected != null && selected === d.data.key
+                            // A slice that filters has to say so before it is
+                            // clicked, and a chart that filters nothing must
+                            // not pretend otherwise — hence the cursor and the
+                            // dimming both hang off onPick.
+                            const dimmed = onPick && selected != null && !isSel
+                            return (
+                                <path key={d.data.key} d={arcGen(d) || undefined}
+                                      onClick={onPick ? () => onPick(isSel ? null : d.data.key) : undefined}
+                                      style={{
+                                          fill: colorFor(d.data),
+                                          cursor: onPick ? "pointer" : "default",
+                                          opacity: dimmed ? 0.3 : 1,
+                                          stroke: isSel ? "var(--txt)" : "none",
+                                          strokeWidth: isSel ? 1.5 : 0,
+                                          transition: "opacity .15s",
+                                      }}>
+                                    <title>{d.data.label}: {d.data.value.toLocaleString()}{onPick ? (isSel ? " — click to clear" : " — click to filter") : ""}</title>
+                                </path>
+                            )
+                        })}
                         <text textAnchor="middle" dy="0.35em" style={{ font: "400 13px var(--mono)", fill: "var(--txt)" }}>
                             {total.toLocaleString()}
                         </text>
@@ -629,10 +646,14 @@ export default function Analytics() {
                                 <Donut label="By severity" items={data.donuts.severity} colorFor={(item) => SEV_COLOR[item.key]} />
                             </Capturable>
                             <Capturable label="By domain" detail={`${data.range} · ${data.region}`}>
-                                <Donut label="By domain" items={data.donuts.domain} colorFor={(item) => greyForName(item.key)} />
+                                <Donut label="By domain" items={data.donuts.domain} colorFor={(item) => greyForName(item.key)}
+                                       selected={domain === "all" ? null : domain}
+                                       onPick={(k) => setDomain(k || "all")} />
                             </Capturable>
                             <Capturable label="By region" detail={`${data.range} · ${data.region}`}>
-                                <Donut label="By region" items={data.donuts.region} colorFor={(item) => greyForName(item.key)} />
+                                <Donut label="By region" items={data.donuts.region} colorFor={(item) => greyForName(item.key)}
+                                       selected={region === "all" ? null : region}
+                                       onPick={(k) => setRegion(k || "all")} />
                             </Capturable>
                             <Capturable label="By source" detail={`${data.range} · ${data.region}`}>
                                 <Donut label="By source" items={data.donuts.source} colorFor={(item) => greyForName(item.key)} />
