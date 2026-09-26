@@ -23,10 +23,31 @@ function emit() {
     listeners.forEach((fn) => fn(snapshot))
 }
 
-export function addToBriefing(id, label) {
+/**
+ * `extra` carries whatever the caller knows about the thing — where it was,
+ * a crop, a line of detail. The basket itself still only needs id+label for
+ * its count, but the Editor's reference pane cannot put an item on a page
+ * from a label alone, and every caller already has the record in hand at
+ * this moment. Mirroring here means every existing "add to briefing" in the
+ * app — Ontology, Dossiers, Analytics, Imagery, the map — feeds the writer
+ * without each one being taught separately.
+ */
+export function addToBriefing(id, label, extra = null) {
     if (!id || items.has(id)) return false
     items.set(id, { id, label: label || id, addedAt: Date.now() })
     emit()
+    // Imported lazily: briefingBasket is imported by modules that run before
+    // settings exist, and a static import would pull the settings store into
+    // that path.
+    import("./savedForBriefing.js").then(({ saveForBriefing }) => {
+        saveForBriefing({
+            id, kind: extra?.kind || "signal", label: label || id,
+            region: extra?.region ?? null,
+            lat: extra?.lat ?? null, lon: extra?.lon ?? null,
+            imageUrl: extra?.imageUrl ?? null,
+            detail: extra?.detail ?? null,
+        })
+    }).catch(() => { /* the basket still worked */ })
     return true
 }
 

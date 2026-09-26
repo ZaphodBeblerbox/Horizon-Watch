@@ -1,3 +1,5 @@
+import { addToBriefing } from "../state/briefingBasket.js"
+import { toast } from "../ui/toast.js"
 import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
 import { entityMarkerSvg } from "../globe/entityIcons.js"
@@ -727,7 +729,7 @@ export default function InspectorPanel({
             </div>
 
             {/* Actions */}
-            {(actions.canJumpToLocation || (onTrackEntity && entityId) || forecastHint(data)) && (
+            {(actions.canJumpToLocation || (onTrackEntity && entityId) || forecastHint(data) || entityId) && (
                 <div style={{
                     display: "flex", gap: "var(--space-2)", flexWrap: "wrap",
                     padding: "var(--space-3) var(--space-4)",
@@ -756,6 +758,29 @@ export default function InspectorPanel({
                     {onTrackEntity && entityId && (
                         <Button variant="ghost" size="sm" style={{ flex: 1 }} onClick={() => onTrackEntity(entityId)}>
                             Track on globe
+                        </Button>
+                    )}
+                    {/* SAVE ANYTHING. Whatever this panel can describe can
+                        be kept for writing — the coordinates and any crop go
+                        with it, because a saved item that is only a name
+                        cannot be put on a page. */}
+                    {entityId && (
+                        <Button variant="ghost" size="sm" style={{ flex: 1 }}
+                                onClick={() => {
+                                    const lat = data?.lat ?? data?.latitude ?? data?.centroid_lat ?? null
+                                    const lon = data?.lon ?? data?.longitude ?? data?.centroid_lon ?? null
+                                    const name = data?.headline || data?.title || data?.name || data?.label || String(entityId)
+                                    const ok = addToBriefing(`${entityType || "sig"}:${entityId}`, name, {
+                                        kind: entityType === "detection" ? "imagery" : entityType === "entity" ? "entity" : "signal",
+                                        lat, lon,
+                                        region: data?.region || data?.location_name || data?.location || null,
+                                        imageUrl: data?.image_crop_url || data?.thumbnail_url || null,
+                                        detail: data?.summary || data?.severity || data?.object_type || null,
+                                    })
+                                    toast(ok ? "Saved — it is in the Editor's Saved pane" : "Already saved",
+                                          { icon: ok ? "i-check" : "i-info" })
+                                }}>
+                            Save for briefing
                         </Button>
                     )}
                 </div>
