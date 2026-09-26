@@ -101,10 +101,10 @@ const ANNOTATION_TOOLS = [
 const INFRA_LAYERS = [
     { key: "chokepoints", label: "Chokepoints", note: "With substitution cost", color: "var(--red)" },
     { key: "ports", label: "Ports & terminals", note: "Positions real; congestion not yet derived", color: "var(--acc-hi)" },
-    { key: "airfields", label: "Airports & airfields", note: "OurAirports, full roster", color: "var(--steel)" },
+    { key: "airfields", label: "Airports & airfields", note: "full roster", color: "var(--steel)" },
     { key: "cables", label: "Submarine cables", note: "Indicative trunk routes, not survey data", color: "var(--acc-hi)" },
-    { key: "power", label: "Power grid", note: "OpenInfraMap raster, community-maintained", color: "var(--amber)" },
-    { key: "nautical", label: "Nautical chart", note: "OpenSeaMap raster overlay", color: "var(--green)" },
+    { key: "power", label: "Power grid", note: "community-maintained raster", color: "var(--amber)" },
+    { key: "nautical", label: "Nautical chart", note: "nautical raster overlay", color: "var(--green)" },
     // Facilities live here rather than under Context layers: they are
     // infrastructure, and they belong beside ports and airfields, which
     // is where someone looking for "what is on the ground" will look.
@@ -1047,7 +1047,7 @@ export default function Situation({ onOpenDossier }) {
                     <div style={{ padding: "8px 12px 2px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
                         Airspace
                         <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginLeft: 6 }}>
-                            openAIP
+                            
                         </span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
@@ -1057,7 +1057,7 @@ export default function Situation({ onOpenDossier }) {
                                            color: airspaceStatus?.state === "error" ? "var(--amber)" : "var(--txt-4)" }}>
                                 {airspaceOn
                                     ? `floor to ceiling · ${airspaceStatus?.text || "zoom in to draw"}`
-                                    : "floor to ceiling · openAIP volumes"}
+                                    : "floor to ceiling"}
                             </span>
                         </span>
                         <button

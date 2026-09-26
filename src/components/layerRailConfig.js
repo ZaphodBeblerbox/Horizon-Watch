@@ -13,20 +13,20 @@ export const LAYER_GROUPS = [
         key: "maritime",
         label: "Maritime",
         layers: [
-            { key: "aisVessels", label: "AIS Vessels", hint: "Maritime transponder positions" },
+            { key: "aisVessels", label: "Vessels", hint: "Maritime transponder positions" },
             { key: "ports", label: "Ports", hint: "11k maritime ports — viewport-culled" },
             { key: "cables", label: "Submarine Cables", hint: "Global undersea fibre routes" },
             { key: "chokepoints", label: "Chokepoints", hint: "Strategic maritime passages" },
-            { key: "aisHeatmap", label: "AIS Density", hint: "Vessel track density over time" },
+            { key: "aisHeatmap", label: "Sea Density", hint: "Vessel track density over time" },
         ],
     },
     {
         key: "air",
         label: "Air",
         layers: [
-            { key: "adsb", label: "ADS-B Aircraft", hint: "Real-time transponder positions" },
+            { key: "adsb", label: "Aircraft", hint: "Real-time transponder positions" },
             { key: "airports", label: "Airports", hint: "49k airports — viewport-culled, large first" },
-            { key: "adsbHeatmap", label: "ADS-B Density", hint: "Aircraft track density over time" },
+            { key: "adsbHeatmap", label: "Air Density", hint: "Aircraft track density over time" },
         ],
     },
     {
@@ -34,24 +34,24 @@ export const LAYER_GROUPS = [
         label: "News",
         layers: [
             { key: "unifiedEvents", label: "Intelligence Events", hint: "All news & city events", defaultOn: true, hasRelevanceFilter: true },
-            { key: "precisionEvents", label: "Precision Intelligence", hint: "Conflict · maritime · aviation · score ≥ 8", defaultOn: true },
+            { key: "precisionEvents", label: "Verified Events", hint: "Conflict · maritime · aviation · score ≥ 8", defaultOn: true },
             // Its own row, not folded into the others: a GDELT pin is a
             // machine that read a wire story, a GeoConfirmed pin is a human
             // who found the building in the video. The reader has to be able
             // to turn one off without the other.
-            { key: "gdeltEvents", label: "GDELT Events", hint: "Machine-coded from news wire · city-level · cites its article" },
+            { key: "gdeltEvents", label: "Wire Reports", hint: "Machine-coded from news wire · city-level · cites its article" },
         ],
     },
     {
         key: "imagery",
         label: "Imagery",
         layers: [
-            { key: "satellite", label: "Sentinel-2 Satellite", hint: "Copernicus true-colour imagery", hasOpacity: true },
-            { key: "shippingLanes", label: "Nautical Chart", hint: "OpenSeaMap vector overlay" },
-            { key: "oim", label: "Infrastructure", hint: "OpenInfraMap — power, telecoms, pipelines" },
+            { key: "satellite", label: "Satellite", hint: "true-colour imagery", hasOpacity: true },
+            { key: "shippingLanes", label: "Nautical Chart", hint: "nautical vector overlay" },
+            { key: "oim", label: "Infrastructure", hint: "power, telecoms and pipelines" },
             // Thermal anomalies belong with the sensors, not with reporting:
             // FIRMS is an instrument reading, and it is what tasks imagery.
-            { key: "fires", label: "Thermal Anomalies", hint: "NASA FIRMS VIIRS/MODIS — a flare, stubble and a strike look identical" },
+            { key: "fires", label: "Thermal Anomalies", hint: "thermal detection — a flare, stubble and a strike look identical" },
         ],
     },
     {
