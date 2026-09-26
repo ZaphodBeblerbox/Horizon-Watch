@@ -102,6 +102,12 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
 #: next process start.
 UNLOCATED_KEY = "GEO:unlocated"
 
+#: Most signals one geo bucket keeps. The fusion window bounds their AGE;
+#: this bounds their NUMBER, which the window never did.
+MAX_BUCKET = 400
+#: How often a bucket may report its arrival rate, in seconds.
+SIGNAL_LOG_INTERVAL_S = 30
+
 
 class FusionEngine:
     def __init__(self):
@@ -123,6 +129,8 @@ class FusionEngine:
         #: _request_fusion_eval for why this is the difference between a
         #: server that answers and one that does not.
         self._dirty: dict     = {}
+        #: geo_key -> {n, since}. Arrival counters for the rate log above.
+        self._sig_log: dict   = {}
         self._last_eval: dict = {}
         #: _evaluate_fusion mutates active_fusions and writes rows. It is
         #: reached both from on_signal (any ingest thread) and from the
@@ -167,9 +175,13 @@ class FusionEngine:
         if not correlatable:
             geo_key = UNLOCATED_KEY
         else:
-            print(f"[FUSION] Signal received: {signal.get('domain')} | "
-                  f"{signal.get('signal_id')} | geo_key={geo_key} | "
-                  f"relevance={signal.get('relevance_score', 0)}")
+            # ONE LINE PER SIGNAL IS THE OUTAGE, NOT THE DIAGNOSTIC.
+            # GDELT arrives in bursts of hundreds into one bucket. Writing
+            # a line for each blocks on a pipe nobody is draining, which is
+            # log-rate backpressure — the same mechanism that killed seven
+            # deploys here before. The useful fact is the RATE and where it
+            # is going, so that is what gets reported, once a window.
+            self._count_signal(geo_key, signal)
             self._add_signal(geo_key, signal)
 
         # Persist to DB so signals survive restarts
@@ -310,6 +322,22 @@ class FusionEngine:
         # correlation, which it never honestly was.
         return None
 
+    def _count_signal(self, geo_key: str, signal: dict):
+        """Report arrivals as a rate, once per window, per bucket."""
+        now = time.time()
+        st = self._sig_log.get(geo_key)
+        if st is None:
+            st = self._sig_log[geo_key] = {"n": 0, "since": now}
+        st["n"] += 1
+        if now - st["since"] >= SIGNAL_LOG_INTERVAL_S:
+            held = len(self.active_signals.get(geo_key, ()))
+            print(f"[FUSION] {geo_key}: {st['n']} signals in "
+                  f"{now - st['since']:.0f}s (holding {held}"
+                  f"{'/' + str(MAX_BUCKET) + ' CAPPED' if held >= MAX_BUCKET else ''}), "
+                  f"latest {signal.get('domain')}")
+            st["n"] = 0
+            st["since"] = now
+
     def _add_signal(self, geo_key: str, signal: dict):
         # GUARDED BECAUSE INGEST IS NO LONGER SINGLE-THREADED. GDELT now
         # feeds from a worker thread (see main._gdelt_loop) while the drain
@@ -336,6 +364,23 @@ class FusionEngine:
         if signal["signal_id"] not in ids:
             kept.append(signal)
             doms.add(signal["domain"])
+
+        # A SIZE CAP, NOT JUST A TIME WINDOW. The window bounds how OLD a
+        # bucket's contents are and says nothing about how many there are.
+        # A country-level key such as CTY:us collects everything GDELT
+        # reports for that country inside the window — it reached 10,012
+        # entries in production — and the scan above runs once per
+        # arriving signal, so a burst of n signals costs O(n²).
+        #
+        # Keeping the newest MAX_BUCKET is not a loss of meaning:
+        # correlation across thousands of signals sharing only a country
+        # is not a correlation, and _evaluate_fusion already refuses a
+        # bucket that holds a single domain. What the cap removes is the
+        # tail that was never going to change the answer.
+        if len(kept) > MAX_BUCKET:
+            kept = kept[-MAX_BUCKET:]
+            doms = {s["domain"] for s in kept}
+
         self.active_signals[geo_key] = kept
         self._bucket_domains[geo_key] = doms
 

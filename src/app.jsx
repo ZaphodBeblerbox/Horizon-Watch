@@ -104,21 +104,52 @@ const WS_STORAGE_KEY  = "akili-workspaces-v1"
 // tabs are simply superseded rather than migrated — a fresh, valid default
 // is safer than reverse-engineering old localStorage shapes.
 const TAB_STORAGE_KEY = "akili_tabs_v2"
+//: Every tab type this build has a renderer for. Anything restored that
+//: is not here came from an older version and cannot be shown.
+const KNOWN_TAB_TYPES = new Set([
+    "situation", "watchlists", "dossiers", "analytics", "generate",
+    "briefings", "replay", "ontology", "imagery", "forecast",
+    "cases", "team", "editor", "dashboard", "sources",
+])
 
 function defaultTabs() {
     return [{ id: "situation", type: "situation", label: "Situation" }]
 }
 
+/**
+ * Restored tabs are not trusted.
+ *
+ * This list outlives the code that wrote it. A saved session was found
+ * holding eighteen tabs including `mywork` and `mail` — modules that have
+ * since been deleted — plus three copies of `dossiers`. Nothing rendered,
+ * because the restored active tab was one of those and the app faithfully
+ * made every real view display:none to honour it. The app opened on
+ * whatever the last session happened to end on, which is how it came up in
+ * Workstation instead of on the map.
+ *
+ * So: drop types this build does not have, de-duplicate, and always keep
+ * Situation. Persisted UI state is an input from an older version of the
+ * program, and inputs get validated.
+ */
 function loadTabsFromStorage() {
     try {
         const raw = localStorage.getItem(TAB_STORAGE_KEY)
         if (raw) {
             const parsed = JSON.parse(raw)
             if (Array.isArray(parsed) && parsed.length > 0) {
-                if (!parsed.find(t => t.type === "situation")) {
-                    return [{ id: "situation", type: "situation", label: "Situation" }, ...parsed]
+                const seen = new Set()
+                const clean = parsed.filter((t) => {
+                    if (!t || typeof t.type !== "string") return false
+                    if (!KNOWN_TAB_TYPES.has(t.type)) return false
+                    if (seen.has(t.type) && !t.recordRef) return false
+                    seen.add(t.type)
+                    return true
+                })
+                if (!clean.length) return defaultTabs()
+                if (!clean.find((t) => t.type === "situation")) {
+                    return [{ id: "situation", type: "situation", label: "Situation" }, ...clean]
                 }
-                return parsed
+                return clean
             }
         }
     } catch { /* ignore */ }
@@ -448,9 +479,16 @@ export default function App() {
         const saved = loadTabsFromStorage()
         try {
             const s = localStorage.getItem(TAB_STORAGE_KEY + "-active")
+            // The saved id must still name a tab that survived validation.
+            // A stale id left every real view hidden, because activeTabType
+            // matched none of them.
             if (s && saved.find(t => t.id === s)) return s
         } catch { /* ignore */ }
-        return saved[0]?.id || "situation"
+        // THE MAP IS THE FRONT DOOR. Falling back to saved[0] meant opening
+        // on whatever happened to be first in a restored list — in practice
+        // a Workstation module. Situation is the app's home screen, and it
+        // is the one tab loadTabsFromStorage guarantees exists.
+        return saved.find(t => t.type === "situation")?.id || saved[0]?.id || "situation"
     })
     const tabHistoryRef = useRef([])
 
@@ -1171,8 +1209,38 @@ export default function App() {
         const h = (e) => {
             const { tabs: restoredTabs, activeTabId: restoredActive } = e.detail || {}
             if (!Array.isArray(restoredTabs) || !restoredTabs.length) return
-            setTabs(restoredTabs)
-            setActiveTabId(restoredTabs.find(t => t.id === restoredActive) ? restoredActive : restoredTabs[restoredTabs.length - 1].id)
+
+            // A SESSION IS AN INPUT FROM AN OLDER BUILD. One was found
+            // holding eighteen tabs including `mywork` and `mail` —
+            // modules since deleted — plus three copies of `dossiers`.
+            // Restoring them verbatim left activeTabType naming a view
+            // that no longer exists, so every real view was display:none
+            // and the window came up with a top bar, a status bar and
+            // nothing in between. Same validation the localStorage path
+            // uses, for the same reason.
+            const seen = new Set()
+            const clean = restoredTabs.filter((t) => {
+                if (!t || typeof t.type !== "string") return false
+                if (!KNOWN_TAB_TYPES.has(t.type)) return false
+                if (seen.has(t.type) && !t.recordRef) return false
+                seen.add(t.type)
+                return true
+            })
+            const withHome = clean.find((t) => t.type === "situation")
+                ? clean
+                : [{ id: "situation", type: "situation", label: "Situation" }, ...clean]
+            setTabs(withHome)
+
+            // THE MAP, NOT THE LAST TAB. This fell back to
+            // restoredTabs[length - 1] — whatever the previous session
+            // happened to open last, which in practice was a Workstation
+            // module. Restoring a session should put you back where you
+            // were, and failing that, at the front door.
+            setActiveTabId(
+                withHome.find((t) => t.id === restoredActive)?.id
+                ?? withHome.find((t) => t.type === "situation")?.id
+                ?? withHome[0].id
+            )
         }
         window.addEventListener("akili:restore-tabs", h)
         return () => window.removeEventListener("akili:restore-tabs", h)
