@@ -24,7 +24,7 @@ import { listReports, getReportBundle } from "../reports/reportApi.js"
 import { toast } from "../ui/toast.js"
 import SidePanel from "../ui/SidePanel.jsx"
 import SavedSidebar from "../cases/SavedSidebar.jsx"
-import { savedLabel } from "../state/savedForBriefing.js"
+import { savedLabel, savedMeta } from "../state/savedForBriefing.js"
 
 /** A briefing's prose, flattened to the editor's HTML. */
 function reportToHtml(report, sections) {
@@ -122,16 +122,26 @@ export default function Editor() {
     // it is and where it was taken is not evidence — it is a picture.
     const insertSaved = useCallback((item) => {
         const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
-        const caption = esc(savedLabel(item))
+        const headline = esc(savedLabel(item))
+        const meta = esc(savedMeta(item))
+        // The attribution line is part of the artefact, not decoration: a
+        // claim on a page without where it came from and when is not
+        // evidence, and the writer should not have to retype it.
+        const metaLine = meta
+            ? `<div style="font:9.5pt Georgia,serif;color:#666;margin-top:3px">${meta}</div>`
+            : ""
         let frag
         if (item.imageUrl) {
             frag = `<figure class="doc-figure" style="margin:14px 0;text-align:center">`
-                 + `<img src="${esc(item.imageUrl)}" alt="${caption}" style="max-width:100%;height:auto" />`
-                 + `<figcaption style="font:italic 10pt Georgia,serif;color:#555;margin-top:5px">${caption}</figcaption>`
-                 + `</figure><p><br/></p>`
+                 + `<img src="${esc(item.imageUrl)}" alt="${headline}" style="max-width:100%;height:auto" />`
+                 + `<figcaption style="font:italic 10pt Georgia,serif;color:#555;margin-top:5px">`
+                 + `${headline}${meta ? `<br/><span style="font-style:normal;font-size:9pt;color:#666">${meta}</span>` : ""}`
+                 + `</figcaption></figure><p><br/></p>`
         } else {
             frag = `<blockquote style="border-left:2px solid #1b1f24;padding:2px 0 2px 12px;margin:11px 0">`
-                 + `<b>${caption}</b>${item.detail ? `<br/>${esc(item.detail)}` : ""}`
+                 + `<b>${headline}</b>`
+                 + (item.context ? `<div style="margin-top:3px">${esc(item.context)}</div>` : "")
+                 + metaLine
                  + `</blockquote><p><br/></p>`
         }
         // The editor must have focus or insertHTML has no range to act on

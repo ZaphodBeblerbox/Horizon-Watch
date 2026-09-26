@@ -13,7 +13,7 @@
 
 import { useState } from "react"
 import MiniMap from "../reports/MiniMap.jsx"
-import { useSaved, removeSaved, savedLabel } from "../state/savedForBriefing.js"
+import { useSaved, removeSaved, savedLabel, savedMeta } from "../state/savedForBriefing.js"
 
 export default function SavedSidebar({ onInsert }) {
     const items = useSaved()
@@ -59,14 +59,19 @@ export default function SavedSidebar({ onInsert }) {
                         )}
                         <div role="button" onClick={() => onInsert?.(i)} title="Insert into the document"
                              style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
-                            <div style={{ font: "400 12px var(--font)", color: "var(--txt-2)", lineHeight: 1.35 }}>
+                            {/* The headline, wrapped to three lines. A
+                                report truncated to one line is a report you
+                                have to open something else to read. */}
+                            <div style={{
+                                font: "400 12px var(--font)", color: "var(--txt-2)", lineHeight: 1.35,
+                                display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical",
+                                overflow: "hidden",
+                            }}>
                                 {savedLabel(i)}
                             </div>
-                            {i.detail && (
-                                <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                    {i.detail}
-                                </div>
-                            )}
+                            <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", marginTop: 2 }}>
+                                {savedMeta(i) || i.detail}
+                            </div>
                         </div>
                         <span role="button" title="Remove" onClick={() => removeSaved(i.id)}
                               style={{ color: "var(--txt-4)", flexShrink: 0, cursor: "pointer", font: "400 11px var(--font)" }}>

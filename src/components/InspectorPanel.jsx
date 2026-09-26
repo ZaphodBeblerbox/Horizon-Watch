@@ -770,15 +770,30 @@ export default function InspectorPanel({
                     {entityId && (
                         <Button variant="ghost" size="sm" style={{ flex: 1 }}
                                 onClick={() => {
+                                    // THE REAL FIELD NAMES. This read
+                                    // data.region and data.severity, which
+                                    // a signal does not have — it carries
+                                    // `location`, `severity_tier`,
+                                    // `published_at` and `source`. So every
+                                    // save fell through to the id and a
+                                    // coordinate pair, and the sidebar
+                                    // filled with "Signal (50.5°N 30.4°E)"
+                                    // instead of what happened.
                                     const lat = data?.lat ?? data?.latitude ?? data?.centroid_lat ?? null
                                     const lon = data?.lon ?? data?.longitude ?? data?.centroid_lon ?? null
-                                    const name = data?.headline || data?.title || data?.name || data?.label || String(entityId)
-                                    const ok = addToBriefing(`${entityType || "sig"}:${entityId}`, name, {
+                                    const headline = data?.headline || data?.title || data?.name || data?.label || null
+                                    const ok = addToBriefing(`${entityType || "sig"}:${entityId}`, headline || String(entityId), {
                                         kind: entityType === "detection" ? "imagery" : entityType === "entity" ? "entity" : "signal",
                                         lat, lon,
-                                        region: data?.region || data?.location_name || data?.location || null,
-                                        imageUrl: data?.image_crop_url || data?.thumbnail_url || null,
-                                        detail: data?.summary || data?.severity || data?.object_type || null,
+                                        headline,
+                                        region:   data?.location || data?.location_name || data?.region || null,
+                                        source:   data?.source || data?.source_type || null,
+                                        severity: data?.severity_tier || data?.severity || null,
+                                        when:     data?.published_at || data?.occurred_at || data?.created_at || null,
+                                        url:      data?.url || null,
+                                        context:  typeof data?.context === "string" ? data.context : null,
+                                        imageUrl: data?.image_crop_url || data?.overlay_url || data?.thumbnail_url || null,
+                                        detail:   data?.object_type || null,
                                     })
                                     toast(ok ? "Saved — it is in the Editor's Saved pane" : "Already saved",
                                           { icon: ok ? "i-check" : "i-info" })

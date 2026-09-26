@@ -36,8 +36,19 @@ export function saveForBriefing(item) {
     const next = [{
         id: item.id,
         kind: item.kind || "signal",
+        // WHAT THE THING ACTUALLY SAYS. This used to keep a label and a
+        // coordinate pair, which produced sidebar entries reading "Signal
+        // (50.5N 30.4E)" — true, and useless to write from. A saved item
+        // has to carry the report: the headline, where it happened, who
+        // reported it and when.
         label: item.label || item.id,
+        headline: item.headline || null,
         region: item.region || null,
+        source: item.source || null,
+        severity: item.severity || null,
+        when: item.when || null,
+        url: item.url || null,
+        context: item.context || null,
         lat: item.lat ?? null,
         lon: item.lon ?? null,
         imageUrl: item.imageUrl || null,
@@ -68,7 +79,17 @@ export function useSaved() {
  * The region is in the label because "Sat image detection" on its own,
  * eleven times, is not a list you can pick from.
  */
+/**
+ * What the item reads as in the sidebar and on the page.
+ *
+ * The headline first, always, when there is one — "Russian strike on a
+ * business centre in Kyiv" is what you are writing about; "Signal
+ * (50.5°N 30.4°E)" is a grid reference that happens to be attached to it.
+ * The generic form is only for items that genuinely have no text.
+ */
 export function savedLabel(item) {
+    if (item.headline) return item.headline
+
     const base = item.kind === "imagery" ? "Sat image detection"
               : item.kind === "entity"  ? "Entity"
               : item.kind === "note"    ? "Note"
@@ -78,4 +99,15 @@ export function savedLabel(item) {
             ? `${Math.abs(item.lat).toFixed(1)}°${item.lat >= 0 ? "N" : "S"} ${Math.abs(item.lon).toFixed(1)}°${item.lon >= 0 ? "E" : "W"}`
             : null)
     return where ? `${base} (${where})` : base
+}
+
+/** The attribution line under a saved item: where, who, when. */
+export function savedMeta(item) {
+    const where = item.region
+        || (item.lat != null && item.lon != null
+            ? `${Math.abs(item.lat).toFixed(2)}°${item.lat >= 0 ? "N" : "S"} ${Math.abs(item.lon).toFixed(2)}°${item.lon >= 0 ? "E" : "W"}`
+            : null)
+    const when = item.when ? String(item.when).slice(0, 10) : null
+    // Source last and lower-cased: it is provenance, not the headline.
+    return [where, when, item.source].filter(Boolean).join(" · ")
 }
