@@ -25,6 +25,7 @@ import { toast } from "../ui/toast.js"
 import SidePanel from "../ui/SidePanel.jsx"
 import SavedSidebar from "../cases/SavedSidebar.jsx"
 import { savedLabel, savedMeta } from "../state/savedForBriefing.js"
+import { signalCardHtml } from "../reports/signalCard.js"
 
 /** A briefing's prose, flattened to the editor's HTML. */
 function reportToHtml(report, sections) {
@@ -117,33 +118,20 @@ export default function Editor() {
         return false
     }, [source])
 
-    // Dropping a saved item into the page. An image goes in as a figure
-    // with its caption, because a satellite crop with no statement of what
-    // it is and where it was taken is not evidence — it is a picture.
+    // Dropping a saved item into the page.
+    //
+    // THE SIGNAL GOES IN AS THE OBJECT IT IS, not as a citation of it.
+    // This used to produce a blockquote with a headline and a coordinate
+    // pair, which tells the reader of the finished document nothing about
+    // where it happened — the one thing a briefing exists to save them
+    // looking up. signalCard.js renders the same shape the Inbox and the
+    // notification card show, with a world view and a local view beside
+    // it, all as inline SVG so it survives export to PDF.
     const insertSaved = useCallback((item) => {
-        const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
-        const headline = esc(savedLabel(item))
-        const meta = esc(savedMeta(item))
-        // The attribution line is part of the artefact, not decoration: a
-        // claim on a page without where it came from and when is not
-        // evidence, and the writer should not have to retype it.
-        const metaLine = meta
-            ? `<div style="font:9.5pt Georgia,serif;color:#666;margin-top:3px">${meta}</div>`
-            : ""
-        let frag
-        if (item.imageUrl) {
-            frag = `<figure class="doc-figure" style="margin:14px 0;text-align:center">`
-                 + `<img src="${esc(item.imageUrl)}" alt="${headline}" style="max-width:100%;height:auto" />`
-                 + `<figcaption style="font:italic 10pt Georgia,serif;color:#555;margin-top:5px">`
-                 + `${headline}${meta ? `<br/><span style="font-style:normal;font-size:9pt;color:#666">${meta}</span>` : ""}`
-                 + `</figcaption></figure><p><br/></p>`
-        } else {
-            frag = `<blockquote style="border-left:2px solid #1b1f24;padding:2px 0 2px 12px;margin:11px 0">`
-                 + `<b>${headline}</b>`
-                 + (item.context ? `<div style="margin-top:3px">${esc(item.context)}</div>` : "")
-                 + metaLine
-                 + `</blockquote><p><br/></p>`
-        }
+        const frag = signalCardHtml(item, {
+            headline: savedLabel(item),
+            meta: savedMeta(item),
+        })
         // The editor must have focus or insertHTML has no range to act on
         // and the fragment is silently dropped.
         const el = document.querySelector('[contenteditable="true"]')
@@ -153,9 +141,6 @@ export default function Editor() {
         }
     }, [])
 
-    // Making the case and filing into it is one action. Sending the writer
-    // to another module to create a container, then back to find their
-    // place again, is three.
     const createAndFile = async () => {
         const t = newCaseTitle.trim()
         if (!t) return
