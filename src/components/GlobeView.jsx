@@ -281,6 +281,10 @@ export default function GlobeView({
                 // clicking a specific contact, and without the viewer a
                 // test can only stab blindly at the canvas and miss.
                 if (import.meta.env.DEV) window.__viewer = v
+                // NOT dev-only: screen capture needs Cesium's own buffer,
+                // because a DOM rasteriser reads a WebGL canvas as black.
+                // See capture/ScreenCapture.jsx.
+                window.__parallaxViewer = v
                 return
             }
             if (attempts++ < 20) setTimeout(tryExpose, 250)

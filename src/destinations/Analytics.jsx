@@ -4,6 +4,7 @@ import { area as d3area, curveMonotoneX, pie as d3pie, arc as d3arc } from "d3-s
 import API_BASE from "../apiBase.js"
 import { useFloatingReadout } from "../components/FloatingReadout.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
+import Capturable from "../capture/Capturable.jsx"
 import { toast } from "../ui/toast.js"
 import { applyTransition } from "../utils/rafTransition.js"
 import { replayOnMap } from "../services/replayOnMap.js"
@@ -620,22 +621,36 @@ export default function Analytics() {
                 {data && (
                     <>
                         <KpiStrip kpis={data.kpis} />
-                        <VolumeChart timeseries={data.timeseries} />
+                        <Capturable label="Signal volume" detail={`${data.range} · ${data.region} · ${data.domain}`}>
+                            <VolumeChart timeseries={data.timeseries} />
+                        </Capturable>
                         <div style={{ display: "flex", gap: 12 }}>
-                            <Donut label="By severity" items={data.donuts.severity} colorFor={(item) => SEV_COLOR[item.key]} />
-                            <Donut label="By domain" items={data.donuts.domain} colorFor={(item) => greyForName(item.key)} />
-                            <Donut label="By region" items={data.donuts.region} colorFor={(item) => greyForName(item.key)} />
-                            <Donut label="By source" items={data.donuts.source} colorFor={(item) => greyForName(item.key)} />
+                            <Capturable label="By severity" detail={`${data.range} · ${data.region}`}>
+                                <Donut label="By severity" items={data.donuts.severity} colorFor={(item) => SEV_COLOR[item.key]} />
+                            </Capturable>
+                            <Capturable label="By domain" detail={`${data.range} · ${data.region}`}>
+                                <Donut label="By domain" items={data.donuts.domain} colorFor={(item) => greyForName(item.key)} />
+                            </Capturable>
+                            <Capturable label="By region" detail={`${data.range} · ${data.region}`}>
+                                <Donut label="By region" items={data.donuts.region} colorFor={(item) => greyForName(item.key)} />
+                            </Capturable>
+                            <Capturable label="By source" detail={`${data.range} · ${data.region}`}>
+                                <Donut label="By source" items={data.donuts.source} colorFor={(item) => greyForName(item.key)} />
+                            </Capturable>
                         </div>
                         <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
                             {/* Clicking a cell drives the SAME region/domain
                                 selects in the toolbar above rather than a
                                 second, parallel filter — so the controls
                                 always show what is actually applied. */}
-                            <Heatmap regions={data.heatmap.regions} domains={data.heatmap.domains}
-                                     cells={data.heatmap.cells}
-                                     onPick={(r, d) => { setRegion(r); setDomain(d) }} />
-                            <MoversTable movers={data.movers} />
+                            <Capturable label="Region / domain heatmap" detail={`${data.range}`}>
+                                <Heatmap regions={data.heatmap.regions} domains={data.heatmap.domains}
+                                         cells={data.heatmap.cells}
+                                         onPick={(r, d) => { setRegion(r); setDomain(d) }} />
+                            </Capturable>
+                            <Capturable label="Biggest movers" detail={`${data.range}`}>
+                                <MoversTable movers={data.movers} />
+                            </Capturable>
                         </div>
                         <SignalsTable rows={data.top_signals} onBriefAll={handleBriefAll} />
                     </>

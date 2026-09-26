@@ -1,5 +1,7 @@
 import UpdateBanner from "./desktop/UpdateBanner.jsx"
 import Tutorial from "./ui/Tutorial.jsx"
+import ScreenCapture, { saveCapture } from "./capture/ScreenCapture.jsx"
+import { toast } from "./ui/toast.js"
 import { isTextEntry } from "./utils/isTextEntry.js"
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
 import { REGION_COORDS } from "./data/regionCoords.js"
@@ -241,6 +243,7 @@ export default function App() {
     // Whether this machine can sign in with no server at all. Resolved
     // once, asynchronously, because it reads IndexedDB.
     const [offlineLoginAvailable, setOfflineLoginAvailable] = useState(false)
+    const [captureOpen, setCaptureOpen] = useState(false)
     useEffect(() => { canLoginOffline().then(setOfflineLoginAvailable).catch(() => {}) }, [])
     const runAuthCheck = useCallback(() => {
         checkSession().then((u) => {
@@ -1110,6 +1113,12 @@ export default function App() {
                 switchMode(mode === "work" ? "watch" : "work")
                 return
             }
+            // ⌘⇧4 — the gesture people already use for a screenshot.
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "4") {
+                e.preventDefault()
+                setCaptureOpen(true)
+                return
+            }
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
                 e.preventDefault()
                 setPaletteOpen(v => !v)
@@ -1475,6 +1484,19 @@ export default function App() {
                     />
                 </>
             )}
+            {/* SCREEN CAPTURE. ⌘⇧4 mirrors the macOS gesture people
+                already have in their hands for exactly this. What it adds
+                over the system tool is where the image goes: the Saved
+                pane, and from there a document. */}
+            <ScreenCapture
+                open={captureOpen}
+                onClose={() => setCaptureOpen(false)}
+                onCaptured={(dataUrl) => {
+                    const ok = saveCapture(dataUrl, { label: `Capture · ${TAB_TYPE_TO_MODULE[activeTabType] || "screen"}` })
+                    toast(ok === false ? "Already saved" : "Saved — it is in the Editor's Saved pane",
+                          { icon: "i-check" })
+                }}
+            />
             <Tutorial />
             <UpdateBanner />
             <ToastHost />
