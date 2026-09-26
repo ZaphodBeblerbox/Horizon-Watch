@@ -186,6 +186,8 @@ function MapLayersSection({ settings }) {
     )
 }
 
+import { setDnd } from "../state/notificationStore.js"
+
 // ── Alerts ───────────────────────────────────────────────────────────────
 function AlertsSection({ settings, onOpenSources }) {
     const [rules, setRules] = useState(null)
@@ -210,6 +212,12 @@ function AlertsSection({ settings, onOpenSources }) {
 
     return (
         <div>
+            <SectionTitle>Interruptions</SectionTitle>
+            <Row label="Do not disturb"
+                 hint="Stops notification cards appearing. Everything still lands in the tray and the bell still counts — a quiet mode that also stopped recording would just be losing alerts silently.">
+                <Toggle value={Boolean(settings.dnd)} onChange={(v) => setDnd(v)} />
+            </Row>
+
             <SectionTitle>Sound</SectionTitle>
             <Row label="Alert sounds" hint="Real audio cue on new alerts.">
                 <Toggle value={!settings.soundMuted} onChange={(v) => updateSetting("soundMuted", !v)} />

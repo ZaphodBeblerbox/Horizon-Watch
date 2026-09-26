@@ -1,3 +1,4 @@
+import { isTextEntry } from "./utils/isTextEntry.js"
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
 import { REGION_COORDS } from "./data/regionCoords.js"
 const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
@@ -299,12 +300,35 @@ export default function App() {
     // Guards the mode-setter against a tab-type-driven effect (below) firing
     // right back — real "switching" flag, not a hopeful timing assumption.
     const modeSwitchGuardRef = useRef(false)
+
+    // WHERE YOU WERE IN EACH MODE. Switching Watch -> Workstation and back
+    // used to land on whatever tab happened to be active, so a round trip
+    // did not return you to your place: you left the Editor mid-sentence,
+    // looked at the map, came back and were somewhere else.
+    const lastByMode = useRef({ watch: null, work: null })
+
     const setMode = useCallback((next) => {
         modeSwitchGuardRef.current = true
         setModeRaw(next)
         try { localStorage.setItem(MODE_STORAGE_KEY, next) } catch { /* ignore */ }
         setTimeout(() => { modeSwitchGuardRef.current = false }, 0)
     }, [])
+
+    /** Switch modes and land on the module you last had open there. */
+    const switchMode = useCallback((next) => {
+        setActiveTabId((curId) => {
+            const cur = tabsRef.current?.find((t) => t.id === curId)
+            const from = next === "work" ? "watch" : "work"
+            if (cur) lastByMode.current[from] = cur.type
+            return curId
+        })
+        setMode(next)
+        const want = lastByMode.current[next]
+        // No remembered module the first time into a mode — the mode's own
+        // default applies rather than an arbitrary tab.
+        if (want) openTabRef.current?.(want)
+        else openTabRef.current?.(next === "work" ? MODULE_TO_TAB_TYPE.cases : MODULE_TO_TAB_TYPE.situation)
+    }, [setMode])
 
     // W / G keybindings (§7.1) — both guarded against firing while typing.
     useEffect(() => {
@@ -314,10 +338,7 @@ export default function App() {
             // a bare letter shortcut fired while typing in one. isContentEditable
             // covers the element and any contenteditable ancestor; role=textbox
             // covers custom editors that are not contenteditable themselves.
-            const t = e.target
-            if (t?.matches?.("input, textarea, select, [contenteditable], [role='textbox']")) return
-            if (t?.isContentEditable) return
-            if (t?.closest?.("[contenteditable='true'], [role='textbox']")) return
+            if (isTextEntry(e.target)) return
 
             // These require Alt (Option on Mac) rather than being bare keys.
             // A bare letter is one missed guard away from firing mid-sentence,
@@ -328,7 +349,7 @@ export default function App() {
             if (!e.altKey) return
             if (e.metaKey || e.ctrlKey) return
 
-            if (e.key === "w" || e.key === "W" || e.code === "KeyW") { e.preventDefault(); setMode(mode === "work" ? "watch" : "work") }
+            if (e.key === "w" || e.key === "W" || e.code === "KeyW") { e.preventDefault(); switchMode(mode === "work" ? "watch" : "work") }
             else if (e.key === "g" || e.key === "G" || e.code === "KeyG") { e.preventDefault(); setMode("work"); openTab(MODULE_TO_TAB_TYPE.cases) }
             // Alt+T cycles auto -> light -> dark -> auto (PARALLAX spec §4.4).
             // Auto is first in the cycle because it is the default state the
@@ -970,6 +991,9 @@ export default function App() {
         setTabs(prev => prev.map(t => (t.id === id ? { ...t, label } : t)))
     }, [])
 
+    const tabsRef = useRef([])
+    const openTabRef = useRef(null)
+
     const openTab = useCallback((type, opts) => {
         // Redesign Round 2 — real tab types for the new 7-module rail
         // (data/modules.js) plus the pre-existing "dashboard"/"sources"/
@@ -1010,6 +1034,11 @@ export default function App() {
         switchTab(decision.tab.id)
     }, [tabs, switchTab, retitleTab, mode, setMode])
 
+
+    // switchMode is declared above these, so it reaches them through refs
+    // rather than the file being reordered around one keybinding.
+    useEffect(() => { tabsRef.current = tabs }, [tabs])
+    useEffect(() => { openTabRef.current = openTab }, [openTab])
     // Redesign Round 2, §6 — global ⌘K/Ctrl+K (palette) and 1-7 (module
     // switch) shortcuts, guarded against active text input so typing is
     // never interrupted. Declared here (after openTab) rather than earlier
@@ -1018,16 +1047,30 @@ export default function App() {
     // temporal-dead-zone crash, not just a style preference.
     useEffect(() => {
         const handler = (e) => {
-            const inTextInput = e.target?.matches?.("input,textarea,[contenteditable]")
+            // ⌘/Ctrl + Shift + Space toggles Watch <-> Workstation and
+            // lands where you last were in the mode you are entering.
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.code === "Space" || e.key === " ")) {
+                e.preventDefault()
+                switchMode(mode === "work" ? "watch" : "work")
+                return
+            }
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
                 e.preventDefault()
                 setPaletteOpen(v => !v)
                 return
             }
             if (e.key === "Escape" && paletteOpen) { closeOverlay("overlay:palette"); return }
-            if (inTextInput) return
+            if (isTextEntry(e.target)) return
+
+            // ⌘/Ctrl + 1..9 jumps to a module. This was a BARE digit, and
+            // its guard matched the editable host but nothing inside it —
+            // so typing "1" inside a bold span in a document switched the
+            // page out from under the writer. A modifier is the fix; the
+            // guard alone can only ever enumerate the surfaces it knows.
+            if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
             const n = Number(e.key)
             if (n >= 1 && n <= 9 && MODULES[n - 1]) {
+                e.preventDefault()
                 openTab(MODULE_TO_TAB_TYPE[MODULES[n - 1].key])
             }
         }

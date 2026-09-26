@@ -1,3 +1,4 @@
+import { isTextEntry } from "../utils/isTextEntry.js"
 import { useState, useRef, useEffect } from "react"
 import Icon from "./Icon.jsx"
 
@@ -53,9 +54,13 @@ export default function FlyoutMenu({ icon, buttonText, label, title, align = "ri
     useEffect(() => {
         if (!hotkey) return
         const onHotkey = (e) => {
-            if (e.metaKey || e.ctrlKey || e.altKey) return
-            const tag = document.activeElement?.tagName
-            if (tag === "INPUT" || tag === "TEXTAREA") return
+            // Alt-qualified, and guarded by the shared text-entry check.
+            // This was a BARE letter behind a guard that only knew about
+            // INPUT and TEXTAREA, so it opened the menu while the writer
+            // was mid-word in a document.
+            if (e.metaKey || e.ctrlKey) return
+            if (!e.altKey) return
+            if (isTextEntry(e.target)) return
             if (e.key.toLowerCase() === hotkey.toLowerCase()) {
                 e.preventDefault()
                 setOpen((v) => !v)

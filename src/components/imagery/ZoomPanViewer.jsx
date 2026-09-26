@@ -1,3 +1,4 @@
+import { isTextEntry } from "../../utils/isTextEntry.js"
 import { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef, createContext, useContext } from "react"
 import {
     zoomAbout, clampPan, focusOnBox, scaleToFit, arrowFor, IDENTITY, MIN_SCALE,
@@ -143,7 +144,10 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
 
     useEffect(() => {
         const onKey = (e) => {
-            if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return
+            // The old tagName test knew nothing about contenteditable, so
+            // typing "0" or "-" while writing a document zoomed this
+            // viewer underneath the writer.
+            if (isTextEntry(e.target)) return
             const { w, h } = frameSize()
             if (e.key === "+" || e.key === "=") setView((v) => clampPan(zoomAbout(v, 1.3, w / 2, h / 2), w, h))
             else if (e.key === "-" || e.key === "_") setView((v) => clampPan(zoomAbout(v, 1 / 1.3, w / 2, h / 2), w, h))

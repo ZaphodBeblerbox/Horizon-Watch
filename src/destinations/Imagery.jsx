@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { addToBriefing } from "../state/briefingBasket.js"
+import { saveForBriefing } from "../state/savedForBriefing.js"
 import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, SceneScrubber, SceneComparison } from "../components/imagery/sceneComparison.jsx"
@@ -497,7 +498,26 @@ export default function Imagery({ onOpenGenerate }) {
     function addToBriefingScene() {
         if (!scene) return
         addToBriefing(scene.scan.scan_id, `Sentinel scan — ${scene.zone.name}`)
-        toast("Added to briefing basket", { icon: "i-check" })
+
+        // Also keep the artefact itself, so the Editor's reference pane can
+        // put the crop on the page. The basket above only carries an id and
+        // a label — enough for a count, not enough to write with.
+        const b = scene.zone?.bbox || {}
+        const centreLat = b.north != null && b.south != null ? (b.north + b.south) / 2 : null
+        const centreLon = b.east != null && b.west != null ? (b.east + b.west) / 2 : null
+        const det = selectedDet || (scene.detections || [])[0]
+        saveForBriefing({
+            id: `imagery:${scene.scan.scan_id}${det ? `:${det.id}` : ""}`,
+            kind: "imagery",
+            region: scene.zone?.name || null,
+            lat: det?.centroid_lat ?? centreLat,
+            lon: det?.centroid_lon ?? centreLon,
+            imageUrl: det?.image_crop_url || scene.annotated_image_url || null,
+            detail: det
+                ? `${det.label || det.object_type} · ${fmtDate(scene.scan.image_timestamp_utc)}`
+                : `Sentinel scan · ${fmtDate(scene.scan.image_timestamp_utc)}`,
+        })
+        toast("Saved for briefing — it is in the Editor's Saved pane", { icon: "i-check" })
     }
     function raiseSignal() {
         if (!scene || !selectedDet) { toast("Select a detection first", {}); return }

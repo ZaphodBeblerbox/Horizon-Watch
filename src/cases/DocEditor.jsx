@@ -69,6 +69,11 @@ const SELECT = {
     padding: "0 4px", cursor: "pointer",
 }
 const BTN = { height: 24, font: "400 11px var(--font)", padding: "0 10px" }
+const IMGBTN = {
+    minWidth: 22, height: 20, padding: "0 5px", background: "transparent",
+    border: "1px solid #3a3f46", borderRadius: 2, color: "#d5dae0",
+    cursor: "pointer", font: "400 10px system-ui",
+}
 
 export default function DocEditor({ name, initialHtml = "", onSave, readOnly = false }) {
     const ref = useRef(null)
@@ -115,13 +120,18 @@ export default function DocEditor({ name, initialHtml = "", onSave, readOnly = f
         if (ref.current) setPrintHtml(ref.current.innerHTML)
     }, [])
 
-    const save = useCallback(async () => {
+    // `auto` distinguishes the timer from a person pressing Save. A caller
+    // that has nowhere to put the document yet must be able to ignore the
+    // timer and only ask where it goes when the writer actually asks to
+    // save — otherwise the question is asked every 1.8 seconds, forever.
+    const save = useCallback(async (auto = false) => {
         if (!onSave || !ref.current) return
         setSaving(true)
         try {
-            await onSave(ref.current.innerHTML)
-            setDirty(false)
-            setSavedAt(new Date())
+            const ok = await onSave(ref.current.innerHTML, { auto })
+            // A caller returns false for "not stored" — an autosave with
+            // nowhere to go. Claiming "Saved" then would be a lie.
+            if (ok !== false) { setDirty(false); setSavedAt(new Date()) }
         } finally {
             setSaving(false)
         }
@@ -131,13 +141,13 @@ export default function DocEditor({ name, initialHtml = "", onSave, readOnly = f
     // editor that loses work.
     useEffect(() => {
         if (!dirty || readOnly) return
-        const t = setTimeout(() => { save() }, 1800)
+        const t = setTimeout(() => { save(true) }, 1800)
         return () => clearTimeout(t)
     }, [dirty, readOnly, save])
 
     useEffect(() => {
         const onKey = (e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save() }
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(false) }
         }
         window.addEventListener("keydown", onKey)
         return () => window.removeEventListener("keydown", onKey)
@@ -168,6 +178,53 @@ export default function DocEditor({ name, initialHtml = "", onSave, readOnly = f
         fr.onload = () => { exec("insertImage", fr.result); touch() }
         fr.readAsDataURL(file)
     }, [touch])
+
+    // ── Placing an image ────────────────────────────────────────────────
+    // Clicking an image selects it and raises a small toolbar over it.
+    // Dragging already works: contenteditable moves an image to the caret
+    // natively, and reimplementing that with absolute coordinates would
+    // take the picture out of the text flow, which is what makes it
+    // reflow correctly across a page break.
+    const [imgSel, setImgSel] = useState(null)   // {el, top, left}
+
+    const placeImage = useCallback((how) => {
+        const el = imgSel?.el
+        if (!el) return
+        const fig = el.closest("figure") || el
+        if (how === "left" || how === "right") {
+            fig.style.float = how
+            fig.style.margin = how === "left" ? "4px 14px 8px 0" : "4px 0 8px 14px"
+            fig.style.textAlign = ""
+        } else if (how === "center") {
+            fig.style.float = ""
+            fig.style.margin = "14px auto"
+            fig.style.textAlign = "center"
+        } else if (how === "full") {
+            fig.style.float = ""; fig.style.margin = "14px 0"; fig.style.textAlign = "center"
+            el.style.width = "100%"
+        } else if (typeof how === "number") {
+            el.style.width = `${how}%`
+            el.style.height = "auto"
+        }
+        touch()
+        // Re-measure: the toolbar sits over the image and the image just moved.
+        requestAnimationFrame(() => {
+            const r = el.getBoundingClientRect()
+            const host = ref.current?.getBoundingClientRect()
+            if (host) setImgSel({ el, top: r.top - host.top, left: r.left - host.left })
+        })
+    }, [imgSel, touch])
+
+    const onEditorClick = useCallback((e) => {
+        const el = e.target
+        if (el?.tagName === "IMG") {
+            const r = el.getBoundingClientRect()
+            const host = ref.current?.getBoundingClientRect()
+            setImgSel({ el, top: r.top - (host?.top || 0), left: r.left - (host?.left || 0) })
+        } else {
+            setImgSel(null)
+        }
+    }, [])
 
     const applyPtSize = useCallback((pt) => {
         // execCommand fontSize only understands 1-7. Tag the selection with
@@ -268,7 +325,7 @@ export default function DocEditor({ name, initialHtml = "", onSave, readOnly = f
                         {saving ? "Saving…" : dirty ? "Unsaved" : savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : ""}
                     </span>
                     <button type="button" className="btn" style={BTN}
-                            onMouseDown={(e) => { e.preventDefault(); save() }}>Save</button>
+                            onMouseDown={(e) => { e.preventDefault(); save(false) }}>Save</button>
                     <button type="button" className="btn primary" style={BTN}
                             title='Opens the print dialog — choose "Save as PDF". Only the page exports, never the app.'
                             onMouseDown={(e) => { e.preventDefault(); exportPdf() }}>Export PDF</button>
@@ -278,12 +335,39 @@ export default function DocEditor({ name, initialHtml = "", onSave, readOnly = f
             {/* The editing surface: the same branded sheet the PDF is. */}
             <div style={{ flex: 1, minHeight: 0, overflow: "auto", background: "#3a3d42", padding: 22 }}>
                 <div style={{ display: "flex", justifyContent: "center" }}>
-                    <PageFrame id="doc-edit-page" style={{ boxShadow: "0 8px 30px rgba(0,0,0,.5)" }}>
+                    <PageFrame id="doc-edit-page" style={{ boxShadow: "0 8px 30px rgba(0,0,0,.5)", position: "relative" }}>
+                        {imgSel && !readOnly && (
+                            <div
+                                contentEditable={false}
+                                onMouseDown={(e) => e.preventDefault()}
+                                style={{
+                                    position: "absolute", zIndex: 5,
+                                    top: Math.max(0, imgSel.top - 30), left: imgSel.left,
+                                    display: "flex", gap: 2, padding: 3,
+                                    background: "#1b1f24", borderRadius: 3,
+                                    boxShadow: "0 2px 8px rgba(0,0,0,.4)",
+                                }}
+                            >
+                                {[["left", "Wrap left"], ["center", "Centre"], ["right", "Wrap right"], ["full", "Full width"]]
+                                    .map(([k, label]) => (
+                                        <button key={k} type="button" title={label}
+                                                onClick={() => placeImage(k)} style={IMGBTN}>
+                                            {k === "left" ? "\u25E7" : k === "right" ? "\u25E8" : k === "center" ? "\u25A3" : "\u25AD"}
+                                        </button>
+                                    ))}
+                                <span style={{ width: 1, background: "#444", margin: "0 2px" }} />
+                                {[25, 50, 75, 100].map((w) => (
+                                    <button key={w} type="button" title={`${w}% width`}
+                                            onClick={() => placeImage(w)} style={IMGBTN}>{w}</button>
+                                ))}
+                            </div>
+                        )}
                         <div
                             ref={ref}
                             contentEditable={!readOnly}
                             suppressContentEditableWarning
                             onInput={touch}
+                            onClick={onEditorClick}
                             onPaste={onPaste}
                             onDrop={(e) => {
                                 const f = e.dataTransfer?.files?.[0]

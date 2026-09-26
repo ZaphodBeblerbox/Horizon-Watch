@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import DocEditor from "../cases/DocEditor.jsx"
-import { listCases, listNodes, createNode, updateNode, getDoc } from "../lib/casesApi.js"
+import { listCases, listNodes, createCase, createNode, updateNode, getDoc } from "../lib/casesApi.js"
 import { listReports, getReportBundle } from "../reports/reportApi.js"
 import { toast } from "../ui/toast.js"
 import SidePanel from "../ui/SidePanel.jsx"
@@ -54,6 +54,7 @@ export default function Editor() {
     const [cases, setCases] = useState([])
     const [recent, setRecent] = useState([])
     const [saveOpen, setSaveOpen] = useState(false)
+    const [newCaseTitle, setNewCaseTitle] = useState("")
 
     useEffect(() => {
         listReports().then((r) => setReports(r || [])).catch(() => setReports([]))
@@ -102,13 +103,18 @@ export default function Editor() {
 
     // An existing case document saves in place. Anything else has to be
     // filed, so it asks where.
-    const onSave = useCallback(async (nextHtml) => {
+    const onSave = useCallback(async (nextHtml, { auto = false } = {}) => {
         setHtml(nextHtml)
         if (source?.kind === "doc") {
             await updateNode(source.caseId, source.nodeId, { body_html: nextHtml })
-            return
+            return true
         }
+        // Nowhere to put it yet. The autosave timer must not turn that into
+        // a dialog every 1.8 seconds; it only becomes a question when the
+        // writer actually asks to save.
+        if (auto) return false
         setSaveOpen(true)
+        return false
     }, [source])
 
     // Dropping a saved item into the page. An image goes in as a figure
@@ -136,6 +142,20 @@ export default function Editor() {
             document.execCommand("insertHTML", false, frag)
         }
     }, [])
+
+    // Making the case and filing into it is one action. Sending the writer
+    // to another module to create a container, then back to find their
+    // place again, is three.
+    const createAndFile = async () => {
+        const t = newCaseTitle.trim()
+        if (!t) return
+        try {
+            const c = await createCase({ title: t, priority: "moderate" })
+            setCases((p) => [c, ...p])
+            setNewCaseTitle("")
+            await fileInto(c.case_id)
+        } catch (e) { toast(e.message || "Could not create that case", { icon: "i-alert" }) }
+    }
 
     const fileInto = async (caseId) => {
         try {
@@ -227,8 +247,24 @@ export default function Editor() {
 
             {saveOpen && (
                 <Modal onClose={() => setSaveOpen(false)} title="Save to case">
+                    <div style={{ display: "flex", gap: 6, padding: "9px 10px", borderBottom: "1px solid var(--line)" }}>
+                        <input
+                            value={newCaseTitle}
+                            onChange={(e) => setNewCaseTitle(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") createAndFile() }}
+                            placeholder="New case title…"
+                            style={{
+                                flex: 1, minWidth: 0, height: 26, background: "var(--bg-0)",
+                                border: "1px solid var(--line)", color: "var(--txt)",
+                                font: "400 12px var(--font)", padding: "0 7px",
+                            }}
+                        />
+                        <button className="btn sm primary" onClick={createAndFile} disabled={!newCaseTitle.trim()}>
+                            create &amp; save
+                        </button>
+                    </div>
                     {cases.length === 0 ? (
-                        <Note>You have no cases yet. Create one in Cases first.</Note>
+                        <Note>No cases yet — name one above and this document becomes its first file.</Note>
                     ) : cases.map((c) => (
                         <div key={c.case_id} role="button" onClick={() => fileInto(c.case_id)}
                              style={{
