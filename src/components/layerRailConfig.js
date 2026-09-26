@@ -92,3 +92,55 @@ export function clampOpacity(value) {
     if (typeof value !== "number" || Number.isNaN(value)) return 0.9
     return Math.min(1, Math.max(0, value))
 }
+
+/**
+ * THE OTHER THREE TOGGLE GROUPS, in the one place layer keys live.
+ *
+ * Situation.jsx held these as inline arrays, so nothing else could render
+ * them — which is why the Settings "default view" control could only offer
+ * to clear the saved state, never to choose it. Worse, the lists overlap:
+ * `cables`, `chokepoints` and `ports` are also LAYER_GROUPS keys, and
+ * `vessels`/`aircraft` are the same switches as `aisVessels`/`adsb` under
+ * different names. That overlap is real and predates this; naming the
+ * groups here at least makes it visible rather than hidden in one file's
+ * JSX.
+ *
+ * `note` marks the ones that are genuinely a second control over the same
+ * data, so a settings screen can say so instead of appearing to offer two
+ * independent switches.
+ */
+export const CONTEXT_TOGGLES = [
+    { key: "risk",       label: "Country risk index" },
+    { key: "graticule",  label: "Graticule 10°" },
+    { key: "flows",      label: "Trade & energy flows" },
+    { key: "aois",       label: "Areas of interest" },
+    { key: "labels",     label: "Marker labels" },
+    { key: "frontlines", label: "Frontlines" },
+    { key: "coverage",   label: "Coverage" },
+]
+
+export const INFRA_TOGGLES = [
+    { key: "chokepoints", label: "Chokepoints", note: "also a map layer" },
+    { key: "ports",       label: "Ports & terminals", note: "also a map layer" },
+    { key: "airfields",   label: "Airports & airfields" },
+    { key: "cables",      label: "Submarine cables", note: "also a map layer" },
+    { key: "power",       label: "Power grid" },
+    { key: "nautical",    label: "Nautical chart" },
+    { key: "facMilitary", label: "Military facilities" },
+    { key: "facMedical",  label: "Medical facilities" },
+    { key: "facSecurity", label: "Security facilities" },
+]
+
+export const TRACK_TOGGLES = [
+    { key: "vessels",        label: "Vessels" },
+    { key: "aircraft",       label: "Aircraft" },
+    { key: "sanctionedOnly", label: "Sanctioned/watchlisted only" },
+]
+
+/** The four groups a saved launch state covers, in display order. */
+export const STARTUP_GROUPS = [
+    { id: "groups",  title: "Map layers",     items: LAYER_GROUPS.flatMap((g) => g.layers || [g]) },
+    { id: "context", title: "Context",        items: CONTEXT_TOGGLES },
+    { id: "infra",   title: "Infrastructure", items: INFRA_TOGGLES },
+    { id: "tracks",  title: "Live tracks",    items: TRACK_TOGGLES },
+]

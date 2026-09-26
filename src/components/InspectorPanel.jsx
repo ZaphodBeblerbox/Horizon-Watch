@@ -78,9 +78,12 @@ const ENTITY_TYPE_TO_REF_KIND = { vessel: "trk", aircraft: "trk", alert: "sig", 
 // exactly as opaque/flat as before.
 const DEFAULT_DOCK_STYLE = {
     position: "fixed",
-    top: 0,
+    // The bars are absolute limits: this docked panel begins where the top
+    // bar ends and ends where the status bar begins. top:0 put its header
+    // underneath the top bar, and bottom:0 ran it under the status bar.
+    top: "var(--top, 40px)",
     right: 0,
-    bottom: 0,
+    bottom: "var(--status, 0px)",
     width: 340,
     maxWidth: "100%",
     zIndex: 1400,

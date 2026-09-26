@@ -26,10 +26,11 @@ export default function WorkspacesPanel({
     return (
         <div style={{
             position: "fixed",
-            top: 44,
+            // Was 44. Three panels, three different guesses at one bar.
+            top: "var(--top, 40px)",
             right: 0,
             width: 256,
-            bottom: 0,
+            bottom: "var(--status, 0px)",
             ...GLASS_DARK,
             borderLeft: "1px solid rgba(255,255,255,0.065)",
             zIndex: 998,

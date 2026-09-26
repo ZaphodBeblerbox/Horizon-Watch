@@ -104,9 +104,6 @@ function SectionTitle({ children }) {
 // ── General ──────────────────────────────────────────────────────────────
 function GeneralSection({ settings }) {
     const user = getCurrentUser()
-    // Read once per open rather than subscribing: this is a summary of a
-    // choice made elsewhere, and it only changes from this panel.
-    const [startup, setStartup] = useState(() => getStartupLayers())
     const [timezone, setTimezone] = useState(user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
     const [tzSaving, setTzSaving] = useState(false)
     const tzOptions = (typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [timezone])
@@ -143,14 +140,9 @@ function GeneralSection({ settings }) {
                 />
             </Row>
             <SectionTitle>Launch</SectionTitle>
-            <Row label="Default view"
-                 hint={startup
-                     ? "The app opens with the layers you saved. Clearing this restores the built-in defaults."
-                     : "Not set — the app opens with its built-in defaults. Turn on the layers you want in Situation, then press \u201csave default\u201d in the Layers header."}>
-                {startup
-                    ? <button className="btn sm" onClick={() => { clearStartupLayers(); setStartup(null) }}>clear</button>
-                    : <span style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>none saved</span>}
-            </Row>
+            <div style={{ padding: "4px 0 2px" }}>
+                <StartupLayersEditor />
+            </div>
             <Row label="Guided walkthrough"
                  hint="The seven-step introduction to the app. Reopening it does not change anything you have set.">
                 <button className="btn sm" onClick={() => updateSetting("tutorial", null)}>
@@ -207,7 +199,7 @@ function MapLayersSection({ settings }) {
 
 import { setDnd } from "../state/notificationStore.js"
 
-import { getStartupLayers, clearStartupLayers } from "../state/useChrome.js"
+import StartupLayersEditor from "./StartupLayersEditor.jsx"
 
 // ── Alerts ───────────────────────────────────────────────────────────────
 function AlertsSection({ settings, onOpenSources }) {

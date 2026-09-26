@@ -260,6 +260,7 @@
             --top: 40px;
             --tabs: 32px;
             --status: 24px;
+            /* Collapsed, the bar keeps only its grip — see the rule below. */
 
             /* Situation glass panel widths (build spec v2, §3/§4.6/§4.7) —
                the map fit AND every map overlay inset derive from these two
@@ -637,6 +638,11 @@
            collapsing while the timeline is showing leaves 150px of gap
            where the chart used to be. */
         html:has(#timestrip.collapsed) { --strip-h: 30px; }
+        /* The status bar collapses to a grip. Keyed off the element so
+           every consumer of --status (docked panels, the notification
+           stack, the map chrome) reclaims the space rather than floating
+           above a gap. */
+        html:has(#statusbar.collapsed) { --status: 14px; }
 
         /* ── Real Settings round, General section: density ─────────────────
            A genuine second value set on the exact spacing tokens the whole

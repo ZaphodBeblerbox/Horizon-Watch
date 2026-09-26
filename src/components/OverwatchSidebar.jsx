@@ -257,9 +257,11 @@ export default function OverwatchSidebar({
     const S = {
         container: {
             position:       "fixed",
-            top:            40,
+            // --top, not 40: the token is 34px at compact density.
+            top:            "var(--top, 40px)",
             right:          0,
-            bottom:         isMobile ? 56 : 0,
+            // The status bar is the floor, the mobile tab bar on phones.
+            bottom:         isMobile ? 56 : "var(--status, 0px)",
             width:          280,
             background:     "rgb(8, 14, 28)",
             borderLeft:     "1px solid rgba(255,255,255,0.06)",

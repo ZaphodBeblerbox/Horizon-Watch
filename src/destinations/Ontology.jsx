@@ -763,15 +763,28 @@ export default function Ontology({ onOpenGenerate }) {
             </div>
 
             <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto", padding: 12 }}>
+                {/* EVERY KIND IS NAMED. This used to be node-or-else, and
+                    the else was LinkEditor — so selecting an ORBAT
+                    formation handed a node with no .id, .kind or .conf to
+                    an editor that reads all three, and the panel crashed.
+                    A fallback that assumes "not a node means a link" is
+                    wrong the moment a third kind exists, and it fails at
+                    the point of use rather than where the kind was added. */}
                 {!selected ? (
                     <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Select an object or link to inspect/edit it.</div>
                 ) : selected.kind === "node" ? (
                     <NodeEditor node={selected.item} onChanged={reload} onLocate={() => locate(selected.item)} />
-                ) : (
+                ) : selected.kind === "link" ? (
                     <LinkEditor link={selected.item} onChanged={reload} />
+                ) : selected.kind === "orbat" ? (
+                    <OrbatDetail sel={selected} />
+                ) : (
+                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>
+                        Nothing to show for this selection.
+                    </div>
                 )}
                 {inspectorExtensions.map((Ext, i) => (
-                    <Ext key={i} recordRef={selected?.kind === "node" ? `onto:${selected.item.id}` : null} record={selected?.item} />
+                    <Ext key={i} recordRef={selected?.kind === "node" && selected.item?.id != null ? `onto:${selected.item.id}` : null} record={selected?.item} />
                 ))}
             </div>
         </div>
@@ -802,6 +815,42 @@ function NodeEditor({ node, onChanged, onLocate }) {
                 <button className="btn sm" onClick={onLocate} disabled={node.lat == null}>locate</button>
                 <button className="btn danger sm" onClick={del}>delete</button>
             </div>
+        </div>
+    )
+}
+
+/**
+ * An ORBAT formation, read-only. It comes from the held order of battle
+ * rather than from the editable ontology graph, so there is nothing here to
+ * save — showing it as an editor would offer edits that go nowhere.
+ */
+function OrbatDetail({ sel }) {
+    const it = sel?.item || {}
+    const rows = [
+        ["Name", it.name],
+        ["Theatre", it.theatre_slug],
+        ["Structure", it.structure_path],
+        ["Status", it.disbanded ? "disbanded" : "active"],
+        ["Sources", sel?.sources],
+        ["Confidence", sel?.confidence != null ? `${Math.round(sel.confidence * 100)}%` : null],
+    ].filter(([, v]) => v != null && v !== "")
+
+    return (
+        <div>
+            <div style={{ font: "600 12px var(--font)", color: "var(--txt)", marginBottom: 8 }}>
+                {it.name || "Formation"}
+            </div>
+            {rows.map(([k, v]) => (
+                <div key={k} style={{ display: "flex", gap: 8, padding: "3px 0", font: "400 12px var(--font)" }}>
+                    <span style={{ minWidth: 88, color: "var(--txt-3)" }}>{k}</span>
+                    <span style={{ color: "var(--txt-2)" }}>{String(v)}</span>
+                </div>
+            ))}
+            <p className="risknote" style={{ marginTop: 10 }}>
+                Held order of battle, not an editable graph object. A single-source
+                formation is capped at 50% confidence, because confidence is agreement
+                between sources and one source agrees with nothing.
+            </p>
         </div>
     )
 }

@@ -55,17 +55,28 @@ try {
 }
 if (typeof window !== 'undefined') window.__parallaxDesktop = isDesktop()
 
-// Register service worker and listen for notification-click messages
-initPushNotifications().then(({ supported }) => {
-    if (!supported) return
-    navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data?.type === 'NOTIFICATION_CLICK' && event.data.eventId) {
-            window.dispatchEvent(new CustomEvent('akili:open-alert', {
-                detail: { id: event.data.eventId },
-            }))
-        }
-    })
-})
+// Register service worker and listen for notification-click messages.
+//
+// NOT IN THE PACKAGED APP. Tauri serves the frontend from tauri://localhost,
+// where service workers do not exist — navigator.serviceWorker is absent or
+// refuses to register. There is also nothing for one to do there: the
+// assets are already local, which is the only thing the SW was caching.
+try {
+    if (!isDesktop()) {
+        initPushNotifications().then(({ supported }) => {
+            if (!supported) return
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                if (event.data?.type === 'NOTIFICATION_CLICK' && event.data.eventId) {
+                    window.dispatchEvent(new CustomEvent('akili:open-alert', {
+                        detail: { id: event.data.eventId },
+                    }))
+                }
+            })
+        }).catch((e) => console.warn('[push] unavailable:', e?.message || e))
+    }
+} catch (e) {
+    console.warn('[push] unavailable:', e?.message || e)
+}
 
 // Real service-worker update-check wiring (stale-chunk-404 fix). The old
 // injectRegister:'auto' script only ever registered the SW once on load —
@@ -91,25 +102,40 @@ function activateWaitingWorkerAndReload() {
     navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true })
     waiting.postMessage({ type: 'SKIP_WAITING' })
 }
-registerSW({
-    immediate: true,
-    onNeedRefresh() {
-        activateWaitingWorkerAndReload()
-    },
-    onRegisteredSW(_swUrl, registration) {
-        if (!registration) return
-        swRegistration = registration
-        if (registration.waiting) activateWaitingWorkerAndReload()
-        const check = () => registration.update().catch(() => {})
-        setInterval(check, 30 * 60 * 1000)
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') check()
+// THIS RUNS AT MODULE SCOPE, SO IT MUST NOT THROW. It used to be a bare
+// call: in the packaged app, where the page is served from tauri://
+// localhost and service workers do not exist, a throw here meant
+// ReactDOM.render() below never ran and the window came up blank with no
+// error anywhere a user could see. A window that renders nothing is the
+// worst failure mode available, and it was one unguarded call away.
+//
+// Skipped entirely on desktop — there is no service worker to register and
+// nothing for it to cache, because the assets are already on disk.
+try {
+    if (!isDesktop()) {
+        registerSW({
+            immediate: true,
+            onNeedRefresh() {
+                activateWaitingWorkerAndReload()
+            },
+            onRegisteredSW(_swUrl, registration) {
+                if (!registration) return
+                swRegistration = registration
+                if (registration.waiting) activateWaitingWorkerAndReload()
+                const check = () => registration.update().catch(() => {})
+                setInterval(check, 30 * 60 * 1000)
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') check()
+                })
+            },
+            onRegisterError(err) {
+                console.error('[sw] registration failed:', err)
+            },
         })
-    },
-    onRegisterError(err) {
-        console.error('[sw] registration failed:', err)
-    },
-})
+    }
+} catch (e) {
+    console.warn('[sw] registration unavailable:', e?.message || e)
+}
 
 window.onerror = function(msg, src, line, col, err) {
   console.error('GLOBAL CRASH:', msg, 'at', src, line, col)

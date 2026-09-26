@@ -6,9 +6,10 @@ const API = API_BASE
 
 const PANEL = {
     position: "fixed",
-    top: 48,
+    // Was 48 — a number that matched no bar in either density.
+    top: "var(--top, 40px)",
     left: 0,
-    bottom: 0,
+    bottom: "var(--status, 0px)",
     width: 360,
     background: "rgb(6, 14, 48)",
     borderRight: "1px solid rgba(255,255,255,0.07)",

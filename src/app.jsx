@@ -1270,7 +1270,31 @@ export default function App() {
     // checkSession()'s one real request is in flight is honest (genuinely
     // nothing to show yet); a real login screen once we know there's no
     // valid session.
-    if (!authChecked) return null
+    // NEVER A BLANK WINDOW. This returned null, which is defensible in a
+    // browser tab — the page frame is already on screen — and is not in a
+    // packaged app, where the whole window is this and a null render is
+    // indistinguishable from the app being broken. The session check can
+    // take tens of seconds against an unreachable server before it gives
+    // up, and that whole time was blank.
+    if (!authChecked) {
+        return (
+            <div style={{
+                position: "fixed", inset: 0, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", gap: 14,
+                background: "var(--bg-0, #171b20)",
+            }}>
+                <svg width="46" height="46" viewBox="0 0 24 24" fill="none"
+                     strokeWidth="2.2" strokeLinecap="butt" aria-hidden="true">
+                    <path stroke="var(--txt, #d5dae0)" d="M3 4L14 20M14 4L3 20" />
+                    <path stroke="var(--acc-hi, #5f95d0)" d="M18 4L12.5 12M22 4L19.25 8" />
+                </svg>
+                <div style={{
+                    font: "400 11px var(--font, system-ui)", color: "var(--txt-3, #818c96)",
+                    letterSpacing: ".16em", textTransform: "uppercase",
+                }}>Parallax</div>
+            </div>
+        )
+    }
     // Real fix for the confirmed root cause of "closing the tab forces a
     // re-login": a transient failure (never a genuine 401) never shows
     // the login screen — it shows this honest, real "couldn't reach the

@@ -54,8 +54,12 @@ export default function StatusBar({ health, taskCount = null }) {
         : null
 
     return (
-        <div style={{
-            height: open ? "var(--status)" : 14, flexShrink: 0, background: "var(--bg-2)",
+        <div id="statusbar" className={open ? "" : "collapsed"} style={{
+            // Height comes from --status, which the rule in index.html
+            // drops to the grip height when this carries .collapsed. Every
+            // panel pinned to `bottom: var(--status)` follows automatically
+            // — otherwise collapsing the bar leaves a hole where it was.
+            height: "var(--status)", flexShrink: 0, background: "var(--bg-2)",
             borderTop: "1px solid var(--line)", display: "flex", alignItems: "stretch",
             overflow: "hidden", transition: "height 140ms var(--ease, ease)",
         }}>
