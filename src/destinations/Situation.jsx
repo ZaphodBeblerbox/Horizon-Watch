@@ -19,6 +19,8 @@
  */
 import { useChrome, getStartupLayers, saveStartupLayers, clearStartupLayers } from "../state/useChrome.js"
 import { createPortal } from "react-dom"
+import { captureElement } from "../capture/Capturable.jsx"
+import { saveForBriefing } from "../state/savedForBriefing.js"
 import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
@@ -1395,6 +1397,39 @@ export default function Situation({ onOpenDossier }) {
                     {/* The imagery entry point is now the single `#t-imagery`
                         control in `.annobar` — §10.1 calls out by name that
                         there must be ONE imagery icon, not two. */}
+                    {/* A picture of the map as it stands, detections and
+                        all, straight into the Saved pane. The globe is a
+                        WebGL canvas, so this goes through Capturable's
+                        Cesium compositing rather than a DOM rasteriser,
+                        which would render it black. */}
+                    <button
+                        onClick={async () => {
+                            const el = document.querySelector('[data-testid="view-root-situation"]')
+                            if (!el) return
+                            try {
+                                const url = await captureElement(el)
+                                saveForBriefing({
+                                    id: `capture:map:${Date.now()}`, kind: "capture",
+                                    headline: "Map view", source: "situation",
+                                    when: new Date().toISOString(), imageUrl: url,
+                                })
+                                toast("Map saved \u2014 it is in the Editor's Saved pane", { icon: "i-check" })
+                            } catch (e) {
+                                toast(`Could not capture the map: ${e?.message || e}`, { icon: "i-alert" })
+                            }
+                        }}
+                        title="Save a picture of the map for a document"
+                        style={{
+                            flex: "none", whiteSpace: "nowrap", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "none", border: "1px solid var(--line-soft)", borderRadius: 3, cursor: "pointer", color: "var(--txt-3)",
+                        }}
+                    >
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+                            <rect x="1.5" y="4" width="13" height="9.5" rx="1.5" />
+                            <circle cx="8" cy="8.75" r="2.6" />
+                            <path d="M5.5 4l1-1.6h3L10.5 4" />
+                        </svg>
+                    </button>
                     <button
                         onClick={() => setExportOpen(true)}
                         title="Export signals for a time period (CSV/PDF)"

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { saveForBriefing } from "../state/savedForBriefing.js"
+import Capturable from "../capture/Capturable.jsx"
 import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, SceneScrubber, SceneComparison } from "../components/imagery/sceneComparison.jsx"
@@ -834,10 +835,27 @@ export default function Imagery({ onOpenGenerate }) {
                     ) : scene.scan.status !== "completed" ? (
                         <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Not yet detected for this scene — run "re-run detection" to call the real detector.</div>
                     ) : (
-                        <SceneComparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
-                            swipePos={swipePos} onSwipePos={setSwipePos} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
-                            clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet}
-                            fullscreen={fullscreen} viewerRef={viewerRef} />
+                        // SAVE THE PIXELS, NOT A REFERENCE TO THEM. The scan's
+                        // own image_crop_url is always null (see database.py) —
+                        // the imagery lives on the scan as base64 and is drawn
+                        // here. Capturing this element takes what is actually on
+                        // screen, detection boxes included, which is the thing
+                        // worth putting in a briefing.
+                        <Capturable
+                            kind="imagery"
+                            label={`Sat imagery · ${scene.zone?.name || "scene"}`}
+                            detail={[
+                                scene.scan?.instrument,
+                                fmtDate(scene.scan?.image_timestamp_utc),
+                                selectedDet ? (selectedDet.label || selectedDet.object_type) : null,
+                            ].filter(Boolean).join(" · ")}
+                            style={{ flex: 1, minHeight: 0, display: "flex" }}
+                        >
+                            <SceneComparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
+                                swipePos={swipePos} onSwipePos={setSwipePos} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
+                                clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet}
+                                fullscreen={fullscreen} viewerRef={viewerRef} />
+                        </Capturable>
                     )}
                 </div>
             </div>
