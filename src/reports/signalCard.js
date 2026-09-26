@@ -117,7 +117,21 @@ export function signalCardHtml(item, { headline, meta }) {
         ? `<div style="margin:9px 0 2px"><img src="${esc(item.imageUrl)}" alt="${esc(headline)}" style="max-width:100%;height:auto;border:1px solid #d8d3ca"/></div>`
         : ""
 
-    return `<div class="signal-card" style="border:1px solid #cdc8bf;border-left:3px solid ${accent};background:#fbfaf8;padding:10px 12px;margin:14px 0">
+    // THE CARD CARRIES ITS COORDINATE. In the editor and the reader, a
+    // click on it flies the map there; in a PDF it is inert and the card
+    // still reads as a complete record, which is why the location is
+    // printed on the face rather than living only in the link.
+    //
+    // data- attributes rather than an <a href>: a real anchor inside
+    // contenteditable is draggable, focusable and followable, and a stray
+    // click while writing would navigate. This is read by a delegated
+    // listener that only acts outside the editor.
+    const geoAttrs = hasGeo
+        ? ` data-signal-lat="${item.lat}" data-signal-lon="${item.lon}"` +
+          ` data-signal-id="${esc(item.id || "")}" title="Click to show this on the map"`
+        : ""
+
+    return `<div class="signal-card"${geoAttrs} style="border:1px solid #cdc8bf;border-left:3px solid ${accent};background:#fbfaf8;padding:10px 12px;margin:14px 0${hasGeo ? ";cursor:pointer" : ""}">
 <div style="font:7.5pt Georgia,serif;letter-spacing:.09em;color:#6a6f77;margin-bottom:4px">${head}</div>
 <div style="font:bold 11.5pt Georgia,serif;color:#1b1f24;line-height:1.35">${esc(headline)}</div>
 ${item.region ? `<div style="font:9.5pt Georgia,serif;color:#4a4f57;margin-top:2px">${esc(item.region)}</div>` : ""}

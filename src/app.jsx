@@ -2,6 +2,7 @@ import UpdateBanner from "./desktop/UpdateBanner.jsx"
 import Tutorial from "./ui/Tutorial.jsx"
 import ScreenCapture, { saveCapture } from "./capture/ScreenCapture.jsx"
 import { toast } from "./ui/toast.js"
+import { installSignalCardNav } from "./reports/signalCardNav.js"
 import { isTextEntry } from "./utils/isTextEntry.js"
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react"
 import { REGION_COORDS } from "./data/regionCoords.js"
@@ -244,6 +245,10 @@ export default function App() {
     // once, asynchronously, because it reads IndexedDB.
     const [offlineLoginAvailable, setOfflineLoginAvailable] = useState(false)
     const [captureOpen, setCaptureOpen] = useState(false)
+    // A signal card in a document is clickable: it flies the map to the
+    // place it describes. Installed once, delegated, so cards rendered
+    // from stored HTML work without React touching them.
+    useEffect(() => installSignalCardNav(window), [])
     useEffect(() => { canLoginOffline().then(setOfflineLoginAvailable).catch(() => {}) }, [])
     const runAuthCheck = useCallback(() => {
         checkSession().then((u) => {
