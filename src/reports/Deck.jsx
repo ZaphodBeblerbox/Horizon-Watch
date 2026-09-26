@@ -321,22 +321,21 @@ function useStageScale(stageRef) {
 }
 
 // Pure CSS media-query-driven print/PDF path — the exact same real
-// pattern PrintLayout.jsx already established (no JS state toggle
-// hoping window.print()'s dialog blocks long enough): .deck-print-flow
-// (every real slide, laid into normal flow) is always in the DOM but
-// display:none outside of print; @media print swaps it in and hides the
-// interactive stage/rail/notes/toolbar instead. This is what makes
-// Page.printToPDF (or a real user's print dialog) produce exactly one
-// landscape sheet per real slide regardless of any JS timing.
+// pattern PrintLayout.jsx already established: .deck-print-flow (every
+// real slide, laid into normal flow) is always in the DOM but display:none
+// outside of print, and it is portalled to <body> through PrintSurface so
+// the allowlist there shows it and hides the app. This is what makes
+// Page.printToPDF (or a real print dialog) produce exactly one landscape
+// sheet per real slide regardless of any JS timing.
+import { PrintSurface, exportPdf as doExportPdf } from "../print/printSurface.jsx"
+import { ParallaxMark, TrifectaFooter } from "../print/PageFrame.jsx"
+
 const PRESENT_PRINT_CSS = `
 .deck-print-flow{display:none}
 @media print{
   @page{margin:0;size:landscape}
-  body{overflow:visible;background:#fff}
-  #app{display:block;height:auto}
-  .view{display:none!important}
-  .view#view-deck{display:block!important;overflow:visible;height:auto}
-  .deck-interactive{display:none!important}
+  /* No chrome is named here on purpose. printSurface.jsx's allowlist
+     decides what is on the sheet; this file only sets slide geometry. */
   .deck-print-flow{display:block!important}
   /* COLOUR HAS TO BE ASKED FOR — same reason as PrintLayout.jsx. Without
      this the light panel fill, the accent rules and every severity swatch
@@ -395,12 +394,10 @@ export default function Deck({ reportId, onBack }) {
     useEffect(() => () => { if (presenting) setPresenting(false) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Real page count matches real slide count exactly — the always-
-    // rendered .deck-print-flow (below) already contains every real slide
-    // laid into normal document flow; @media print (see PRESENT_PRINT_CSS)
-    // is what actually shows it and hides the interactive stage, so this
-    // is just the real trigger, not something that needs to toggle state
-    // first and hope a print dialog blocks long enough.
-    const exportPdf = useCallback(() => window.print(), [])
+    // rendered .deck-print-flow (below) already contains every real slide,
+    // portalled to <body>; the shared entry point waits for layout and
+    // then opens the dialog.
+    const exportPdf = useCallback(() => doExportPdf(), [])
 
     if (!reportId) return null
     const active = slides[activeIndex]
@@ -504,7 +501,8 @@ export default function Deck({ reportId, onBack }) {
                 PrintLayout.jsx's own docpage already uses rather than a
                 live-measured print-time scale, which JS cannot reliably
                 get during actual print rendering. */}
-            <div className="deck-print-flow">
+            <PrintSurface>
+              <div className="deck-print-flow">
                 {slides.map((s) => {
                     const R = SLIDE_RENDERERS[s.kind]
                     return (
@@ -512,10 +510,18 @@ export default function Deck({ reportId, onBack }) {
                             <div style={{ position: "absolute", top: "50%", left: "50%", width: 1920, height: 1080, transform: `translate(-50%,-50%) scale(${PRINT_PAGE_SCALE})`, transformOrigin: "center center", background: PRINT_PAL.panel }}>
                                 {R && <R s={s} pal={PRINT_PAL} />}
                             </div>
+                            {/* Same two marks as the paginated report, so a
+                                deck exported for a client carries the same
+                                identity as a briefing. */}
+                            <div style={{ position: "absolute", top: "0.3in", left: "0.42in" }}><ParallaxMark height={12} /></div>
+                            <div style={{ position: "absolute", bottom: "0.26in", left: 0, right: 0, display: "flex", justifyContent: "center" }}>
+                                <TrifectaFooter />
+                            </div>
                         </div>
                     )
                 })}
-            </div>
+              </div>
+            </PrintSurface>
         </div>
     )
 }

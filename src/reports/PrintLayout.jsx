@@ -24,6 +24,9 @@ const SEV_RANK = { critical: 4, high: 3, moderate: 2, low: 1 }
 // or, failing that, the claim's own real lat/lon is always honest regardless
 // of which alert type produced it — a place-looking string that might
 // actually be something else is not.
+import { PrintSurface, exportPdf } from "../print/printSurface.jsx"
+import { ParallaxMark, TrifectaFooter } from "../print/PageFrame.jsx"
+
 function formatLocation(claim, signal) {
     if (claim.region) return claim.region
     const lat = claim.lat ?? signal?.lat, lon = claim.lon ?? signal?.lon
@@ -32,43 +35,15 @@ function formatLocation(claim, signal) {
 }
 
 const PRINT_CSS = `
+/* Page-box geometry only. What is ON the sheet is decided by the
+   allowlist in printSurface.jsx, not by naming chrome to hide here —
+   that denylist is exactly what printed the whole UI. */
 @media print{
-  @page{margin:0;size:letter}
-  body{overflow:visible;background:#fff}
-  #app{display:block;height:auto}
-  .topbar,.tabstrip,.statusbar,#toasts,.scrim,.doctools,.docaside{display:none!important}
-  .view{display:none!important}
-  .view#view-doc{display:block!important;overflow:visible;height:auto}
-  .docdesk{overflow:visible;height:auto;padding:0;background:#fff}
-  #view-doc .panes{display:block!important}
-  .pane{border:0!important}
-  .docpage{box-shadow:none;margin:0;width:8.5in;min-height:11in;padding:.72in .8in .6in;
+  .docpage{box-shadow:none!important;margin:0!important;transform:none!important;
+           width:8.5in!important;min-height:11in!important;
+           padding:.62in .7in .54in!important;background:#fff!important;
            break-after:page}
   .docpage:last-child{break-after:auto}
-
-  /* COLOUR HAS TO BE ASKED FOR. Browsers drop background colours when
-     printing unless told otherwise, so every severity bar, callout rule
-     and shaded cell in the briefing came out white — which is most of
-     why the PDF read as a broken screenshot of the screen rather than a
-     document. */
-  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-
-  /* NOTHING SPLITS ACROSS A PAGE MID-THOUGHT. A table row broken over a
-     page boundary loses its header and reads as corrupted; a heading
-     stranded at the foot of a page belongs to nothing. */
-  table,figure,blockquote{break-inside:avoid}
-  tr,li{break-inside:avoid}
-  thead{display:table-header-group}
-  tfoot{display:table-footer-group}
-  h1,h2,h3,h4{break-after:avoid;break-inside:avoid}
-
-  /* An image wider than the text block silently pushed the page out and
-     clipped the right margin. */
-  img,svg,canvas{max-width:100%;height:auto}
-
-  /* A link printed as blue underlined text with no destination is
-     noise on paper; the reference grammar already carries the source. */
-  a{color:inherit;text-decoration:none}
 }
 `
 
@@ -76,10 +51,27 @@ const PAGE_H2 = { font: "700 12px var(--font)", textTransform: "uppercase", lett
 const PAGE_H3 = { fontSize: 13.5, margin: "15px 0 4px", fontWeight: 700 }
 const CALLOUT = { borderLeft: "2px solid #1b1f24", padding: "2px 0 2px 12px", margin: "11px 0", fontSize: 13, lineHeight: 1.58 }
 
+/* Top-left of every page, on screen and in the PDF alike — it is real
+   document content, not print-only chrome. */
+function PageBrand() {
+    return <div style={{ position: "absolute", top: 20, left: 70 }}><ParallaxMark /></div>
+}
+
 function Folio({ cls, id, page }) {
     return (
         <div style={{ marginTop: "auto", paddingTop: 20, display: "flex", justifyContent: "space-between", font: "400 8.5px var(--font)", letterSpacing: "0.11em", color: "#7d7870", borderTop: "1px solid #cdc8bf" }}>
             <span>{cls}</span><span>{id}</span><span>PAGE {page}</span>
+        </div>
+    )
+}
+
+/* Centred under the folio. Separate element rather than a third folio
+   cell, because it must read as the company mark on the page, not as
+   another piece of document metadata. */
+function PageFooterMark() {
+    return (
+        <div style={{ display: "flex", justifyContent: "center", paddingTop: 7 }}>
+            <TrifectaFooter />
         </div>
     )
 }
@@ -164,7 +156,7 @@ export default function PrintLayout({ reportId, onBack, onOpenDeck }) {
                     print dialog, and "print" on a button is not a
                     discoverable way to say "this is how you get a PDF".
                     Choose "Save as PDF" as the destination. */}
-                <button className="btn primary" onClick={() => window.print()}
+                <button className="btn primary" onClick={() => exportPdf()}
                         title={'Opens the print dialog — choose "Save as PDF" as the '
                                + "destination. The pages below are what you get, at letter size."}>
                     export pdf
@@ -194,12 +186,23 @@ export default function PrintLayout({ reportId, onBack, onOpenDeck }) {
                     )}
                 </div>
             </div>
+
+            {/* WHAT ACTUALLY PRINTS. A second, unscaled copy of the same
+                pages, portalled to <body> so the allowlist in
+                printSurface.jsx can show it and hide everything else. The
+                preview above is zoomed and sits on a dark desk — printing
+                that is what produced a screenshot. */}
+            {report && sections && (
+                <PrintSurface>
+                    <PrintPages report={report} sections={sections} xrefIndex={xrefIndex} linkAnalysis={linkAnalysis} />
+                </PrintSurface>
+            )}
         </div>
     )
 }
 
 const DOCPAGE_STYLE = {
-    width: 816, minHeight: 1056, background: "#f4f2ee", color: "#1b1f24",
+    width: 816, minHeight: 1056, background: "#fff", color: "#1b1f24",
     padding: "62px 70px 54px", boxShadow: "0 8px 30px rgba(0,0,0,.5)", position: "relative",
     display: "flex", flexDirection: "column", fontFamily: "'Times New Roman', Times, Georgia, serif",
     marginBottom: 20,
@@ -231,6 +234,7 @@ function PrintPages({ report, sections, xrefIndex, linkAnalysis }) {
         <>
             {/* Page 1 — Judgement */}
             <section className="docpage" id="pg1" style={DOCPAGE_STYLE}>
+                <PageBrand />
                 <div style={{ position: "absolute", top: 20, right: 70, font: "400 8.5px var(--font)", letterSpacing: "0.14em", color: "#7d7870" }}>{report.classification}</div>
                 <Kicker>{report.classification}</Kicker>
                 <h1 style={{ fontSize: 26, lineHeight: 1.16, margin: "0 0 10px", fontWeight: 700, letterSpacing: "-.01em" }}>{report.title}</h1>
@@ -273,10 +277,12 @@ function PrintPages({ report, sections, xrefIndex, linkAnalysis }) {
                 ))} />
 
                 <Folio cls={report.classification} id={report.report_id} page={1} />
+                <PageFooterMark />
             </section>
 
             {/* Page 2 — Themes */}
             <section className="docpage" id="pg2" style={DOCPAGE_STYLE}>
+                <PageBrand />
                 <div style={PAGE_H2}>Assessment by theme</div>
                 {themes.map((t) => (
                     <div key={t.id}>
@@ -296,10 +302,12 @@ function PrintPages({ report, sections, xrefIndex, linkAnalysis }) {
                 ))} />
 
                 <Folio cls={report.classification} id={report.report_id} page={2} />
+                <PageFooterMark />
             </section>
 
             {/* Page 3 — Consequence */}
             <section className="docpage" id="pg3" style={DOCPAGE_STYLE}>
+                <PageBrand />
                 <div style={PAGE_H2}>Exposure and continuity impact</div>
                 {!exposure || exposure.asset_count === 0 ? (
                     <EmptyNote>{exposure ? "The real asset register is currently empty — no exposure could be scored." : "No exposure scoring was run for this report."}</EmptyNote>
@@ -335,6 +343,7 @@ function PrintPages({ report, sections, xrefIndex, linkAnalysis }) {
                 )}
 
                 <Folio cls={report.classification} id={report.report_id} page={3} />
+                <PageFooterMark />
             </section>
 
             {/* Page 4 — Appendix A: link analysis */}
@@ -351,6 +360,7 @@ function AppendixA({ report, linkAnalysis }) {
     const inferredCount = (linkAnalysis?.links || []).filter((l) => l.inferred).length
     return (
         <section className="docpage" id="pg4" style={DOCPAGE_STYLE}>
+                <PageBrand />
             <div style={{ position: "absolute", top: 20, right: 70, font: "400 8.5px var(--font)", letterSpacing: "0.14em", color: "#7d7870" }}>{report.classification}</div>
             <div style={PAGE_H2}>Appendix A — link analysis</div>
             <p style={{ fontSize: 13, lineHeight: 1.6 }}>
@@ -374,6 +384,7 @@ function AppendixA({ report, linkAnalysis }) {
                 and shared registry data, not a stated fact); they are review candidates, not conclusions.
             </div>
             <Folio cls={report.classification} id={report.report_id} page={4} />
+                <PageFooterMark />
         </section>
     )
 }
