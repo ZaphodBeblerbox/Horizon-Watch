@@ -96,3 +96,31 @@ export function formatCoord(deg, pad) {
     const s = deg < 0 ? "−" : "+"
     return s + Math.abs(deg).toFixed(4).padStart(pad + 5, "0")
 }
+
+// ── Measuring a viewer that is not the main globe ─────────────────────────
+// The publishers above are a singleton, because there is one main globe and
+// GlobeView owns it. A minimap is a second, independent Cesium viewer, and
+// it used to get its readout from a whole parallel pair of components
+// (ScaleBar.jsx / CoordinateReadout.jsx) that measured the same quantities
+// the same way and rendered them in a different shape. Two implementations
+// of one readout is how the main globe ended up drawing both at once.
+//
+// So the measurement moves here, where the formatting already lives, and
+// MapMeta renders either source. Same geodesic technique the old ScaleBar
+// used: sample two points a fixed pixel span apart across the centre of the
+// canvas, take the real ground distance between them, divide by the span.
+
+export function measureViewerScale(viewer, Cartesian2, Cartesian3, spanPx = 100) {
+    const canvas = viewer?.scene?.canvas
+    if (!canvas || viewer.isDestroyed?.()) return null
+    const cx = canvas.clientWidth / 2, cy = canvas.clientHeight / 2, half = spanPx / 2
+    let p1, p2
+    try {
+        p1 = viewer.camera.pickEllipsoid(new Cartesian2(cx - half, cy))
+        p2 = viewer.camera.pickEllipsoid(new Cartesian2(cx + half, cy))
+    } catch { return null }
+    // Off-globe (looking at the horizon or space) pickEllipsoid returns
+    // nothing. A scale bar that keeps its last value there is lying.
+    if (!p1 || !p2) return null
+    return scaleFor(Cartesian3.distance(p1, p2) / spanPx)
+}

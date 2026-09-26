@@ -1494,7 +1494,9 @@ export default function Situation({ onOpenDossier }) {
                         }}
                     />
                     <MapChrome basemap={{ value: basemap, onChange: setBasemap }} />
-                    <MapMeta />
+                    {/* MapMeta is rendered by GlobeView itself — one readout
+                        per map. Rendering a second one here is what put two
+                        coordinate/scale stacks in the same corner. */}
                     {/* §6 — the ONE map tooltip. Mounted here, driven by any
                         layer through mapTip.js; no layer renders its own. */}
                     <MapTip />

@@ -39,8 +39,7 @@ import GlobeReplayLayer         from "../globe/GlobeReplayLayer.jsx"
 import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
-import ScaleBar                 from "./ScaleBar.jsx"
-import CoordinateReadout        from "./CoordinateReadout.jsx"
+import MapMeta                  from "./MapMeta.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -259,7 +258,7 @@ export default function GlobeView({
     const [cesiumViewer, setCesiumViewer] = useState(null)
 
     // Expose the live Cesium.Viewer once Resium has mounted it, for the
-    // bottom-left map-chrome overlays (ScaleBar/CoordinateReadout) which
+    // bottom-left map-chrome overlay (MapMeta) which
     // need a real viewer instance rather than the ref wrapper. UI correction
     // pass, Dashboard bug #3: this was a one-shot check with no retry, unlike
     // every other "wait for viewerRef.current.cesiumElement" spot in this
@@ -267,7 +266,7 @@ export default function GlobeView({
     // both of which retry on a timer) — confirmed live that Resium's actual
     // Cesium.Viewer isn't always ready on the very first post-mount tick, so
     // the one-shot version could leave cesiumViewer null forever and
-    // silently drop ScaleBar/CoordinateReadout. Now retries the same way.
+    // silently drop MapMeta. Now retries the same way.
     useEffect(() => {
         let attempts = 0
         let cancelled = false
@@ -1129,10 +1128,13 @@ export default function GlobeView({
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
             {cesiumViewer && (
-                <div data-testid="map-bottom-chrome" style={{ position: "absolute", left: 12 + mapChromeLeftInset, bottom: 12 + mapChromeBottomInset, zIndex: 40, display: "flex", flexDirection: "column", gap: 4, transition: "left 0.15s ease, bottom 0.15s ease" }}>
-                    <ScaleBar viewer={cesiumViewer} />
-                    <CoordinateReadout viewer={cesiumViewer} />
-                </div>
+                <MapMeta
+                    data-testid="map-bottom-chrome"
+                    style={{
+                        left: 12 + mapChromeLeftInset, bottom: 12 + mapChromeBottomInset,
+                        zIndex: 40, transition: "left 0.15s ease, bottom 0.15s ease",
+                    }}
+                />
             )}
 
         </div>

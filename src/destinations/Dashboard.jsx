@@ -41,7 +41,7 @@
  * component the old standalone "Maritime Operational View" destination used
  * — with the real shared MapControlStack (locate/zoom/fullscreen/layers) and
  * LayersFlyout, rather than a second bespoke map+controls implementation.
- * GlobeView's own bottom-left ScaleBar/CoordinateReadout come along for free.
+ * GlobeView's own bottom-left MapMeta readout comes along for free.
  */
 import { useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"

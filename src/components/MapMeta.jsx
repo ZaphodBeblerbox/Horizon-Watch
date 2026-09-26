@@ -14,17 +14,56 @@
  */
 
 import { useEffect, useState } from "react"
-import { subscribeCursor, getCursor, subscribeScale, getScale, formatCoord } from "../globe/mapReadout.js"
+import {
+    subscribeCursor, getCursor, subscribeScale, getScale, formatCoord,
+    measureViewerScale,
+} from "../globe/mapReadout.js"
+import { Cartesian2, Cartesian3, Math as CMath } from "cesium"
 
-export default function MapMeta() {
-    const [cursor, setCursor] = useState(() => getCursor())
-    const [scale, setScale] = useState(() => getScale())
+/**
+ * `viewer` is for a map that is not the main globe — a minimap runs its own
+ * Cesium viewer, which the singleton publishers know nothing about. Given
+ * one, this measures it directly; given none, it reads what GlobeView
+ * publishes. One component either way, so there is only ever one readout
+ * shape in the product.
+ */
+export default function MapMeta({ viewer = null, style = null }) {
+    const [cursor, setCursor] = useState(() => (viewer ? null : getCursor()))
+    const [scale, setScale] = useState(() => (viewer ? null : getScale()))
 
-    useEffect(() => subscribeCursor(setCursor), [])
-    useEffect(() => subscribeScale(setScale), [])
+    useEffect(() => { if (!viewer) return subscribeCursor(setCursor) }, [viewer])
+    useEffect(() => { if (!viewer) return subscribeScale(setScale) }, [viewer])
+
+    useEffect(() => {
+        if (!viewer || viewer.isDestroyed?.()) return
+        const onRender = () => setScale(measureViewerScale(viewer, Cartesian2, Cartesian3))
+        onRender()
+        viewer.scene.postRender.addEventListener(onRender)
+
+        const canvas = viewer.scene.canvas
+        const onMove = (e) => {
+            const r = canvas.getBoundingClientRect()
+            let picked = null
+            try {
+                picked = viewer.camera.pickEllipsoid(
+                    new Cartesian2(e.clientX - r.left, e.clientY - r.top))
+            } catch { picked = null }
+            if (!picked) { setCursor(null); return }
+            const c = viewer.scene.globe.ellipsoid.cartesianToCartographic(picked)
+            setCursor({ lat: CMath.toDegrees(c.latitude), lon: CMath.toDegrees(c.longitude) })
+        }
+        const onLeave = () => setCursor(null)
+        canvas.addEventListener("mousemove", onMove)
+        canvas.addEventListener("mouseleave", onLeave)
+        return () => {
+            if (!viewer.isDestroyed?.()) viewer.scene.postRender.removeEventListener(onRender)
+            canvas.removeEventListener("mousemove", onMove)
+            canvas.removeEventListener("mouseleave", onLeave)
+        }
+    }, [viewer])
 
     return (
-        <div className="mapmeta" aria-hidden="true">
+        <div className="mapmeta" aria-hidden="true" style={style || undefined}>
             <span className="coord">
                 {cursor
                     ? <>LAT <b>{formatCoord(cursor.lat, 2)}</b>&nbsp;&nbsp;LON <b>{formatCoord(cursor.lon, 3)}</b></>

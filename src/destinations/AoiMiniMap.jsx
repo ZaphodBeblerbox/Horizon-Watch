@@ -33,8 +33,7 @@
  */
 import { useEffect, useRef, useState } from "react"
 import { esriSatelliteProvider } from "../globe/imageryProviders.js"
-import ScaleBar from "../components/ScaleBar.jsx"
-import CoordinateReadout from "../components/CoordinateReadout.jsx"
+import MapMeta from "../components/MapMeta.jsx"
 import AoiLockDimming from "../globe/AoiLockDimming.jsx"
 import { useUserLocation } from "../globe/useUserLocation.js"
 
@@ -466,14 +465,10 @@ export default function AoiMiniMap({
                     fontFamily: "var(--font-sans)",
                 }}>Click two opposite corners to draw a watch area · right-click to cancel</div>
             )}
-            {/* UI correction pass, Part 7.5: every real map instance needs the
-                bottom-left scale bar + coordinate readout. */}
-            {ready && viewerRef.current && (
-                <>
-                    <ScaleBar viewer={viewerRef.current} />
-                    <CoordinateReadout viewer={viewerRef.current} />
-                </>
-            )}
+            {/* Every real map instance needs the bottom-left readout — and
+                it is the same component the main globe uses, measuring this
+                viewer instead of the published one. */}
+            {ready && viewerRef.current && <MapMeta viewer={viewerRef.current} />}
         </div>
     )
 }

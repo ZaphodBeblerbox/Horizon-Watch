@@ -2,7 +2,7 @@
  * connectorLineGeometry.js — pure coordinate-validation logic extracted out
  * of GlobeConnectorLinesLayer.jsx so it's testable without mounting Cesium/
  * resium (matches this repo's existing convention of pure-logic .js modules
- * — e.g. coordinateFormat.js — imported by both a .jsx component and a
+ * — e.g. mapReadout.js — imported by both a .jsx component and a
  * plain vitest .test.js file).
  *
  * Real, confirmed root cause this exists to prevent regressing: the global
