@@ -322,12 +322,16 @@ export default function App() {
 
     /** Switch modes and land on the module you last had open there. */
     const switchMode = useCallback((next) => {
-        setActiveTabId((curId) => {
-            const cur = tabsRef.current?.find((t) => t.id === curId)
-            const from = next === "work" ? "watch" : "work"
-            if (cur) lastByMode.current[from] = cur.type
-            return curId
-        })
+        // READ SYNCHRONOUSLY. This used to record the outgoing tab inside a
+        // setActiveTabId updater — which React runs during render, after
+        // the line below had already read lastByMode back. The memory was
+        // therefore always one switch behind, and the first switch had
+        // nothing recorded at all. A state setter is not a way to read
+        // state.
+        const from = next === "work" ? "watch" : "work"
+        const cur = tabsRef.current?.find((t) => t.id === activeTabIdRef.current)
+        if (cur) lastByMode.current[from] = cur.type
+
         setMode(next)
         const want = lastByMode.current[next]
         // No remembered module the first time into a mode — the mode's own
@@ -999,6 +1003,7 @@ export default function App() {
 
     const tabsRef = useRef([])
     const openTabRef = useRef(null)
+    const activeTabIdRef = useRef(null)
 
     const openTab = useCallback((type, opts) => {
         // Redesign Round 2 — real tab types for the new 7-module rail
@@ -1045,6 +1050,7 @@ export default function App() {
     // rather than the file being reordered around one keybinding.
     useEffect(() => { tabsRef.current = tabs }, [tabs])
     useEffect(() => { openTabRef.current = openTab }, [openTab])
+    useEffect(() => { activeTabIdRef.current = activeTabId }, [activeTabId])
     // Redesign Round 2, §6 — global ⌘K/Ctrl+K (palette) and 1-7 (module
     // switch) shortcuts, guarded against active text input so typing is
     // never interrupted. Declared here (after openTab) rather than earlier
@@ -1082,7 +1088,7 @@ export default function App() {
         }
         window.addEventListener("keydown", handler)
         return () => window.removeEventListener("keydown", handler)
-    }, [paletteOpen, openTab])
+    }, [paletteOpen, openTab, mode, switchMode])
 
     // Real, destination-neutral navigation event (introduced for the strategic
     // zone tooltip's "Manage in Sources" action; that layer is gone, the event
