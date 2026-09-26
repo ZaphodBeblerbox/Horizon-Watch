@@ -18,6 +18,7 @@
  * why the label below is computed from `face` rather than written by whoever
  * rendered last.
  */
+import { useChrome } from "../state/useChrome.js"
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
@@ -78,6 +79,12 @@ export default function TimeStrip({
     onEndDateChange,
 }) {
     const [face, setFace] = useState("density")
+    // Collapsed the strip keeps its header row, so the face buttons and the
+    // collapse control stay reachable; only the chart body goes. --strip-h
+    // follows the .collapsed class (index.html), so the panes and the
+    // notification stack reclaim the space rather than leaving a gap where
+    // the chart used to be.
+    const [stripOpen, toggleStrip] = useChrome("timeStrip")
     const [range, setRange] = useState(null)      // { min_date, max_date }
     const [rows, setRows] = useState([])          // histogram buckets, with categories
     const [loadError, setLoadError] = useState(false)
@@ -212,8 +219,23 @@ export default function TimeStrip({
         : `${zulu(nowMs - windowHours * 3600000)} → ${zulu(nowMs)}`
 
     return (
-        <div className="timestrip" id="timestrip">
+        <div className={`timestrip${stripOpen ? "" : " collapsed"}`} id="timestrip">
             <div className="head">
+                <button type="button" onClick={toggleStrip}
+                        aria-expanded={stripOpen}
+                        title={stripOpen ? "Collapse the time strip" : "Expand the time strip"}
+                        aria-label={stripOpen ? "Collapse the time strip" : "Expand the time strip"}
+                        style={{
+                            width: 20, height: 20, marginRight: 6, flexShrink: 0, padding: 0,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
+                        }}>
+                    <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"
+                         style={{ transform: stripOpen ? "none" : "rotate(180deg)" }}>
+                        <path d="M1.5 6.5 L5 3 L8.5 6.5" fill="none" stroke="currentColor"
+                              strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                </button>
                 <div className="seg" id="strip-mode">
                     <button type="button" data-s="density" aria-pressed={face === "density"}
                             onClick={() => setFace("density")}>event density</button>

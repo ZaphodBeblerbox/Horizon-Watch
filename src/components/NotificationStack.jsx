@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useState } from "react"
-import { subscribeNotifications, getNotifications, dismissCard, KIND } from "../state/notificationStore.js"
+import { subscribeNotifications, getNotifications, dismissCard, useDnd, KIND } from "../state/notificationStore.js"
 
 function zulu(ts) {
     const d = new Date(ts)
@@ -62,15 +62,70 @@ function Card({ n, onOpen, onAcknowledge, onBasket }) {
     )
 }
 
+/**
+ * ONE CARD AT A TIME, IN ARRIVAL ORDER.
+ *
+ * The stack used to render every pending card at once, so a burst — which
+ * is exactly what a busy feed produces — arrived as a wall that covered the
+ * work underneath and had to be cleared before anything could be read. A
+ * queue shows the oldest card, waits, retires it and shows the next, so the
+ * things that happened separately are seen separately.
+ *
+ * SHOWN is held locally rather than read straight from the store on every
+ * publish: re-rendering the visible card whenever a later one arrives
+ * restarts its dwell timer, and a steady trickle would pin one card on
+ * screen indefinitely.
+ */
+const DWELL_MS = 6200
+
 export default function NotificationStack({ onOpen = null, onAcknowledge = null, onBasket = null }) {
-    const [cards, setCards] = useState(() => getNotifications().cards)
-    useEffect(() => subscribeNotifications((s) => setCards(s.cards)), [])
+    const [queue, setQueue] = useState(() => getNotifications().cards)
+    const [shown, setShown] = useState(null)
+    const [leaving, setLeaving] = useState(false)
+    const dnd = useDnd()
+
+    useEffect(() => subscribeNotifications((st) => setQueue(st.cards)), [])
+
+    // Promote the next card once nothing is showing.
+    useEffect(() => {
+        if (shown || !queue.length) return
+        const next = queue[queue.length - 1]     // store prepends; oldest last
+        setShown(next); setLeaving(false)
+    }, [queue, shown])
+
+    // Retire it after its dwell. A critical card stays: it is the one the
+    // reader must actually act on, and a timeout would quietly discard it.
+    useEffect(() => {
+        if (!shown || shown.severity === "critical") return
+        const t = setTimeout(() => setLeaving(true), DWELL_MS)
+        return () => clearTimeout(t)
+    }, [shown])
+
+    useEffect(() => {
+        if (!leaving) return
+        const t = setTimeout(() => {
+            if (shown?.id) dismissCard(shown.id)
+            setShown(null); setLeaving(false)
+        }, 220)                                   // matches the exit transition
+        return () => clearTimeout(t)
+    }, [leaving, shown])
+
+    // Do not disturb: everything still lands in the tray and the bell still
+    // counts. Silencing the cards must not silence the record, or the
+    // feature becomes "lose alerts quietly".
+    if (dnd) return null
+    if (!shown) return <div id="notifstack" aria-live="polite" />
 
     return (
         <div id="notifstack" aria-live="polite">
-            {cards.map((n) => (
-                <Card key={n.id} n={n} onOpen={onOpen} onAcknowledge={onAcknowledge} onBasket={onBasket} />
-            ))}
+            <div className={`ncard-slot${leaving ? " leaving" : ""}`}>
+                <Card n={shown} onOpen={onOpen} onAcknowledge={onAcknowledge} onBasket={onBasket} />
+            </div>
+            {queue.length > 1 && (
+                <div className="nqueue" aria-hidden="true">
+                    {queue.length - 1} more waiting
+                </div>
+            )}
         </div>
     )
 }

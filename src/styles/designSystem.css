@@ -58,6 +58,15 @@
     writing-mode: vertical-rl; font: 400 11px var(--font); color: var(--txt-3); letter-spacing: .02em;
 }
 .panetab:hover { background: var(--bg-3); color: var(--txt); }
+/* The tab is the only way back to a hidden pane, so it has to read as a
+   control rather than as a label printed on the edge of the screen. */
+.panetab::after {
+    content: ""; display: block; width: 6px; height: 6px; margin-top: 7px;
+    border-right: 1.4px solid currentColor; border-bottom: 1.4px solid currentColor;
+    transform: rotate(-45deg); opacity: .75;
+}
+.timestrip.collapsed > *:not(.head) { display: none; }
+.timestrip.collapsed { height: 30px; min-height: 0; overflow: hidden; }
 
 /* ── Icon sprite usage (§4) — <svg class="icon"><use href="#icon-x" /></svg> */
 .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; flex-shrink: 0; }
@@ -411,6 +420,34 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) .toast-stac
    only there), and the Inspector pane's own test id is the real "the pane is
    open" signal — when it is minimised Situation renders a .panetab instead. */
 html:not(:has(#timestrip)) #notifstack { right: 12px; }
+/* OFF THE MAP, NOTIFICATIONS GO TO THE TOP. The rule above put them at the
+   bottom-right everywhere, which on the map is the right answer — geography
+   can afford to be covered. In Workstation the bottom-right of the screen
+   is the document you are writing in and the file tree you are picking
+   from, so a card landed in the middle of the work. Top-right is the one
+   corner of an editing surface that holds nothing. */
+html:not(:has(#timestrip)) #notifstack {
+    top: calc(var(--top, 44px) + 12px);
+    bottom: auto;
+    flex-direction: column;
+}
+
+/* One card at a time, arriving and leaving under its own power rather than
+   appearing instantly in a stack. */
+.ncard-slot {
+    pointer-events: auto;
+    animation: ncard-in .22s var(--ease) both;
+}
+.ncard-slot.leaving { animation: ncard-out .22s var(--ease) both; }
+@keyframes ncard-in  { from { opacity: 0; transform: translateX(14px) } to { opacity: 1; transform: none } }
+@keyframes ncard-out { from { opacity: 1; transform: none } to { opacity: 0; transform: translateX(14px) } }
+@media (prefers-reduced-motion: reduce) {
+    .ncard-slot, .ncard-slot.leaving { animation: none }
+}
+.nqueue {
+    font: 400 10px var(--font); color: var(--txt-4);
+    padding: 2px 6px; user-select: none;
+}
 html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack { right: 42px; }
 
 .ncard {

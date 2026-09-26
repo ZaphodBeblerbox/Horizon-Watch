@@ -80,6 +80,10 @@ export const DEFAULTS = {
     // never image bytes: a few hundred KB of base64 per crop would be
     // written back to this row on every save.
     savedForBriefing: [],
+
+    // Do not disturb — suppresses notification CARDS. The tray still
+    // records everything and the bell still counts.
+    dnd: false,
 }
 
 let _settings = { ...DEFAULTS }

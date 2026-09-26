@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react"
+import { getSettings, subscribeSettings, updateSetting } from "./settingsStore.js"
 /**
  * notificationStore.js — PARALLAX spec §5.
  *
@@ -88,6 +90,33 @@ export function interrupts(n) {
 export function setMuted(v) {
     state.muted = !!v
     notify()
+}
+
+/**
+ * DO NOT DISTURB. This is the store's existing `muted` flag — which
+ * nothing ever set — given a persisted, per-user home and a name people
+ * use. A second parallel flag would mean interrupts() and the UI could
+ * disagree about whether the app is quiet.
+ *
+ * It suppresses CARDS ONLY. Everything still lands in the tray and the
+ * bell still counts, because a quiet mode that also stops recording is
+ * "lose alerts silently" wearing a friendlier label.
+ */
+export function useDnd() {
+    const [on, setOn] = useState(() => Boolean(getSettings()?.dnd))
+    useEffect(() => {
+        setMuted(Boolean(getSettings()?.dnd))
+        return subscribeSettings((st) => {
+            const v = Boolean(st?.dnd)
+            setOn(v); setMuted(v)
+        })
+    }, [])
+    return on
+}
+
+export function setDnd(v) {
+    setMuted(Boolean(v))
+    return updateSetting("dnd", Boolean(v))
 }
 
 /**

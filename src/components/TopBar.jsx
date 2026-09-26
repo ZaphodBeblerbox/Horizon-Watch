@@ -17,6 +17,8 @@ import ThemeControl from "./ThemeControl.jsx"
  * without a real place to put them would just recreate the old flyout this
  * round is replacing.
  */
+import { useDnd, setDnd } from "../state/notificationStore.js"
+
 export default function TopBar({
     activeModule,
     onSelectModule,
@@ -31,6 +33,7 @@ export default function TopBar({
     onOpenSettings = null,
     onOpenTray = null,
 }) {
+    const dnd = useDnd()
     // Mode, not modules (§7.1) — the rendered rail set is filtered off one
     // real registry field (data/modules.js's `set`), re-derived fresh every
     // render from current `mode` — never patched/re-applied after the fact.
@@ -205,6 +208,23 @@ export default function TopBar({
                 {/* Moved off the tab strip when that row was removed —
                     session mode is a top-level control, not a tab. */}
                 {sessionControl}
+                <button
+                    onClick={() => setDnd(!dnd)}
+                    aria-pressed={dnd}
+                    title={dnd ? "Do not disturb is on — cards suppressed, tray still recording" : "Do not disturb"}
+                    aria-label="Do not disturb"
+                    style={{
+                        width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                        background: "transparent", border: "none",
+                        color: dnd ? "var(--acc-hi)" : "var(--txt-3)", cursor: "pointer",
+                    }}
+                >
+                    <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none"
+                         stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                        <circle cx="8" cy="8" r="6" />
+                        {dnd && <path d="M5 8h6" />}
+                    </svg>
+                </button>
                 <ThemeControl />
                 {onOpenSettings && (
                     <button

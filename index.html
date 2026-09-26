@@ -633,6 +633,10 @@
            and #gcstrip, which do exist. */
         html:has(#timestrip) { --strip-h: 76px; }
         html:has(#gcstrip:not(.hidden)) { --strip-h: 150px; }
+        /* Collapsed wins over both, including the archive face — otherwise
+           collapsing while the timeline is showing leaves 150px of gap
+           where the chart used to be. */
+        html:has(#timestrip.collapsed) { --strip-h: 30px; }
 
         /* ── Real Settings round, General section: density ─────────────────
            A genuine second value set on the exact spacing tokens the whole
