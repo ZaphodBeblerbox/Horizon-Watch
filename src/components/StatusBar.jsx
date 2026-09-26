@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react"
+import { useChrome } from "../state/useChrome.js"
 import { classifyAll, summarise, ageLabel, STATE } from "../lib/feedHealth.js"
 import { useBriefingCount } from "../state/briefingBasket.js"
 
@@ -31,6 +32,10 @@ function Cell({ label, value, mono = true }) {
 export default function StatusBar({ health, taskCount = null }) {
     const briefingCount = useBriefingCount()
     const [feedsOpen, setFeedsOpen] = useState(false)
+    // Collapsed, the bar keeps a thin grip rather than disappearing: a bar
+    // that vanishes entirely leaves nothing to click to get it back, and
+    // the connection state is the thing you most want at a glance.
+    const [open, toggleOpen] = useChrome("bottomBar")
 
     // §33.3 — each adapter reports live | degraded | stale(age) | off, and a
     // stale feed's detectors are SUSPENDED rather than left firing on old
@@ -50,10 +55,28 @@ export default function StatusBar({ health, taskCount = null }) {
 
     return (
         <div style={{
-            height: "var(--status)", flexShrink: 0, background: "var(--bg-2)",
+            height: open ? "var(--status)" : 14, flexShrink: 0, background: "var(--bg-2)",
             borderTop: "1px solid var(--line)", display: "flex", alignItems: "stretch",
-            overflow: "hidden",
+            overflow: "hidden", transition: "height 140ms var(--ease, ease)",
         }}>
+            <button
+                onClick={toggleOpen}
+                aria-expanded={open}
+                aria-label={open ? "Collapse status bar" : "Expand status bar"}
+                title={open ? "Collapse status bar" : "Expand status bar"}
+                style={{
+                    width: 26, flexShrink: 0, display: "flex", alignItems: "center",
+                    justifyContent: "center", background: "transparent", border: "none",
+                    borderRight: open ? "1px solid var(--line)" : "none",
+                    color: "var(--txt-3)", cursor: "pointer", padding: 0,
+                }}
+            >
+                <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"
+                     style={{ transform: open ? "none" : "rotate(180deg)", transition: "transform 140ms" }}>
+                    <path d="M1.5 6.5 L5 3 L8.5 6.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+            </button>
+            {open && <>
             <Cell label="Connection" value={connectionLabel} mono={false} />
             {dataVolume != null && <Cell label="Data volume" value={dataVolume.toLocaleString()} />}
             {typeof pingMs === "number" && <Cell label="Latency" value={`${pingMs.toFixed(0)}ms`} />}
@@ -104,6 +127,7 @@ export default function StatusBar({ health, taskCount = null }) {
                     )}
                 </div>
             )}
+            </>}
         </div>
     )
 }

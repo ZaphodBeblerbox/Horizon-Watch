@@ -17,6 +17,7 @@
  * that SAME filtered list — never independently recomputed, so they can't
  * disagree.
  */
+import { useChrome, getStartupLayers, saveStartupLayers, clearStartupLayers } from "../state/useChrome.js"
 import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
@@ -457,6 +458,32 @@ export default function Situation({ onOpenDossier }) {
         facMilitary: false, facMedical: false, facSecurity: false,
     })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false })
+
+    // THE LAUNCH STATE THE USER SAVED. Applied once, and only if they have
+    // actually saved one — getStartupLayers() returns null when they never
+    // have, which is deliberately different from a saved set with
+    // everything off. Treating those two the same would either ignore a
+    // user who wants a bare map or silently override the built-in defaults
+    // for everyone who never touched the feature.
+    //
+    // It runs on a subscription rather than on mount because settings
+    // arrive from the server after first paint; reading once on mount would
+    // usually read the built-in defaults and do nothing.
+    const startupApplied = useRef(false)
+    useEffect(() => {
+        const apply = () => {
+            if (startupApplied.current) return
+            const saved = getStartupLayers()
+            if (!saved) return
+            startupApplied.current = true
+            if (saved.groups)  setGroupsOn(saved.groups)
+            if (saved.context) setContextOn(saved.context)
+            if (saved.infra)   setInfraOn(saved.infra)
+            if (saved.tracks)  setTracksOn(saved.tracks)
+        }
+        apply()
+        return subscribeSettings(apply)
+    }, [])
     const [exportOpen, setExportOpen] = useState(false)
     // Imagery/detection top-bar entry point — real audit (Part 0) confirmed
     // no draw-to-scan tool existed in this top bar at all (the old
@@ -594,8 +621,19 @@ export default function Situation({ onOpenDossier }) {
     // panes open on load leave a strip of it visible and make the first
     // action a reader takes "close things". They reopen from their edge
     // tabs and the state is theirs from then on.
-    const [leftMin, setLeftMin] = useState(true)
-    const [rightMin, setRightMin] = useState(true)
+    // Persisted per user, not per mount. These were useState(true), so
+    // every remount re-minimised both panes and an analyst who works with
+    // Layers open had to reopen it every single time.
+    //
+    // Stored as "is the panel open", the way a person would describe it;
+    // the local names stay inverted because the layout below is written in
+    // terms of minimised.
+    const [leftOpen, , setLeftOpen] = useChrome("leftPanel")
+    const [rightOpen, , setRightOpen] = useChrome("rightPanel")
+    const leftMin = !leftOpen
+    const rightMin = !rightOpen
+    const setLeftMin = (v) => setLeftOpen(!v)
+    const setRightMin = (v) => setRightOpen(!v)
     useEffect(() => {
         const t = setTimeout(() => setEntered(true), 20)
         return () => clearTimeout(t)
@@ -854,6 +892,29 @@ export default function Situation({ onOpenDossier }) {
                             setInfraOn({ cables: false, chokepoints: false, ports: false, airfields: false, power: false, nautical: false })
                             setTracksOn({ vessels: false, aircraft: false, sanctionedOnly: false })
                         }} style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>none</span>
+                        {/* Saves what is on right now as the launch state,
+                            per user. The alternative — a separate settings
+                            screen listing every layer again — asks the
+                            reader to rebuild a view they are already
+                            looking at. */}
+                        <span role="button" tabIndex={0}
+                              title="Open the app with exactly these layers next time"
+                              onClick={() => {
+                                  saveStartupLayers({ groups: groupsOn, context: contextOn, infra: infraOn, tracks: tracksOn })
+                                      .then(() => toast("Saved as your default view", { icon: "i-check" }))
+                                      .catch(() => toast("Could not save default view", { icon: "i-alert" }))
+                              }}
+                              style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>save default</span>
+                        {getStartupLayers() && (
+                            <span role="button" tabIndex={0}
+                                  title="Go back to the built-in default layers"
+                                  onClick={() => {
+                                      clearStartupLayers()
+                                          .then(() => toast("Default view cleared", { icon: "i-check" }))
+                                          .catch(() => toast("Could not clear default view", { icon: "i-alert" }))
+                                  }}
+                                  style={{ font: "400 11px var(--font)", color: "var(--txt-3)", cursor: "pointer" }}>reset</span>
+                        )}
                         <button onClick={() => setLeftMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
                             <svg className="icon sm"><use href="#i-collapse-l" /></svg>
                         </button>

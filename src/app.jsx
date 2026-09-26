@@ -3,7 +3,6 @@ import { REGION_COORDS } from "./data/regionCoords.js"
 const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
 import IconSprite from "./ui/IconSprite.jsx"
 import TopBar from "./components/TopBar.jsx"
-import TabStrip from "./components/TabStrip.jsx"
 import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayManager.js"
 import NotificationStack from "./components/NotificationStack.jsx"
 import NotificationTray from "./components/NotificationTray.jsx"
@@ -1293,14 +1292,6 @@ export default function App() {
                         onToggleMode={() => setMode(mode === "work" ? "watch" : "work")}
                         onOpenSettings={() => openOverlay("overlay:settings")}
                         onOpenTray={() => openOverlay("overlay:tray")}
-                    />
-                    <TabStrip
-                        tabs={tabs}
-                        activeTabId={activeTabId}
-                        onSelect={switchTab}
-                        onClose={closeTab}
-                        onOpenPalette={() => openOverlay("overlay:palette")}
-                        liveFeedCount={Array.isArray(healthData?.data_sources) ? healthData.data_sources.filter(s => s.status === "ok").length : null}
                         sessionControl={<SessionControl mode={mode} onSetMode={setMode} />}
                     />
                 </>

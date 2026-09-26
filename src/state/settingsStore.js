@@ -50,6 +50,25 @@ export const DEFAULTS = {
     // way every other per-user filter/view setting in this store is. []
     // means "all theatres" (never resets to some other implied default).
     mapLayers: { geoConfirmedTheatres: [] },
+
+    // Which chrome is collapsed. Persisted per user for the same reason
+    // every other view preference here is: an analyst who works with the
+    // left pane shut should not have to shut it again every morning.
+    chrome: {
+        // Both side panes start collapsed, which is what Situation.jsx
+        // already did before this was persisted — the map is the view, and
+        // the panes overlay it. Changing this default would silently
+        // narrow every existing user's map on their next launch.
+        leftPanel:  false,
+        rightPanel: false,
+        bottomBar:  true,
+    },
+
+    // The app's launch state, saved by the user from whatever they
+    // currently have on ("save current view as my default"). null means
+    // "never saved one" — the built-in per-view defaults apply, which is
+    // different from "saved an empty set", where every layer really is off.
+    startupLayers: null,
 }
 
 let _settings = { ...DEFAULTS }

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 /**
  * The map's opening state.
  *
@@ -37,8 +38,18 @@ describe("v4.3 shell defaults", () => {
     it("opens with both side panes closed", () => {
         // The map is the product. Two panes open on load leave a strip of
         // it visible and make the reader's first action "close things".
-        expect(SRC).toContain("const [leftMin, setLeftMin] = useState(true)")
-        expect(SRC).toContain("const [rightMin, setRightMin] = useState(true)")
+        //
+        // The state moved to settingsStore.js so it survives a remount —
+        // it used to be useState(true), which re-minimised both panes every
+        // time the destination mounted. The default it opens with has to
+        // stay the same, so the guard now reads the stored default.
+        expect(SRC).toContain('useChrome("leftPanel")')
+        expect(SRC).toContain('useChrome("rightPanel")')
+        const store = readFileSync(
+            new URL("../state/settingsStore.js", import.meta.url), "utf8")
+        const chrome = /chrome:\s*\{([\s\S]*?)\}/.exec(store)[1]
+        expect(chrome).toMatch(/leftPanel:\s*false/)
+        expect(chrome).toMatch(/rightPanel:\s*false/)
     })
 
     it("clears the map selection when the inspector closes", () => {

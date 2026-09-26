@@ -20,6 +20,7 @@ import ThemeControl from "./ThemeControl.jsx"
 export default function TopBar({
     activeModule,
     onSelectModule,
+    sessionControl = null,
     unreadCount = 0,
     inboxCount = 0,
     dataUpdatedAt = null,
@@ -201,6 +202,9 @@ export default function TopBar({
                 >
                     <svg className="icon sm"><use href={isFullscreen ? "#i-fullscreen-exit" : "#i-fullscreen-enter"} /></svg>
                 </button>
+                {/* Moved off the tab strip when that row was removed —
+                    session mode is a top-level control, not a tab. */}
+                {sessionControl}
                 <ThemeControl />
                 {onOpenSettings && (
                     <button
