@@ -328,7 +328,6 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
                         nauticalEnabled={layerOn(activeLayers, "shippingLanes")}
                         satelliteEnabled={layerOn(activeLayers, "satellite")}
                         satelliteOpacity={activeLayers?.satelliteOpacity ?? 0.9}
-                        cctvEnabled={layerOn(activeLayers, "cctvFeeds")}
                         aisHeatmapEnabled={layerOn(activeLayers, "aisHeatmap")}
                         adsbHeatmapEnabled={layerOn(activeLayers, "adsbHeatmap")}
                     />

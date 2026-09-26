@@ -10,7 +10,9 @@ describe("LAYER_GROUPS", () => {
         const expectedKeys = [
             "satellite", "shippingLanes", "oim", "adsb", "aisVessels", "eez", "cityLabels",
             "derivedAlerts", "precisionEvents", "unifiedEvents",
-            "chokepoints", "cables", "cctvFeeds", "airports", "ports",
+            // "cctvFeeds" was removed with GlobeCameraLayer: two public
+            // webcams behind a rail switch, no backend, and not used.
+            "chokepoints", "cables", "airports", "ports",
             "aisHeatmap", "adsbHeatmap",
             // Added deliberately, not inherited from the old panel: GDELT
             // cannot share the News switch with GeoConfirmed, because one is

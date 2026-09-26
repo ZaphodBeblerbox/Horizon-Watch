@@ -39,7 +39,6 @@ import GlobeReplayLayer         from "../globe/GlobeReplayLayer.jsx"
 import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
-import GlobeCameraLayer         from "../globe/GlobeCameraLayer.jsx"
 import ScaleBar                 from "./ScaleBar.jsx"
 import CoordinateReadout        from "./CoordinateReadout.jsx"
 import API_BASE from "../apiBase.js"
@@ -211,7 +210,6 @@ export default function GlobeView({
     satelliteEnabled = false,
     satelliteOpacity = 0.9,
     // Live CCTV camera feeds (real public webcams + local YOLO detection server)
-    cctvEnabled = false,
     // Infrastructure layers
     airportsEnabled = false,
     portsEnabled    = false,
@@ -1105,7 +1103,6 @@ export default function GlobeView({
                 {/* ── Forge alerts layer ──────────────────────────────────────── */}
 
                 {/* ── Live CCTV camera feeds ───────────────────────────────────── */}
-                {cctvEnabled && <GlobeCameraLayer />}
 
                 {/* ── Passive auto mode ────────────────────────────────────────── */}
                 <GlobeAutoMode enabled={autoModeEnabled} isMobile={isMobile} />
