@@ -40,6 +40,7 @@ import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
 import GlobeAirportLayer        from "../globe/GlobeAirportLayer.jsx"
 import GlobePortLayer           from "../globe/GlobePortLayer.jsx"
 import MapMeta                  from "./MapMeta.jsx"
+import DrawModeBanner           from "./DrawModeBanner.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
@@ -201,6 +202,7 @@ export default function GlobeView({
     overwatchEnabled    = false,
     overwatchDetections = [],
     overwatchDrawActive = false,
+    onOverwatchDrawCancel = null,
     overwatchDrawMode   = "rectangle",
     onOverwatchBounds   = null,
     onOverwatchPolygon  = null,
@@ -1127,6 +1129,16 @@ export default function GlobeView({
             <GlobeReplayLayer viewerRef={viewerRef} isVisible={isVisible} />
 
             {/* Bottom-left map chrome — real scale reference + live cursor coordinates */}
+            {/* SAY THAT THE MAP IS LISTENING. Arming area selection changed
+                nothing visible except the pointer, and only after the first
+                click — so a click about to define a corner looked exactly
+                like a click that pans the globe. */}
+            <DrawModeBanner
+                active={overwatchDrawActive}
+                drawMode={overwatchDrawMode}
+                onCancel={onOverwatchDrawCancel}
+            />
+
             {cesiumViewer && (
                 <MapMeta
                     data-testid="map-bottom-chrome"

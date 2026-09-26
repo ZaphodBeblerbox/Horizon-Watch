@@ -40,13 +40,17 @@ export default function GlobeOverwatchDrawLayer({
 
     const [isDrawing, setIsDrawing] = useState(false)
 
-    // ── Cursor: crosshair only while mid-draw ─────────────────────────────────
+    // ── Cursor: crosshair from the moment drawing is ARMED ───────────────────
+    // It used to appear only after the first click, so between choosing
+    // "draw an area" and clicking there was nothing to say the map was
+    // listening — the pointer looked exactly as it does when a click pans
+    // the globe. The confirmation has to start when the mode does.
     useEffect(() => {
         const canvas = viewer?.scene?.canvas
         if (!canvas) return
-        canvas.style.cursor = isDrawing ? "crosshair" : "default"
+        canvas.style.cursor = (active || isDrawing) ? "crosshair" : "default"
         return () => { if (canvas) canvas.style.cursor = "default" }
-    }, [isDrawing, viewer])
+    }, [active, isDrawing, viewer])
 
     function _clearAllEntities() {
         if (!viewer || viewer.isDestroyed()) return

@@ -502,6 +502,17 @@ export default function Situation({ onOpenDossier }) {
     // until this round).
     const [imageryDrawMode, setImageryDrawMode] = useState("rectangle")
     const [imageryDrawActive, setImageryDrawActive] = useState(false)
+
+    // ESCAPE LEAVES DRAW MODE. A mode that changes what a click does must
+    // have an exit that does not require finding the control that started
+    // it — especially this one, where the control lives in a panel the
+    // reader may have collapsed to see the map they are drawing on.
+    useEffect(() => {
+        if (!imageryDrawActive) return
+        const onKey = (e) => { if (e.key === "Escape") setImageryDrawActive(false) }
+        window.addEventListener("keydown", onKey)
+        return () => window.removeEventListener("keydown", onKey)
+    }, [imageryDrawActive])
     const [imageryDrawn, setImageryDrawn] = useState(null) // {bounds, polygonVertices|null}
     const [imageryScene, setImageryScene] = useState(null) // {image_b64, image_b64_composited, bounds, sensor, capture_timestamp, cloud_cover}
     const [imageryDetections, setImageryDetections] = useState([])
@@ -1512,6 +1523,7 @@ export default function Situation({ onOpenDossier }) {
                         overwatchEnabled={imageryPanelOpen}
                         overwatchDetections={imageryDetections}
                         overwatchDrawActive={imageryDrawActive}
+                        onOverwatchDrawCancel={() => setImageryDrawActive(false)}
                         overwatchDrawMode={imageryDrawMode}
                         onOverwatchBounds={handleImageryBounds}
                         onOverwatchPolygon={handleImageryPolygon}
