@@ -45,4 +45,13 @@ describe("switching between Watch and Workstation", () => {
     it("the mode toggle is a chord, not a bare key", () => {
         expect(APP).toMatch(/e\.metaKey \|\| e\.ctrlKey\) && e\.shiftKey/)
     })
+
+    it("every way of changing mode goes through switchMode", () => {
+        // The TopBar toggle called setMode directly, skipping the
+        // last-page memory — so the keyboard shortcut returned you to
+        // where you were and clicking the control did not. Any entry
+        // point that bypasses switchMode loses the behaviour silently.
+        expect(APP).toMatch(/onToggleMode=\{\(\) => switchMode\(/)
+        expect(APP).toMatch(/onSetMode=\{switchMode\}/)
+    })
 })

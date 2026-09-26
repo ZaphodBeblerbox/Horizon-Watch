@@ -1462,10 +1462,16 @@ export default function App() {
                         systemHealth={systemHealth}
                         onOpenPalette={() => openOverlay("overlay:palette")}
                         mode={mode}
-                        onToggleMode={() => setMode(mode === "work" ? "watch" : "work")}
+                        // switchMode, not setMode: the toggle in the top
+                        // bar is how most people change mode, and calling
+                        // setMode directly skipped the last-page memory
+                        // entirely — so the keyboard shortcut returned you
+                        // to where you were and clicking the control did
+                        // not.
+                        onToggleMode={() => switchMode(mode === "work" ? "watch" : "work")}
                         onOpenSettings={() => openOverlay("overlay:settings")}
                         onOpenTray={() => openOverlay("overlay:tray")}
-                        sessionControl={<SessionControl mode={mode} onSetMode={setMode} />}
+                        sessionControl={<SessionControl mode={mode} onSetMode={switchMode} />}
                     />
                 </>
             )}
