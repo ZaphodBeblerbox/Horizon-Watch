@@ -62,6 +62,11 @@ export const DEFAULTS = {
         leftPanel:  false,
         rightPanel: false,
         bottomBar:  true,
+        // Workstation panes. Open by default — unlike the Situation panes,
+        // these are the surface itself rather than an overlay on a map.
+        caseTree:     true,
+        editorSource: true,
+        editorSaved:  true,
     },
 
     // The app's launch state, saved by the user from whatever they
@@ -69,6 +74,12 @@ export const DEFAULTS = {
     // "never saved one" — the built-in per-view defaults apply, which is
     // different from "saved an empty set", where every layer really is off.
     startupLayers: null,
+
+    // Things kept off the map to write about later — see
+    // savedForBriefing.js. Small records only (a URL and coordinates),
+    // never image bytes: a few hundred KB of base64 per crop would be
+    // written back to this row on every save.
+    savedForBriefing: [],
 }
 
 let _settings = { ...DEFAULTS }

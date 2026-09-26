@@ -22,6 +22,9 @@ import DocEditor from "../cases/DocEditor.jsx"
 import { listCases, listNodes, createNode, updateNode, getDoc } from "../lib/casesApi.js"
 import { listReports, getReportBundle } from "../reports/reportApi.js"
 import { toast } from "../ui/toast.js"
+import SidePanel from "../ui/SidePanel.jsx"
+import SavedSidebar from "../cases/SavedSidebar.jsx"
+import { savedLabel } from "../state/savedForBriefing.js"
 
 /** A briefing's prose, flattened to the editor's HTML. */
 function reportToHtml(report, sections) {
@@ -108,6 +111,32 @@ export default function Editor() {
         setSaveOpen(true)
     }, [source])
 
+    // Dropping a saved item into the page. An image goes in as a figure
+    // with its caption, because a satellite crop with no statement of what
+    // it is and where it was taken is not evidence — it is a picture.
+    const insertSaved = useCallback((item) => {
+        const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
+        const caption = esc(savedLabel(item))
+        let frag
+        if (item.imageUrl) {
+            frag = `<figure class="doc-figure" style="margin:14px 0;text-align:center">`
+                 + `<img src="${esc(item.imageUrl)}" alt="${caption}" style="max-width:100%;height:auto" />`
+                 + `<figcaption style="font:italic 10pt Georgia,serif;color:#555;margin-top:5px">${caption}</figcaption>`
+                 + `</figure><p><br/></p>`
+        } else {
+            frag = `<blockquote style="border-left:2px solid #1b1f24;padding:2px 0 2px 12px;margin:11px 0">`
+                 + `<b>${caption}</b>${item.detail ? `<br/>${esc(item.detail)}` : ""}`
+                 + `</blockquote><p><br/></p>`
+        }
+        // The editor must have focus or insertHTML has no range to act on
+        // and the fragment is silently dropped.
+        const el = document.querySelector('[contenteditable="true"]')
+        if (el) {
+            el.focus()
+            document.execCommand("insertHTML", false, frag)
+        }
+    }, [])
+
     const fileInto = async (caseId) => {
         try {
             const node = await createNode(caseId, { kind: "doc", name: title || "Untitled document" })
@@ -120,10 +149,8 @@ export default function Editor() {
 
     return (
         <div style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
-            <div style={{
-                width: 268, flexShrink: 0, borderRight: "1px solid var(--line)",
-                display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
-            }}>
+            <SidePanel side="left" label="Sources" width={268} storageKey="editorSource"
+                       style={{ overflowY: "auto" }}>
                 <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
                     <button className="btn primary sm" onClick={openBlank} style={{ width: "100%" }}>
                         new document
@@ -149,7 +176,7 @@ export default function Editor() {
                                   title={r.title || r.report_id} sub={r.status} />
                         ))}
                 </Group>
-            </div>
+            </SidePanel>
 
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
                 {html === null ? (
@@ -191,6 +218,12 @@ export default function Editor() {
                     </>
                 )}
             </div>
+
+            {html !== null && (
+                <SidePanel side="right" label="Saved" width={250} storageKey="editorSaved">
+                    <SavedSidebar onInsert={insertSaved} />
+                </SidePanel>
+            )}
 
             {saveOpen && (
                 <Modal onClose={() => setSaveOpen(false)} title="Save to case">

@@ -15,6 +15,7 @@ import {
     listNodes, createNode, updateNode, deleteNode, getDoc, uploadFile, fileUrl,
 } from "../lib/casesApi.js"
 import { toast } from "../ui/toast.js"
+import SidePanel from "../ui/SidePanel.jsx"
 
 export default function CaseFiles({ caseId, readOnly = false }) {
     const [nodes, setNodes] = useState([])
@@ -121,11 +122,10 @@ export default function CaseFiles({ caseId, readOnly = false }) {
                 if (files.length) { e.preventDefault(); setDragOver(false); doUpload(files) }
             }}
         >
-            <div style={{
-                width: 258, flexShrink: 0, borderRight: "1px solid var(--line)",
-                display: "flex", flexDirection: "column", minHeight: 0,
-                background: dragOver ? "var(--acc-dim, #2b3a4a)" : "transparent",
-            }}>
+            <SidePanel
+                side="left" label="Files" width={258} storageKey="caseTree"
+                style={{ background: dragOver ? "var(--acc-dim, #2b3a4a)" : "transparent" }}
+            >
                 <div style={{ display: "flex", gap: 4, padding: "6px 8px", borderBottom: "1px solid var(--line)" }}>
                     <button className="btn sm" onClick={addFolder} disabled={readOnly} title="New folder">+ folder</button>
                     <button className="btn sm" onClick={addDoc} disabled={readOnly} title="New document">+ doc</button>
@@ -142,7 +142,7 @@ export default function CaseFiles({ caseId, readOnly = false }) {
                         nodes={nodes} selectedId={selected?.id} readOnly={readOnly}
                         onSelect={setSelected} onMove={move} onRename={rename} onDelete={remove}
                       />}
-            </div>
+            </SidePanel>
 
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
                 {!selected && (

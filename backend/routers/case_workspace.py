@@ -19,6 +19,7 @@ every folder listing drag the bytes along with it.
 
 import datetime
 import json
+import json as _json
 import os
 import re
 import uuid
@@ -100,8 +101,8 @@ async def create_node(case_id: str, request: Request):
     me = _me(request)
     body = await request.json()
     kind = (body.get("kind") or "").strip()
-    if kind not in ("folder", "doc"):
-        raise HTTPException(status_code=400, detail="kind must be 'folder' or 'doc'")
+    if kind not in ("folder", "doc", "signal"):
+        raise HTTPException(status_code=400, detail="kind must be 'folder', 'doc' or 'signal'")
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
@@ -118,7 +119,16 @@ async def create_node(case_id: str, request: Request):
         n = CaseNode(
             case_id=case_id, parent_id=parent_id or None, kind=kind, name=name,
             owner_user_id=me["id"],
-            body_html=("" if kind == "doc" else None),
+            # A signal node is a reference, not a file: the payload (the
+            # ref string, where it was, the crop it came with) rides in
+            # body_html as JSON, tagged by mime. Reusing the existing Text
+            # column avoids an ALTER on a table that already ships —
+            # create_all() adds missing tables, never missing columns, so a
+            # new column would simply be absent in production.
+            body_html=("" if kind == "doc"
+                       else _json.dumps(body.get("payload") or {}) if kind == "signal"
+                       else None),
+            mime=("application/vnd.parallax.signal+json" if kind == "signal" else None),
             sort_index=int(body.get("sort_index") or 0),
         )
         db.add(n); db.commit(); db.refresh(n)

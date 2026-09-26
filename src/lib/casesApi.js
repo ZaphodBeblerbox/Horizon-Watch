@@ -27,6 +27,8 @@ export const listUsers = () => req("/api/users")
 export const listCases = () => req("/api/cases")
 export const getCase = (caseId) => req(`/api/cases/${encodeURIComponent(caseId)}`)
 export const createCase = (data) => req("/api/cases", { method: "POST", body: JSON.stringify(data) })
+export const deleteCase = (caseId) =>
+    req(`/api/cases/${encodeURIComponent(caseId)}`, { method: "DELETE" })
 export const updateCase = (caseId, data) => req(`/api/cases/${encodeURIComponent(caseId)}`, { method: "PUT", body: JSON.stringify(data) })
 export const addCaseRef = (caseId, ref) => req(`/api/cases/${encodeURIComponent(caseId)}/refs`, { method: "POST", body: JSON.stringify({ ref }) })
 export const addCaseNote = (caseId, text, authorUserId) =>

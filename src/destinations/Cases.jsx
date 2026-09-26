@@ -9,7 +9,7 @@
 // in later without restructuring.
 import { useState, useEffect, useCallback } from "react"
 import {
-    listCases, getCase, createCase, addCaseRef, addCaseNote, advanceCase,
+    listCases, getCase, createCase, deleteCase, addCaseRef, addCaseNote, advanceCase,
     listUsers, listRfis, createRfi, answerRfi,
 } from "../lib/casesApi.js"
 import { label, open as openRef } from "../lib/ref.js"
@@ -27,6 +27,18 @@ const LEDGER_KINDS = [
     { kind: "scn", label: "Scenes" }, { kind: "aoi", label: "AOIs" },
     { kind: "onto", label: "Onto" },
 ]
+
+/* A case is a folder of work, and the list should look like one. The
+   priority colour rides on the folder itself rather than sitting beside it
+   as a second mark competing for the same glance. */
+function CaseFolder({ priority }) {
+    return (
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style={{ flexShrink: 0, display: "block" }}>
+            <path d="M1.5 3.5h4.2l1.3 1.6h7.5v8.4a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"
+                  fill="none" stroke={PRIORITY_COLOR[priority] || "var(--txt-3)"} strokeWidth="1.3" strokeLinejoin="round" />
+        </svg>
+    )
+}
 
 function PriorityDiamond({ priority }) {
     return <span style={{ display: "inline-block", width: 7, height: 7, flexShrink: 0, background: PRIORITY_COLOR[priority] || "var(--txt-4)", transform: "rotate(45deg)" }} />
@@ -98,6 +110,19 @@ export default function Cases() {
             await refreshList()
             setActiveCaseId(created.case_id)
         } catch (e) { toast(e.message || "Could not create case", { icon: "i-alert" }) }
+    }
+
+    async function handleDeleteCase(c) {
+        // Everything inside goes with it — documents, uploads, filed
+        // signals. Saying how much is about to disappear is the difference
+        // between a confirmation and a formality.
+        if (!confirm(`Delete "${c.title}" (${c.case_id}) and everything filed in it? This cannot be undone.`)) return
+        try {
+            await deleteCase(c.case_id)
+            if (activeCaseId === c.case_id) { setActiveCaseId(null); setActiveCase(null) }
+            await refreshList()
+            toast(`Deleted ${c.case_id}`, { icon: "i-check" })
+        } catch (e) { toast(e.message || "Could not delete case", { icon: "i-alert" }) }
     }
 
     async function handleAddNote() {
@@ -202,8 +227,15 @@ export default function Cases() {
                         style={{ padding: "8px 10px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: c.case_id === activeCaseId ? "var(--bg-3)" : "transparent" }}
                     >
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <PriorityDiamond priority={c.priority} />
-                            <span style={{ font: "600 12px var(--font)", color: "var(--txt)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</span>
+                            <CaseFolder priority={c.priority} />
+                            <span style={{ flex: 1, minWidth: 0, font: "600 12px var(--font)", color: "var(--txt)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</span>
+                            {c.owner_user_id === uid && (
+                                <span
+                                    role="button" title="Delete this case"
+                                    onClick={(e) => { e.stopPropagation(); handleDeleteCase(c) }}
+                                    style={{ color: "var(--txt-4)", flexShrink: 0, font: "400 11px var(--font)", padding: "0 2px" }}
+                                >&#10005;</span>
+                            )}
                         </div>
                         <div style={{ font: "400 10.5px var(--mono)", color: "var(--txt-3)", marginTop: 2 }}>
                             {c.case_id} · {userLabel(users, c.owner_user_id)} · {c.due_at ? c.due_at.slice(0, 10) : "no due date"}
