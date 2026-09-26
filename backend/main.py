@@ -26924,6 +26924,19 @@ def _get_current_user(request: Request) -> dict | None:
     requiring login."""
     token = request.cookies.get("hw_session")
     if not token:
+        # THE PACKAGED APP CANNOT USE THE COOKIE. Its page origin is
+        # tauri://localhost while the API is on another registrable domain,
+        # so hw_session is a third-party cookie — and WKWebView blocks
+        # those by default. The cookie is set, never stored, never sent,
+        # and every launch asks for the password again.
+        #
+        # The browser keeps using the cookie, which is httpOnly and
+        # therefore out of reach of any script on the page. Only the
+        # desktop build falls back to a bearer token it holds itself.
+        auth = request.headers.get("authorization") or ""
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+    if not token:
         return None
     from jose import jwt as _jose_jwt, JWTError as _JoseError
     try:
@@ -26991,7 +27004,15 @@ async def api_auth_login(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="invalid email or password")
         token = _create_session_token(u.id)
         response.set_cookie(key="hw_session", value=token, max_age=JWT_SESSION_HOURS * 3600, **_cookie_kwargs(request))
-        return _user_to_dict(u)
+        out = _user_to_dict(u)
+        # Returned ONLY to the packaged app, whose origin cannot keep the
+        # cookie. Handing the raw JWT to a browser page would put it within
+        # reach of any injected script, which is exactly what httpOnly
+        # exists to prevent — so a browser never receives this field.
+        origin = (request.headers.get("origin") or "").lower()
+        if origin.startswith("tauri://") or origin.startswith("http://tauri."):
+            out["session_token"] = token
+        return out
 
 @app.post("/api/auth/logout")
 def api_auth_logout(request: Request, response: Response):

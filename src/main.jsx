@@ -10,6 +10,7 @@ import API_BASE from './apiBase.js'
 import { isDesktop } from './apiBase.js'
 import { installOfflineCache, indexedDbStore, pruneCache } from './lib/offlineCache.js'
 import { seedOffline, WHOLE_DATASET_PATHS } from './lib/offlineSeed.js'
+import { installDesktopAuth } from './lib/desktopAuth.js'
 
 // THE APP MUST OPEN WHETHER OR NOT ANYTHING ANSWERS. Installed before
 // React mounts, so the very first screen's requests are covered too — a
@@ -20,6 +21,12 @@ import { seedOffline, WHOLE_DATASET_PATHS } from './lib/offlineSeed.js'
 // bundled files, not the network), so this is only ever about the data:
 // the last good response for each API GET is kept and served when the
 // server cannot be reached.
+// BEFORE THE CACHE. The cache records whatever came back; if the request
+// went out unauthenticated it would cache a 401 body and serve that
+// offline. The bearer has to be on the request before it is made.
+try { installDesktopAuth({ win: window, apiBase: API_BASE }) }
+catch (e) { console.warn('[auth] desktop bearer unavailable:', e?.message || e) }
+
 try {
     if (typeof window !== 'undefined' && window.indexedDB) {
         const store = indexedDbStore(window.indexedDB)

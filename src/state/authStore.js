@@ -9,6 +9,7 @@
 import API_BASE from "../apiBase.js"
 import { enrol, offlineLogin, forgetEnrolment, enrolmentFor, OFFLINE_GRACE_MS } from "../lib/offlineAuth.js"
 import { indexedDbStore, memoryStore } from "../lib/offlineCache.js"
+import { storeDesktopToken, clearDesktopToken } from "../lib/desktopAuth.js"
 
 // One store for the enrolment record, created lazily so importing this
 // module in a test environment never touches IndexedDB.
@@ -174,6 +175,11 @@ export async function login(email, password) {
         })
         _currentUser = user
         _offlineSession = false
+        // The packaged app cannot keep the session cookie — its origin
+        // makes hw_session third-party and WKWebView drops it — so the
+        // server hands the desktop build a bearer token instead, and it is
+        // kept here. A browser never receives this field.
+        if (user?.session_token) storeDesktopToken(user.session_token)
         // Remember this machine so the same person can get in when the
         // server cannot be reached. Enrolment is deliberately tied to a
         // SUCCESSFUL server login and to nothing else.
@@ -213,6 +219,7 @@ export async function logout() {
     // Signing out is explicit, so it also withdraws this machine's
     // permission to sign in offline. Leaving the enrolment behind would
     // let the next person at the laptop back in with the old password.
+    clearDesktopToken()
     await forgetEnrolment(_enrolStore())
     _currentUser = null
     _offlineSession = false
