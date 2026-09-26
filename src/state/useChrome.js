@@ -50,6 +50,8 @@ export function getStartupLayers() {
 }
 
 export function saveStartupLayers(layers) {
+    // Returns updateSetting's {ok, error} so the caller can say whether it
+    // actually persisted rather than assuming.
     return updateSetting("startupLayers", { ...layers })
 }
 

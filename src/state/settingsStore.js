@@ -168,8 +168,31 @@ export async function updateSetting(path, value) {
             body: JSON.stringify(patch),
         })
         if (r.ok) {
-            _settings = await r.json()
+            // MERGE OVER THE DEFAULTS, DO NOT REPLACE. The server returns
+            // only what it has STORED — after a single PATCH it answered
+            // with {"chrome": {...}} and nothing else. Assigning that
+            // straight to _settings erased every other value from memory:
+            // the defaults, and anything set earlier that the server had
+            // no reason to echo back. The visible effect was a saved
+            // setting appearing not to stick, and the saved-signals list
+            // emptying itself whenever some unrelated preference changed.
+            //
+            // reconcileSettings() has always merged over DEFAULTS for the
+            // same reason; this path simply did not.
+            _settings = deepMerge(structuredClone(DEFAULTS), await r.json())
             _publish()
+            return { ok: true }
         }
-    } catch { /* real network hiccup — local value already applied */ }
+        // A REFUSED WRITE IS NOT A SAVE. The local value stays applied so
+        // the UI does not jump, but the caller is TOLD, because a
+        // preference that silently fails to persist is worse than one that
+        // visibly did not take: the user believes it is set.
+        //
+        // Reported rather than thrown: most callers are fire-and-forget
+        // toggles, and making them all handle a rejection would trade one
+        // silent failure for a page full of unhandled ones.
+        return { ok: false, error: `HTTP ${r.status}` }
+    } catch (e) {
+        return { ok: false, error: e?.message || "network error" }
+    }
 }

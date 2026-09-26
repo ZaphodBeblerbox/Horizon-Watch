@@ -250,7 +250,10 @@ export default function Cases() {
             {!activeCase ? (
                 <div style={{ padding: 24, color: "var(--txt-3)", font: "400 13px var(--font)" }}>Select a case.</div>
             ) : (
-                <div style={{ overflowY: "auto", padding: "16px 20px" }}>
+                <div style={{
+                    display: "flex", flexDirection: "column", minHeight: 0,
+                    overflow: "hidden", padding: "16px 20px",
+                }}>
                     <div style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{activeCase.case_id} · opened {activeCase.opened_at?.slice(0, 10)}</div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
                         <span style={{ font: "700 10px var(--font)", padding: "1px 6px", borderRadius: "var(--r)", background: "var(--bg-3)", color: PRIORITY_COLOR[activeCase.priority] || "var(--txt-3)", textTransform: "uppercase" }}>{activeCase.priority}</span>
@@ -271,7 +274,7 @@ export default function Cases() {
                         Owner: {userLabel(users, activeCase.owner_user_id)} · Watchers: {(activeCase.watchers || []).map((w) => userLabel(users, w)).join(", ") || "none"}
                     </div>
 
-                    <div style={{ display: "flex", gap: 4, marginTop: 16, borderBottom: "1px solid var(--line)" }}>
+                    <div style={{ display: "flex", gap: 4, marginTop: 16, borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
                         {["overview", "files", "records", "rfis", "timeline", "briefing", "sharing"].map((t) => (
                             <button
                                 key={t} onClick={() => setTab(t)}
@@ -283,13 +286,20 @@ export default function Cases() {
                         ))}
                     </div>
 
-                    <div style={{ marginTop: 12 }}>
+                    <div style={{ marginTop: 12, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
                         {/* The case's own contents: folders, subfolders,
-                            documents and uploaded evidence. Given its own
-                            height because a file tree in a short box is
-                            unusable. */}
+                            documents and uploaded evidence.
+
+                            FILLS WHAT IS LEFT. This was
+                            height:calc(100vh - 290px) — a guess at the
+                            height of the chrome above it, made from the
+                            VIEWPORT while sitting inside a column that was
+                            already bounded and scrolling. The 290 was
+                            right for one window size and wrong for every
+                            other, which is what made the panel run past
+                            the bottom of its container. */}
                         {tab === "files" && (
-                            <div style={{ height: "calc(100vh - 290px)", minHeight: 420 }}>
+                            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
                                 <CaseFiles caseId={activeCaseId} />
                             </div>
                         )}
