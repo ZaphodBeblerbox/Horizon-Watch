@@ -1231,15 +1231,19 @@ export default function App() {
                 : [{ id: "situation", type: "situation", label: "Situation" }, ...clean]
             setTabs(withHome)
 
-            // THE MAP, NOT THE LAST TAB. This fell back to
-            // restoredTabs[length - 1] — whatever the previous session
-            // happened to open last, which in practice was a Workstation
-            // module. Restoring a session should put you back where you
-            // were, and failing that, at the front door.
+            // THE MAP IS THE FRONT DOOR, EVERY LAUNCH. This used to fall
+            // back to restoredTabs[length - 1] — whatever the previous
+            // session opened last, in practice a Workstation module — and
+            // then to the saved active tab, which had the same effect.
+            //
+            // Restoring the tabs is worth doing: the work is still there,
+            // one click away. Restoring the VIEW is not. Opening on a
+            // half-finished document instead of the picture is the wrong
+            // first thing to see, and it is what made the app appear to
+            // open in the wrong place. Where you were inside a session is
+            // remembered by switchMode for the rest of that session.
             setActiveTabId(
-                withHome.find((t) => t.id === restoredActive)?.id
-                ?? withHome.find((t) => t.type === "situation")?.id
-                ?? withHome[0].id
+                withHome.find((t) => t.type === "situation")?.id ?? withHome[0].id
             )
         }
         window.addEventListener("akili:restore-tabs", h)

@@ -30,6 +30,15 @@ class RelevanceScorer:
         self._zones     = []   # list of dicts from _load_zones()
         self._zones_ts  = 0.0  # epoch of last load
         self._ttl       = 120  # seconds between DB reloads
+        #: Surge and fusion bboxes, cached for the same reason zones are.
+        #: Both used to open a DB SESSION AND RUN A QUERY PER SIGNAL, so
+        #: scoring one signal cost two or three sessions — and GDELT
+        #: arrives in bursts of hundreds into the same area. The lists are
+        #: small (tens of rows); the overlap test belongs in memory.
+        self._surges    = []
+        self._surges_ts = 0.0
+        self._fusions    = []
+        self._fusions_ts = 0.0
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -164,39 +173,69 @@ class RelevanceScorer:
             containing.append(z)
         return containing, fringe
 
-    def _surge_bonus(self, lat: float, lon: float, db=None) -> int:
-        """+10 if there is an active surge event whose bbox overlaps this point."""
+    def _get_surges(self, db=None) -> list[tuple]:
+        import time
+        with self._lock:
+            if time.time() - self._surges_ts < self._ttl and self._surges is not None:
+                if self._surges_ts:
+                    return self._surges
+        rows = []
         try:
             from database import SurgeEvent, get_db
-            from sqlalchemy import and_
             ctx = get_db() if db is None else _NullCtx(db)
             with ctx as session:
-                hit = session.query(SurgeEvent).filter(
-                    and_(
-                        SurgeEvent.bbox_min_lat <= lat, SurgeEvent.bbox_max_lat >= lat,
-                        SurgeEvent.bbox_min_lon <= lon, SurgeEvent.bbox_max_lon >= lon,
-                    )
-                ).first()
-            return 10 if hit else 0
+                for r in session.query(SurgeEvent).all():
+                    rows.append((r.bbox_min_lat, r.bbox_max_lat, r.bbox_min_lon, r.bbox_max_lon))
         except Exception:
-            return 0
+            rows = []
+        with self._lock:
+            self._surges, self._surges_ts = rows, time.time()
+        return rows
 
-    def _fusion_bonus(self, lat: float, lon: float, db=None) -> int:
+    def _surge_bonus(self, lat: float, lon: float, db=None) -> int:
+        """+10 if an active surge event's bbox overlaps this point.
+
+        Reads a cached list. This opened a database session and ran a
+        query FOR EVERY SIGNAL, and GDELT does not arrive one signal at a
+        time — a burst of hundreds into one area meant hundreds of SQLite
+        sessions, synchronously, competing with the writer.
         """
-        +10 if the nearest recent fusion event is within ~200 km of the signal.
-        Uses a rough bbox check (2 degrees ≈ 220 km).
-        """
+        for lo_lat, hi_lat, lo_lon, hi_lon in self._get_surges(db):
+            if lo_lat is None or hi_lat is None or lo_lon is None or hi_lon is None:
+                continue
+            if lo_lat <= lat <= hi_lat and lo_lon <= lon <= hi_lon:
+                return 10
+        return 0
+
+    def _get_fusions(self, db=None) -> list[tuple]:
+        import time
+        with self._lock:
+            if self._fusions_ts and time.time() - self._fusions_ts < self._ttl:
+                return self._fusions
+        rows = []
         try:
             from database import FusionEvent, get_db
             ctx = get_db() if db is None else _NullCtx(db)
             with ctx as session:
-                hit = session.query(FusionEvent).filter(
-                    FusionEvent.lat.between(lat - 2.0, lat + 2.0),
-                    FusionEvent.lon.between(lon - 2.0, lon + 2.0),
-                ).first()
-            return 10 if hit else 0
+                for r in session.query(FusionEvent).all():
+                    if r.lat is not None and r.lon is not None:
+                        rows.append((r.lat, r.lon))
         except Exception:
-            return 0
+            rows = []
+        with self._lock:
+            self._fusions, self._fusions_ts = rows, time.time()
+        return rows
+
+    def _fusion_bonus(self, lat: float, lon: float, db=None) -> int:
+        """+10 if a recent fusion event is within ~200 km (2 degrees).
+
+        Cached for the same reason as the surge check above: this was a
+        second DB session per signal.
+        """
+        for flat, flon in self._get_fusions(db):
+            if abs(flat - lat) <= 2.0 and abs(flon - lon) <= 2.0:
+                return 10
+        return 0
 
     def _domain_bonus(self, signal: dict, nearby_zones: list[dict]) -> int:
         """
