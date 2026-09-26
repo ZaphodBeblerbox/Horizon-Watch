@@ -41,7 +41,10 @@ _TEXT_DIM   = colors.HexColor("#8899AA")
 
 _MARGIN = 18 * mm
 _ORG_NAME = "Trifecta Technologies"
-_PRODUCT_NAME = "HORIZON WATCH"
+# The product is PARALLAX. Server-rendered PDFs said HORIZON WATCH while
+# every client-rendered page said PARALLAX, so two documents out of the
+# same system carried two different names.
+_PRODUCT_NAME = "PARALLAX"
 
 
 def _styles():
@@ -203,15 +206,18 @@ def _page_chrome(canvas, doc, classification: str, title: str):
     canvas.setLineWidth(1.2)
     canvas.line(0, page_h - banner_h, page_w, page_h - banner_h)
 
-    # Running header — product name left, title centered-ish, org right
+    # Running header — the PARALLAX mark top-left on EVERY page, matching
+    # the client-rendered pages exactly (src/print/PageFrame.jsx). It used
+    # to start on page 2, so the first page of every exported document —
+    # the one a reader actually looks at — carried no mark at all.
+    header_y = page_h - banner_h - 6 * mm
+    canvas.setFont("Helvetica-Bold", 8)
+    canvas.setFillColor(colors.HexColor("#1b1f24"))
+    canvas.drawString(_MARGIN, header_y, _PRODUCT_NAME)
     if doc.page > 1:
-        header_y = page_h - banner_h - 6 * mm
-        canvas.setFont("Helvetica-Bold", 8)
-        canvas.setFillColor(colors.HexColor("#333333"))
-        canvas.drawString(_MARGIN, header_y, _PRODUCT_NAME)
         canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#333333"))
         canvas.drawCentredString(page_w / 2, header_y, title or "")
-        canvas.drawRightString(page_w - _MARGIN, header_y, _ORG_NAME)
         canvas.setStrokeColor(colors.HexColor("#CCCCCC"))
         canvas.setLineWidth(0.5)
         canvas.line(_MARGIN, header_y - 2 * mm, page_w - _MARGIN, header_y - 2 * mm)
@@ -225,9 +231,9 @@ def _page_chrome(canvas, doc, classification: str, title: str):
     canvas.line(0, footer_h, page_w, footer_h)
     canvas.setFillColor(colors.white)
     canvas.setFont("Helvetica", 7)
-    canvas.drawString(_MARGIN, footer_h - 4.5 * mm, f"{_ORG_NAME} · {_PRODUCT_NAME}")
-    canvas.drawCentredString(page_w / 2, footer_h - 4.5 * mm, f"Page {doc.page}")
-    canvas.drawRightString(page_w - _MARGIN, footer_h - 4.5 * mm, datetime.utcnow().strftime("%Y-%m-%d"))
+    canvas.drawString(_MARGIN, footer_h - 4.5 * mm, datetime.utcnow().strftime("%Y-%m-%d"))
+    canvas.drawCentredString(page_w / 2, footer_h - 4.5 * mm, _ORG_NAME)
+    canvas.drawRightString(page_w - _MARGIN, footer_h - 4.5 * mm, f"Page {doc.page}")
     canvas.setFont("Helvetica-Bold", 6.5)
     canvas.drawCentredString(page_w / 2, 2 * mm, classification or "UNCLASSIFIED")
 

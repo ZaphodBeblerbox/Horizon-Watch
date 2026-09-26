@@ -20,22 +20,25 @@
 export const PAGE_W = "8.5in"
 export const PAGE_H = "11in"
 
-/* Geometric wordmark: three offset bars reading as layers seen at an
-   angle — parallax. Drawn in currentColor so it prints solid black. */
-export function ParallaxMark({ height = 13 }) {
+/* The Echo X — the product's real mark (public/favicon.svg, v4.3 §1): an X
+   with two receding echo strokes, the X sitting one unit left so the whole
+   mark reads centred once the echoes are counted as part of it.
+   
+   Drawn here in fixed print colours rather than the theme tokens. A page
+   that carries the mark in the app's dark-theme greys prints a pale logo on
+   white; a document's ink does not follow the reader's OS scheme. */
+export function ParallaxMark({ height = 14 }) {
     return (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#1b1f24" }}>
-            <svg width={height} height={height} viewBox="0 0 24 24" aria-hidden="true"
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, color: "#26231e" }}>
+            <svg width={height} height={height} viewBox="0 0 24 24" fill="none"
+                 strokeWidth="2.6" strokeLinecap="butt" aria-hidden="true"
                  style={{ display: "block", flexShrink: 0 }}>
-                <path d="M3 7.5 L12 3 L21 7.5 L12 12 Z"  fill="currentColor" />
-                <path d="M3 12 L12 16.5 L21 12"  fill="none" stroke="currentColor"
-                      strokeWidth="1.8" strokeLinejoin="round" opacity="0.62" />
-                <path d="M3 16.5 L12 21 L21 16.5" fill="none" stroke="currentColor"
-                      strokeWidth="1.8" strokeLinejoin="round" opacity="0.32" />
+                <path stroke="#26231e" d="M3 4L14 20M14 4L3 20" />
+                <path stroke="#2f5c90" d="M18 4L12.5 12M22 4L19.25 8" />
             </svg>
             <span style={{
-                font: `700 ${Math.round(height * 0.72)}px var(--font, system-ui)`,
-                letterSpacing: "0.14em", textTransform: "uppercase", lineHeight: 1,
+                font: `700 ${Math.round(height * 0.68)}px var(--font, system-ui)`,
+                letterSpacing: "0.15em", textTransform: "uppercase", lineHeight: 1,
             }}>Parallax</span>
         </span>
     )
