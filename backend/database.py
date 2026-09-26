@@ -240,6 +240,66 @@ class Case(Base):
     updated_at            = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class CaseNode(Base):
+    """A folder or a file inside a case.
+
+    ONE TABLE FOR BOTH, with parent_id pointing at another CaseNode, because
+    a case's contents are a tree the user builds — files, subfiles, folders
+    of imagery — and modelling folders and files separately means every
+    listing, move, rename and permission check is written twice and drifts.
+    parent_id NULL means the node sits at the case root.
+
+    Binary content (a PDF, a PNG, an exported satellite crop) is NOT stored
+    here. It goes on disk under DATA_DIR/case_files/<case_id>/<id>, and this
+    row holds the pointer plus what the UI needs to list it without touching
+    the disk. A multi-megabyte image in a TEXT column makes every listing
+    query drag the bytes along with it.
+
+    owner_user_id is the real per-user boundary: a node is visible to its
+    owner, and to anyone the case has been shared with. It is never global.
+    """
+    __tablename__ = "case_nodes"
+    id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id        = Column(String, nullable=False, index=True)   # Case.case_id
+    parent_id      = Column(String, nullable=True, index=True)    # CaseNode.id, NULL = case root
+    kind           = Column(String, nullable=False)               # folder | file | doc
+    name           = Column(String, nullable=False)
+    owner_user_id  = Column(String, nullable=True, index=True)
+
+    # file only
+    mime           = Column(String, nullable=True)
+    size_bytes     = Column(Integer, nullable=True)
+    storage_path   = Column(String, nullable=True)                # relative to DATA_DIR/case_files
+
+    # doc only — the editor's own content, kept as HTML because that is what
+    # a rich-text surface round-trips losslessly; a Markdown round-trip
+    # silently drops fonts, colour and alignment, which is most of what a
+    # "Word-like" document is for.
+    body_html      = Column(Text, nullable=True)
+
+    sort_index     = Column(Integer, nullable=False, default=0)
+    created_at     = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class CaseShare(Base):
+    """Who, besides the owner, may see a case and everything inside it.
+
+    Sharing is an explicit row and nothing else. There is no "visible to the
+    team" flag and no role that reads everything: if no row exists, the
+    other user does not see it. That is the whole point — one analyst's
+    detections, documents and briefings are theirs until they say otherwise.
+    """
+    __tablename__ = "case_shares"
+    id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id        = Column(String, nullable=False, index=True)
+    user_id        = Column(String, nullable=False, index=True)   # recipient
+    shared_by      = Column(String, nullable=True)
+    can_edit       = Column(Boolean, default=False)
+    created_at     = Column(DateTime, default=datetime.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("case_id", "user_id", name="uq_case_share"),)
+
+
 class RFI(Base):
     """Workstation round, §7.7 — a real Request For Information raised
     against a case, answerable only by its real named recipient

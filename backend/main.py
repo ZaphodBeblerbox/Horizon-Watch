@@ -356,6 +356,8 @@ app.include_router(_tile_proxy_router.router)
 app.include_router(_analytics_router.router)
 app.include_router(_forge_router.router)
 app.include_router(_signals_export_router.router)
+from routers import case_workspace as _case_workspace_router
+app.include_router(_case_workspace_router.router)
 app.include_router(_geoconfirmed_router.router)
 app.include_router(_risk_index_router.router)
 app.include_router(_alerts_derived_router.router)
@@ -14330,6 +14332,22 @@ async def startup_event():
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
     print(f"[startup] *** HORIZON WATCH STARTING — env='{os.getenv('RAILWAY_ENVIRONMENT','local')}' DATA_DIR={DATA_DIR} ***")
+
+    # CREATE ANY TABLE THE CODE KNOWS ABOUT AND THE DATABASE DOES NOT.
+    # Nothing was doing this: the tables in production exist because some
+    # earlier run happened to call migrate_db(), and no startup path calls
+    # it now. So a model added in code simply never got a table, and the
+    # first request to touch it failed with "no such table" at runtime
+    # rather than at deploy.
+    #
+    # create_all() only adds missing tables and never alters an existing
+    # one, so it is safe to run on every boot.
+    try:
+        from database import Base as _Base, engine as _engine
+        await loop.run_in_executor(_executor, lambda: _Base.metadata.create_all(bind=_engine))
+        print("[startup] schema: missing tables created (existing tables untouched)")
+    except Exception as _e:
+        print(f"[startup] schema create_all failed: {_e}")
     print(f"[startup] ELEVENLABS_API_KEY present: {bool(os.getenv('ELEVENLABS_API_KEY'))}")
     print(f"[startup] ANTHROPIC_API_KEY present: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
     # Initialise response cache
@@ -26596,7 +26614,9 @@ async def api_sessions_create(request: Request):
     with _gdb_ses() as db:
         s = DeskSession(
             session_id=f"SESN-{uuid.uuid4().hex[:8]}", name=name,
-            owner_user_id=body.get("owner_user_id"),
+            # From the session, never the body: a client-supplied owner is
+            # a client-supplied answer to "whose data is this".
+            owner_user_id=user["id"],
             time_window=body.get("time_window", "72h"),
             severity_floor=body.get("severity_floor", "low"),
             domains_json=_json.dumps(body.get("domains", [])),
@@ -27075,16 +27095,48 @@ def _rfi_row_to_dict(r) -> dict:
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
 
+def _assert_case_access(db, case_id: str, user_id: str, need_edit: bool = False):
+    """Owner, or an explicit CaseShare row. Nothing else grants access."""
+    from database import Case, CaseShare
+    c = db.query(Case).filter(Case.case_id == case_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+    if c.owner_user_id == user_id:
+        return c
+    share = db.query(CaseShare).filter(
+        CaseShare.case_id == case_id, CaseShare.user_id == user_id).first()
+    if not share:
+        raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+    if need_edit and not share.can_edit:
+        raise HTTPException(status_code=403, detail="shared read-only")
+    return c
+
+
 @app.get("/api/cases")
-def api_cases_list():
-    from database import Case, get_db as _gdb_cases
+def api_cases_list(request: Request):
+    """Only the caller's own cases, plus the ones shared with them.
+
+    This used to return every case in the database to anyone who asked.
+    One analyst's work is not another's to read: the boundary is ownership
+    plus an explicit CaseShare row, and nothing else — no team-wide flag and
+    no role that implies read-everything, because the moment one exists
+    every later feature is written on top of it.
+    """
+    from database import Case, CaseShare, get_db as _gdb_cases
+    user = _require_current_user(request)
+    uid = user["id"]
     with _gdb_cases() as db:
-        rows = db.query(Case).order_by(Case.updated_at.desc()).all()
+        shared_ids = [r.case_id for r in db.query(CaseShare).filter(CaseShare.user_id == uid).all()]
+        q = db.query(Case).filter(
+            (Case.owner_user_id == uid) | (Case.case_id.in_(shared_ids) if shared_ids else False)
+        )
+        rows = q.order_by(Case.updated_at.desc()).all()
         return [_case_row_to_dict(c) for c in rows]
 
 @app.post("/api/cases")
 async def api_cases_create(request: Request):
     from database import Case, get_db as _gdb_cases
+    user = _require_current_user(request)
     body = await request.json()
     title = (body.get("title") or "").strip()
     if not title:
@@ -27096,7 +27148,9 @@ async def api_cases_create(request: Request):
     with _gdb_cases() as db:
         c = Case(
             case_id=_case_id(), title=title,
-            owner_user_id=body.get("owner_user_id"),
+            # From the session, never the body: a client-supplied owner is a
+            # client-supplied answer to "whose data is this".
+            owner_user_id=user["id"],
             priority=body.get("priority", "moderate"),
             summary=body.get("summary"),
             watchers_json=_json.dumps(body.get("watchers", [])),
@@ -27109,18 +27163,26 @@ async def api_cases_create(request: Request):
         return _case_row_to_dict(c)
 
 @app.get("/api/cases/{case_id}")
-def api_cases_get(case_id: str):
+def api_cases_get(case_id: str, request: Request):
     from database import Case, get_db as _gdb_cases
     with _gdb_cases() as db:
+        # Ownership or an explicit share — 404 rather than 403 when there
+        # is neither, because confirming a case exists is itself a
+        # disclosure to someone with no access to it.
+        _assert_case_access(db, case_id, _require_current_user(request)["id"])
         c = db.query(Case).filter(Case.case_id == case_id).first()
         if not c:
             raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
         return _case_row_to_dict(c)
 
 @app.delete("/api/cases/{case_id}")
-def api_cases_delete(case_id: str):
+def api_cases_delete(case_id: str, request: Request):
     from database import Case, RFI, get_db as _gdb_cases
     with _gdb_cases() as db:
+        # Ownership or an explicit share — 404 rather than 403 when there
+        # is neither, because confirming a case exists is itself a
+        # disclosure to someone with no access to it.
+        _assert_case_access(db, case_id, _require_current_user(request)["id"], need_edit=True)
         c = db.query(Case).filter(Case.case_id == case_id).first()
         if not c:
             raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
@@ -27134,6 +27196,10 @@ async def api_cases_update(case_id: str, request: Request):
     from database import Case, get_db as _gdb_cases
     body = await request.json()
     with _gdb_cases() as db:
+        # Ownership or an explicit share — 404 rather than 403 when there
+        # is neither, because confirming a case exists is itself a
+        # disclosure to someone with no access to it.
+        _assert_case_access(db, case_id, _require_current_user(request)["id"], need_edit=True)
         c = db.query(Case).filter(Case.case_id == case_id).first()
         if not c:
             raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
