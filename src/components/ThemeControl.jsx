@@ -3,7 +3,7 @@ import {
     getThemeMode, subscribeThemeMode, setThemeMode,
     getRenderedTheme, subscribeRenderedTheme,
     getBlend, getElevationDeg, subscribeBlend,
-    getLocationState, subscribeLocationState,
+    getLocationState, subscribeLocationState, getDayPhase,
 } from "../state/themeStore.js"
 
 // ThemeControl.jsx — the ONE real theme control (Light/Dark/Auto), used
@@ -28,23 +28,59 @@ const MODES = [
 /**
  * The sky control (PARALLAX spec §4.3).
  *
- * ONE sky, TWO bodies on a single rail 18px apart, clipped by the disc with
- * a horizon line across it. As t goes 0 -> 1 the rail translates -18t: the
- * moon sets as the sun rises, both passing behind the skyline. It is NOT two
- * icons that swap — a swapping pair can only ever say "day" or "night",
- * whereas this shows WHERE IN THE CYCLE you are, which is the entire point
- * of an automatic theme. The sun is what stays continuous while the palette
- * itself is binary.
+ * ONE sky, TWO bodies on a real arc, clipped by the disc with a horizon
+ * line across it. The sun rises on the left, crosses the top and sets on
+ * the right; the moon does the same half a cycle behind it, so one is
+ * always below the horizon while the other is above.
  *
- * glow = clamp((t - 0.35) / 0.4) — the sun brightens as it clears the line.
+ * WHY AN ARC AND NOT A VERTICAL RAIL. The rail moved both bodies straight
+ * up and down the same axis, which reads as a lift, not a day. It was also
+ * driven by the twilight blend — and that value pins to 0 or 1 for most of
+ * the day, so the glyph sat motionless for hours and then jumped twice.
+ * The arc is driven by the sun's real hour angle (solarDayPhase), which
+ * advances continuously, so the control actually says WHERE IN THE CYCLE
+ * you are rather than only which side of the horizon.
+ *
+ * Elevation alone cannot do this: the same elevation happens twice a day,
+ * once climbing and once falling, and the hour angle is what tells them
+ * apart.
  */
-function SkyGlyph({ mode, blend, size = 19 }) {
-    // Manual modes hold a position rather than tracking the sky: fully up
-    // for light, fully down for dark. The control still reads as the same
-    // object, so switching modes does not change what kind of thing it is.
-    const t = mode === "auto" ? Math.max(0, Math.min(1, blend ?? 0))
-        : (mode === "light" ? 1 : 0)
-    const glow = Math.max(0, Math.min(1, (t - 0.35) / 0.4))
+const ARC_R = 7.4          // radius the bodies travel on
+const ARC_CX = 12
+const ARC_CY = 12.4        // the horizon line
+
+/** phase 0..1 (0 = solar midnight) -> a point on the arc. */
+function arcPoint(phase) {
+    // Solar midnight sits at the bottom, noon at the top, and the body
+    // travels left-to-right across the visible half — east to west, the
+    // direction the sky actually moves.
+    const theta = (phase - 0.25) * 2 * Math.PI
+    return {
+        x: ARC_CX - ARC_R * Math.cos(theta),
+        y: ARC_CY - ARC_R * Math.sin(theta),
+    }
+}
+
+function SkyGlyph({ mode, blend, phase, size = 19 }) {
+    // Manual modes hold a position rather than tracking the sky: sun at
+    // noon for light, moon at its own noon for dark. The control still
+    // reads as the same object, so switching modes does not change what
+    // kind of thing it is.
+    const p = mode === "auto"
+        ? ((phase ?? 0) % 1 + 1) % 1
+        : (mode === "light" ? 0.5 : 0.0)
+
+    const sun = arcPoint(p)
+    // Half a cycle behind: when the sun is at noon the moon is at its
+    // midnight, below the line, and the reverse at night.
+    const moon = arcPoint((p + 0.5) % 1)
+
+    // How day-lit the scene reads. Auto uses the real twilight blend so
+    // the ground and the glow match the palette that is actually applied;
+    // the arc position and the brightness are two different facts and
+    // should not be derived from one another.
+    const t = mode === "auto" ? Math.max(0, Math.min(1, blend ?? 0)) : (mode === "light" ? 1 : 0)
+    const glow = Math.max(0, Math.min(1, (t - 0.2) / 0.5))
     const clipId = "skyclip-" + size
 
     return (
@@ -54,20 +90,20 @@ function SkyGlyph({ mode, blend, size = 19 }) {
             </defs>
             <circle cx="12" cy="12" r="9.2" className="skydisc" />
             <g clipPath={`url(#${clipId})`}>
-                <rect x="2" y="12.4" width="20" height="10" className="skyground" opacity={0.25 + 0.45 * t} />
-                <g transform={`translate(0, ${-18 * t})`}>
-                    <g transform="translate(12,27)" opacity={0.4 + 0.6 * glow}>
-                        <circle r="3.1" className="sun" />
-                        {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
-                            <line key={a} x1="0" y1="-4.6" x2="0" y2="-5.9" transform={`rotate(${a})`} className="sunray" />
-                        ))}
-                    </g>
-                    <g transform="translate(12,9)" opacity={1 - glow}>
-                        <path d="M2.9,0a3.1,3.1 0 1,1 -3.1,-3.1 a2.5,2.5 0 0,0 3.1,3.1z" className="moon" />
-                    </g>
+                <rect x="2" y={ARC_CY} width="20" height="10" className="skyground" opacity={0.25 + 0.45 * t} />
+
+                <g transform={`translate(${sun.x.toFixed(2)},${sun.y.toFixed(2)})`} opacity={0.35 + 0.65 * glow}>
+                    <circle r="2.9" className="sun" />
+                    {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
+                        <line key={a} x1="0" y1="-4.3" x2="0" y2="-5.5" transform={`rotate(${a})`} className="sunray" />
+                    ))}
+                </g>
+
+                <g transform={`translate(${moon.x.toFixed(2)},${moon.y.toFixed(2)})`} opacity={1 - glow}>
+                    <path d="M2.9,0a3.1,3.1 0 1,1 -3.1,-3.1 a2.5,2.5 0 0,0 3.1,3.1z" className="moon" />
                 </g>
             </g>
-            <line x1="2.8" y1="12.4" x2="21.2" y2="12.4" className="skyline" />
+            <line x1="2.8" y1={ARC_CY} x2="21.2" y2={ARC_CY} className="skyline" />
             <circle cx="12" cy="12" r="9.2" className="skyring" />
         </svg>
     )
@@ -81,13 +117,15 @@ export default function ThemeControl({ inline = false }) {
     const [mode, setMode] = useState(getThemeMode)
     const [renderedTheme, setRenderedTheme] = useState(getRenderedTheme)
     const [{ blend, elevationDeg }, setBlendState] = useState(() => ({ blend: getBlend(), elevationDeg: getElevationDeg() }))
+    // Read on every blend tick — themeStore recomputes both together.
+    const [phase, setPhase] = useState(getDayPhase)
     const [locationState, setLocationState] = useState(getLocationState)
     const [open, setOpen] = useState(false)
     const containerRef = useRef(null)
 
     useEffect(() => subscribeThemeMode(setMode), [])
     useEffect(() => subscribeRenderedTheme(setRenderedTheme), [])
-    useEffect(() => subscribeBlend(setBlendState), [])
+    useEffect(() => subscribeBlend((b) => { setBlendState(b); setPhase(getDayPhase()) }), [])
     useEffect(() => subscribeLocationState(setLocationState), [])
 
     useEffect(() => {
@@ -104,7 +142,7 @@ export default function ThemeControl({ inline = false }) {
         }
     }, [open])
 
-    const glyph = <SkyGlyph mode={mode} renderedTheme={renderedTheme} blend={blend} elevationDeg={elevationDeg} />
+    const glyph = <SkyGlyph mode={mode} renderedTheme={renderedTheme} blend={blend} elevationDeg={elevationDeg} phase={phase} />
 
     if (inline) {
         return (
@@ -183,7 +221,7 @@ export default function ThemeControl({ inline = false }) {
                                     <use href={m.value === "light" ? "#i-sun" : "#i-moon"} />
                                 </svg>
                             )}
-                            {m.value === "auto" && <SkyGlyph mode="auto" renderedTheme={renderedTheme} blend={blend} elevationDeg={elevationDeg ?? 0} size={14} />}
+                            {m.value === "auto" && <SkyGlyph mode="auto" renderedTheme={renderedTheme} blend={blend} elevationDeg={elevationDeg ?? 0} phase={phase} size={14} />}
                             <span>{m.label}</span>
                         </button>
                     ))}

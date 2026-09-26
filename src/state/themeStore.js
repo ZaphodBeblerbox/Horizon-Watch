@@ -18,7 +18,7 @@
 //                      manual Light/Dark mode; a real, live value in Auto
 import API_BASE from "../apiBase.js"
 import { getUserLocation } from "../globe/useUserLocation.js"
-import { solarElevationDeg, civilTwilightBlend } from "../utils/solarPosition.js"
+import { solarElevationDeg, civilTwilightBlend, solarDayPhase } from "../utils/solarPosition.js"
 import { blendColor, isParseableColor } from "../utils/colorBlend.js"
 
 const RENDERED_CACHE_KEY = "hw-theme-cache"
@@ -56,6 +56,8 @@ let themeMode = (() => {
 })()
 let blend = renderedTheme === "light" ? 1 : 0
 let elevationDeg = null
+// 0..1 across the solar day, 0 = solar midnight. See recomputeAndApply.
+let dayPhase = 0
 let locationState = "unknown" // "unknown" | "resolving" | "ok" | "unavailable"
 
 let fadeTimer = null
@@ -236,8 +238,14 @@ async function resolveLocation() {
 }
 
 function recomputeAndApply(loc) {
-    const el = solarElevationDeg(loc.lat, loc.lon, new Date())
+    const now = new Date()
+    const el = solarElevationDeg(loc.lat, loc.lon, now)
     elevationDeg = el
+    // Where in the day, as distinct from how light it is. The sky control
+    // needs both: the blend says which palette applies, the phase says
+    // where the sun actually is on its arc. Computed on the same tick so
+    // the two can never disagree about what time it is.
+    dayPhase = solarDayPhase(loc.lon, now)
     applyBlend(civilTwilightBlend(el))
 }
 
@@ -323,6 +331,7 @@ export function subscribeRenderedTheme(fn) { renderedListeners.add(fn); return (
  * driving both the token color fade and the sun/moon horizon indicator —
  * never two independently-computed approximations. */
 export function getBlend() { return blend }
+export function getDayPhase() { return dayPhase }
 export function getElevationDeg() { return elevationDeg }
 export function subscribeBlend(fn) { blendListeners.add(fn); return () => blendListeners.delete(fn) }
 

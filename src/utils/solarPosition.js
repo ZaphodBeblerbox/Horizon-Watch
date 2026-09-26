@@ -81,6 +81,43 @@ export function solarElevationDeg(lat, lon, date = new Date()) {
 // dusk is elevation = -6°; this app additionally treats +6° as "fully
 // day" so the fade has a real, symmetric, ~12°-wide band to animate
 // across rather than a hard cutoff right at the horizon).
+/**
+ * Where in the day we are, 0..1, from the sun's real hour angle.
+ *
+ * 0 and 1 are solar midnight, 0.5 is solar noon. This is what an arc needs
+ * and elevation cannot give: elevation says how high the sun is, and the
+ * same elevation happens twice a day, once climbing and once falling. The
+ * hour angle distinguishes them, so the sun can rise on one side and set
+ * on the other instead of going up and down the same rail.
+ *
+ * The computation is already done inside solarElevationDeg — this exposes
+ * it rather than deriving the sun's position a second, slightly different
+ * way.
+ */
+export function solarDayPhase(lon, date = new Date()) {
+    const jd = toJulianDay(date)
+    const T = (jd - 2451545.0) / 36525.0
+    const L0 = (280.46646 + T * (36000.76983 + T * 0.0003032)) % 360
+    const M = 357.52911 + T * (35999.05029 - 0.0001537 * T)
+    const Mrad = M * RAD
+    const e = 0.016708634 - T * (0.000042037 + 0.0000001267 * T)
+    const omega = 125.04 - 1934.136 * T
+    const seconds = 21.448 - T * (46.815 + T * (0.00059 - T * 0.001813))
+    const e0 = 23.0 + (26.0 + seconds / 60.0) / 60.0
+    const epsilon = e0 + 0.00256 * Math.cos(omega * RAD)
+    const y = Math.tan((epsilon / 2) * RAD) ** 2
+    const eqTime = 4 * DEG * (
+        y * Math.sin(2 * L0 * RAD)
+        - 2 * e * Math.sin(Mrad)
+        + 4 * e * y * Math.sin(Mrad) * Math.cos(2 * L0 * RAD)
+        - 0.5 * y * y * Math.sin(4 * L0 * RAD)
+        - 1.25 * e * e * Math.sin(2 * Mrad)
+    )
+    const utcMinutes = date.getUTCHours() * 60 + date.getUTCMinutes() + date.getUTCSeconds() / 60
+    const trueSolarTime = ((utcMinutes + eqTime + 4 * lon) % 1440 + 1440) % 1440
+    return trueSolarTime / 1440
+}
+
 export const CIVIL_TWILIGHT_DEG = 6
 
 /** Maps a real solar elevation angle to a continuous 0..1 blend factor:
