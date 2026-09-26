@@ -14426,14 +14426,13 @@ def _fusion_fire_callback(fusion_dict: dict, suppressed_alert_ids: list):
 async def startup_event():
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
-    # RETRY THE PIPELINE SOURCE. _refresh_pipelines_from_remote() was only
-    # ever reachable through an explicit ?refresh=true on the search
-    # endpoint, which nothing sends — so the cache sat at its last
-    # successful fetch (2026-03-20) with a recorded 404 and never tried
-    # again. A feed that cannot retry is not degraded, it is abandoned.
-    # Backgrounded, because a 30s timeout per URL must not delay the port
-    # binding and fail the healthcheck.
-    threading.Thread(target=_refresh_pipelines_from_remote, daemon=True).start()
+    # NOT RETRIED AT STARTUP, DELIBERATELY. The GEM/GOPIT pipeline dataset
+    # is gone: both file URLs 404, and so does the repository itself
+    # (api.github.com/repos/GlobalEnergyMonitor/GOPIT), so it was withdrawn
+    # rather than moved. Retrying costs two 30s timeouts per boot to learn
+    # something already known. The manual ?refresh=true path stays, so
+    # pointing PIPELINE_SOURCE_URLS at a replacement and calling it is all
+    # that is needed if one appears.
 
     print(f"[startup] *** HORIZON WATCH STARTING — env='{os.getenv('RAILWAY_ENVIRONMENT','local')}' DATA_DIR={DATA_DIR} ***")
 
@@ -19240,17 +19239,20 @@ def _pipelines_age_days():
 def _pipelines_status():
     if not (_PIPELINES_DATA or {}).get("error"):
         return "ok"
-    age = _pipelines_age_days()
-    # A source that has produced nothing for a month is not "degraded" in
-    # any useful sense — it is down, and saying so is what gets it fixed.
-    return "error" if age is not None and age > 30 else "degraded"
+    # "retired", not "degraded" or "error". Degraded implies it might
+    # recover and error implies something to fix here; neither is true when
+    # the upstream dataset has been withdrawn. A permanent red row trains
+    # people to ignore the health panel, which is the real cost.
+    return "retired"
 
 def _pipelines_message():
-    err = (_PIPELINES_DATA or {}).get("error")
-    if not err:
+    if not (_PIPELINES_DATA or {}).get("error"):
         return None
     age = _pipelines_age_days()
-    return f"{err} — last successful fetch {age} days ago" if age is not None else err
+    age_txt = f", last data {age} days old" if age is not None else ""
+    return ("Global Energy Monitor withdrew the GOPIT dataset — the repository "
+            f"returns 404{age_txt}. Trade routes are unaffected; the energy half "
+            "of the Flows layer is empty until a replacement source is chosen.")
 
 # ── Pipeline dataset ──────────────────────────────────────────────────────────
 _PIPELINES_DATA:   dict  = {}
