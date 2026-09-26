@@ -240,6 +240,31 @@ class Case(Base):
     updated_at            = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class PushSubscription(Base):
+    """A browser's push endpoint, per user.
+
+    These lived in a module-level dict. A dict does not survive a restart,
+    so every deploy silently unsubscribed everyone — the browser still
+    believed it was subscribed, the server had nothing to send to, and
+    nobody found out until they noticed they had stopped getting alerts.
+    A notification channel that fails silently is worse than none, because
+    it is trusted.
+
+    Keyed by endpoint rather than by user: one person with a laptop and a
+    phone has two endpoints and should get both, and the old dict could
+    only ever hold the most recent one.
+    """
+    __tablename__ = "push_subscriptions"
+    id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id        = Column(String, nullable=False, index=True)
+    endpoint       = Column(Text, nullable=False)
+    subscription   = Column(Text, nullable=False)   # the full JSON the browser gave us
+    user_agent     = Column(String, nullable=True)
+    created_at     = Column(DateTime, default=datetime.datetime.utcnow)
+    last_used_at   = Column(DateTime, nullable=True)
+    __table_args__ = (UniqueConstraint("endpoint", name="uq_push_endpoint"),)
+
+
 class CaseNode(Base):
     """A folder or a file inside a case.
 

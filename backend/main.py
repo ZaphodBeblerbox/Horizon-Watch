@@ -135,8 +135,9 @@ w8OYINpr7eTh+lAh7ARnAMvU0CShRANCAATqXQyqJfz9pQC4GLtN8m1ybdgjVzYG
 jqn+AMFKug9IJvJSs8ivbu1NfjVPIHeNuwsxeDknR8HEyLNQwntQ+MdP
 -----END PRIVATE KEY-----"""
 _VAPID_CLAIMS     = {"sub": "mailto:admin@trifectatechnologies.co"}
-_PUSH_SUBS: dict  = {}          # user_id → subscription JSON
-_PUSH_SUBS_LOCK   = threading.Lock()
+# Push subscriptions live in the database (PushSubscription), not here —
+# a dict does not survive a restart, so every deploy silently unsubscribed
+# everyone while their browsers still believed they were subscribed.
 from geocode_utils import geocode_place, get_geocode_stats
 from scoring import score_news_markers, geo_gate_passes
 from location_extract import (
@@ -1280,52 +1281,108 @@ def get_settings():
 
 @app.post("/api/push/subscribe")
 async def push_subscribe(request: Request):
-    """Store a browser push subscription for the current user."""
-    user = _get_current_user(request)
-    uid  = user["id"] if user else request.headers.get("x-forwarded-for", "anon")
+    """Store a browser push subscription for the current user.
+
+    Persisted, and keyed by endpoint. It used to be a module-level dict
+    keyed by user: it did not survive a restart, so every deploy silently
+    unsubscribed everyone, and one person with a laptop and a phone only
+    ever kept whichever subscribed last.
+
+    Requires a real session. An anonymous subscription keyed off
+    X-Forwarded-For addresses a header the client controls, which is not an
+    identity — and behind a proxy it is frequently the same value for
+    everyone.
+    """
+    from database import PushSubscription, get_db as _gdb_push
+    user = _require_current_user(request)
     data = await request.json()
-    with _PUSH_SUBS_LOCK:
-        _PUSH_SUBS[uid] = data
+    endpoint = (data or {}).get("endpoint")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="subscription endpoint is required")
+
+    with _gdb_push() as db:
+        row = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).first()
+        if row:
+            # Same browser re-subscribing, possibly as a different user on a
+            # shared machine — the endpoint moves with it.
+            row.user_id = user["id"]
+            row.subscription = _json.dumps(data)
+        else:
+            db.add(PushSubscription(
+                user_id=user["id"], endpoint=endpoint,
+                subscription=_json.dumps(data),
+                user_agent=request.headers.get("user-agent"),
+            ))
+        db.commit()
     return {"status": "subscribed"}
 
 @app.post("/api/push/unsubscribe")
 async def push_unsubscribe(request: Request):
-    """Remove push subscription for current user."""
+    """Remove one endpoint, or all of this user's if none is named."""
+    from database import PushSubscription, get_db as _gdb_push
     user = _get_current_user(request)
-    uid  = user["id"] if user else None
-    if uid:
-        with _PUSH_SUBS_LOCK:
-            _PUSH_SUBS.pop(uid, None)
+    if not user:
+        return {"status": "unsubscribed"}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    endpoint = (body or {}).get("endpoint")
+    with _gdb_push() as db:
+        q = db.query(PushSubscription).filter(PushSubscription.user_id == user["id"])
+        if endpoint:
+            q = q.filter(PushSubscription.endpoint == endpoint)
+        q.delete()
+        db.commit()
     return {"status": "unsubscribed"}
 
 def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> None:
-    """Send a Web Push notification to one subscribed user (fire-and-forget)."""
+    """Send a Web Push notification to every endpoint this user has.
+
+    Every endpoint, not one: a person with a laptop and a phone expects the
+    alert on whichever they are holding.
+    """
     if not _WEBPUSH_OK:
         return
-    with _PUSH_SUBS_LOCK:
-        sub = _PUSH_SUBS.get(uid)
-    if not sub:
-        return
+    from database import PushSubscription, get_db as _gdb_push
     import json as _j
+
+    with _gdb_push() as db:
+        rows = db.query(PushSubscription).filter(PushSubscription.user_id == uid).all()
+        subs = [(r.id, _j.loads(r.subscription)) for r in rows]
+    if not subs:
+        return
+
     payload = _j.dumps({"title": title, "body": body, **(data or {})})
-    try:
-        webpush(
-            subscription_info=sub,
-            data=payload,
-            vapid_private_key=_VAPID_PRIVATE_KEY,
-            vapid_claims=_VAPID_CLAIMS,
-        )
-    except Exception as e:
-        status = getattr(getattr(e, "response", None), "status_code", None)
-        if status == 410:           # Subscription expired
-            with _PUSH_SUBS_LOCK:
-                _PUSH_SUBS.pop(uid, None)
-        print(f"[push] send failed for {uid}: {e}")
+    dead = []
+    for row_id, sub in subs:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=_VAPID_PRIVATE_KEY,
+                vapid_claims=_VAPID_CLAIMS,
+            )
+        except Exception as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            # 410 Gone / 404 mean the browser threw the subscription away.
+            # Keeping it means retrying a dead endpoint on every alert
+            # forever.
+            if status in (404, 410):
+                dead.append(row_id)
+            print(f"[push] send failed for {uid}: {e}")
+
+    if dead:
+        with _gdb_push() as db:
+            db.query(PushSubscription).filter(PushSubscription.id.in_(dead)).delete(
+                synchronize_session=False)
+            db.commit()
 
 def _broadcast_push(title: str, body: str, data: dict | None = None) -> None:
     """Send a push notification to all subscribed users (background thread)."""
-    with _PUSH_SUBS_LOCK:
-        uids = list(_PUSH_SUBS.keys())
+    from database import PushSubscription, get_db as _gdb_push
+    with _gdb_push() as db:
+        uids = [r[0] for r in db.query(PushSubscription.user_id).distinct().all()]
     for uid in uids:
         threading.Thread(target=_send_push, args=(uid, title, body, data), daemon=True).start()
 
@@ -5700,7 +5757,12 @@ def _push_real_time_alert(alert: dict) -> None:
 
     # Browser push notification for critical / significant alerts
     tier = alert.get("severity_tier", "")
-    if tier in ("critical", "significant") and _WEBPUSH_OK and _PUSH_SUBS:
+    # The `and _PUSH_SUBS` that used to be here gated on the in-memory
+    # dict. With subscriptions in the database that dict is always empty,
+    # so this condition would never be true again and alert push would have
+    # stopped without a single error line. _broadcast_push does its own
+    # "is anyone subscribed" check against the real rows.
+    if tier in ("critical", "significant") and _WEBPUSH_OK:
         headline = (alert.get("headline") or alert.get("title") or "New alert")[:120]
         location = alert.get("location") or ""
         body     = f"{location} — {headline}" if location else headline

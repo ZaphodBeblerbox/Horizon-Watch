@@ -1,5 +1,11 @@
-// Horizon Watch — Service Worker
-// Handles push notifications and offline caching
+// Parallax — Service Worker
+// Handles push notifications and offline caching.
+//
+// The notification carries the Echo X (the product mark, public/favicon.svg)
+// through icon-192.png. A push that arrives with a blank or default glyph
+// reads as a browser notification rather than as this product's alert,
+// which is exactly when the reader is least able to tell what it is —
+// the app is minimised or closed.
 
 const CACHE_NAME = 'horizon-watch-v1'
 
@@ -13,7 +19,7 @@ self.addEventListener('activate', (event) => {
 
 // Push notification received
 self.addEventListener('push', (event) => {
-    let data = { title: 'Horizon Watch', body: 'New intelligence alert' }
+    let data = { title: 'Parallax', body: 'New intelligence alert' }
 
     if (event.data) {
         try {
@@ -30,7 +36,7 @@ self.addEventListener('push', (event) => {
         icon:               '/icon-192.png',
         badge:              '/icon-192.png',
         vibrate:            isCritical ? [300, 100, 300, 100, 300] : [200, 100, 200],
-        tag:                data.id || 'horizon-alert',
+        tag:                data.id || 'parallax-alert',
         renotify:           true,
         requireInteraction: isCritical,
         silent:             false,
@@ -46,7 +52,7 @@ self.addEventListener('push', (event) => {
 
     event.waitUntil(
         self.registration.showNotification(
-            data.title || 'Horizon Watch',
+            data.title || 'Parallax',
             options
         )
     )
