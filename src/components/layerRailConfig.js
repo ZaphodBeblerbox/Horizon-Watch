@@ -27,6 +27,12 @@ export const LAYER_GROUPS = [
             { key: "adsb", label: "Aircraft", hint: "Real-time transponder positions" },
             { key: "airports", label: "Airports", hint: "49k airports — viewport-culled, large first" },
             { key: "adsbHeatmap", label: "Air Density", hint: "Aircraft track density over time" },
+            // Its own switch rather than folded into Air: this is not
+            // where aircraft are, it is where they are losing their
+            // satellite fix, and a reader has to be able to see one
+            // without the other.
+            { key: "gpsInterference", label: "Nav Interference",
+              hint: "Where aircraft are losing their satellite fix — measured from their own reported integrity" },
         ],
     },
     {

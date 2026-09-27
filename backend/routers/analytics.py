@@ -61,6 +61,7 @@ _SOURCE_LABELS = {
     "geoconfirmed": "Verified Events",
     "sentinel":     "Satellite",
     "sat-task":     "Satellite Tasking",
+    "gps":          "GPS Interference",
     "surge":        "Activity Surges",
     "forecast":     "Forecast",
     "corroborated": "Corroborated",
@@ -136,7 +137,7 @@ def _region_sql_case(lat_col, lon_col):
 
 def _alert_domain_sql_case(source_col, zone_ids_col):
     """SQL `case()` mirroring the domain classification in the loop below
-    (zones takes priority over source, else adsb/ais/geoconfirmed substring
+    (zones takes priority over source, else adsb/gps/ais/geoconfirmed
     match, else zones) — real DB-level equivalent of the same logic, used to
     push the domain filter into SQL for Alert rows. SentinelDetection rows
     are always domain="imagery" and never go through this."""
@@ -145,6 +146,10 @@ def _alert_domain_sql_case(source_col, zone_ids_col):
     return case(
         (has_zones, "zones"),
         (src.contains("adsb"), "air"),
+        # Must sit above the ais test and mirror the Python exactly: a
+        # filter that disagrees with the tally shows a domain whose chart
+        # and whose rows describe different sets of signals.
+        (src == "gps", "air"),
         (src.contains("ais"), "maritime"),
         (src.contains("geoconfirmed"), "news"),
         else_="zones",
@@ -211,7 +216,10 @@ def _fetch_and_normalize_signals(db, since, region: str = "all", domain: str = "
         src_norm = (source or "").lower()
         if zones:
             dom = "zones"
-        elif "adsb" in src_norm:
+        elif "adsb" in src_norm or src_norm == "gps":
+            # GPS interference is measured from aircraft and is a statement
+            # about airspace, so it reads under Air rather than falling
+            # through to the zones catch-all.
             dom = "air"
         elif "ais" in src_norm:
             dom = "maritime"

@@ -54,3 +54,6 @@ tauri-keys/
 
 # Case attachments are user data on the data volume, never source.
 backend/data/case_files/
+
+# Airspace tiles fetched from openAIP — a cache on the data volume, not source.
+backend/data/airspace_cache/

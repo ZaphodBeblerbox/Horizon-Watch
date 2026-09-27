@@ -75,7 +75,10 @@ export default function MapControlStack({ layers = null, onLocate, onZoomIn, onZ
             <ControlButton name="locate" title="Locate" onClick={onLocate} />
             <ControlButton name="zoomIn" title="Zoom In" onClick={onZoomIn} />
             <ControlButton name="zoomOut" title="Zoom Out" onClick={onZoomOut} />
-            <ControlButton name="expand" title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"} onClick={onFullscreen} />
+            {/* Fullscreen is gone from the map controls too. The OS and the
+                browser both already offer it, and on the desktop build the
+                app is its own window — a third control for it earned
+                nothing but a slot in a stack people reach for often. */}
             {basemap && (
                 <>
                     <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />

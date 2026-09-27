@@ -10,6 +10,7 @@ import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { buildOntologyRecord, traceRationale } from "../inspector/ontologyRecord.js"
 import { linkifyText } from "../lib/linkifyText.jsx"
 import Loading from "../ui/Loading.jsx"
+import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -656,6 +657,22 @@ export default function InspectorPanel({
                         {attributes.map((a) => (
                             <AttributeRow key={a.label} label={a.label} value={a.value} />
                         ))}
+                    </div>
+                )}
+
+                {/* WHAT IS IN THIS WATER RIGHT NOW. Only for the two types
+                    whose whole subject is a piece of sea. Rendered after the
+                    reference attributes because it is the live half and it
+                    arrives a moment later — the panel must not sit blank
+                    waiting for it. */}
+                {(entityType === "eez" || entityType === "chokepoint") && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <SectionLabel>Live traffic</SectionLabel>
+                        <MaritimeAreaSection
+                            kind={entityType === "chokepoint" ? "chokepoint" : "bbox"}
+                            id={data?.system_id || data?.chokepoint_id || data?.id
+                                || data?.name || entityId}
+                            bounds={entityType === "eez" ? (data?.bounds || null) : null} />
                     </div>
                 )}
 

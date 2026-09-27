@@ -70,10 +70,23 @@ export default function GlobeGfwLayer({ enabled = false, kinds = [], days = 14, 
                         event: styleFor(kind).label,
                         when: ev.start,
                         age: ageLabel(ev.start),
+                        // The vessels as STRUCTURE, not as one pre-joined
+                        // string. A detection whose whole subject is "which
+                        // ships were here" has to hand the inspector the
+                        // ships, so it can look up where each one is now
+                        // rather than printing a sentence nobody can act on.
+                        vessel_list: (ev.vessels || []).map((v) => ({
+                            name: v.name || null, mmsi: v.mmsi || null,
+                            flag: v.flag || null, type: v.type || null,
+                        })),
                         vessels: (ev.vessels || [])
                             .map((v) => [v.name, v.mmsi && `MMSI ${v.mmsi}`, v.flag]
                                 .filter(Boolean).join(" · "))
                             .join("  |  ") || null,
+                        // Where it happened, so the inspector can contrast it
+                        // with where the vessels are now.
+                        detected_lat: ev.lat, detected_lon: ev.lon,
+                        end: ev.end || null,
                         // GFW's assessment stays labelled as GFW's.
                         gfw_potential_risk: ev.gfw_potential_risk,
                         encounter_type: ev.encounter_type,

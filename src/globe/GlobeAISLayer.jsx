@@ -210,10 +210,21 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
                                 position, new HeadingPitchRoll(hullAngle, 0, 0)), false)}
                         model={{
                             uri: hullUrl(hull),
-                            // Nominal metres for the TYPE — AIS gives us
-                            // no length or beam — but never smaller than
-                            // this on screen.
-                            minimumPixelSize: 24,
+                            // Nominal metres for the TYPE — AIS gives us no
+                            // length or beam.
+                            //
+                            // THE FLOOR IS WHAT MADE THE GLOBE UNREADABLE.
+                            // minimumPixelSize is the size below which a
+                            // model will not shrink however far away it is,
+                            // so at 24 every hull in the world stayed a
+                            // 24-pixel boat: zoomed out, the Channel and the
+                            // Malacca Strait were solid blocks of ship with
+                            // no water between them. Eight keeps a distant
+                            // hull visible as a mark without it claiming the
+                            // space of a city, and the real model scale
+                            // takes over well before you are close enough to
+                            // read a name.
+                            minimumPixelSize: 8,
                             maximumScale: 40000,
                             color: sanctioned ? Color.fromCssColorString("#FF453A") : undefined,
                             colorBlendMode: ColorBlendMode.MIX,

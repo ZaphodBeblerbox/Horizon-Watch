@@ -891,6 +891,140 @@ export function adaptFacilityOsm(data = {}) {
     }
 }
 
+
+// ── GPS / navigation interference cell ───────────────────────────────────
+/**
+ * A clicked interference tile has to explain itself, because the number on
+ * it is easy to misread in three specific ways.
+ *
+ * It is a RATE, so it needs its denominator: 80% of five aircraft and 80%
+ * of four hundred are different claims. It describes a NEIGHBOURHOOD wider
+ * than the square drawn, so the square is not a boundary. And it cannot
+ * distinguish jamming from spoofing, or name who is responsible — an
+ * aircraft that has been successfully spoofed reports a healthy fix for a
+ * position that is wrong, and this method cannot see that at all.
+ *
+ * All three go in the panel rather than in a doc nobody opens.
+ */
+export function adaptGpsInterference(data = {}) {
+    const pct = isFiniteNum(data.pct) ? data.pct : null
+    const total = isFiniteNum(data.aircraft) ? data.aircraft : null
+    const bad = isFiniteNum(data.degraded) ? data.degraded : null
+    const level = (data.level || "clear").toLowerCase()
+
+    const verdict = level === "severe" ? "Severe interference"
+                  : level === "degraded" ? "Degraded"
+                  : "No interference detected"
+
+    const reading = (bad != null && total != null)
+        ? `${bad} of ${total} aircraft could not hold a satellite fix`
+          + (pct != null ? ` (${pct}%)` : "")
+        : null
+
+    const attributes = compact([
+        attr("Reading", reading),
+        attr("Assessment", verdict),
+        attr("Aircraft sampled", total != null ? String(total) : null),
+        attr("Without a fix", bad != null ? String(bad) : null),
+        attr("Position", fmtCoord(data.lat, data.lon)),
+        attr("Tile", isFiniteNum(data.cell_deg) ? `${data.cell_deg}°` : null),
+        attr("Measured over", isFiniteNum(data.radius_deg)
+            ? `${data.radius_deg}° around this tile — the square is where it is drawn, not the edge of the effect`
+            : null),
+        attr("Last aircraft seen", fmtTimestamp(data.last_seen)),
+        attr("How this is measured",
+            "Aircraft broadcast their own navigation integrity (NIC/NACp). One "
+            + "reporting no usable containment radius has lost GNSS. Only aircraft "
+            + "above 10,000 ft are counted, because below that a poor reading says "
+            + "more about the avionics than about the sky."),
+        attr("What it cannot tell you",
+            "Jamming and spoofing are not separated, and nothing here names a "
+            + "source. An aircraft successfully spoofed may report a healthy fix "
+            + "for a position that is wrong, which this method cannot see."),
+    ])
+
+    return {
+        identity: {
+            title: verdict,
+            subtitle: reading || "Navigation interference",
+            entityType: "gps_interference",
+            subtype: level,
+            sanctionsStatus: null,
+        },
+        attributes,
+        provenance: {
+            feed: "Aircraft-reported navigation integrity",
+            ingestedAt: data.last_seen || null,
+        },
+        actions: { canJumpToLocation: isFiniteNum(data.lat) && isFiniteNum(data.lon) },
+    }
+}
+
+
+// ── Vessel-activity detection (encounter, AIS gap, loitering, port visit) ─
+/**
+ * These detections fell through to adaptGeneric, which drops any value that
+ * is an object — and everything worth reading about them lives under `meta`.
+ * So a click on an encounter, an AIS gap or a loitering event showed a title
+ * and a coordinate, and the one question they exist to answer — WHICH SHIPS,
+ * and where are they now — could not be asked at all.
+ *
+ * The vessels come through as rows rather than as a pre-joined sentence, so
+ * the panel can offer each one as something to look up. Where a vessel is
+ * NOW is deliberately not fetched here: this adapter is synchronous and must
+ * not make the inspector wait on the network. It hands the panel the MMSI
+ * and the position at detection, which is what a "where is it now" lookup
+ * needs, and the panel can resolve it when the reader asks.
+ */
+export function adaptGfwEvent(data = {}) {
+    const m = data.meta || {}
+    const vessels = Array.isArray(m.vessel_list) ? m.vessel_list : []
+
+    const attributes = compact([
+        attr("Detection", m.event || null),
+        attr("When", fmtTimestamp(m.when)),
+        attr("Ended", fmtTimestamp(m.end)),
+        attr("Age", m.age || null),
+        attr("Where it happened", fmtCoord(m.detected_lat, m.detected_lon)),
+        attr("Vessels involved", vessels.length ? String(vessels.length) : null),
+        ...vessels.map((v, i) => attr(
+            `Vessel ${i + 1}`,
+            compact([v.name, v.mmsi ? `MMSI ${v.mmsi}` : null, v.flag, v.type]).join(" · ")
+                || "unidentified")),
+        attr("Encounter type", m.encounter_type || null),
+        attr("Median separation", fmtUnit(m.median_distance_km, "km")),
+        attr("Distance from shore", fmtUnit(m.km_from_shore, "km")),
+        attr("High seas", m.high_seas === true ? "yes" : m.high_seas === false ? "no" : null),
+        // The supplier's own assessment stays labelled as theirs, never
+        // restated as this system's finding.
+        attr("Supplier risk flag", m.gfw_potential_risk === true ? "flagged by the supplier" : null),
+        attr("Freshness", m.freshness || null),
+        attr("What this is",
+            "A detection derived from vessel transponder tracks. The position "
+            + "is where the behaviour was observed, not where the vessels are "
+            + "now — this feed publishes days behind."),
+    ])
+
+    return {
+        identity: {
+            title: data.name || m.event || "Vessel activity",
+            subtitle: vessels.length
+                ? vessels.map((v) => v.name || v.mmsi || "unidentified").join(" · ")
+                : (m.event || null),
+            entityType: "gfw_event",
+            subtype: m.event || null,
+            sanctionsStatus: null,
+        },
+        attributes,
+        // Handed through so the panel can offer a live lookup per vessel.
+        vessels: vessels.filter((v) => v.mmsi),
+        provenance: { feed: m.source || null, ingestedAt: m.when || null },
+        actions: {
+            canJumpToLocation: isFiniteNum(m.detected_lat) && isFiniteNum(m.detected_lon),
+        },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -913,6 +1047,8 @@ const ADAPTERS = {
     surge: adaptSurge,
     warmap_area: adaptWarmapArea,
     facility_osm: adaptFacilityOsm,
+    gps_interference: adaptGpsInterference,
+    gfw_event: adaptGfwEvent,
 }
 
 /**

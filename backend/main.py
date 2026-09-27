@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.error
 import logging
 from collections import Counter, OrderedDict, deque
+import gps_interference as _gps_interference
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
@@ -4390,6 +4391,104 @@ def api_gfw_heatmap(kind: str = Query("encounters"),
     except Exception as e:                                   # noqa: BLE001
         logger.exception("gfw heatmap failed")
         return {"available": False, "error": str(e)[:200], "cells": []}
+
+
+@app.get("/api/maritime-area")
+def api_maritime_area(
+    kind: str = Query(..., pattern="^(chokepoint|eez|bbox)$"),
+    id: str = Query(None),
+    south: float = Query(None), north: float = Query(None),
+    west: float = Query(None), east: float = Query(None),
+):
+    """What is inside a piece of sea right now — traffic, congestion, flags,
+    sanctioned hulls.
+
+    Serves the chokepoint and EEZ panels from one place because the question
+    is identical for both; only the boundary differs. See maritime_area.py
+    for why congestion is reported against the area's own baseline and never
+    as a bare count.
+    """
+    import maritime_area as _ma
+
+    ring = None
+    bounds = None
+    name = None
+    area_key = None
+
+    if kind == "chokepoint":
+        cp = next((c for c in _CHOKEPOINT_DEFS
+                   if c.get("system_id") == id or c.get("id") == id
+                   or c.get("name", "").lower().replace(" ", "-") == (id or "").lower()), None)
+        if not cp:
+            raise HTTPException(status_code=404, detail=f"Chokepoint '{id}' not found")
+        name = cp.get("name")
+        area_key = f"cp:{cp.get('system_id') or id}"
+        poly = cp.get("polygon")
+        if poly:
+            # Stored [[lat, lon], ...]; the ray test wants [[lon, lat], ...].
+            ring = [[pt[1], pt[0]] for pt in poly if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+        if not ring and cp.get("lat") is not None:
+            d = 1.0
+            bounds = (cp["lat"] - d, cp["lon"] - d, cp["lat"] + d, cp["lon"] + d)
+    else:
+        if None in (south, north, west, east):
+            raise HTTPException(status_code=400,
+                                detail="south/north/west/east are required for this kind")
+        bounds = (south, west, north, east)
+        name = id or "Area"
+        area_key = f"{kind}:{id or f'{south},{west},{north},{east}'}"
+
+    with _AIS_LOCK:
+        vessels = list(_AIS_VESSELS.values())
+
+    def _check(v):
+        try:
+            return check_sanctions_for_vessel(str(v.get("mmsi") or ""), v.get("name"), vessel=v)
+        except Exception:
+            return None
+
+    from mmsi_lookup import lookup_mmsi as _flag_of
+    out = _ma.summarise(vessels, area_key=area_key, ring=ring, bounds=bounds,
+                        sanctions_check=_check, flag_lookup=_flag_of)
+    return {"kind": kind, "id": id, "name": name,
+            "boundary": "polygon" if ring else "bounding box", **out}
+
+
+@app.get("/api/gps-interference")
+def api_gps_interference(
+    west:  float = Query(None),
+    south: float = Query(None),
+    east:  float = Query(None),
+    north: float = Query(None),
+    level: str = Query("all", pattern="^(all|affected)$"),
+):
+    """Where aircraft are failing to hold a satellite fix.
+
+    Measured from the navigation-integrity fields the ADS-B poll already
+    receives — see gps_interference.py for why that is a real measurement
+    and what it cannot tell you.
+
+    Clear cells are returned too, and deliberately. A map that only draws
+    trouble cannot distinguish "no interference here" from "nothing looked
+    here", and over open sea that difference is the entire story. Pass
+    level=affected when you only want the cells that crossed a threshold.
+    """
+    cells = _gps_interference.cells()
+    if level == "affected":
+        cells = [c for c in cells if c["level"] != "clear"]
+    if None not in (west, south, east, north):
+        cells = [c for c in cells
+                 if _in_bbox(c["lat"], c["lon"], west, south, east, north)]
+    return {
+        "cells": cells,
+        "affected": sum(1 for c in cells if c["level"] != "clear"),
+        "method": ("ADS-B navigation integrity (NIC/NACp) from aircraft above "
+                   f"{_gps_interference.MIN_ALT_FT:,} ft"),
+        "caveat": ("Jamming and spoofing are not separated, and an aircraft "
+                   "successfully spoofed may report a healthy fix for a "
+                   "position that is wrong. Counts are aircraft, not sightings."),
+        **_gps_interference.stats(),
+    }
 
 
 @app.get("/api/airspace")
@@ -11859,6 +11958,62 @@ async def _vessel_resolution_loop():
         await asyncio.sleep(6 * 3600)
 
 
+async def _gps_interference_alert_loop():
+    """Turn crossed interference cells into Alert rows.
+
+    Separate from the poll rather than inline in it, because the poll must
+    not be made slower or more fragile by a database write. If this loop
+    dies the measurement still runs and the map still draws; only the
+    signals stop.
+    """
+    await asyncio.sleep(180)          # let the grid fill before judging it
+    while True:
+        try:
+            if HEAVY_FEEDS_PAUSED:
+                await asyncio.sleep(300)
+                continue
+            cells = _gps_interference.cells()
+            due = _gps_interference.due_for_alert(cells)
+            if due:
+                for c in due:
+                    # A named body of water beats a coordinate pair in a
+                    # headline someone has to read at a glance; the
+                    # coordinate is the fallback, not the first choice.
+                    try:
+                        import notification_context as _nc
+                        _p = _nc.describe_place(c["lat"], c["lon"])
+                        _where = (_p.get("chokepoint") or _p.get("waters")
+                                  or _p.get("zone") or None)
+                    except Exception:
+                        _where = None
+                    payload = _gps_interference.alert_payload(c, place=_where)
+                    # THROUGH write_alert(), not a raw db.add. That wrapper is
+                    # what feeds the fusion engine, links ontology entities and
+                    # applies relevance scoring — writing the row directly put
+                    # interference on the map and in the tables while leaving
+                    # it out of every piece of analysis the product actually
+                    # runs on its signals.
+                    write_alert({
+                        "id": f"GPS-{c['cell'].replace(':', '_')}-{int(time.time())}",
+                        "source": payload["source"],
+                        "alert_type": payload["alert_type"],
+                        "title": payload["title"],
+                        "severity": payload["severity"],
+                        "lat": payload["lat"], "lon": payload["lon"],
+                        "region": _where,
+                        "entity_type": payload["entity_type"],
+                        "entity_id": payload["entity_id"],
+                        # A measurement, not an inference — the rate is
+                        # counted, so it is not hedged like a coded report.
+                        "confidence": 0.95,
+                        "raw": payload["raw"],
+                    })
+                print(f"[gps] {len(due)} cell(s) crossed the interference threshold")
+        except Exception as _e:
+            _loop_error("gps-interference-alerts", _e)
+        await asyncio.sleep(300)
+
+
 async def _global_adsb_cache_loop():
     """Poll ADS-B globally every 60s to populate _GLOBAL_ADSB_CACHE for anomaly detection."""
     global _GLOBAL_ADSB_CACHE
@@ -11883,6 +12038,14 @@ async def _global_adsb_cache_loop():
                         return []
                 aircraft_raw = await loop.run_in_executor(_executor, _fetch)
                 fetched_total += len(aircraft_raw)
+                # GPS interference rides along on this poll. The aircraft
+                # already report their own navigation integrity and this
+                # loop was discarding it; reading it here costs no extra
+                # request, no key and no rate limit. See gps_interference.py.
+                try:
+                    _gps_interference.observe(aircraft_raw)
+                except Exception:
+                    logger.exception("gps interference: observe failed")
                 now_ts = time.time()
                 for ac in aircraft_raw:
                     hex_id = (ac.get("hex") or "").upper()
@@ -12778,9 +12941,15 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
                 raw_t = session.run(None, {session.get_inputs()[0].name: arr_t})[0]
             except Exception as e:
                 print(f"[overwatch] tile ({tx},{ty}) failed: {e}")
-                del arr_t
                 continue
-            del arr_t
+            finally:
+                # One release on both paths. This used to `del arr_t` inside
+                # the except AND again after it, which works at runtime but
+                # reads as a use-after-delete and is reported as an undefined
+                # name by any static check. The array is large and freeing it
+                # before the next tile is the point, so `finally` rather than
+                # dropping one of the two.
+                del arr_t
 
             pr_t = raw_t[0].T
             del raw_t
@@ -14636,6 +14805,7 @@ async def startup_event():
     _spawn(_ais_history_flush_loop)
     _spawn(_weekly_snapshot_loop)
     _spawn(_global_adsb_cache_loop)
+    _spawn(_gps_interference_alert_loop)
     # Forge detection engine
     if _HAS_DETECTORS:
         _weights_file = os.path.join(DATA_DIR, "forge", "forge_weights.json")

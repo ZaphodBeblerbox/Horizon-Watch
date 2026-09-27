@@ -59,6 +59,15 @@ FT_TO_M = 0.3048
 #: 28 days. Hours of caching costs nothing in freshness.
 CACHE_TTL_S = 6 * 3600
 
+# AIRSPACE IS NEARLY STATIC — a control zone does not move — so the cache
+# is written to disk as well as held in memory. In memory alone it was
+# empty on every restart, which meant every restart went back to an API
+# that rate-limits, and until it answered the layer drew nothing. On disk
+# it also means the layer keeps working with no network at all, which is
+# the difference between a desktop build that shows airspace offline and
+# one that shows an empty sky.
+DISK_TTL_S = 30 * 24 * 3600
+
 _cache: dict = {}
 
 
@@ -173,6 +182,82 @@ def normalise(item: dict) -> dict | None:
     }
 
 
+# openAIP rejects a bounding box larger than roughly 5 degrees on a side.
+# Measured against the live API: 5.0 works at 51N, 6.0 returns 400. Four is
+# used so the margin survives the rounding above and any latitude effect.
+MAX_TILE_DEG = 4.0
+
+# And a viewport can be continental, so tiling one at 4 degrees could mean
+# a hundred requests against an API that rate-limits. Past this the request
+# is served from whatever tiles the cap allows, centred on the viewport —
+# the layer only draws close in anyway (see MAX_SPAN_DEG in the layer).
+MAX_TILES = 9
+
+# Seconds between tile requests. See the burst note where it is used.
+_TILE_PAUSE_S = 2.5
+
+
+def _disk_path(key: str) -> str:
+    import hashlib
+    try:
+        from main import DATA_DIR
+        root = os.path.join(DATA_DIR, "airspace_cache")
+    except Exception:
+        root = os.path.join(os.path.dirname(__file__), "data", "airspace_cache")
+    os.makedirs(root, exist_ok=True)
+    return os.path.join(root, hashlib.sha1(key.encode()).hexdigest() + ".json")
+
+
+def _disk_get(key: str):
+    try:
+        path = _disk_path(key)
+        if not os.path.exists(path):
+            return None
+        if time.time() - os.path.getmtime(path) > DISK_TTL_S:
+            return None
+        with open(path) as fh:
+            return _json.load(fh)
+    except Exception:
+        # A cache that cannot be read is a cache miss, never an error the
+        # caller has to handle.
+        return None
+
+
+def _disk_put(key: str, data: dict) -> None:
+    try:
+        path = _disk_path(key)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as fh:
+            _json.dump(data, fh)
+        os.replace(tmp, path)          # atomic, so a crash cannot leave half a file
+    except Exception:
+        logger.debug("airspace: disk cache write failed", exc_info=True)
+
+
+def _tiles(west: float, south: float, east: float, north: float):
+    """Split a viewport into boxes openAIP will actually accept.
+
+    Centred rather than truncated: when the viewport is too large for the
+    tile budget, the tiles that survive are the ones around the middle of
+    the screen, which is where the reader is looking.
+    """
+    import math as _math
+    nx = max(1, _math.ceil((east - west) / MAX_TILE_DEG))
+    ny = max(1, _math.ceil((north - south) / MAX_TILE_DEG))
+    dx = (east - west) / nx
+    dy = (north - south) / ny
+    boxes = []
+    for iy in range(ny):
+        for ix in range(nx):
+            boxes.append((round(west + ix * dx, 4), round(south + iy * dy, 4),
+                          round(west + (ix + 1) * dx, 4), round(south + (iy + 1) * dy, 4)))
+    if len(boxes) <= MAX_TILES:
+        return boxes
+    cx, cy = (west + east) / 2, (south + north) / 2
+    boxes.sort(key=lambda b: ((b[0] + b[2]) / 2 - cx) ** 2 + ((b[1] + b[3]) / 2 - cy) ** 2)
+    return boxes[:MAX_TILES]
+
+
 def in_bbox(west: float, south: float, east: float, north: float,
             limit: int = 400, force: bool = False) -> dict:
     """Airspace volumes intersecting a viewport."""
@@ -185,22 +270,75 @@ def in_bbox(west: float, south: float, east: float, north: float,
     ck = f"{bbox}:{limit}"
     hit = _cache.get(ck)
     if hit and not force and (time.time() - hit["ts"]) < CACHE_TTL_S:
-        return {**hit["data"], "cached": True}
+        # An incomplete answer is held only briefly, so a viewport that
+        # lost tiles to the rate limiter retries within the minute rather
+        # than staying incomplete for the full TTL.
+        if hit["data"].get("complete", True) or (time.time() - hit["ts"]) < 60:
+            return {**hit["data"], "cached": True}
+    if not force:
+        disk = _disk_get(ck)
+        if disk:
+            _cache[ck] = {"ts": time.time(), "data": disk}
+            return {**disk, "cached": True, "from_disk": True}
 
-    q = urllib.parse.urlencode({
-        "bbox": ",".join(str(v) for v in bbox),
-        "limit": int(limit),
-        "page": 1,
-    })
-    raw = _get(f"/airspaces?{q}")
-    if raw is None:
+    # THE VIEWPORT IS TILED, because openAIP refuses a bbox over about
+    # 5 degrees on a side — "exceeds the maximum allowed bounding box", a
+    # 400 that this code used to report as "openAIP request failed" with
+    # an empty list. The layer allowed spans up to 14 degrees, so at almost
+    # every zoom the request was rejected and the map drew no airspace at
+    # all. That is the whole reason this layer appeared broken.
+    # EACH TILE IS CACHED ON ITS OWN, which matters more than it looks.
+    # openAIP rate-limits hard enough that six tiles in a row had five
+    # rejected, and caching only the finished viewport threw the one
+    # success away with them. Per-tile, a rejected tile is the only thing
+    # lost: the next request re-uses what already arrived and asks for the
+    # gaps, so a viewport fills in over a few passes instead of failing
+    # whole every time.
+    items = []
+    failures = 0
+    fetched = 0
+    for (tw, ts, te, tn) in _tiles(*bbox):
+        tkey = f"tile:{tw},{ts},{te},{tn}:{limit}"
+        cached_tile = None if force else _disk_get(tkey)
+        if cached_tile is not None:
+            items.extend(cached_tile.get("items") or [])
+            continue
+        if fetched:
+            # Only pause between calls we actually make; a fully cached
+            # viewport must not pay for requests it never sent.
+            time.sleep(_TILE_PAUSE_S)
+        q = urllib.parse.urlencode({
+            "bbox": f"{tw},{ts},{te},{tn}",
+            "limit": int(limit),
+            "page": 1,
+        })
+        raw = _get(f"/airspaces?{q}")
+        fetched += 1
+        if raw is None:
+            failures += 1
+            continue
+        got = raw.get("items") or []
+        _disk_put(tkey, {"items": got})
+        items.extend(got)
+
+    if failures and not items:
         if hit:
             # A rate-limited call is not empty sky.
             return {**hit["data"], "cached": True, "stale": True}
         return {"available": False, "error": "openAIP request failed",
                 "airspaces": []}
 
-    items = raw.get("items") or []
+    # Tiles overlap at their seams and a volume spanning one is returned by
+    # both, so the same airspace would otherwise be drawn twice.
+    seen = set()
+    deduped = []
+    for it in items:
+        ident = it.get("_id") or it.get("id") or id(it)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        deduped.append(it)
+    items = deduped
     out = [a for a in (normalise(i) for i in items) if a]
     data = {
         "available": True,
@@ -214,5 +352,17 @@ def in_bbox(west: float, south: float, east: float, north: float,
                  "from one are approximate by tens of metres and move with "
                  "the weather."),
     }
+    # A VIEWPORT IS ONLY CACHED WHOLE WHEN IT ARRIVED WHOLE. Freezing a
+    # partial answer for the disk TTL would lock in whatever the rate
+    # limiter happened to allow on the first try, and no later request
+    # would ever fill the gaps — the map would show two thirds of the
+    # airspace over Germany for a month. Incomplete answers are still
+    # returned and still held in memory briefly, but the next request goes
+    # back for the tiles that failed, and those arrive cached.
+    data["complete"] = failures == 0
+    if failures:
+        data["partial_tiles"] = failures
     _cache[ck] = {"ts": time.time(), "data": data}
+    if failures == 0:
+        _disk_put(ck, data)
     return data

@@ -51,6 +51,7 @@ import LayerGroup from "../components/LayerGroup.jsx"
 import TimeStrip from "../components/TimeStrip.jsx"
 import ImagerySidebar from "../components/ImagerySidebar.jsx"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
+import LayerSubGroup from "../components/LayerSubGroup.jsx"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -181,11 +182,14 @@ function MapToolsPortal({ children }) {
     return slot ? createPortal(children, slot) : null
 }
 
+// The zones/EEZ quick button is deliberately absent. EEZ boundaries are
+// reference geography rather than something you flick on and off while
+// working, and the switch still lives in the Layers rail where the rest of
+// the reference layers are.
 const QUICK_LAYERS = [
     { key: "maritime", label: "Maritime", icon: "i-ship" },
     { key: "air", label: "Air", icon: "i-plane" },
     { key: "news", label: "News", icon: "i-read" },
-    { key: "zones", label: "Zones", icon: "i-target" },
     { key: "alerts", label: "Alerts", icon: "i-flag" },
 ]
 
@@ -383,6 +387,12 @@ export default function Situation({ onOpenDossier }) {
         LAYER_GROUPS.map((g) => [g.key, g.key === "news"])))
     // Default OFF. Machine-coded pins are opt-in: the reader should choose
     // to accept them, not discover them mixed in with verified events.
+    // CONFIRMED AND UNCONFIRMED ARE SEPARATE SWITCHES because they are
+    // separate claims. A GeoConfirmed pin is a person who found the building
+    // in the video; a wire report is a machine's reading of a news story.
+    // They were both tied to one "News" toggle, so an analyst who wanted
+    // only what had been verified could not have it.
+    const [geoConfirmedOn, setGeoConfirmedOn] = useState(true)
     const [gdeltOn, setGdeltOn] = useState(true)
     // Which CAMEO codings to draw. Starts as every kind rather than a
     // curated subset: a reader who has not chosen yet should see the whole
@@ -392,6 +402,9 @@ export default function Situation({ onOpenDossier }) {
     // what decides where imagery gets tasked, so hiding it by default
     // conceals the system's own reasoning.
     const [firesOn, setFiresOn] = useState(false)
+    // Default off: it is a specialist reading, and a globe that
+    // opens with every layer lit is not a map of anything.
+    const [gpsInterferenceOn, setGpsInterferenceOn] = useState(false)
     // Which theatres the frontline layer should draw. Ukraine is the only
     // one with an open control feed today; the roster comes from the
     // backend so adding a source later needs no frontend change.
@@ -969,10 +982,24 @@ export default function Situation({ onOpenDossier }) {
                                     on={firesOn} parentOn={groupsOn.imagery}
                                     onToggle={() => setFiresOn((v) => !v)} />
                             )}
+                            {g.key === "air" && (
+                                <SubLayerRow
+                                    label="Nav Interference"
+                                    hint="Where aircraft are losing their satellite fix, from the navigation integrity they report themselves. Jamming and spoofing are not separated."
+                                    on={gpsInterferenceOn} parentOn={groupsOn.air}
+                                    onToggle={() => setGpsInterferenceOn((v) => !v)} />
+                            )}
                             {g.key === "news" && (
                                 <SubLayerRow
-                                    label="Wire Reports"
-                                    hint="Machine-coded from news wire · city-level only · every pin cites its article"
+                                    label="Confirmed"
+                                    hint="Human-verified geolocation — somebody found the building in the video."
+                                    on={geoConfirmedOn} parentOn={groupsOn.news}
+                                    onToggle={() => setGeoConfirmedOn((v) => !v)} />
+                            )}
+                            {g.key === "news" && (
+                                <SubLayerRow
+                                    label="Unconfirmed"
+                                    hint="Machine-coded from a news wire · city-level only · every pin cites its article"
                                     on={gdeltOn} parentOn={groupsOn.news}
                                     onToggle={() => setGdeltOn((v) => !v)} />
                             )}
@@ -1038,12 +1065,8 @@ export default function Situation({ onOpenDossier }) {
                             </button>
                         </div>
                     ))}
-                    <div style={{ padding: "8px 12px 2px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
-                        Airspace
-                        <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginLeft: 6 }}>
-                            
-                        </span>
-                    </div>
+                    <LayerSubGroup id="airspace" title="Airspace"
+                                   activeCount={airspaceOn ? 1 : 0}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
                         <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
                             Controlled airspace
@@ -1062,12 +1085,11 @@ export default function Situation({ onOpenDossier }) {
                             <svg className="icon sm"><use href={airspaceOn ? "#i-eye" : "#i-eye-off"} /></svg>
                         </button>
                     </div>
-                    <div style={{ padding: "8px 12px 2px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
-                        Vessel activity events
-                        <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginLeft: 6 }}>
-                            published days behind
-                        </span>
-                    </div>
+                    </LayerSubGroup>
+
+                    <LayerSubGroup id="gfw-events" title="Vessel activity events"
+                                   note="published days behind"
+                                   activeCount={Object.values(gfwOn).filter(Boolean).length}>
                     {[
                         ["encounters", "Encounters", "two vessels meeting at sea"],
                         ["gaps", "AIS gaps", "transmission stopped, then resumed"],
@@ -1110,12 +1132,17 @@ export default function Situation({ onOpenDossier }) {
                             <svg className="icon sm"><use href={gfwHeatOn ? "#i-eye" : "#i-eye-off"} /></svg>
                         </button>
                     </div>
+                    </LayerSubGroup>
+
                     {/* Frontlines, per theatre. The unavailable ones are
                         listed rather than hidden: a control layer offering
                         only Ukraine implies the other wars have no front
                         line, and each row carries the actual reason. */}
+                    <LayerSubGroup id="frontlines" title="Frontlines"
+                                   activeCount={(contextOn.frontlines ? 1 : 0)
+                                                + Object.values(theatresOn).filter(Boolean).length}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
-                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>Frontlines</span>
+                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>Show frontlines</span>
                         <button
                             onClick={() => setContextOn((p) => ({ ...p, frontlines: !p.frontlines }))}
                             title={contextOn.frontlines ? "Hide layer" : "Show layer"}
@@ -1222,6 +1249,8 @@ export default function Situation({ onOpenDossier }) {
                         })()}
                         </Fragment>
                     ))}
+                    </LayerSubGroup>
+
                     <div
                         role="button" tabIndex={0}
                         onClick={() => toast("Satellite tasking is not a real capability in this build yet", { icon: "icon-eye-off" })}
@@ -1477,8 +1506,8 @@ export default function Situation({ onOpenDossier }) {
                         it's now explicitly wired to the same real toggle. */}
                     
                     <GlobeView
-                        eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news}
-                        geoConfirmedEnabled={groupsOn.news}
+                        eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news && geoConfirmedOn}
+                        geoConfirmedEnabled={groupsOn.news && geoConfirmedOn}
                         gdeltEnabled={groupsOn.news && gdeltOn}
                         gdeltTypes={gdeltTypes}
                         firesEnabled={groupsOn.imagery && firesOn}
@@ -1522,6 +1551,7 @@ export default function Situation({ onOpenDossier }) {
                                     return { key: t.key, revid: stop?.revid ?? null }
                                 })
                             : []}
+                        gpsInterferenceEnabled={groupsOn.air && gpsInterferenceOn}
                         satelliteEnabled={groupsOn.imagery} infraEnabled={infraOn.power}
                         nauticalEnabled={infraOn.nautical}
                         eezEnabled={groupsOn.zones}

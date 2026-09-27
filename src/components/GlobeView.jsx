@@ -31,6 +31,7 @@ import GlobeFacilitiesLayer      from "../globe/GlobeFacilitiesLayer.jsx"
 import GlobeFiresLayer           from "../globe/GlobeFiresLayer.jsx"
 import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
+import GlobeGpsInterferenceLayer from "../globe/GlobeGpsInterferenceLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
 import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
@@ -197,6 +198,7 @@ export default function GlobeView({
     graticuleEnabled = false,
     aisHeatmapEnabled  = false,
     adsbHeatmapEnabled = false,
+    gpsInterferenceEnabled = false,
     heatmapHours     = 24,
     // Overwatch ML detections + draw mode
     overwatchEnabled    = false,
@@ -1063,6 +1065,11 @@ export default function GlobeView({
                 {/* ── Heatmap overlays (rectangle entities, clamped to ground) ─ */}
                 <GlobeHeatmapLayer enabled={aisHeatmapEnabled}  domain="ais"  hours={heatmapHours} bounds={viewBounds} />
                 <GlobeHeatmapLayer enabled={adsbHeatmapEnabled} domain="adsb" hours={heatmapHours} bounds={viewBounds} />
+                {/* Not viewport-bounded on purpose: interference is a
+                    continental-scale fact and the cells are cheap, so the
+                    reader can see the Baltic lit up while looking at the
+                    Mediterranean rather than discovering it by panning. */}
+                <GlobeGpsInterferenceLayer enabled={gpsInterferenceEnabled} />
 
                 {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} sanctionedMmsis={sanctionedMmsis} pinnedMmsi={pinnedMmsi} />}
                 {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} watchlistedIcaos={watchlistedIcaos} pinnedIcao={pinnedIcao} />}

@@ -22,7 +22,7 @@ const adsbLon = (ac) => ac.lon ?? ac.longitude
  * There is no altitude gate. An earlier version only drew models below
  * 400km, which meant that at any normal working zoom the aircraft were
  * flat glyphs again — the models were there and almost never visible.
- * minimumPixelSize keeps a model legible at any range, so the only
+ * minimumPixelSize is the floor a model will not shrink past, so the only
  * thing that needs bounding is how many exist: each is its own
  * primitive, where billboards are one batched quad each.
  *
@@ -334,7 +334,13 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
                             // than a regional jet — but never smaller than
                             // this on screen, or zooming out would make the
                             // aircraft vanish before the glyph takes over.
-                            minimumPixelSize: 26,
+                            // See the note in GlobeAISLayer: this floor is
+                            // what a model refuses to shrink past, so a high
+                            // one turns continental zoom into a solid mass
+                            // of aircraft. Ten rather than the vessels' eight
+                            // because an airframe silhouette needs slightly
+                            // more to stay recognisable as one.
+                            minimumPixelSize: 10,
                             maximumScale: 20000,
                             // The watchlist signal has to survive the switch
                             // from glyph to model.

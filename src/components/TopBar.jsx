@@ -3,9 +3,6 @@ import Freshness from "./Freshness.jsx"
 import { useState, useEffect } from "react"
 import { WATCH_MODULES, WORK_MODULES } from "../data/modules.js"
 import ThemeControl from "./ThemeControl.jsx"
-import { isDesktop } from "../apiBase.js"
-
-const IS_DESKTOP = isDesktop()
 
 /**
  * TopBar.jsx — redesign Round 2, §2. Replaces AppHeader.jsx entirely: a
@@ -53,23 +50,6 @@ export default function TopBar({
     }, [])
     const zulu = now.toUTCString().slice(17, 22) + "Z"
     const dateStr = now.toISOString().slice(0, 10)
-
-    // Real Fullscreen API — state tracked via a real fullscreenchange
-    // listener (not just toggled on click) so the icon stays correct if the
-    // analyst exits fullscreen with Esc directly rather than the button.
-    const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement)
-    useEffect(() => {
-        const onChange = () => setIsFullscreen(!!document.fullscreenElement)
-        document.addEventListener("fullscreenchange", onChange)
-        return () => document.removeEventListener("fullscreenchange", onChange)
-    }, [])
-    const toggleFullscreen = () => {
-        if (document.fullscreenElement) {
-            document.exitFullscreen().catch(() => {})
-        } else {
-            document.documentElement.requestFullscreen().catch(() => {})
-        }
-    }
 
     return (
         <div style={{
@@ -200,11 +180,11 @@ export default function TopBar({
                     along the bar. Screenshot was keyboard-only (⌘⇧4), which
                     means it existed only for people who already knew it did.
 
-                    Fullscreen is not shown on the desktop build: the app is
-                    already its own window there, and the browser fullscreen
-                    API in a WKWebView hides the traffic lights with no
-                    reliable way back. It stays on the web, where the browser
-                    chrome it hides is real. */}
+                    Fullscreen is gone entirely. On the desktop build the app
+                    is already its own window, and in a WKWebView the browser
+                    fullscreen API hides the traffic lights with no reliable
+                    way back; on the web the OS and the browser both already
+                    offer it. A third control for it earned nothing. */}
                 {onScreenshot && (
                     <button
                         onClick={onScreenshot}
@@ -215,18 +195,6 @@ export default function TopBar({
                         }}
                     >
                         <svg className="icon sm"><use href="#i-crop" /></svg>
-                    </button>
-                )}
-                {!IS_DESKTOP && (
-                    <button
-                        onClick={toggleFullscreen}
-                        title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                        style={{
-                            width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
-                            background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
-                        }}
-                    >
-                        <svg className="icon sm"><use href={isFullscreen ? "#i-fullscreen-exit" : "#i-fullscreen-enter"} /></svg>
                     </button>
                 )}
                 {/* WHERE THE MAP'S OWN TOOLS GO. Situation portals its
