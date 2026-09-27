@@ -19,7 +19,6 @@ import LoginScreen from "./components/LoginScreen.jsx"
 import { checkSession, subscribeAuth, isAuthTransientError, canLoginOffline } from "./state/authStore.js"
 import { reconcileTheme, getThemeMode, setThemeMode } from "./state/themeStore.js"
 import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from "./state/settingsStore.js"
-import StatusBar from "./components/StatusBar.jsx"
 import CommandPalette from "./components/CommandPalette.jsx"
 import SettingsModal from "./components/SettingsModal.jsx"
 // Workstation round, Part 8 — importing this for its module-level
@@ -742,18 +741,10 @@ export default function App() {
     }, [])
     const systemHealth = useMemo(() => summarizeHealth(healthData), [healthData])
 
-    // Redesign Round 2 — StatusBar's real task/queue count.
-    const [taskCount, setTaskCount] = useState(null)
-    useEffect(() => {
-        let cancelled = false
-        const load = () => fetch(`${API}/api/reports/tasks`)
-            .then(r => r.ok ? r.json() : null)
-            .then(d => { if (!cancelled && Array.isArray(d)) setTaskCount(d.length) })
-            .catch(() => {})
-        load()
-        const t = setInterval(load, 60000)
-        return () => { cancelled = true; clearInterval(t) }
-    }, [])
+    // The task/queue count and its 60-second poll of /api/reports/tasks
+    // went with the status bar. Nothing displayed the number any more, so
+    // the request was pure load on a backend whose stability is the point
+    // of much of this work.
 
     // Redesign Round 2 — command palette open state (the global ⌘K/1-7
     // keyboard handler lives further down, after openTab is declared).

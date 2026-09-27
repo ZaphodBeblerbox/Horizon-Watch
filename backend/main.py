@@ -26737,6 +26737,13 @@ def api_sessions_list(owner_user_id: str | None = None):
 @app.post("/api/sessions")
 async def api_sessions_create(request: Request):
     from database import DeskSession, get_db as _gdb_ses
+    # The owner is resolved here, from the session cookie or bearer. An
+    # earlier edit changed the owner_user_id assignment below to read from
+    # the verified identity — correct — but this handler never resolved
+    # one, so it referenced a name that did not exist and every attempt to
+    # create a desk session raised NameError at runtime. Python does not
+    # catch that at import time, which is why it shipped.
+    user = _require_current_user(request)
     body = await request.json()
     name = (body.get("name") or "").strip()
     if not name:

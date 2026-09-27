@@ -19,7 +19,7 @@
  * attribute renaming (stroke-width -> strokeWidth, etc.).
  *
  * Four ids at the end are aliases kept for existing callers
- * (i-settings, i-mywork, i-fullscreen-enter/exit). They render the spec
+ * (i-settings, i-fullscreen-enter/exit). They render the spec
  * symbol of the same meaning rather than a second drawing, so there is one
  * mark per concept.
  */
@@ -148,7 +148,6 @@ const SPRITE = `
 <!-- Aliases for existing callers. One mark per concept: these reference the
      spec symbol rather than drawing a second, slightly different version. -->
 <symbol id="i-settings" viewBox="0 0 24 24"><use href="#i-gear"/></symbol>
-<symbol id="i-mywork" viewBox="0 0 24 24"><use href="#i-work"/></symbol>
 <symbol id="i-fullscreen-enter" viewBox="0 0 24 24"><use href="#i-full"/></symbol>
 <symbol id="i-fullscreen-exit" viewBox="0 0 24 24"><use href="#i-full-exit"/></symbol>
 `

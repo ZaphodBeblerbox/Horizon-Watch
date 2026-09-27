@@ -26,6 +26,8 @@
     "@playwright/test": "^1.63.0",
     "@tauri-apps/cli": "^2.11.5",
     "@vitejs/plugin-react": "^4.0.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-react": "^7.37.5",
     "jsdom": "^29.1.1",
     "playwright": "^1.62.1",
     "pngjs": "^7.0.0",

@@ -2,7 +2,6 @@ import { Wordmark, Glyph } from "../ui/Wordmark.jsx"
 import Freshness from "./Freshness.jsx"
 import { useState, useEffect } from "react"
 import { WATCH_MODULES, WORK_MODULES } from "../data/modules.js"
-import { STATUS_COLOR_TOKEN, STATUS_WORD } from "../utils/systemHealth.js"
 import ThemeControl from "./ThemeControl.jsx"
 
 /**
@@ -245,16 +244,13 @@ export default function TopBar({
                     }}>⌘K</span>
                 </button>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{
-                        width: 6, height: 6, borderRadius: "50%",
-                        background: STATUS_COLOR_TOKEN[systemHealth.status] || STATUS_COLOR_TOKEN.operational,
-                        flexShrink: 0,
-                    }} />
-                    <span style={{ font: "400 11px var(--font)", color: "var(--txt-2)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                        {STATUS_WORD[systemHealth.status] || STATUS_WORD.operational}
-                    </span>
-                </div>
+                {/* THE HEALTH WORD IS GONE. It read DEGRADED whenever any
+                    one feed of fifteen was stale, which is most of the
+                    time and almost never something to act on — so it
+                    trained people to ignore a status light, which is the
+                    one thing a status light must not do. Feed state lives
+                    in the health panel, where which feed and how stale can
+                    actually be read. */}
 
                 <span style={{ font: "400 11.5px var(--mono)", color: "var(--txt-2)" }}>
                     {zulu} <span style={{ color: "var(--txt-4)" }}>· {dateStr}</span>

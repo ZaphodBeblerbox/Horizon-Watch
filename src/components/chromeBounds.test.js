@@ -69,8 +69,11 @@ describe("collapsing a bar gives the space back", () => {
         expect(HTML).toMatch(/html:has\(#timestrip\.collapsed\)\s*\{\s*--strip-h:/)
     })
 
-    it("the status bar takes its height from the token, not a literal", () => {
-        const sb = readFileSync(fileURLToPath(new URL("./StatusBar.jsx", import.meta.url)), "utf8")
-        expect(sb).toMatch(/height:\s*"var\(--status\)"/)
+    it("--status is 0 now that the bar is gone, and still a token", () => {
+        // The status bar was removed. --status is kept and set to 0 rather
+        // than deleted, because every docked panel and map overlay is
+        // positioned against it — a token that still exists can be given a
+        // height again without hunting down its consumers.
+        expect(HTML).toMatch(/--status:\s*0px/)
     })
 })

@@ -1,62 +1,53 @@
 /**
- * UpdateBanner.jsx — "there is a new version", and the button that takes it.
+ * UpdateBanner.jsx — says an update happened. Does not ask permission.
  *
- * A bar rather than a modal: an update is not urgent enough to interrupt
- * what someone is doing, and a modal over a half-written briefing is worse
- * than the old version they are running.
+ * The install runs by itself and applies at the next launch, so there is
+ * nothing here to accept. What is left is telling the truth about state:
+ * that something is downloading, that a new version is waiting, or that it
+ * failed and the current one is still fine.
+ *
+ * A quiet line at the bottom, not a modal. Nothing here is urgent enough
+ * to take the screen from someone who is working.
  */
 
 import { useEffect, useState } from "react"
-import { checkOnceOnLaunch, installUpdate } from "./autoUpdate.js"
+import { autoUpdateOnLaunch } from "./autoUpdate.js"
 
 export default function UpdateBanner() {
-    const [update, setUpdate] = useState(null)
-    const [busy, setBusy] = useState(false)
-    const [pct, setPct] = useState(0)
-    const [error, setError] = useState(null)
+    const [state, setState] = useState(null)
     const [dismissed, setDismissed] = useState(false)
 
-    useEffect(() => { checkOnceOnLaunch().then(setUpdate).catch(() => {}) }, [])
+    useEffect(() => { autoUpdateOnLaunch({ onState: setState }).catch(() => {}) }, [])
 
-    if (!update || dismissed) return null
+    if (!state || dismissed) return null
+    // Downloading is progress, not news: it shows, but quietly.
+    if (state.phase === "failed" && !state.error) return null
+
+    const text =
+        state.phase === "downloading" ? `Downloading ${state.version}… ${state.pct || 0}%`
+        : state.phase === "ready"     ? `Version ${state.version} installed — it starts next time you open Parallax.`
+        : state.phase === "failed"    ? `Update to ${state.version} didn't install. You're still on the working version.`
+        : null
+    if (!text) return null
 
     return (
         <div role="status" style={{
-            position: "fixed", bottom: 14, left: "50%", transform: "translateX(-50%)",
-            zIndex: 120, display: "flex", alignItems: "center", gap: 12,
-            padding: "9px 14px", background: "var(--bg-2, #22282f)",
+            position: "fixed", bottom: 12, left: "50%", transform: "translateX(-50%)",
+            zIndex: 120, display: "flex", alignItems: "center", gap: 10,
+            padding: "7px 13px", background: "var(--bg-2, #22282f)",
             border: "1px solid var(--line)", borderRadius: 4,
-            boxShadow: "0 6px 22px rgba(0,0,0,.45)", maxWidth: "calc(100vw - 32px)",
+            boxShadow: "0 4px 18px rgba(0,0,0,.4)", maxWidth: "calc(100vw - 32px)",
+            font: "400 12px var(--font)", color: "var(--txt-2)",
         }}>
-            <span style={{ font: "400 12px var(--font)", color: "var(--txt-2)" }}>
-                {error
-                    ? `Update failed: ${error}`
-                    : busy
-                        ? `Downloading ${update.version}… ${pct ? `${pct}%` : ""}`
-                        : <>Version <b style={{ color: "var(--txt)" }}>{update.version}</b> is available.</>}
-            </span>
-            {!busy && !error && (
-                <>
-                    <button className="btn sm primary" onClick={async () => {
-                        setBusy(true); setError(null)
-                        try {
-                            await installUpdate(update, (done, total) => {
-                                if (total) setPct(Math.round((done / total) * 100))
-                            })
-                        } catch (e) {
-                            // The app is still running the old version and
-                            // is perfectly usable — say so rather than
-                            // leaving a stuck progress bar.
-                            setError(e?.message || "could not install")
-                            setBusy(false)
-                        }
-                    }}>
-                        install &amp; restart
-                    </button>
-                    <button className="btn sm" onClick={() => setDismissed(true)}>later</button>
-                </>
+            <span>{text}</span>
+            {state.phase !== "downloading" && (
+                <button onClick={() => setDismissed(true)}
+                        style={{
+                            background: "transparent", border: "1px solid var(--line)",
+                            borderRadius: 3, color: "var(--txt-3)", cursor: "pointer",
+                            font: "400 11px var(--font)", padding: "1px 7px",
+                        }}>dismiss</button>
             )}
-            {error && <button className="btn sm" onClick={() => setDismissed(true)}>dismiss</button>}
         </div>
     )
 }

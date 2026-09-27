@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import {
     pushNotification, getNotifications, __resetNotifications,
-} from "../state/notificationStore.js"
+} from "./notificationStore.js"
 
-// The tape reads straight off the notification store, so what it can
-// show is exactly what the store holds. These pin the properties the
-// tape depends on rather than re-testing the renderer.
+// These pin the store's own guarantees — what it records, in what order,
+// and what survives being recorded silently. They were written for the
+// live tape, which has since been removed; the properties they cover are
+// the store's, not that renderer's, so they outlive it. Renamed rather
+// than deleted: the coverage was never really about the tape.
 
-describe("what the live tape can show", () => {
+describe("what the notification store guarantees", () => {
     beforeEach(() => __resetNotifications())
 
     it("sees items that were recorded silently", () => {
