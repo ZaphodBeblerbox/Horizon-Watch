@@ -16,6 +16,7 @@ import {
 } from "../lib/casesApi.js"
 import { toast } from "../ui/toast.js"
 import SidePanel from "../ui/SidePanel.jsx"
+import Loading from "../ui/Loading.jsx"
 
 export default function CaseFiles({ caseId, readOnly = false }) {
     const [nodes, setNodes] = useState([])
@@ -137,7 +138,7 @@ export default function CaseFiles({ caseId, readOnly = false }) {
                     />
                 </div>
                 {loading
-                    ? <p style={{ font: "400 11px var(--font)", color: "var(--txt-3)", padding: "10px 12px" }}>Loading…</p>
+                    ? <Loading size={18} inline label="Loading" style={{ padding: "10px 12px" }} />
                     : <FileTree
                         nodes={nodes} selectedId={selected?.id} readOnly={readOnly}
                         onSelect={setSelected} onMove={move} onRename={rename} onDelete={remove}

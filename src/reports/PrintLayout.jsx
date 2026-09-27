@@ -26,6 +26,7 @@ const SEV_RANK = { critical: 4, high: 3, moderate: 2, low: 1 }
 // actually be something else is not.
 import { PrintSurface, exportPdf } from "../print/printSurface.jsx"
 import { ParallaxMark, TrifectaFooter } from "../print/PageFrame.jsx"
+import Loading from "../ui/Loading.jsx"
 
 function formatLocation(claim, signal) {
     if (claim.region) return claim.region
@@ -178,7 +179,7 @@ export default function PrintLayout({ reportId, onBack, onOpenDeck }) {
             <div className="docdesk" ref={deskRef} style={{ overflow: "auto", background: "#3a3d42", padding: 24 }}>
                 <div className="panes" style={{ display: "flex", justifyContent: "center" }}>
                     {!report || !sections ? (
-                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Loading…</div>
+                        <Loading label="Loading report" />
                     ) : (
                         <div className="pane" style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center", marginBottom: marginFor(zoom / 100) }}>
                             <PrintPages report={report} sections={sections} xrefIndex={xrefIndex} linkAnalysis={linkAnalysis} />

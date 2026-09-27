@@ -7,6 +7,7 @@ import { addToBriefing } from "../state/briefingBasket.js"
 import Capturable from "../capture/Capturable.jsx"
 import { toast } from "../ui/toast.js"
 import { replayOnMap } from "../services/replayOnMap.js"
+import Loading from "../ui/Loading.jsx"
 
 // Analytics — page-by-page rebuild. Full-width, single-column module (no
 // side panes), rebuilt onto the real design system per the Exact Replication
@@ -38,11 +39,45 @@ const SEV_COLOR = {
     moderate: "var(--sev-moderate)", low: "var(--sev-low)",
 }
 
+/**
+ * Parse either form a colour can arrive in.
+ *
+ * This is why the heatmap rendered blank. The cell colour is interpolated
+ * between two CSS custom properties, and those are read with
+ * getComputedStyle — which returns "rgb(212, 226, 242)", never the "#d4e2f2"
+ * that was written in the stylesheet. Slicing hex digits out of an rgb()
+ * string produced NaN, NaN came back as an unparseable colour, and the
+ * browser silently fell back to transparent. Every cell that HAD data drew
+ * as nothing; the only cells you could see were the empty ones, which take
+ * a flat token and never go through here.
+ */
+function parseColor(c) {
+    const s = String(c || "").trim()
+    const m = s.match(/^rgba?\(([^)]+)\)$/i)
+    if (m) {
+        const parts = m[1].split(/[\s,/]+/).filter(Boolean).slice(0, 3)
+        const v = parts.map((n) => Math.round(parseFloat(n)))
+        if (v.length === 3 && v.every(Number.isFinite)) return v
+    }
+    const hex = s.replace(/^#/, "")
+    if (/^[0-9a-f]{3}$/i.test(hex)) {
+        return [0, 1, 2].map((i) => parseInt(hex[i] + hex[i], 16))
+    }
+    if (/^[0-9a-f]{6}$/i.test(hex)) {
+        return [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16))
+    }
+    return null
+}
+
 function lerpHex(a, b, t) {
-    const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16))
-    const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16))
+    const pa = parseColor(a)
+    const pb = parseColor(b)
+    // A colour that cannot be read is reported as one of the ends rather
+    // than as an unparseable string — a cell drawn in the wrong shade is a
+    // smaller lie than a cell that vanishes.
+    if (!pa || !pb) return pa || pb ? `rgb(${(pa || pb).join(",")})` : "transparent"
     const c = pa.map((v, i) => Math.round(v + (pb[i] - v) * t))
-    return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`
+    return `rgb(${c.join(",")})`
 }
 
 function formatTime(iso) {
@@ -336,7 +371,16 @@ function Heatmap({ regions, domains, cells, onPick = null }) {
         const cs = getComputedStyle(document.documentElement)
         const lo = cs.getPropertyValue("--heatmap-lo").trim()
         const hi = cs.getPropertyValue("--heatmap-hi").trim()
-        return lerpHex(lo, hi, count / maxCount)
+        // LOG, not linear. These counts span five orders of magnitude —
+        // maritime alone is ninety thousand while most cells are single
+        // digits — so a linear ramp put every cell except one at the very
+        // bottom of the scale and the whole grid rendered as one flat tint.
+        // A log scale is the standard reading for skewed counts and is what
+        // makes the difference between 3 and 300 visible at all. The floor
+        // keeps a cell holding one real signal from being indistinguishable
+        // from a cell holding none, which is a different statement.
+        const t = Math.log1p(count) / Math.log1p(maxCount)
+        return lerpHex(lo, hi, Math.max(0.14, Math.min(1, t)))
     }
 
     return (
@@ -346,7 +390,7 @@ function Heatmap({ regions, domains, cells, onPick = null }) {
             <div className="body" style={{ overflowX: "auto" }}>
                 <PanelNote>
                     Signals in the selected window, counted by where they were and
-                    which sensor family reported them. Darker is more.
+                    which sensor family reported them. Darker is more, on a log scale — these counts span five orders of magnitude.
                     {onPick ? " Click a cell to filter everything below to it." : ""}
                 </PanelNote>
                 {regions.length === 0 ? (
@@ -634,7 +678,7 @@ export default function Analytics() {
                     </div>
                 )}
                 {!data && !error && (
-                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Loading…</div>
+                    <Loading label="Loading analytics" />
                 )}
                 {data && (
                     <>

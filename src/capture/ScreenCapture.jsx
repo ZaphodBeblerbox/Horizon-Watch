@@ -140,10 +140,14 @@ export default function ScreenCapture({ open, onClose, onCaptured }) {
 }
 
 /** Keep a capture where the rest of the work already is. */
-export function saveCapture(dataUrl, { label = "Screen capture", region = null } = {}) {
+export function saveCapture(dataUrl, { label = "Screen capture", region = null, of = null } = {}) {
     return saveForBriefing({
         id: `capture:${Date.now()}`,
         kind: "capture",
+        // Which surface it was taken on, so it files itself under
+        // Screenshots/Analytics, Screenshots/Maps and so on rather than
+        // landing in one undifferentiated pile.
+        captureOf: of,
         headline: label,
         region,
         imageUrl: dataUrl,

@@ -88,6 +88,7 @@ const SPRITE = `
 <symbol id="i-zoom-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6.5 12h11"/></symbol>
 <symbol id="i-recentre" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 2v3.2M12 18.8V22M2 12h3.2M18.8 12H22"/></symbol>
 <symbol id="i-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 8.5v-5h5M15.5 3.5h5v5M20.5 15.5v5h-5M8.5 20.5h-5v-5"/><path d="M3.5 12h17" stroke-dasharray="2 2"/><rect x="9" y="9" width="6" height="6"/></symbol>
+<symbol id="i-crop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6.5 2.5v15h15"/><path d="M2.5 6.5h15v15"/></symbol>
 <symbol id="i-scanbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="6" width="16" height="12"/><path d="M8 10h3M8 13h6"/><circle cx="16.5" cy="10.5" r="1.4"/></symbol>
 <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 12a8 8 0 0113.7-5.6M20 12a8 8 0 01-13.7 5.6"/><path d="M17.5 3.2v3.4h-3.4M6.5 20.8v-3.4h3.4"/></symbol>
 <symbol id="i-present" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="4" width="19" height="12.5" rx="1.2"/><path d="M12 16.5V20M8.5 20h7"/></symbol>

@@ -4,6 +4,7 @@ backed by the TrackDensity aggregation table."""
 from __future__ import annotations
 
 import datetime
+import time as _time
 import json
 from typing import Optional
 
@@ -257,6 +258,45 @@ def _pct_delta(cur: int, prior: int):
     return round(((cur - prior) / prior) * 100, 1)
 
 
+# ── A short cache in front of the overview ───────────────────────────────
+#
+# The overview normalises up to _ROW_CAP alert rows in Python and takes
+# twelve seconds on this dataset. That was survivable as one slow page load
+# until you count what the app asks for when a module opens: around seventy
+# requests go out at once, the browser will only run six at a time, and the
+# overview ends up queued behind everything else. It then passed the
+# client's thirty-second ceiling and the page showed "the server did not
+# respond" on a server that was answering fine.
+#
+# The window is seven days or more and the figures move by fractions of a
+# percent in a minute, so serving the same answer for sixty seconds costs
+# the reader nothing and takes the endpoint out of the contention entirely
+# after the first call. A real fix for the twelve seconds is aggregation in
+# SQL rather than in Python, which is a larger change than this one.
+_OVERVIEW_TTL_S = 60
+_overview_cache: dict[tuple, tuple[float, dict]] = {}
+
+
+def _cache_get(key):
+    hit = _overview_cache.get(key)
+    if not hit:
+        return None
+    at, value = hit
+    if _time.time() - at > _OVERVIEW_TTL_S:
+        _overview_cache.pop(key, None)
+        return None
+    return value
+
+
+def _cache_put(key, value):
+    # Bounded: three ranges x a dozen regions x six domains is the whole key
+    # space, but an unbounded dict in a long-lived process is how a cache
+    # becomes a leak.
+    if len(_overview_cache) > 200:
+        _overview_cache.clear()
+    _overview_cache[key] = (_time.time(), value)
+
+
 @router.get("/overview")
 def get_overview(
     range: str = Query("30d", pattern="^(7d|30d|90d)$"),
@@ -275,6 +315,11 @@ def get_overview(
     region_names = list(threat_matrix.REGIONS.keys()) + ["Other"]
     if region != "all" and region not in region_names:
         region = "all"
+
+    cache_key = (range, region, domain)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     with get_db() as db:
         signals, truncated = _fetch_and_normalize_signals(db, prior_start, region=region, domain=domain)
@@ -430,7 +475,7 @@ def get_overview(
         for s in top_signals
     ]
 
-    return {
+    out = {
         "range": range, "region": region, "domain": domain,
         "generated_at": now.isoformat(),
         "truncated": truncated,
@@ -445,6 +490,8 @@ def get_overview(
         "top_signals": top_signals_out,
         "region_options": region_names,
     }
+    _cache_put(cache_key, out)
+    return out
 
 
 @router.get("/timeline")

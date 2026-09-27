@@ -83,6 +83,7 @@ import {
     validateRuleForm, buildRulePayload, boundsToPolygon,
     bboxToLockBounds, zoneFlyTarget, matchAlertsToRule,
 } from "./sourcesLogic.js"
+import Loading from "../ui/Loading.jsx"
 
 const API = API_BASE
 
@@ -911,7 +912,7 @@ function StatusHealthTab() {
             </div>
 
             {loading && !data && (
-                <div style={{ color: "var(--text-muted)", fontSize: "var(--text-callout-meta)" }}>Loading…</div>
+                <Loading label="Loading sources" />
             )}
 
             {!loading && sources.length === 0 && (

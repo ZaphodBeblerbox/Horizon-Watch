@@ -51,3 +51,6 @@ backend/data/gdelt_events_cache.json
 # Tauri build output — the .app and .dmg are artefacts, not source.
 src-tauri/target/
 tauri-keys/
+
+# Case attachments are user data on the data volume, never source.
+backend/data/case_files/

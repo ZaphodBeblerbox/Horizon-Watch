@@ -1293,3 +1293,20 @@ table.grid .dim { color: var(--txt-4); }
 .wc-brief { font: 400 10.5px var(--font); color: var(--txt-3); line-height: 1.45;
     margin: 4px 0 2px; }
 .wc-brief.quiet { color: var(--txt-4); }
+
+/* ── The Parallax mark, working ──────────────────────────────────────────
+   One definition for every wait in the product (see src/ui/Loading.jsx).
+   The X holds still and the two echo strokes lift in sequence, so the mark
+   reads as working rather than as stalled. Colours come from the theme, so
+   the mark is ink-on-paper in light and light-on-slate in dark. */
+.pxl-loading .pxl-ink  { stroke: var(--txt); }
+.pxl-loading .pxl-echo { stroke: var(--accent, #5f95d0); }
+.pxl-loading .pxl-e1 { animation: pxl-lift 1.15s ease-in-out infinite; }
+.pxl-loading .pxl-e2 { animation: pxl-lift 1.15s ease-in-out .16s infinite; }
+@keyframes pxl-lift {
+    0%, 100% { transform: translateY(0);      opacity: .42; }
+    45%      { transform: translateY(-1.6px); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pxl-loading .pxl-e1, .pxl-loading .pxl-e2 { animation: none; opacity: 1; }
+}

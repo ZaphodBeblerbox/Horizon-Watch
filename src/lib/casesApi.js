@@ -62,6 +62,18 @@ export const deleteNode = (caseId, nodeId) =>
 export const getDoc = (caseId, nodeId) =>
     req(`/api/cases/${encodeURIComponent(caseId)}/nodes/${encodeURIComponent(nodeId)}/doc`)
 
+/**
+ * File a saved signal or a screenshot into its folder in a case.
+ *
+ * The server owns the taxonomy (Signals/<type>, Screenshots/<type>) and
+ * creates the folders on the way. The client says what the thing IS and
+ * lets the tree be the server's business — a client that builds the path
+ * itself is a second definition of the filing system, and the two drift.
+ */
+export const fileSavedItem = (caseId, data) =>
+    req(`/api/cases/${encodeURIComponent(caseId)}/file-saved`,
+        { method: "POST", body: JSON.stringify(data) })
+
 export const fileUrl = (caseId, nodeId) =>
     `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/files/${encodeURIComponent(nodeId)}`
 

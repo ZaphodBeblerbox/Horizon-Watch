@@ -18,6 +18,7 @@ import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import CaseFiles from "../cases/CaseFiles.jsx"
 import CaseSharing from "../cases/CaseSharing.jsx"
+import { setFilingCase } from "../state/filingCase.js"
 
 const PRIORITY_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-high)", moderate: "var(--sev-moderate)", low: "var(--sev-low)" }
 const STAGES = ["draft", "review", "approved", "issued"]
@@ -96,6 +97,10 @@ export default function Cases() {
 
     const refreshActive = useCallback(() => {
         if (!activeCaseId) return
+        // Opening a case makes it the one new saves file into, so keeping
+        // something off the map lands in the case you are working in
+        // rather than asking which case every time.
+        setFilingCase(activeCaseId)
         getCase(activeCaseId).then(setActiveCase).catch(() => setActiveCase(null))
         listRfis({ case_id: activeCaseId }).then(setRfis).catch(() => setRfis([]))
     }, [activeCaseId])

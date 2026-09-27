@@ -76,25 +76,24 @@ export function freshnessState(updatedAt, now = Date.now(), online = true, cache
     return { tone: stale ? "stale" : "fresh", text: body }
 }
 
+/* Three states a reader can name, and the dot is the whole control in the
+   top bar: green connected, orange disrupted, red not connected. A stale
+   reading and a dead connection used to share one grey dot, which is how a
+   disconnected console goes on looking merely old. */
 const TONE = {
-    fresh:   { dot: "var(--green, #3f9a58)", text: "var(--txt-3)" },
-    stale:   { dot: "var(--amber)",          text: "var(--amber)" },
-    offline: { dot: "var(--txt-4)",          text: "var(--txt-4)" },
-    unknown: { dot: "var(--txt-4)",          text: "var(--txt-4)" },
+    fresh:   { dot: "var(--green, #3f9a58)", text: "var(--txt-3)", word: "Connected" },
+    stale:   { dot: "var(--amber)",          text: "var(--amber)",  word: "Disrupted" },
+    offline: { dot: "var(--sev-critical)",   text: "var(--sev-critical)", word: "Not connected" },
+    unknown: { dot: "var(--amber)",          text: "var(--amber)",  word: "Disrupted" },
 }
 
-export default function Freshness({ updatedAt }) {
+/** The live connection reading, for anything that wants to render it itself. */
+export function useFreshness(updatedAt) {
     const [, tick] = useState(0)
     const [online, setOnline] = useState(
         () => (typeof navigator === "undefined" ? true : navigator.onLine))
-    // What the fetch layer actually saw, rather than what the browser
-    // believes about its network. See freshnessState.
     const [cache, setCache] = useState(null)
-
     useEffect(() => {
-        // Re-ticks on its own: the timestamp does not change but its AGE
-        // does, and a readout that only updates when data arrives says
-        // "4m ago" an hour later.
         const t = setInterval(() => tick((n) => n + 1), 30000)
         const on = () => setOnline(true)
         const off = () => setOnline(false)
@@ -109,16 +108,37 @@ export default function Freshness({ updatedAt }) {
             window.removeEventListener(CACHE_EVENT, onCache)
         }
     }, [])
-
     const s = freshnessState(updatedAt, Date.now(), online, cache)
-    const tone = TONE[s.tone] || TONE.unknown
+    return { ...s, ...(TONE[s.tone] || TONE.unknown) }
+}
+
+/**
+ * In the top bar this is a dot and nothing else. The sentence it used to
+ * carry ("Server unreachable · showing data from 14:32Z") is a paragraph of
+ * status in a strip meant to be glanced at, and it moved to Settings ▸
+ * Health, where there is room to say it properly. The dot keeps the fact
+ * itself, and its tooltip keeps the sentence for anyone who hovers.
+ */
+export default function Freshness({ updatedAt, dotOnly = true }) {
+    const s = useFreshness(updatedAt)
+    if (dotOnly) {
+        return (
+            <div title={`${s.word} — ${s.text}`}
+                 aria-label={`${s.word}. ${s.text}`}
+                 role="status"
+                 style={{ display: "flex", alignItems: "center", padding: "0 8px" }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%",
+                               background: s.dot, flex: "none" }} />
+            </div>
+        )
+    }
     return (
         <div title="Age of the newest data on screen"
              style={{ display: "flex", alignItems: "center", gap: 5,
-                      font: "400 10.5px var(--font)", color: tone.text,
+                      font: "400 10.5px var(--font)", color: s.text,
                       whiteSpace: "nowrap", padding: "0 8px" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%",
-                           background: tone.dot, flex: "none" }} />
+                           background: s.dot, flex: "none" }} />
             {s.text}
         </div>
     )

@@ -401,3 +401,154 @@ def _notify_shared(case_id: str, target_user_id: str, sharer: dict):
         )
     except Exception as e:  # noqa: BLE001
         print(f"[case-share] push notify failed for {target_user_id}: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Filing what you keep
+#
+# Saving something from the map or taking a screenshot used to put it in one
+# flat list of 120 items that lived in a settings blob. That list is a
+# scratchpad — it is capped, it is not a case, and nothing in it survives as
+# part of the record. Anything worth keeping belongs in a case, filed, so it
+# is still findable a week later.
+#
+# The shape is fixed rather than freeform, because a tree everybody invents
+# for themselves is a tree nobody can search:
+#
+#     Signals/
+#         Vessels/  Aircraft/  Verified Events/  Surge & Fusion/  …
+#     Screenshots/
+#         Analytics/  Maps/  Imagery/  Documents/  …
+#
+# The second level is the thing's own type, so a case with two hundred items
+# still reads as a filing cabinet instead of a pile.
+# ─────────────────────────────────────────────────────────────────────────
+
+SIGNALS_ROOT = "Signals"
+SCREENSHOTS_ROOT = "Screenshots"
+
+# What a saved thing's type is called in the tree. Capability names, never
+# feed names — the same rule the map's layer labels follow (NAMING.md §1).
+SIGNAL_CATEGORIES = {
+    "ais": "Vessels", "vessel": "Vessels", "vessels": "Vessels",
+    "adsb": "Aircraft", "aircraft": "Aircraft",
+    "geoconfirmed": "Verified Events", "confirm": "Verified Events",
+    "gdelt": "Wire Reports", "news": "Wire Reports",
+    "surge": "Surge & Fusion", "fusion": "Surge & Fusion",
+    "sentinel": "Imagery", "imagery": "Imagery", "detection": "Imagery",
+    "firms": "Thermal", "fires": "Thermal",
+    "zone": "Zones", "zones": "Zones",
+}
+SCREENSHOT_CATEGORIES = {
+    "analytics": "Analytics",
+    "situation": "Maps", "map": "Maps", "maps": "Maps", "globe": "Maps",
+    "imagery": "Imagery", "sat": "Imagery",
+    "editor": "Documents", "doc": "Documents", "briefing": "Documents",
+    "replay": "Replay", "dossiers": "Dossiers", "inbox": "Inbox",
+    "ontology": "Ontology", "forecast": "Forecast",
+}
+
+
+def _category(raw: str, table: dict) -> str:
+    """The folder a thing files itself under. Unknown types go to "Other"
+    rather than creating a folder per raw key — a tree that grows a new
+    branch every time a feed is added stops being a filing system."""
+    return table.get((raw or "").strip().lower(), "Other")
+
+
+def _ensure_folder(db, case_id: str, user_id: str, name: str, parent_id=None):
+    """Get-or-create one folder. Case-insensitive on name so "Signals" and
+    "signals" do not become two branches of the same tree."""
+    from database import CaseNode
+    q = db.query(CaseNode).filter(
+        CaseNode.case_id == case_id, CaseNode.kind == "folder")
+    q = q.filter(CaseNode.parent_id == parent_id) if parent_id else \
+        q.filter(CaseNode.parent_id.is_(None))
+    for n in q.all():
+        if (n.name or "").strip().lower() == name.strip().lower():
+            return n
+    n = CaseNode(case_id=case_id, parent_id=parent_id, kind="folder",
+                 name=name, owner_user_id=user_id, sort_index=0)
+    db.add(n)
+    db.flush()          # the child needs this row's id before the commit
+    return n
+
+
+def _ensure_path(db, case_id: str, user_id: str, *names):
+    """Walk (creating as needed) a folder path, returning the leaf."""
+    node = None
+    for name in names:
+        node = _ensure_folder(db, case_id, user_id, name,
+                              parent_id=node.id if node else None)
+    return node
+
+
+@router.post("/{case_id}/file-saved")
+async def file_saved_item(case_id: str, request: Request):
+    """File a saved signal, or a screenshot, into its folder in this case.
+
+    Body: {kind: "signal"|"screenshot", category, name, payload?, image?}
+
+    `image` is a data: URL — the screenshot tool and the map export both
+    already hold one, and making them build a multipart upload to send the
+    same bytes would be a second path to the same place. It is decoded and
+    written to disk exactly like an upload, through the same allowlist and
+    the same size ceiling; the tree row only ever holds the pointer.
+    """
+    import base64
+    from database import CaseNode, get_db
+    me = _me(request)
+    body = await request.json()
+
+    kind = (body.get("kind") or "signal").strip().lower()
+    if kind not in ("signal", "screenshot"):
+        raise HTTPException(status_code=400, detail="kind must be 'signal' or 'screenshot'")
+    name = (body.get("name") or "").strip()[:255] or "Untitled"
+
+    if kind == "signal":
+        root, table = SIGNALS_ROOT, SIGNAL_CATEGORIES
+    else:
+        root, table = SCREENSHOTS_ROOT, SCREENSHOT_CATEGORIES
+    category = _category(body.get("category"), table)
+
+    with get_db() as db:
+        _case_access(db, case_id, me["id"], need_edit=True)
+        folder = _ensure_path(db, case_id, me["id"], root, category)
+
+        image = body.get("image") or ""
+        if kind == "screenshot" or image.startswith("data:"):
+            m = re.match(r"^data:([^;,]+);base64,(.+)$", image, re.S)
+            if not m:
+                raise HTTPException(status_code=400, detail="image must be a base64 data URL")
+            mime = m.group(1).strip().lower()
+            if mime not in ALLOWED_MIME:
+                raise HTTPException(status_code=415, detail=f"unsupported image type: {mime}")
+            try:
+                data = base64.b64decode(m.group(2), validate=True)
+            except Exception:
+                raise HTTPException(status_code=400, detail="image is not valid base64")
+            if len(data) > MAX_BYTES:
+                raise HTTPException(status_code=413, detail="image larger than 64MB")
+
+            node_id = str(uuid.uuid4())
+            rel = os.path.join(_safe_seg(case_id), node_id + ALLOWED_MIME[mime])
+            dest = os.path.join(_data_root(), rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as fh:
+                fh.write(data)
+            n = CaseNode(id=node_id, case_id=case_id, parent_id=folder.id, kind="file",
+                         name=name, owner_user_id=me["id"], mime=mime,
+                         size_bytes=len(data), storage_path=rel, sort_index=0)
+        else:
+            # A signal with no crop is a reference, not a file.
+            n = CaseNode(case_id=case_id, parent_id=folder.id, kind="signal",
+                         name=name, owner_user_id=me["id"],
+                         mime="application/vnd.parallax.signal+json",
+                         body_html=_json.dumps(body.get("payload") or {}),
+                         sort_index=0)
+        db.add(n)
+        db.commit()
+        db.refresh(n)
+        out = _node_dict(n)
+        out["folder"] = {"root": root, "category": category, "id": folder.id}
+        return out

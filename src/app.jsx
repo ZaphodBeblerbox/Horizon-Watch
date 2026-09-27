@@ -1476,6 +1476,7 @@ export default function App() {
                         onToggleMode={() => switchMode(mode === "work" ? "watch" : "work")}
                         onOpenSettings={() => openOverlay("overlay:settings")}
                         onOpenTray={() => openOverlay("overlay:tray")}
+                        onScreenshot={() => setCaptureOpen(true)}
                         sessionControl={<SessionControl mode={mode} onSetMode={switchMode} />}
                     />
                 </>
@@ -1488,7 +1489,8 @@ export default function App() {
                 open={captureOpen}
                 onClose={() => setCaptureOpen(false)}
                 onCaptured={(dataUrl) => {
-                    const ok = saveCapture(dataUrl, { label: `Capture · ${TAB_TYPE_TO_MODULE[activeTabType] || "screen"}` })
+                    const mod = TAB_TYPE_TO_MODULE[activeTabType] || "screen"
+                    const ok = saveCapture(dataUrl, { label: `Capture · ${mod}`, of: mod })
                     toast(ok === false ? "Already saved" : "Saved — it is in the Editor's Saved pane",
                           { icon: "i-check" })
                 }}

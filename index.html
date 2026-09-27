@@ -187,7 +187,11 @@
             --chart-grid:        #262c33;
             --chart-hist:        #4a545e;
             --chart-hist-hot:    #8d5348;
-            --heatmap-lo: #232a30; --heatmap-hi: #5c6b78; --heatmap-empty: #1e242a;
+            /* Sequential, one hue, light->dark — the same blue the share bars
+               use, so magnitude reads the same way everywhere on the page.
+               `empty` is the panel ground: a cell with no data should read as
+               absence, not as the smallest real value. */
+            --heatmap-lo: #26313d; --heatmap-hi: #7fa8cf; --heatmap-empty: #1c2127;
             /* Share-of-window bars. One hue, not a category ramp: domain /
                region / source breakdowns name every row in text, so colour
                carries magnitude, not identity. The old 14-step grey ramp is
@@ -573,7 +577,7 @@
             --chart-grid:        #e2d9c7;
             --chart-hist:        #b3a48a;
             --chart-hist-hot:    #8a4a3a;
-            --heatmap-lo: #e2d9c7; --heatmap-hi: #ab9a78; --heatmap-empty: #ede5d4;
+            --heatmap-lo: #d4e2f2; --heatmap-hi: #2f5c90; --heatmap-empty: #f4efe5;
             --chart-bar:     #3a5f80; /* share-of-window bars (5.4:1 on --bg-1) */
             --chart-bar-track: #e2d9c7;
 

@@ -3,6 +3,9 @@ import Freshness from "./Freshness.jsx"
 import { useState, useEffect } from "react"
 import { WATCH_MODULES, WORK_MODULES } from "../data/modules.js"
 import ThemeControl from "./ThemeControl.jsx"
+import { isDesktop } from "../apiBase.js"
+
+const IS_DESKTOP = isDesktop()
 
 /**
  * TopBar.jsx — redesign Round 2, §2. Replaces AppHeader.jsx entirely: a
@@ -29,6 +32,7 @@ export default function TopBar({
     onToggleMode = null,
     onOpenSettings = null,
     onOpenTray = null,
+    onScreenshot = null,
 }) {
     // Mode, not modules (§7.1) — the rendered rail set is filtered off one
     // real registry field (data/modules.js's `set`), re-derived fresh every
@@ -191,16 +195,40 @@ export default function TopBar({
                         }}>{unreadCount > 99 ? "99+" : unreadCount}</span>
                     )}
                 </button>
-                <button
-                    onClick={toggleFullscreen}
-                    title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                    style={{
-                        width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
-                        background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
-                    }}
-                >
-                    <svg className="icon sm"><use href={isFullscreen ? "#i-fullscreen-exit" : "#i-fullscreen-enter"} /></svg>
-                </button>
+                {/* THE TOOLS THAT ACT ON WHAT YOU ARE LOOKING AT, in one
+                    cluster with the map's own controls rather than scattered
+                    along the bar. Screenshot was keyboard-only (⌘⇧4), which
+                    means it existed only for people who already knew it did.
+
+                    Fullscreen is not shown on the desktop build: the app is
+                    already its own window there, and the browser fullscreen
+                    API in a WKWebView hides the traffic lights with no
+                    reliable way back. It stays on the web, where the browser
+                    chrome it hides is real. */}
+                {onScreenshot && (
+                    <button
+                        onClick={onScreenshot}
+                        title="Screenshot (⌘⇧4) — crop it and save to a case or document"
+                        style={{
+                            width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
+                        }}
+                    >
+                        <svg className="icon sm"><use href="#i-crop" /></svg>
+                    </button>
+                )}
+                {!IS_DESKTOP && (
+                    <button
+                        onClick={toggleFullscreen}
+                        title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                        style={{
+                            width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
+                        }}
+                    >
+                        <svg className="icon sm"><use href={isFullscreen ? "#i-fullscreen-exit" : "#i-fullscreen-enter"} /></svg>
+                    </button>
+                )}
                 {/* WHERE THE MAP'S OWN TOOLS GO. Situation portals its
                     layer toggles, export and camera presets in here, so
                     they sit in the chrome instead of floating over the

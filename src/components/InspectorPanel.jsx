@@ -9,6 +9,7 @@ import { Panel, Button, EmptyState } from "../ui/index.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { buildOntologyRecord, traceRationale } from "../inspector/ontologyRecord.js"
 import { linkifyText } from "../lib/linkifyText.jsx"
+import Loading from "../ui/Loading.jsx"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -676,7 +677,7 @@ export default function InspectorPanel({
                     <div style={{ marginBottom: "var(--space-4)" }}>
                         <SectionLabel>Real linked entities</SectionLabel>
                         {forgeConnectionsLoading ? (
-                            <div style={{ fontSize: "var(--text-sm)", color: "var(--text-dim)" }}>Loading…</div>
+                            <Loading size={18} inline label="Loading" />
                         ) : forgeConnections.length > 0 ? (
                             forgeConnections.map((c) => (
                                 <div key={c.id} style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)", padding: "3px 0" }}>
@@ -697,7 +698,7 @@ export default function InspectorPanel({
                 <div style={{ marginBottom: "var(--space-4)" }}>
                     <SectionLabel>Related entities</SectionLabel>
                     {linksLoading ? (
-                        <div style={{ fontSize: "var(--text-sm)", color: "var(--text-dim)" }}>Loading…</div>
+                        <Loading size={18} inline label="Loading" />
                     ) : links.length > 0 ? (
                         links.map((link) => (
                             <RelatedLinkRow key={link.link_id ?? `${link.entity_type}-${link.entity_id}-${link.source_id}`} link={link} onSelectRelated={onSelectRelated} />

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { listReports, getReport, getReportSections, getXrefIndex } from "../mobileApi.js"
 import { buildXrefCandidates, wrapXrefsHtml } from "../../reports/xrefEngine.js"
+import Loading from "../../ui/Loading.jsx"
 
 const EVIDENCE_SECTION_IDS = ["maritime_activity", "aerial_activity", "imagery_detection", "alerts_events", "open_source_context", "area_overview", "outlook_watch"]
 
@@ -91,7 +92,7 @@ export default function BriefTab({ onOpenNoteWithReference, initialReportId }) {
             </div>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "6px 18px 24px" }}>
                 {!report || !sections ? (
-                    <div style={{ color: "var(--txt-3)", fontSize: 14 }}>Loading…</div>
+                    <Loading label="Loading briefing" />
                 ) : (
                     <>
                         <div style={{ font: "700 20px var(--font)", margin: "4px 0 4px" }}>{report.title}</div>

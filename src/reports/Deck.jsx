@@ -329,6 +329,7 @@ function useStageScale(stageRef) {
 // sheet per real slide regardless of any JS timing.
 import { PrintSurface, exportPdf as doExportPdf } from "../print/printSurface.jsx"
 import { ParallaxMark, TrifectaFooter } from "../print/PageFrame.jsx"
+import Loading from "../ui/Loading.jsx"
 
 const PRESENT_PRINT_CSS = `
 .deck-print-flow{display:none}
@@ -458,7 +459,7 @@ export default function Deck({ reportId, onBack }) {
                                 <Renderer s={active} pal={pal} />
                             </div>
                         ) : (
-                            <div style={{ font: "400 12px var(--font)", color: pal.dim, padding: 20 }}>Loading…</div>
+                            <Loading label="Loading deck" style={{ padding: 20 }} />
                         )}
 
                         {presenting && (

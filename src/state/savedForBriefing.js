@@ -20,6 +20,40 @@
 
 import { useEffect, useState } from "react"
 import { getSettings, subscribeSettings, updateSetting } from "./settingsStore.js"
+import { getFilingCase, categoryOf } from "./filingCase.js"
+import { fileSavedItem } from "../lib/casesApi.js"
+
+/**
+ * Also file it in the open case, under Signals/<type> or Screenshots/<type>.
+ *
+ * Deliberately not awaited and deliberately silent on failure. The saved
+ * pane is the thing the user just acted on and it must update at once; the
+ * case copy is the durable record and can land a moment later. A case that
+ * is unreachable must not make the save itself appear to fail — the item is
+ * already in the pane either way, and a red toast for a background copy
+ * teaches people that saving is unreliable when it is not.
+ */
+function fileInCase(item) {
+    const caseId = getFilingCase()
+    if (!caseId || !item) return
+    const isShot = item.kind === "capture"
+    const image = typeof item.imageUrl === "string" && item.imageUrl.startsWith("data:")
+        ? item.imageUrl : null
+    Promise.resolve()
+        .then(() => fileSavedItem(caseId, {
+            kind: isShot ? "screenshot" : "signal",
+            category: isShot ? (item.captureOf || "other") : categoryOf(item),
+            name: item.headline || item.label || item.id,
+            image,
+            payload: {
+                ref: item.id, headline: item.headline || null, region: item.region || null,
+                source: item.source || null, severity: item.severity || null,
+                when: item.when || null, lat: item.lat ?? null, lon: item.lon ?? null,
+                context: item.context || null, url: item.url || null,
+            },
+        }))
+        .catch(() => {})
+}
 
 /** kind: "imagery" | "signal" | "entity" | "note" */
 function read() {
@@ -56,6 +90,7 @@ export function saveForBriefing(item) {
         savedAt: Date.now(),
     }, ...now].slice(0, 120)   // a sidebar, not an archive
     updateSetting("savedForBriefing", next)
+    fileInCase(item)
     return true
 }
 

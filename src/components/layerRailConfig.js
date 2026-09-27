@@ -137,9 +137,19 @@ export const TRACK_TOGGLES = [
     { key: "sanctionedOnly", label: "Sanctioned/watchlisted only" },
 ]
 
-/** The four groups a saved launch state covers, in display order. */
+/**
+ * The four groups a saved launch state covers, in display order.
+ *
+ * "Map layers" lists the GROUPS, not the layers inside them, because a
+ * group is what the map actually switches. Situation keeps one flag per
+ * group (`groupsOn`), so the editor used to flatten this to the eighteen
+ * per-layer keys and offer switches that nothing read — you could set
+ * "Sea Density" as a launch default, save it, and the map would ignore it,
+ * because no state of that name exists. Offering a control that does
+ * nothing is worse than not offering it.
+ */
 export const STARTUP_GROUPS = [
-    { id: "groups",  title: "Map layers",     items: LAYER_GROUPS.flatMap((g) => g.layers || [g]) },
+    { id: "groups",  title: "Map layers",     items: LAYER_GROUPS.map((g) => ({ key: g.key, label: g.label })) },
     { id: "context", title: "Context",        items: CONTEXT_TOGGLES },
     { id: "infra",   title: "Infrastructure", items: INFRA_TOGGLES },
     { id: "tracks",  title: "Live tracks",    items: TRACK_TOGGLES },

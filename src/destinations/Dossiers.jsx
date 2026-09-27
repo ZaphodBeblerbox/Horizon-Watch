@@ -6,6 +6,7 @@ import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+import Loading from "../ui/Loading.jsx"
 
 // Dossiers — page-by-page rebuild, §8.4. Genuinely new module (no prior
 // implementation existed — only a PlaceholderModule). Layout 238px/1fr/292px,
@@ -348,7 +349,7 @@ export default function Dossiers({ onOpenGenerate }) {
 
             <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: 16 }}>
                 {!profile ? (
-                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Loading…</div>
+                    <Loading label="Loading dossiers" />
                 ) : (
                     <>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>

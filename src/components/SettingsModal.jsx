@@ -6,6 +6,7 @@ import { LAYER_GROUPS } from "./layerRailConfig.js"
 import { listSessions, listViews, deleteSession, deleteView, viewExtraLabels } from "../state/sessionStore.js"
 import { KEYBOARD_SHORTCUTS } from "../data/keyboardShortcuts.js"
 import PushNotificationToggle from "./PushNotificationToggle.jsx"
+import { useFreshness } from "./Freshness.jsx"
 import ThemeControl from "./ThemeControl.jsx"
 
 /**
@@ -200,6 +201,7 @@ function MapLayersSection({ settings }) {
 import { setDnd } from "../state/notificationStore.js"
 
 import StartupLayersEditor from "./StartupLayersEditor.jsx"
+import Loading from "../ui/Loading.jsx"
 
 // ── Alerts ───────────────────────────────────────────────────────────────
 function AlertsSection({ settings, onOpenSources }) {
@@ -267,7 +269,7 @@ function AlertsSection({ settings, onOpenSources }) {
                 Reuses the app's real rule system (Sources → Detection Rules) — enable/disable only here; full
                 create/edit stays in Sources so there's one real rule editor, not two.
             </div>
-            {rules === null && <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>Loading…</div>}
+            {rules === null && <Loading size={18} inline label="Loading" />}
             {rules?.length === 0 && <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>No rules configured yet.</div>}
             {rules?.map(rule => (
                 <Row key={rule.id} label={rule.name} hint={rule.wired ? rule.severity : "not wired — has no live effect even if enabled"}>
@@ -298,6 +300,29 @@ function timeAgo(iso) {
 
 const STATUS_COLOR = { ok: "var(--green)", degraded: "var(--amber)", pending: "var(--grey)", error: "var(--red)" }
 
+/**
+ * The connection itself, stated in full.
+ *
+ * This used to be a sentence in the top bar. A strip you glance at is the
+ * wrong place for "Server unreachable · showing data from 14:32Z · 2h ago",
+ * so the top bar keeps a dot and the sentence lives here, next to the
+ * per-feed status it belongs with.
+ */
+function ConnectionHealth() {
+    const s = useFreshness(null)
+    return (
+        <div style={{ display: "flex", alignItems: "center", gap: 9,
+                      padding: "var(--space-2) 0 var(--space-3)",
+                      borderBottom: "1px solid var(--line-soft)", marginBottom: "var(--space-3)" }}>
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: s.dot, flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+                <div style={{ font: "600 12.5px var(--font)", color: "var(--txt)" }}>{s.word}</div>
+                <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)", marginTop: 2 }}>{s.text}</div>
+            </div>
+        </div>
+    )
+}
+
 function SourcesSection() {
     const [sources, setSources] = useState(null)
     const load = useCallback(() => {
@@ -307,6 +332,7 @@ function SourcesSection() {
 
     return (
         <div>
+            <ConnectionHealth />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-2)" }}>
                 <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>
                     Real per-feed status — a stale feed shows stale with its real age, never silently as live.
@@ -315,7 +341,7 @@ function SourcesSection() {
                     Refresh
                 </button>
             </div>
-            {sources === null && <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>Loading…</div>}
+            {sources === null && <Loading size={18} inline label="Loading" />}
             {sources?.map(src => (
                 <div key={src.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--line-soft)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -487,7 +513,7 @@ const SECTIONS = [
     { key: "mapLayers", label: "Map & layers" },
     { key: "alerts", label: "Alerts" },
     { key: "sessions", label: "Sessions & views" },
-    { key: "sources", label: "Sources" },
+    { key: "sources", label: "Health" },
     { key: "briefing", label: "Briefing" },
     { key: "keyboard", label: "Shortcuts" },
     { key: "about", label: "About" },
