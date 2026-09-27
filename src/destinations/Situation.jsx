@@ -194,12 +194,6 @@ const QUICK_LAYERS = [
 // the reference spec's own real regional bounding boxes (world
 // [[-170,78],[178,-58]], emea [[-22,62],[62,-12]], apac [[62,46],[150,-12]],
 // amer [[-128,52],[-32,-46]]), not guessed.
-const CAMERA_PRESETS = [
-    { key: "world", label: "World", lat: 10, lon: 4, altitude: 18_000_000 },
-    { key: "emea", label: "EMEA", lat: 25, lon: 20, altitude: 7_000_000 },
-    { key: "apac", label: "APAC", lat: 17, lon: 106, altitude: 7_500_000 },
-    { key: "amer", label: "AMER", lat: 3, lon: -80, altitude: 10_000_000 },
-]
 
 function DomainRow({ group, count, on, onToggle }) {
     return (
@@ -1440,16 +1434,10 @@ export default function Situation({ onOpenDossier }) {
                     >
                         <svg className="icon sm"><use href="#i-export" /></svg>
                     </button>
-                    <div className="seg" style={{ flex: "none" }}>
-                        {CAMERA_PRESETS.map((p) => (
-                            <button
-                                key={p.key}
-                                onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: p.lat, lon: p.lon, altitude: p.altitude } }))}
-                                title={`Fly to ${p.label}`}
-                                style={{ flex: "none", whiteSpace: "nowrap" }}
-                            >{p.label}</button>
-                        ))}
-                    </div>
+                    {/* The World/EMEA/APAC/AMER jumps are gone. Four
+                        buttons permanently in the chrome for something the
+                        search palette and a drag already do, and three of
+                        them were wrong for any given analyst's patch. */}
                 </MapToolsPortal>
 
                 <div style={{

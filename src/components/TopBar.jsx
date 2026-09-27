@@ -230,7 +230,7 @@ export default function TopBar({
 
                 <button
                     onClick={onOpenPalette}
-                    title="Search signals, entities, reports (⌘K)"
+                    title="Search (⌘K)"
                     style={{
                         display: "flex", alignItems: "center", gap: 8, width: 260, height: 26,
                         padding: "0 8px", background: "var(--bg-0)", border: "1px solid var(--line)",
@@ -238,7 +238,7 @@ export default function TopBar({
                     }}
                 >
                     <svg className="icon sm"><use href="#i-search" /></svg>
-                    <span style={{ flex: 1, textAlign: "left" }}>Search signals, entities, reports</span>
+                    <span style={{ flex: 1, textAlign: "left" }}>Search</span>
                     <span style={{
                         font: "400 10px var(--mono)", color: "var(--txt-3)", border: "1px solid var(--line-strong)",
                         borderRadius: "var(--r)", padding: "0 4px",
