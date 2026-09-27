@@ -35,7 +35,19 @@ const STORE = "responses"
 /** How long a cached body may still be served. Matches the 12-24h brief. */
 export const MAX_AGE_MS = 24 * 60 * 60 * 1000
 /** Give up on the network this fast before falling back to the cache. */
-export const NETWORK_TIMEOUT_MS = 12000
+/**
+ * How long to wait before falling back to cache.
+ *
+ * 30s, not 12. A MACHINE THAT IS ACTUALLY OFFLINE DOES NOT HIT THIS: the
+ * connection fails immediately and fetch rejects, cache kicks in, nobody
+ * waits. This deadline only applies to a server that accepted the
+ * connection and then took its time — and one of this app's own endpoints
+ * (/api/reports/tasks/snapshot) legitimately takes ten seconds, which at
+ * 12s meant anything queued behind it on the browser's six connections
+ * was killed mid-flight. Analytics failed to load for exactly that
+ * reason, on a request the server answered in under two seconds.
+ */
+export const NETWORK_TIMEOUT_MS = 30000
 
 export const CACHE_HEADER = "X-Parallax-Cache"
 export const CACHED_AT_HEADER = "X-Parallax-Cached-At"
@@ -166,8 +178,12 @@ export function installOfflineCache({
         // A request with no deadline cannot fall back: it just hangs, which
         // is what a dead server looks like from inside the app today.
         const ctl = typeof AbortController === "function" ? new AbortController() : null
+        // Records that WE gave up, as distinct from the caller cancelling.
+        // Without this the two are indistinguishable downstream, and the
+        // only thing a caller can show is the browser's own wording.
+        let timedOut = false
         const timer = ctl && timeoutMs
-            ? setTimeout(() => { try { ctl.abort() } catch { /* already gone */ } }, timeoutMs)
+            ? setTimeout(() => { timedOut = true; try { ctl.abort() } catch { /* already gone */ } }, timeoutMs)
             : null
         try {
             const res = await native(input, ctl ? { ...init, signal: init.signal || ctl.signal } : init)
@@ -190,10 +206,20 @@ export function installOfflineCache({
             if (timer) clearTimeout(timer)
             const entry = await lookup(backing, url, wholePaths)
             if (!entry || (now() - entry.at) > maxAgeMs) {
-                // Nothing usable. Re-throw the real error rather than
-                // handing back an empty 200, which would read to every
-                // caller as "the server says there is nothing".
+                // Nothing usable. Re-throw rather than handing back an
+                // empty 200, which would read to every caller as "the
+                // server says there is nothing".
                 announce("offline-empty")
+                // BUT NOT THE RAW AbortError. Its message is "signal is
+                // aborted without reason", which callers put straight on
+                // screen — Analytics showed exactly that string to the
+                // user. A timeout has a reason and can say it.
+                if (timedOut) {
+                    const e = new Error(`the server did not respond within ${Math.round(timeoutMs / 1000)}s`)
+                    e.name = "TimeoutError"
+                    e.cause = err
+                    throw e
+                }
                 throw err
             }
             announce("cached", entry.at)

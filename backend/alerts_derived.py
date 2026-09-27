@@ -288,8 +288,50 @@ def surge_notification(s: dict) -> dict:
     }
 
 
+# A fusion card names the kinds of evidence that agreed. It used to print the
+# raw modality keys — "aircraft, ais" — which put a supplier's name on the one
+# card an analyst is most likely to read aloud. Same rule as the map's layer
+# labels (NAMING.md §1): say what the evidence IS, never which feed carried it.
+MODALITY_LABELS = {
+    "ais":      "vessel tracking",
+    "vessel":   "vessel tracking",
+    "vessels":  "vessel tracking",
+    "adsb":     "aircraft tracking",
+    "aircraft": "aircraft tracking",
+    "opt":      "optical imagery",
+    "sar":      "radar imagery",
+    "therm":    "thermal detection",
+    "press":    "reporting",
+    "net":      "network telemetry",
+    "atmo":     "atmospheric sensing",
+}
+
+
+def modality_label(mod: str) -> str:
+    """What a modality IS, for anything a reader sees."""
+    key = (mod or "").strip().lower()
+    return MODALITY_LABELS.get(key, key.replace("-", " ") or "unattributed")
+
+
+def modality_labels(mods) -> list[str]:
+    """Labels for a modality list, de-duplicated but order-stable — two raw
+    keys can share one label (adsb and aircraft are both aircraft tracking),
+    and a card must never say "aircraft tracking and aircraft tracking"."""
+    out = []
+    for m in mods or []:
+        lab = modality_label(m)
+        if lab not in out:
+            out.append(lab)
+    return out
+
+
 def fusion_notification(f: dict) -> dict:
-    mods = " + ".join(f["mods"])
+    # Count the KINDS of evidence, not the raw keys. Two keys can name one
+    # modality (adsb and aircraft are both aircraft tracking), and counting
+    # those as two made a card claim two independent sources where it had
+    # one — the exact thing a fusion card exists to assert.
+    labels = modality_labels(f["mods"])
+    mods = " + ".join(labels)
     sub = f"{mods} within {round(f['span_h'])}h"
     if f.get("headline"):
         sub += f" · {f['headline']}"
@@ -298,8 +340,8 @@ def fusion_notification(f: dict) -> dict:
         "kind": "fusion",
         # Three independent kinds agreeing in one place within four days is
         # the strongest statement this system can make without a human.
-        "sev": "critical" if len(f["mods"]) >= 3 else "high",
-        "title": f"{len(f['mods'])} independent sources converging at {f['place']}",
+        "sev": "critical" if len(labels) >= 3 else "high",
+        "title": f"{len(labels)} independent sources converging at {f['place']}",
         "sub": sub,
         "ref": {"fusion": f["id"], "cell": f["cell"]},
         "ts": f["ts"],

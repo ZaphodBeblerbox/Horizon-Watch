@@ -597,14 +597,14 @@ export function adaptGdeltEvent(data = {}) {
 
     return {
         identity: {
-            title: data.name || m.title || "GDELT event",
+            title: data.name || m.title || "Wire report",
             subtitle: types || "machine-coded event",
             entityType: "gdelt_event",
             subtype: null,
             sanctionsStatus: null,
         },
         attributes,
-        provenance: { feed: "GDELT v2", ingestedAt: m.date || null },
+        provenance: { feed: "Wire reports", ingestedAt: m.date || null },
         actions: { canJumpToLocation: !!point },
     }
 }
@@ -740,7 +740,7 @@ export function adaptCountryRisk(data = {}) {
             sanctionsStatus: null,
         },
         attributes,
-        provenance: { feed: "Horizon-Watch risk index (GDELT + confirmed incidents)",
+        provenance: { feed: "Parallax risk index (wire reports + confirmed incidents)",
                       ingestedAt: null },
         actions: { canJumpToLocation: !!point },
     }

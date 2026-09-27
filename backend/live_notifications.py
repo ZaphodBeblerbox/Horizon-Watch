@@ -111,7 +111,7 @@ def gdelt_items(hours: int = 48, limit: int = 40) -> list[dict]:
                            f"· machine-coded from a wire story"),
                 "notify": True,
                 "kind": "signal",
-                "source": "GDELT",
+                "source": "Wire Reports",
                 "lat": pin.get("lat"), "lon": pin.get("lon"),
                 "region": pin.get("location_name"),
                 "url": pin.get("source_url"),
@@ -145,11 +145,11 @@ def geoconfirmed_items(hours: int = 48, limit: int = 30) -> list[dict]:
                     "sev": "high",
                     # This is the strongest evidence class on the map and the
                     # reason says so, because it is what distinguishes it
-                    # from the GDELT card directly above it.
-                    "reason": "human-verified geolocation · GeoConfirmed",
+                    # from the wire-report card directly above it.
+                    "reason": "human-verified geolocation",
                     "notify": True,
                     "kind": "confirm",
-                    "source": "GeoConfirmed",
+                    "source": "Verified Events",
                     "lat": float(p.latitude), "lon": float(p.longitude),
                     "region": p.theatre_slug,
                     "created_at": p.date.isoformat() if p.date else None,
@@ -188,7 +188,9 @@ def derived_items(limit: int = 20) -> list[dict]:
             })
         fusions = (_R._fusions_sync(at, 3.0, None, limit) or {}).get("fusions") or []
         for f in fusions[:limit]:
-            mods = f.get("mods") or []
+            # Named by kind of evidence, never by feed — and counted by kind
+            # too, so the number in the sentence matches the list after it.
+            mods = _D.modality_labels(f.get("mods") or [])
             out.append({
                 "id": f"fusion-{f.get('id')}",
                 "title": f.get("headline") or "Independent sources agree",
@@ -230,12 +232,12 @@ def frontline_items(days: int = 7, limit: int = 12) -> list[dict]:
                 "title": (f"Ukraine front moved: {g:.0f} km² occupied, "
                           f"{l:.0f} km² retaken in {days}d"),
                 "sev": "high" if abs(net) >= 50 else "moderate",
-                "reason": (f"measured between DeepStateMap snapshots "
+                "reason": (f"measured between frontline snapshots "
                            f"{str(d['from_snapshot']['at'])[:10]} and "
                            f"{str(d['to_snapshot']['at'])[:10]}"),
                 "notify": True,
                 "kind": "escalate",
-                "source": "DeepStateMap",
+                "source": "Frontline Tracking",
                 "lat": None, "lon": None,
                 "region": "Ukraine",
                 "created_at": _now().isoformat(),
@@ -279,7 +281,7 @@ def frontline_items(days: int = 7, limit: int = 12) -> list[dict]:
                     # filing it as an arrival meant Mokha Port falling was
                     # recorded silently.
                     "kind": "escalate",
-                    "source": _wm.SOURCE,
+                    "source": "Territorial Control",
                     "lat": c["lat"], "lon": c["lon"],
                     "region": d["label"],
                     "created_at": _now().isoformat(),

@@ -1,12 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react"
 import { scaleLinear, scaleTime } from "d3-scale"
-import { area as d3area, curveMonotoneX, pie as d3pie, arc as d3arc } from "d3-shape"
+import { area as d3area, curveMonotoneX } from "d3-shape"
 import API_BASE from "../apiBase.js"
 import { useFloatingReadout } from "../components/FloatingReadout.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
 import Capturable from "../capture/Capturable.jsx"
 import { toast } from "../ui/toast.js"
-import { applyTransition } from "../utils/rafTransition.js"
 import { replayOnMap } from "../services/replayOnMap.js"
 
 // Analytics — page-by-page rebuild. Full-width, single-column module (no
@@ -37,27 +36,6 @@ const DOMAIN_LABELS = { maritime: "Maritime", air: "Air", news: "News", imagery:
 const SEV_COLOR = {
     critical: "var(--sev-critical)", high: "var(--sev-high)",
     moderate: "var(--sev-moderate)", low: "var(--sev-low)",
-}
-
-// The one fixed grey ramp for every non-severity chart on this page (domain/
-// region/source donuts + reused nowhere else) — a category's shade is a
-// hash of its own name, not its position in whatever subset is currently
-// visible, so "Baltic" keeps the same shade across any filter combination.
-// Real fix (Parallax theming pass): this used to hardcode a JS-side copy
-// of index.html's --cat-1..--cat-14 dark-theme hex values — already an
-// exact-value duplicate of the real tokens, and structurally unable to
-// ever pick up the real light-theme category-ramp values (a hardcoded JS
-// literal can't react to [data-theme]). Real var(--cat-N) references
-// instead — the browser resolves these per the active theme, same as any
-// other themed color.
-const GREY_RAMP = [
-    "var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)", "var(--cat-5)", "var(--cat-6)", "var(--cat-7)",
-    "var(--cat-8)", "var(--cat-9)", "var(--cat-10)", "var(--cat-11)", "var(--cat-12)", "var(--cat-13)", "var(--cat-14)",
-]
-function greyForName(name) {
-    let h = 0
-    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
-    return GREY_RAMP[h % GREY_RAMP.length]
 }
 
 function lerpHex(a, b, t) {
@@ -144,7 +122,7 @@ function KpiStrip({ kpis }) {
 
 // §4 — real d3 area chart. No animated count-up: per the "no ambient motion
 // beyond the clock/telemetry" rule this renders its current values directly,
-// so it deliberately does NOT use applyTransition().
+// so it deliberately does NOT animate between data states.
 function VolumeChart({ timeseries }) {
     const ref = useRef(null)
     const [width, setWidth] = useState(600)
@@ -217,79 +195,102 @@ function VolumeChart({ timeseries }) {
     )
 }
 
-// §5 — the four donuts. Arc sweep animates via the shared rAF-safe helper
-// (applyTransition) on data change; if rAF is unavailable/throttled the new
-// angles are applied in one synchronous step instead of freezing mid-sweep.
-function Donut({ label, items, colorFor, onPick = null, selected = null }) {
-    const outerR = 40, innerR = 26, size = 96
-    const pieGen = useMemo(() => d3pie().value((d) => d.value).sort(null), [])
-    const arcGen = useMemo(() => d3arc().innerRadius(innerR).outerRadius(outerR), [])
-    const target = useMemo(() => pieGen(items), [items, pieGen])
-    const [rendered, setRendered] = useState(target)
-    const prevRef = useRef(target)
-
-    useEffect(() => {
-        const prev = prevRef.current
-        applyTransition(260, (t) => {
-            setRendered(target.map((d, i) => {
-                const p = prev[i]
-                if (!p) return d
-                return {
-                    ...d,
-                    startAngle: p.startAngle + (d.startAngle - p.startAngle) * t,
-                    endAngle: p.endAngle + (d.endAngle - p.endAngle) * t,
-                }
-            }))
-            if (t === 1) prevRef.current = target
-        })
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [items])
-
+// §5 — the four share-of-window breakdowns.
+//
+// These were donuts, and they were unreadable. Three of the four distributions
+// are extremely skewed — maritime is 90% of the domain split, "Other" is 83%
+// of the region split — so every class that wasn't the leader rendered as a
+// one-or-two-degree sliver. Colour couldn't rescue that: the categorical ramp
+// was fourteen near-identical greys picked by hashing the class name, so the
+// 90% arc and the 8% arc could differ by two hex points. Even the severity
+// donut, which had real colours, failed on its two biggest classes —
+// --sev-moderate and --sev-low measure ΔE 5.9 apart in normal vision.
+//
+// A ranked horizontal bar fixes all of it at once. Every row is named in text,
+// so identity never rests on colour; a common baseline makes the magnitudes
+// comparable; long region names have somewhere to go; and a 0.4% class is
+// honestly tiny while its exact count sits right beside it. Colour is now one
+// hue carrying magnitude (severity keeps its reserved status colours, which
+// are label-paired here and so never load-bearing alone).
+function ShareBars({ label, items, colorFor, onPick = null, selected = null, note }) {
+    const { readout, bind } = useFloatingReadout()
     const total = items.reduce((s, d) => s + d.value, 0)
+    const max = items.reduce((m, d) => Math.max(m, d.value), 0) || 1
 
     return (
         <div className="panelbox" style={{ flex: 1, minWidth: 0 }}>
+            {readout}
             <div className="head"><span className="caption">{label}</span></div>
-            <div className="body" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                <PanelNote>
-                    Share of the {total.toLocaleString("en-GB")} signals in this
-                    window. Proportions only — a slice that doubles because the
-                    total halved has not grown.
-                </PanelNote>
-                <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-                    <g transform={`translate(${size / 2},${size / 2})`}>
-                        {rendered.map((d) => {
-                            // Real fix — the documented SVG-theming trap: a
-                            // bare fill={...} attribute holding a var(--x)
-                            // string doesn't reliably resolve CSS custom
-                            // properties in every rendering path; `style`
-                            // always resolves correctly via the real CSS cascade.
-                            const isSel = selected != null && selected === d.data.key
-                            // A slice that filters has to say so before it is
-                            // clicked, and a chart that filters nothing must
-                            // not pretend otherwise — hence the cursor and the
-                            // dimming both hang off onPick.
+            <div className="body">
+                <PanelNote>{note}</PanelNote>
+                {total === 0 ? (
+                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>
+                        Nothing in this window.
+                    </div>
+                ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {items.map((d) => {
+                            const isSel = selected != null && selected === d.key
                             const dimmed = onPick && selected != null && !isSel
+                            const share = total ? (d.value / total) * 100 : 0
+                            // Share is rounded for reading but never rounded to
+                            // "0.0%" while the class still has signals in it —
+                            // a row that exists has to look like it exists.
+                            const shareText = share > 0 && share < 0.1 ? "<0.1%" : `${share.toFixed(1)}%`
                             return (
-                                <path key={d.data.key} d={arcGen(d) || undefined}
-                                      onClick={onPick ? () => onPick(isSel ? null : d.data.key) : undefined}
-                                      style={{
-                                          fill: colorFor(d.data),
-                                          cursor: onPick ? "pointer" : "default",
-                                          opacity: dimmed ? 0.3 : 1,
-                                          stroke: isSel ? "var(--txt)" : "none",
-                                          strokeWidth: isSel ? 1.5 : 0,
-                                          transition: "opacity .15s",
-                                      }}>
-                                    <title>{d.data.label}: {d.data.value.toLocaleString()}{onPick ? (isSel ? " — click to clear" : " — click to filter") : ""}</title>
-                                </path>
+                                <div key={d.key}
+                                     tabIndex={0}
+                                     role={onPick ? "button" : undefined}
+                                     onClick={onPick ? () => onPick(isSel ? null : d.key) : undefined}
+                                     onKeyDown={onPick ? (e) => {
+                                         if (e.key === "Enter" || e.key === " ") {
+                                             e.preventDefault()
+                                             onPick(isSel ? null : d.key)
+                                         }
+                                     } : undefined}
+                                     {...bind({
+                                         title: d.label,
+                                         lines: [
+                                             `${d.value.toLocaleString("en-GB")} of ${total.toLocaleString("en-GB")} signals (${shareText})`,
+                                             "A share of this window only — a class that doubles because the total halved has not grown.",
+                                             ...(onPick ? [isSel ? "Selected — activate to clear the filter." : "Activate to filter every chart on this page to this class."] : []),
+                                         ],
+                                     })}
+                                     style={{
+                                         display: "flex", alignItems: "center", gap: 8,
+                                         cursor: onPick ? "pointer" : "default",
+                                         opacity: dimmed ? 0.45 : 1,
+                                         transition: "opacity .15s",
+                                     }}>
+                                    <span style={{
+                                        width: 104, flexShrink: 0,
+                                        font: `${isSel ? 600 : 400} 11px var(--font)`,
+                                        color: "var(--txt)",
+                                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                    }}>{d.label}</span>
+                                    <div style={{
+                                        flex: 1, minWidth: 0, height: 8,
+                                        background: "var(--chart-bar-track)",
+                                        borderRadius: 2,
+                                    }}>
+                                        <div style={{
+                                            width: `${Math.max(d.value > 0 ? 1.5 : 0, (d.value / max) * 100)}%`,
+                                            height: "100%",
+                                            background: colorFor(d),
+                                            borderRadius: "2px 4px 4px 2px",
+                                            transition: "width .26s",
+                                        }} />
+                                    </div>
+                                    <span style={{
+                                        width: 42, flexShrink: 0, textAlign: "right",
+                                        font: "400 11px var(--mono)", color: "var(--txt-2)",
+                                        fontVariantNumeric: "tabular-nums",
+                                    }}>{shareText}</span>
+                                </div>
                             )
                         })}
-                        <text textAnchor="middle" dy="0.35em" style={{ font: "400 13px var(--mono)", fill: "var(--txt)" }}>
-                            {total.toLocaleString()}
-                        </text>
-                    </g>
-                </svg>
+                    </div>
+                )}
             </div>
         </div>
     )
@@ -643,20 +644,28 @@ export default function Analytics() {
                         </Capturable>
                         <div style={{ display: "flex", gap: 12 }}>
                             <Capturable label="By severity" detail={`${data.range} · ${data.region}`}>
-                                <Donut label="By severity" items={data.donuts.severity} colorFor={(item) => SEV_COLOR[item.key]} />
+                                <ShareBars label="By severity" items={data.donuts.severity}
+                                           colorFor={(item) => SEV_COLOR[item.key]}
+                                           note="How this window's signals divide by severity. Each row is named, so the colours only rank them." />
                             </Capturable>
                             <Capturable label="By domain" detail={`${data.range} · ${data.region}`}>
-                                <Donut label="By domain" items={data.donuts.domain} colorFor={(item) => greyForName(item.key)}
-                                       selected={domain === "all" ? null : domain}
-                                       onPick={(k) => setDomain(k || "all")} />
+                                <ShareBars label="By domain" items={data.donuts.domain}
+                                           colorFor={() => "var(--chart-bar)"}
+                                           note="Share of this window by domain. Select a row to filter every chart on this page."
+                                           selected={domain === "all" ? null : domain}
+                                           onPick={(k) => setDomain(k || "all")} />
                             </Capturable>
                             <Capturable label="By region" detail={`${data.range} · ${data.region}`}>
-                                <Donut label="By region" items={data.donuts.region} colorFor={(item) => greyForName(item.key)}
-                                       selected={region === "all" ? null : region}
-                                       onPick={(k) => setRegion(k || "all")} />
+                                <ShareBars label="By region" items={data.donuts.region}
+                                           colorFor={() => "var(--chart-bar)"}
+                                           note="The six busiest regions this window; the rest are counted under Other. Select a row to filter."
+                                           selected={region === "all" ? null : region}
+                                           onPick={(k) => setRegion(k || "all")} />
                             </Capturable>
                             <Capturable label="By source" detail={`${data.range} · ${data.region}`}>
-                                <Donut label="By source" items={data.donuts.source} colorFor={(item) => greyForName(item.key)} />
+                                <ShareBars label="By source" items={data.donuts.source}
+                                           colorFor={() => "var(--chart-bar)"}
+                                           note="Which collection capability produced this window's signals." />
                             </Capturable>
                         </div>
                         <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>

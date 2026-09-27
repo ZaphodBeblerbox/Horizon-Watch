@@ -188,12 +188,13 @@
             --chart-hist:        #4a545e;
             --chart-hist-hot:    #8d5348;
             --heatmap-lo: #232a30; --heatmap-hi: #5c6b78; --heatmap-empty: #1e242a;
-            /* Category ramp — greys only, for anything needing distinct
-               swatches (domains, sources, regions) that isn't severity. */
-            --cat-1: #9aa5ae; --cat-2: #8b96a0; --cat-3: #8d9aa4; --cat-4: #7c8792;
-            --cat-5: #7d8993; --cat-6: #6d7883; --cat-7: #6f7b85; --cat-8: #5f6a74;
-            --cat-9: #626e78; --cat-10: #515c66; --cat-11: #55616b; --cat-12: #444e58;
-            --cat-13: #4a555f; --cat-14: #404b54;
+            /* Share-of-window bars. One hue, not a category ramp: domain /
+               region / source breakdowns name every row in text, so colour
+               carries magnitude, not identity. The old 14-step grey ramp is
+               gone — it coloured categories by a hash of their name, so a
+               90% class and an 8% class could land two hex points apart. */
+            --chart-bar:     #7d97b3; /* share-of-window bars (3.0:1 on --bg-1) */
+            --chart-bar-track: #262c33;
 
             /* ── Real glass-pane tokens (Parallax theming pass) — the
                previously-untokenized rgba() literals .pane-glass and
@@ -573,10 +574,8 @@
             --chart-hist:        #b3a48a;
             --chart-hist-hot:    #8a4a3a;
             --heatmap-lo: #e2d9c7; --heatmap-hi: #ab9a78; --heatmap-empty: #ede5d4;
-            --cat-1: #6b6355; --cat-2: #746c5d; --cat-3: #7d7566; --cat-4: #867e6f;
-            --cat-5: #8f8778; --cat-6: #988f80; --cat-7: #a19889; --cat-8: #aaa192;
-            --cat-9: #b3aa9b; --cat-10: #bcb3a4; --cat-11: #c5bcad; --cat-12: #cec5b6;
-            --cat-13: #d7cebf; --cat-14: #e0d7c8;
+            --chart-bar:     #3a5f80; /* share-of-window bars (5.4:1 on --bg-1) */
+            --chart-bar-track: #e2d9c7;
 
             --shadow: 0 10px 26px rgba(70,60,45,.16), 0 1px 3px rgba(70,60,45,.14);
 
@@ -721,20 +720,8 @@
             @property --heatmap-lo { syntax: '<color>'; inherits: true; initial-value: #000000; }
             @property --heatmap-hi { syntax: '<color>'; inherits: true; initial-value: #000000; }
             @property --heatmap-empty { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-1 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-2 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-3 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-4 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-5 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-6 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-7 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-8 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-9 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-10 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-11 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-12 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-13 { syntax: '<color>'; inherits: true; initial-value: #000000; }
-            @property --cat-14 { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --chart-bar { syntax: '<color>'; inherits: true; initial-value: #000000; }
+            @property --chart-bar-track { syntax: '<color>'; inherits: true; initial-value: #000000; }
             @property --pane-glass-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
             @property --akili-glass-bg { syntax: '<color>'; inherits: true; initial-value: #000000; }
             @property --akili-glass-border { syntax: '<color>'; inherits: true; initial-value: #000000; }

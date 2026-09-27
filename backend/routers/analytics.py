@@ -44,6 +44,61 @@ _RANGE_DAYS = {"7d": 7, "30d": 30, "90d": 90}
 
 _DOMAIN_LABELS = {"maritime": "Maritime", "air": "Air", "news": "News", "imagery": "Imagery", "zones": "Zones"}
 
+# How many named rows a share-of-window breakdown may show before the rest is
+# folded into "Other". Six is the readable ceiling for a part-to-whole chart;
+# the source breakdown used to admit thirteen, which is past the point where
+# adjacent classes blur into each other no matter how they are coloured.
+_SHARE_ROWS = 6
+
+# Sources named by what they give you, never by who sells it. Keys are the raw
+# lowercased `source` values on the alert/detection rows; several keys may map
+# to one label, and anything unrecognised falls through to "Other" rather than
+# leaking a new supplier name the day a feed is added.
+_SOURCE_LABELS = {
+    "ais":          "Vessels",
+    "adsb":         "Aircraft",
+    "geoconfirmed": "Verified Events",
+    "sentinel":     "Satellite",
+    "sat-task":     "Satellite Tasking",
+    "surge":        "Activity Surges",
+    "forecast":     "Forecast",
+    "corroborated": "Corroborated",
+}
+
+
+def _source_label(raw: str) -> str:
+    """Display name for a raw source key — a capability, never a supplier."""
+    return _SOURCE_LABELS.get((raw or "").strip().lower(), "Other")
+
+
+def _rank_and_fold(rows: list[dict], limit: int = _SHARE_ROWS) -> list[dict]:
+    """Largest first, with everything past `limit` folded into a single "Other".
+
+    Ranking is by value so the rows a reader actually needs are the ones that
+    survive. Any row already called "Other" is folded in with the tail instead
+    of competing against it, so a breakdown never shows two "Other" rows.
+    """
+    named = sorted(
+        (r for r in rows if r["label"] != "Other"),
+        key=lambda r: (-r["value"], r["label"]),
+    )
+    tail = sum(r["value"] for r in rows if r["label"] == "Other")
+    # Fold only when the breakdown genuinely overflows. A set that already
+    # fits keeps every row named, including its own "Other" — folding a
+    # six-row breakdown down to five plus "Other" would hide a real class
+    # to make room for a bucket holding nothing extra.
+    fits = len(named) + (1 if tail else 0) <= limit
+    if not fits:
+        keep = named[: limit - 1]
+        tail += sum(r["value"] for r in named[limit - 1:])
+    else:
+        keep = named
+    out = list(keep)
+    if tail:
+        out.append({"key": "Other", "label": "Other", "value": tail})
+    return out
+
+
 # Real escalation-chain icon types (backend/database.py EscalationChain rows,
 # and correlation_engine.py's own generic dual/triple markers) are the only
 # reliable way to identify a fired escalation post-hoc, since write_alert()
@@ -285,7 +340,7 @@ def get_overview(
             buckets[key] += 1
     timeseries = [{"date": k, "count": v} for k, v in sorted(buckets.items())]
 
-    # ── Donuts: severity (real colors), domain/region/source (grey ramp) ──
+    # ── Share-of-window breakdowns: severity, domain, region, source ──
     def _tally(items, key_fn):
         out: dict[str, int] = {}
         for s in items:
@@ -303,18 +358,23 @@ def get_overview(
     ]
 
     reg_tally = _tally(cur_signals, lambda s: s["region"])
-    donut_region = sorted(
-        ({"key": k, "label": k, "value": v} for k, v in reg_tally.items() if v > 0),
-        key=lambda r: r["key"],
+    donut_region = _rank_and_fold(
+        [{"key": k, "label": k, "value": v} for k, v in reg_tally.items() if v > 0]
     )
 
-    src_tally = _tally(cur_signals, lambda s: s["source"])
-    top_sources = sorted(src_tally.items(), key=lambda kv: (-kv[1], kv[0]))
-    donut_source = [{"key": k, "label": k, "value": v} for k, v in top_sources[:13]]
-    other_src_total = sum(v for _, v in top_sources[13:])
-    if other_src_total:
-        donut_source.append({"key": "other", "label": "Other", "value": other_src_total})
-    donut_source.sort(key=lambda r: r["key"])
+    # Sources are reported as the capability they feed, never as the feed —
+    # the same rule NAMING.md already applied to the map's layer labels, which
+    # this chart was missing: it rendered the raw `ais` / `adsb` keys straight
+    # from the alert rows, so the one screen in the product that named our
+    # suppliers out loud was the analytics page. Several raw keys can share a
+    # display name, so the tally is rebuilt on the label, not merely relabelled.
+    src_tally: dict[str, int] = {}
+    for k, v in _tally(cur_signals, lambda s: s["source"]).items():
+        label = _source_label(k)
+        src_tally[label] = src_tally.get(label, 0) + v
+    donut_source = _rank_and_fold(
+        [{"key": k, "label": k, "value": v} for k, v in src_tally.items() if v > 0]
+    )
 
     # ── Heatmap: region x domain, real counts, explicit zero cells ──
     active_regions = sorted({s["region"] for s in cur_signals if s["region"] != "Other"})
@@ -361,7 +421,11 @@ def get_overview(
             "id": s["id"], "title": s["title"], "severity": s["severity"],
             "domain": s["domain"], "region": s["region"], "lat": s["lat"], "lon": s["lon"],
             "created_at": s["created_at"].isoformat() if s["created_at"] else None,
-            "entity_id": s["entity_id"], "entity_type": s["entity_type"], "source": s["source"],
+            "entity_id": s["entity_id"], "entity_type": s["entity_type"],
+            # Same rule as the breakdown above: the table's Source column and
+            # the CSV export both render this verbatim, so it carries the
+            # capability name, never the feed's.
+            "source": _source_label(s["source"]),
         }
         for s in top_signals
     ]
@@ -407,7 +471,8 @@ def get_timeline(hours: int = Query(168, ge=1, le=24 * 90)):
         {
             "id": s["id"], "kind": s["kind"], "domain": s["domain"], "severity": s["severity"],
             "region": s["region"], "lat": s["lat"], "lon": s["lon"],
-            "created_at": s["created_at"].isoformat(), "title": s["title"], "source": s["source"],
+            "created_at": s["created_at"].isoformat(), "title": s["title"],
+            "source": _source_label(s["source"]),
             "entity_id": s["entity_id"], "entity_type": s["entity_type"],
         }
         for s in signals

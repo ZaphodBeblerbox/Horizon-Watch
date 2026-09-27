@@ -111,8 +111,8 @@ const INFRA_LAYERS = [
     // One row per kind so the three can be asked for separately —
     // "where are the hospitals" and "where are the barracks" are
     // different questions asked at different moments.
-    { key: "facMilitary", label: "Military sites", note: "OSM — bases, barracks, bunkers", color: "#C084FC" },
-    { key: "facMedical", label: "Hospitals & clinics", note: "OSM — crowd-mapped, uneven coverage", color: "#3DDC97" },
+    { key: "facMilitary", label: "Military sites", note: "bases, barracks, bunkers", color: "#C084FC" },
+    { key: "facMedical", label: "Hospitals & clinics", note: "crowd-mapped, uneven coverage", color: "#3DDC97" },
     { key: "facSecurity", label: "Police & fire", note: "OSM — crowd-mapped, uneven coverage", color: "#3D8BFF" },
 ]
 
@@ -965,13 +965,13 @@ export default function Situation({ onOpenDossier }) {
                             {g.key === "imagery" && (
                                 <SubLayerRow
                                     label="Thermal Anomalies"
-                                    hint="NASA FIRMS — the feed that tasks imagery. A gas flare, burning stubble and a strike look identical to the instrument."
+                                    hint="The feed that tasks imagery. A gas flare, burning stubble and a strike look identical to the instrument."
                                     on={firesOn} parentOn={groupsOn.imagery}
                                     onToggle={() => setFiresOn((v) => !v)} />
                             )}
                             {g.key === "news" && (
                                 <SubLayerRow
-                                    label="GDELT Events"
+                                    label="Wire Reports"
                                     hint="Machine-coded from news wire · city-level only · every pin cites its article"
                                     on={gdeltOn} parentOn={groupsOn.news}
                                     onToggle={() => setGdeltOn((v) => !v)} />
@@ -1063,9 +1063,9 @@ export default function Situation({ onOpenDossier }) {
                         </button>
                     </div>
                     <div style={{ padding: "8px 12px 2px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>
-                        Satellite AIS events
+                        Vessel activity events
                         <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)", marginLeft: 6 }}>
-                            GFW · published days behind
+                            published days behind
                         </span>
                     </div>
                     {[
@@ -1294,8 +1294,8 @@ export default function Situation({ onOpenDossier }) {
                 <div style={{ padding: "8px 0" }}>
                     <div style={{ padding: "2px 12px 4px", font: "600 11px var(--font)", color: "var(--txt-3)" }}>Live tracks</div>
                     {[
-                        ["vessels", "Vessels (AIS)", trackCounts.vessels],
-                        ["aircraft", "Aircraft (ADS-B)", trackCounts.aircraft],
+                        ["vessels", "Vessels", trackCounts.vessels],
+                        ["aircraft", "Aircraft", trackCounts.aircraft],
                         ["sanctionedOnly", "Sanctioned/watchlisted only", trackCounts.sanctioned],
                         // "Ports & airports" moved to Global infrastructure
                         // (§L5) and split in two. They are fixed facilities,
