@@ -7,6 +7,8 @@ import { listSessions, listViews, deleteSession, deleteView, viewExtraLabels } f
 import { KEYBOARD_SHORTCUTS } from "../data/keyboardShortcuts.js"
 import PushNotificationToggle from "./PushNotificationToggle.jsx"
 import { useFreshness } from "./Freshness.jsx"
+import { getManualLocation, setManualLocation } from "../state/themeStore.js"
+import { approximateLocationFromClock } from "../globe/useUserLocation.js"
 import ThemeControl from "./ThemeControl.jsx"
 
 /**
@@ -103,6 +105,77 @@ function SectionTitle({ children }) {
 }
 
 // ── General ──────────────────────────────────────────────────────────────
+
+/**
+ * Where the day/night cycle thinks you are.
+ *
+ * Auto theme needs a latitude to know how long the day is, and the desktop
+ * build cannot ask: the WKWebView never surfaces a geolocation prompt. The
+ * fallback derives longitude from the system clock — which is exact, the
+ * earth turns fifteen degrees an hour — and then guesses 40 degrees north
+ * for latitude. That guess is why sunrise can be hours out in Oslo or
+ * Nairobi, and this is the control that replaces it.
+ *
+ * Longitude is prefilled from the clock because it is already right; the
+ * number worth setting is the latitude.
+ */
+function DayCycleLocation() {
+    const [saved, setSaved] = useState(() => getManualLocation())
+    const fallback = approximateLocationFromClock()
+    const [lat, setLat] = useState(() => String(saved?.lat ?? fallback.lat))
+    const [lon, setLon] = useState(() => String(saved?.lon ?? Math.round(fallback.lon * 10) / 10))
+    const [note, setNote] = useState(null)
+
+    const apply = () => {
+        const la = Number(lat), lo = Number(lon)
+        if (!Number.isFinite(la) || la < -90 || la > 90) { setNote("Latitude must be between -90 and 90."); return }
+        if (!Number.isFinite(lo) || lo < -180 || lo > 180) { setNote("Longitude must be between -180 and 180."); return }
+        setManualLocation({ lat: la, lon: lo })
+        setSaved({ lat: la, lon: lo })
+        setNote("Saved — the sky control is already using it.")
+    }
+    const clear = () => {
+        setManualLocation(null)
+        setSaved(null)
+        setLat(String(fallback.lat)); setLon(String(Math.round(fallback.lon * 10) / 10))
+        setNote("Cleared — back to your device's clock and, where it works, its location.")
+    }
+
+    const num = {
+        width: 74, background: "var(--bg-2)", border: "1px solid var(--line-strong)",
+        borderRadius: "var(--r)", color: "var(--txt)", font: "400 11.5px var(--mono)",
+        padding: "4px 6px",
+    }
+    const btn = {
+        background: "none", border: "1px solid var(--line-strong)", borderRadius: "var(--r)",
+        color: "var(--txt-2)", font: "400 11px var(--font)", padding: "4px 8px", cursor: "pointer",
+    }
+
+    return (
+        <div style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--line-soft)" }}>
+            <div style={{ font: "400 12.5px var(--font)", color: "var(--txt)" }}>Location for the day/night cycle</div>
+            <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginTop: 2, lineHeight: 1.5 }}>
+                {saved
+                    ? `Set to ${saved.lat}°, ${saved.lon}°.`
+                    : "Not set. Longitude comes from your clock and is accurate; latitude "
+                      + "is assumed to be 40°, which makes the day the wrong length away "
+                      + "from mid-northern latitudes."}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                <label style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>Lat</label>
+                <input id="daycycle-lat" style={num} value={lat} onChange={(e) => setLat(e.target.value)} inputMode="decimal" />
+                <label style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>Lon</label>
+                <input id="daycycle-lon" style={num} value={lon} onChange={(e) => setLon(e.target.value)} inputMode="decimal" />
+                <button style={btn} onClick={apply}>Use this</button>
+                {saved && <button style={btn} onClick={clear}>Clear</button>}
+            </div>
+            {note && (
+                <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", marginTop: 6 }}>{note}</div>
+            )}
+        </div>
+    )
+}
+
 function GeneralSection({ settings }) {
     const user = getCurrentUser()
     const [timezone, setTimezone] = useState(user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
@@ -126,6 +199,7 @@ function GeneralSection({ settings }) {
             <Row label="Theme" hint="Same real per-user value the top-bar control reads and writes. Auto fades with the real sun at your location.">
                 <ThemeControl inline />
             </Row>
+            <DayCycleLocation />
             <Row label="Density" hint="Compact reduces spacing app-wide.">
                 <ChoiceGroup
                     value={getAtPath(settings, "general.density") || "comfortable"}

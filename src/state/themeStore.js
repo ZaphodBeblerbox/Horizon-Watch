@@ -18,6 +18,7 @@
 //                      manual Light/Dark mode; a real, live value in Auto
 import API_BASE from "../apiBase.js"
 import { getUserLocation } from "../globe/useUserLocation.js"
+import { getSettings, updateSetting } from "./settingsStore.js"
 import { solarElevationDeg, civilTwilightBlend, solarDayPhase } from "../utils/solarPosition.js"
 import { blendColor, isParseableColor } from "../utils/colorBlend.js"
 
@@ -230,11 +231,53 @@ function applyBlend(t) {
     blendListeners.forEach((fn) => fn({ blend: t, elevationDeg }))
 }
 
+/**
+ * Where to put the sun.
+ *
+ * THE ORDER MATTERS, AND A SET LOCATION WINS. Geolocation does not work in
+ * the desktop build — the WKWebView never surfaces a permission prompt — so
+ * the day/night cycle there falls back to a longitude derived from the
+ * system clock and a LATITUDE OF 40 DEGREES, which is a guess. At 40 the
+ * days are the wrong length for anyone in Norway or Kenya, and sunrise is
+ * wrong by hours in winter. Letting someone say where they are is the only
+ * fix that works on a build that cannot ask the operating system.
+ *
+ * So: what the user set, then the browser, then the clock. The clock is
+ * never wrong about longitude, so the fallback is always roughly right
+ * east-to-west and only its latitude is a guess — which is exactly what the
+ * setting exists to replace.
+ */
 async function resolveLocation() {
+    const manual = getManualLocation()
+    if (manual) return manual
     if (cachedLocation) return cachedLocation
     const loc = await getUserLocation()
     if (loc) cachedLocation = loc
     return loc
+}
+
+/** A location the user set themselves, or null. */
+export function getManualLocation() {
+    const v = getSettings()?.dayCycleLocation
+    if (!v || typeof v !== "object") return null
+    const lat = Number(v.lat), lon = Number(v.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null
+    return { lat, lon, approximate: false, manual: true, label: v.label || null }
+}
+
+/**
+ * Set (or clear, with null) the location the day/night cycle uses.
+ * Applies at once rather than on the next launch — a setting whose effect
+ * you cannot see is one you cannot tell you got right.
+ */
+export function setManualLocation(loc) {
+    updateSetting("dayCycleLocation", loc || null)
+    cachedLocation = null
+    if (themeMode === "auto") {
+        stopAutoEngine()
+        startAutoEngine()
+    }
 }
 
 function recomputeAndApply(loc) {

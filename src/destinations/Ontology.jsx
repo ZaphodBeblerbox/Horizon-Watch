@@ -8,6 +8,7 @@ import OntologyClusters from "./OntologyClusters.jsx"
 import FindingsPanel from "../components/FindingsPanel.jsx"
 import OntologyOrbat from "./OntologyOrbat.jsx"
 import OntologyEngine from "./OntologyEngine.jsx"
+import Loading from "../ui/Loading.jsx"
 
 // Ontology — page-by-page rebuild, Part A. A fixed four-tier diagram, never
 // a force simulation. Built on the real Forge ontology (forge_ontology.json,
@@ -635,7 +636,7 @@ export default function Ontology({ onOpenGenerate }) {
                             {data?.counts
                                 ? `${data.counts.nodes} nodes · ${data.counts.links} links · `
                                   + `${data.counts.fixed_linked}/${data.counts.fixed_in_country} fixed sites linked`
-                                : "loading…"}
+                                : <Loading size={13} inline label="Loading graph" />}
                             {data?.truncated ? " · truncated" : ""}
                         </div>
                     )}

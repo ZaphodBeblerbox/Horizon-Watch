@@ -15,6 +15,7 @@ import API_BASE from "../apiBase.js"
 import { replayOnMap } from "../services/replayOnMap.js"
 import Minimap from "../components/Minimap.jsx"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
+import Loading from "../ui/Loading.jsx"
 
 const API = API_BASE
 const WINDOW_HOURS = 168 // real bounded window — 7 days, matching Analytics' own shortest real "range" option
@@ -257,7 +258,9 @@ export default function Replay({ isVisible = true }) {
                 {/* Ruler + lanes */}
                 {t0 == null ? (
                     <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--txt-4)", font: "400 12px var(--font)" }}>
-                        {signals == null ? "Loading real signals…" : "No real signals with a position in the last 7 days."}
+                        {signals == null
+                            ? <Loading label="Loading signals" />
+                            : "No real signals with a position in the last 7 days."}
                     </div>
                 ) : (
                     <div style={{ flex: 1, overflow: "auto", position: "relative" }}>

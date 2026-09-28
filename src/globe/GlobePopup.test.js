@@ -15,6 +15,10 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "gdelt_event", "geoconfirmed", "heatmap_cell", "infra", "port",
             "sentinel_detection", "surge", "thermal_anomaly", "trade_route", "vessel",
             "facility_osm", "warmap_area", "gfw_event", "airspace",
+            // Nav interference cells. Without this entry the click falls
+            // through to the raw-html popup, which is exactly the failure
+            // this test exists to catch.
+            "gps_interference",
         ].sort())
     })
 

@@ -20,6 +20,9 @@ describe("LAYER_GROUPS", () => {
             // found the building in the video. Listed here so the guard keeps
             // doing its job — it exists to catch keys that appear by accident.
             "gdeltEvents",
+            // Nav interference, its own switch under Air — it is not where
+            // aircraft ARE, it is where they are losing their fix.
+            "gpsInterference",
             // Also deliberate: FIRMS thermal anomalies are what task
             // imagery, and the feed has been running for weeks with no way
             // to see its own output.

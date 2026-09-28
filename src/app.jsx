@@ -13,6 +13,7 @@ import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayMana
 import NotificationStack from "./components/NotificationStack.jsx"
 import NotificationTray from "./components/NotificationTray.jsx"
 import { pushNotification, unreadCount as notifUnread, subscribeNotifications } from "./state/notificationStore.js"
+import { subscribeLive } from "./state/liveEvents.js"
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
@@ -608,10 +609,26 @@ export default function App() {
             .then(d => { if (!cancelled && Array.isArray(d)) setNotifFeed(d) })
             .catch(() => {})
         load()
-        // The tray is the surface people judge "is anything happening"
-        // by, so it polls faster than anything else here.
+        // The tray is the surface people judge "is anything happening" by.
+        // The timer is now the FLOOR rather than the mechanism: the stream
+        // below refetches the moment the pipeline writes something, and this
+        // catches whatever the stream missed while the laptop was asleep or
+        // a proxy was eating the connection.
         const t = setInterval(load, 20000)
-        return () => { cancelled = true; clearInterval(t) }
+        // Coalesced: a burst of twenty alerts in one second is one refetch,
+        // not twenty. Without this a busy minute would be a request storm
+        // against the endpoint the tray depends on.
+        let pending = null
+        const off = subscribeLive(() => {
+            if (pending) return
+            pending = setTimeout(() => { pending = null; load() }, 400)
+        }, ["alert.created", "signal.created", "fusion.created", "surge.created"])
+        return () => {
+            cancelled = true
+            clearInterval(t)
+            if (pending) clearTimeout(pending)
+            off()
+        }
     }, [profile])
 
     // CONNECTIONS THE GRAPH WORKED OUT, as opposed to events that

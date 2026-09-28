@@ -28,6 +28,7 @@ import {
     COLUMNS, SEV_COLOR, toInboxRow, nextSort, sortRows, applyFilters,
     emptyStateMessage, severityDistribution, distribution, unreadCount, hhmm,
 } from "./inboxLogic.js"
+import { subscribeLive } from "../state/liveEvents.js"
 
 const SEV_FLOORS = [
     { key: null, label: "all" },
@@ -101,7 +102,25 @@ export default function Inbox() {
     // Two minutes was long enough that the inbox was reliably showing
     // something other than what the map was showing. It is the working
     // record and it has to keep up with the feed that fills it.
-    useEffect(() => { load(); const iv = setInterval(load, 30_000); return () => clearInterval(iv) }, [load])
+    useEffect(() => {
+        load()
+        // The timer is the floor. The stream refetches the moment the
+        // pipeline writes a signal, so the working record and the map stop
+        // disagreeing for half a minute at a time; the interval covers the
+        // stream being down, asleep or buffered by a proxy.
+        const iv = setInterval(load, 30_000)
+        let pending = null
+        const off = subscribeLive(() => {
+            if (pending) return
+            pending = setTimeout(() => { pending = null; load() }, 400)
+        }, ["alert.created", "signal.created", "fusion.created", "surge.created",
+            "news_article.created"])
+        return () => {
+            clearInterval(iv)
+            if (pending) clearTimeout(pending)
+            off()
+        }
+    }, [load])
 
     // The freshness label has to count up by itself; without its own
     // tick it only changed when a load happened, which is exactly the

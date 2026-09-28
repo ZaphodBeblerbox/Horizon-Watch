@@ -49,16 +49,23 @@ const ARC_R = 7.4          // radius the bodies travel on
 const ARC_CX = 12
 const ARC_CY = 12.4        // the horizon line
 
-/** phase 0..1 (0 = solar midnight) -> a point on the arc. */
-function arcPoint(phase) {
-    // Solar midnight sits at the bottom, noon at the top, and the body
-    // travels left-to-right across the visible half — east to west, the
-    // direction the sky actually moves.
-    const theta = (phase - 0.25) * 2 * Math.PI
-    return {
-        x: ARC_CX - ARC_R * Math.cos(theta),
-        y: ARC_CY - ARC_R * Math.sin(theta),
-    }
+/**
+ * phase 0..1 (0 = solar midnight) -> how far the carriage has turned.
+ *
+ * A TOURBILLON, NOT TWO BODIES ON A TRACK. The sun and moon are always
+ * exactly half a day apart, so they are not two things to position — they
+ * are one assembly that turns once a day, the way a tourbillon carriage
+ * does. Placing each independently computed the same rotation twice and let
+ * them drift apart if either formula was ever touched; here the geometry
+ * cannot disagree with itself, because there is only one of it.
+ *
+ * Derived rather than eyeballed: with the sun drawn at the top of the
+ * circle, rotating by (phase x 360 - 180) puts it at the top at solar noon
+ * (phase 0.5), at the bottom at midnight, and on the left at sunrise —
+ * east to west, the direction the sky actually moves.
+ */
+function carriageAngle(phase) {
+    return phase * 360 - 180
 }
 
 function SkyGlyph({ mode, blend, phase, size = 19 }) {
@@ -70,10 +77,7 @@ function SkyGlyph({ mode, blend, phase, size = 19 }) {
         ? ((phase ?? 0) % 1 + 1) % 1
         : (mode === "light" ? 0.5 : 0.0)
 
-    const sun = arcPoint(p)
-    // Half a cycle behind: when the sun is at noon the moon is at its
-    // midnight, below the line, and the reverse at night.
-    const moon = arcPoint((p + 0.5) % 1)
+    const angle = carriageAngle(p)
 
     // How day-lit the scene reads. Auto uses the real twilight blend so
     // the ground and the glow match the palette that is actually applied;
@@ -92,15 +96,28 @@ function SkyGlyph({ mode, blend, phase, size = 19 }) {
             <g clipPath={`url(#${clipId})`}>
                 <rect x="2" y={ARC_CY} width="20" height="10" className="skyground" opacity={0.25 + 0.45 * t} />
 
-                <g transform={`translate(${sun.x.toFixed(2)},${sun.y.toFixed(2)})`} opacity={0.35 + 0.65 * glow}>
-                    <circle r="2.9" className="sun" />
-                    {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
-                        <line key={a} x1="0" y1="-4.3" x2="0" y2="-5.5" transform={`rotate(${a})`} className="sunray" />
-                    ))}
-                </g>
+                {/* ONE CARRIAGE, TURNING. Both bodies sit at fixed ends of
+                    the same assembly and the assembly rotates; they cannot
+                    drift out of opposition because nothing positions them
+                    separately. Each body is counter-rotated inside it so the
+                    moon's crescent and the sun's rays stay upright rather
+                    than tumbling — a tourbillon's cage turns, the balance
+                    inside it does not present a different face. */}
+                <g transform={`rotate(${angle.toFixed(2)} ${ARC_CX} ${ARC_CY})`}>
+                    <g transform={`translate(${ARC_CX},${ARC_CY - ARC_R})`} opacity={0.35 + 0.65 * glow}>
+                        <g transform={`rotate(${(-angle).toFixed(2)})`}>
+                            <circle r="2.9" className="sun" />
+                            {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
+                                <line key={a} x1="0" y1="-4.3" x2="0" y2="-5.5" transform={`rotate(${a})`} className="sunray" />
+                            ))}
+                        </g>
+                    </g>
 
-                <g transform={`translate(${moon.x.toFixed(2)},${moon.y.toFixed(2)})`} opacity={1 - glow}>
-                    <path d="M2.9,0a3.1,3.1 0 1,1 -3.1,-3.1 a2.5,2.5 0 0,0 3.1,3.1z" className="moon" />
+                    <g transform={`translate(${ARC_CX},${ARC_CY + ARC_R})`} opacity={1 - glow}>
+                        <g transform={`rotate(${(-angle).toFixed(2)})`}>
+                            <path d="M2.9,0a3.1,3.1 0 1,1 -3.1,-3.1 a2.5,2.5 0 0,0 3.1,3.1z" className="moon" />
+                        </g>
+                    </g>
                 </g>
             </g>
             <line x1="2.8" y1={ARC_CY} x2="21.2" y2={ARC_CY} className="skyline" />

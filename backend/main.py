@@ -4250,6 +4250,49 @@ def api_ontology_predict(root: str = Query(...),
         return {"available": False, "error": str(e)[:200], "predictions": []}
 
 
+# ── The findings cache ───────────────────────────────────────────────────
+#
+# grouped_chains() walks the whole graph and takes about fifty seconds on
+# this dataset. The client gives up at thirty, so the Ontology feed never
+# loaded anywhere — it looked like a desktop-build problem only because that
+# is where it was noticed.
+#
+# What it computes is inferred routes over a graph that changes on the scale
+# of hours, so a long TTL costs the reader nothing. Stale results are served
+# immediately while a refresh runs behind them: a reader waiting fifty
+# seconds for a slightly newer inference is worse off than one reading a
+# twenty-minute-old one now.
+_FINDINGS_TTL_S = 20 * 60
+_findings_cache: dict = {}
+_findings_lock = threading.Lock()
+_findings_running: set = set()
+
+
+def _compute_findings(limit: int, min_conf: float):
+    import sqlite3
+    import link_predict as lp
+    conn = sqlite3.connect(f"file:{_akili_db_path()}?mode=ro", uri=True)
+    try:
+        return lp.grouped_chains(conn, limit=limit, min_conf=min_conf)
+    finally:
+        conn.close()
+
+
+def _refresh_findings(key, limit: float, min_conf: float):
+    """Recompute off the request path. One at a time per key: without the
+    guard, every request arriving during a fifty-second walk would start its
+    own, and the box would end up running twenty copies of the same query."""
+    try:
+        found = _compute_findings(limit, min_conf)
+        with _findings_lock:
+            _findings_cache[key] = (time.time(), found)
+    except Exception:
+        logger.exception("ontology findings refresh failed")
+    finally:
+        with _findings_lock:
+            _findings_running.discard(key)
+
+
 @app.get("/api/ontology/findings")
 def api_ontology_findings(limit: int = Query(25, ge=1, le=100),
                           min_conf: float = Query(0.05, ge=0.0, le=1.0)):
@@ -4262,21 +4305,35 @@ def api_ontology_findings(limit: int = Query(25, ge=1, le=100),
     diplomatic act and silently discarded almost the entire
     cooperation half of the graph.
     """
-    try:
-        import sqlite3
-        import link_predict as lp
-        conn = sqlite3.connect(f"file:{_akili_db_path()}?mode=ro", uri=True)
-        try:
-            found = lp.grouped_chains(conn, limit=limit, min_conf=min_conf)
-            return {"available": True, "findings": found,
-                    "caveat": "Inferred routes, not observed transfers. "
-                              "Each step is a reported relationship and "
-                              "should be checked before it is used."}
-        finally:
-            conn.close()
-    except Exception as e:                                   # noqa: BLE001
-        logger.exception("ontology findings failed")
-        return {"available": False, "error": str(e)[:200], "findings": []}
+    caveat = ("Inferred routes, not observed transfers. Each step is a "
+              "reported relationship and should be checked before it is used.")
+    key = (limit, round(min_conf, 4))
+    now = time.time()
+
+    with _findings_lock:
+        hit = _findings_cache.get(key)
+        fresh = hit and (now - hit[0]) < _FINDINGS_TTL_S
+        needs_refresh = not fresh and key not in _findings_running
+        if needs_refresh:
+            _findings_running.add(key)
+
+    if needs_refresh:
+        threading.Thread(target=_refresh_findings, args=(key, limit, min_conf),
+                         daemon=True).start()
+
+    if hit:
+        # Stale is fine and says so. Fifty seconds of blank screen is not.
+        return {"available": True, "findings": hit[1], "caveat": caveat,
+                "cached": True, "stale": not fresh,
+                "age_seconds": int(now - hit[0])}
+
+    # Nothing cached yet and a refresh is on its way. An empty list with
+    # available:true would read as "the graph implies nothing", which is a
+    # different and false statement — so this says what is actually going on.
+    return {"available": False, "findings": [], "caveat": caveat,
+            "computing": True,
+            "error": "Working out the graph's implied routes — this takes "
+                     "about a minute the first time and is cached after that."}
 
 
 @app.get("/api/ontology/graph/stats")
@@ -4452,6 +4509,63 @@ def api_maritime_area(
                         sanctions_check=_check, flag_lookup=_flag_of)
     return {"kind": kind, "id": id, "name": name,
             "boundary": "polygon" if ring else "bounding box", **out}
+
+
+@app.get("/api/stream")
+async def api_stream(request: Request):
+    """Server-sent events: the pipeline telling the UI something happened.
+
+    THE STREAM IS A NUDGE, NOT THE RECORD. Each message says only what kind
+    of thing arrived; the client refetches the API it already trusts. That
+    keeps one source of truth for what a signal IS — and means a dropped
+    message costs a few seconds of staleness rather than a hole in the feed,
+    because the next poll or the next event fills it in.
+
+    Polling stays in place behind this on purpose. SSE dies quietly: a proxy
+    idles the connection out, a laptop sleeps, a corporate middlebox buffers
+    it forever. A UI that only listened would look alive while being hours
+    stale, which is worse than one that is visibly a minute behind.
+    """
+    q = event_bus.add_listener()
+
+    async def gen():
+        try:
+            # An immediate hello so the client knows the pipe is open rather
+            # than inferring it from the first event, which may be minutes
+            # away on a quiet night.
+            yield "event: ready\ndata: {}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    evt = await asyncio.wait_for(q.get(), timeout=20.0)
+                except asyncio.TimeoutError:
+                    # A comment line, which is a valid SSE keep-alive and
+                    # is what stops an idle proxy closing the connection.
+                    yield ": keep-alive\n\n"
+                    continue
+                payload = evt.get("payload") or {}
+                # Deliberately thin: an id and a position at most. The
+                # client refetches; shipping the whole record here would be
+                # a second, divergent definition of every signal.
+                body = _json.dumps({
+                    "type": evt.get("type"),
+                    "at": evt.get("timestamp"),
+                    "id": payload.get("alert_id") or payload.get("id"),
+                    "severity": payload.get("severity"),
+                    "lat": payload.get("lat"), "lon": payload.get("lon"),
+                })
+                yield f"event: {evt.get('type')}\ndata: {body}\n\n"
+        finally:
+            event_bus.remove_listener(q)
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        # nginx and friends buffer streamed responses by default, which
+        # turns a live stream into a batch delivered at the end.
+        "X-Accel-Buffering": "no",
+    })
 
 
 @app.get("/api/gps-interference")
@@ -14806,6 +14920,23 @@ async def startup_event():
     _spawn(_weekly_snapshot_loop)
     _spawn(_global_adsb_cache_loop)
     _spawn(_gps_interference_alert_loop)
+
+    # WARM THE FINDINGS CACHE ONCE, IN THE BACKGROUND. The walk takes about
+    # a minute, so whoever opens Ontology first would otherwise pay for it.
+    # A thread rather than a task: it is CPU-bound sync work and would hold
+    # the event loop for the whole minute if awaited on it. The two argument
+    # sets are the ones the app actually asks for (app.jsx polls limit=20,
+    # the Ontology page limit=40).
+    def _warm_findings():
+        for lim in (20, 40):
+            key = (lim, 0.05)
+            with _findings_lock:
+                if key in _findings_running:
+                    continue
+                _findings_running.add(key)
+            _refresh_findings(key, lim, 0.05)
+        print("[ontology] findings cache warmed")
+    threading.Thread(target=_warm_findings, daemon=True).start()
     # Forge detection engine
     if _HAS_DETECTORS:
         _weights_file = os.path.join(DATA_DIR, "forge", "forge_weights.json")

@@ -41,6 +41,7 @@ import {
 import { unproject } from "./forecastTerrain.js"
 import { checkUnit } from "./forecastFeasibility.js"
 import { phaseAt } from "./forecastTemplate.js"
+import Loading from "../ui/Loading.jsx"
 
 const W = 560, H = 240
 
@@ -352,7 +353,7 @@ export function Geographic({ tpl, t, country, big = false, onToggleBig,
                 </svg>
                 <p style={{ color: "#9AA0AA", fontSize: 12, lineHeight: 1.55,
                             margin: "10px 0 0" }}>
-                    {why || "Loading country outlines…"}
+                    {why || <Loading size={16} inline label="Loading country outlines" />}
                     {why ? " Without it you cannot check the schematic against real"
                          + " ground — the axes there are relationships, not routes,"
                          + " and nothing asserts the terrain permits them." : ""}
