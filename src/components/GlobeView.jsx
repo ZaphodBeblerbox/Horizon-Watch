@@ -6,7 +6,7 @@ import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, Ces
 import { publishCameraState } from "../globe/cameraState.js"
 import { publishCursor, publishScale, getScale, scaleFor, zoomLabelFor } from "../globe/mapReadout.js"
 import "cesium/Build/Cesium/Widgets/widgets.css"
-import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, openSeaMapProvider, openInfraRasterProvider } from "../globe/imageryProviders.js"
+import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, openSeaMapProvider, openInfraRasterProvider, offlineBasemapProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
@@ -232,6 +232,7 @@ export default function GlobeView({
 }) {
     const viewerRef = useRef(null)
     const baseLayerRef = useRef(null) // the one ImageryLayer this component manages imperatively for basemap swaps
+    const offlineBaseRef = useRef(null) // the Natural Earth floor beneath it, added once
     const tileErrRef = useRef([])
     const offTileErrRef = useRef(null)
     // Cesium OSM Buildings, added only for the 3D basemap.
@@ -737,8 +738,44 @@ export default function GlobeView({
             if (baseLayerRef.current && viewer.imageryLayers.contains(baseLayerRef.current)) {
                 viewer.imageryLayers.remove(baseLayerRef.current, true)
             }
+
+            // THE FLOOR GOES IN FIRST, AND STAYS. Natural Earth II from
+            // Cesium's own bundled assets sits at index 0 for the life of
+            // the viewer; the real basemap is added above it. Online you
+            // never see it. Offline — or on a slow link, or when Esri is
+            // having a day — the layer above simply has no tiles and this
+            // shows through, so the globe is a coarse world map instead of
+            // a blank sphere. Added once, and never removed by a basemap
+            // swap, which is why it is not tracked in baseLayerRef.
             const provider = basemap === "dark" ? esriDarkProvider : esriSatelliteProvider
-            baseLayerRef.current = viewer.imageryLayers.addImageryProvider(provider, 0)
+            // APPENDED, NOT INSERTED AT A FIXED INDEX. The offline floor
+            // below resolves asynchronously, so "put the real basemap at
+            // index 1" raced it: on a cold start the collection was still
+            // empty and Cesium threw a DeveloperError for an index out of
+            // range. Order is established by lowering the floor once it
+            // arrives, which cannot race anything.
+            baseLayerRef.current = viewer.imageryLayers.addImageryProvider(provider)
+
+            if (!offlineBaseRef.current) {
+                offlineBaseRef.current = true    // claim it before the await
+                offlineBasemapProvider()
+                    .then((prov) => {
+                        const v = viewerRef.current?.cesiumElement
+                        if (!v || v.isDestroyed?.()) return
+                        const layer = v.imageryLayers.addImageryProvider(prov)
+                        v.imageryLayers.lowerToBottom(layer)
+                        offlineBaseRef.current = layer
+                    })
+                    .catch(() => {
+                        // A missing floor must not take the globe with it.
+                        offlineBaseRef.current = null
+                        console.warn("[globe] offline basemap unavailable")
+                    })
+            } else if (offlineBaseRef.current !== true
+                       && viewer.imageryLayers.contains(offlineBaseRef.current)) {
+                // A basemap swap appended above it; put it back underneath.
+                viewer.imageryLayers.lowerToBottom(offlineBaseRef.current)
+            }
 
             // A BASEMAP THAT FAILS SHOULD SAY SO. Cesium retries a tile
             // a few times, gives up, and reports it nowhere a person can

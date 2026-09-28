@@ -126,7 +126,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Horizon" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Leaflet's stylesheet used to be pulled from unpkg here. Nothing in
+         this app uses Leaflet — the map is Cesium — so it was a network
+         request on every start that could only ever fail offline and buy
+         nothing when it succeeded. -->
     <style>
         /* ── Horizon Watch design tokens — redesign Round 1 ───────────────
            "The corporate risk console spec." Supersedes EVERY prior token
@@ -782,9 +785,16 @@
 
 <body>
     <div id="root"></div>
-    <script>window.CESIUM_BASE_URL = "https://cesium.com/downloads/cesiumjs/releases/1.141/Build/Cesium/";</script>
-    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
+    <!-- CESIUM'S OWN ASSETS, FROM THIS BUILD, NOT FROM A CDN.
+         This pointed at cesium.com, which meant the globe could not start
+         without a network: Cesium fetches its Workers, Assets and Widgets
+         from CESIUM_BASE_URL at init, and offline every one of them failed,
+         so the desktop build opened to an empty scene. The whole 22 MB
+         build is already bundled at /cesium (public/cesium symlinks
+         node_modules/cesium/Build/Cesium and Vite copies it into dist), so
+         this was fetching from the internet what was already on disk.
+         Relative, not absolute: the DMG serves from tauri://localhost. -->
+    <script>window.CESIUM_BASE_URL = "./cesium/";</script>
     <script type="module" src="/src/main.jsx"></script>
 </body>
 

@@ -97,6 +97,31 @@ export default defineConfig({
                 importScripts: ['/sw-recovery.js'],
                 runtimeCaching: [
                     {
+                        // CESIUM, CACHED AS IT IS USED rather than precached.
+                        // It is excluded from the precache above on purpose —
+                        // 22 MB of workers and assets would be downloaded
+                        // before the app could start for the first time. But
+                        // excluded from BOTH caches it was never available
+                        // offline at all in the browser build, so the globe
+                        // could not start on a second visit without a network.
+                        // CacheFirst because these files are immutable: a
+                        // given Cesium build's worker never changes, and a new
+                        // version arrives under a new path.
+                        urlPattern: ({ url }) => url.pathname.startsWith('/cesium/'),
+                        handler: 'CacheFirst',
+                        options: {
+                            cacheName: 'cesium-assets',
+                            expiration: {
+                                // Generous on count because Cesium's own build
+                                // is ~390 files, and long on age because they
+                                // do not change within a version.
+                                maxEntries: 500,
+                                maxAgeSeconds: 60 * 60 * 24 * 90,
+                            },
+                            cacheableResponse: { statuses: [0, 200] },
+                        },
+                    },
+                    {
                         urlPattern: /\/api\/(strategic-zones|chokepoints|cables|rules|watch-zones)/,
                         handler: 'StaleWhileRevalidate',
                         options: {

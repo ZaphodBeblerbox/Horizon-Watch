@@ -1,4 +1,5 @@
-import { UrlTemplateImageryProvider, Credit } from "cesium"
+import { UrlTemplateImageryProvider, Credit,
+         TileMapServiceImageryProvider, buildModuleUrl } from "cesium"
 import API_BASE from "../apiBase.js"
 
 // ESRI World Imagery — satellite base used when overlays are active
@@ -59,3 +60,28 @@ export const openInfraRasterProvider = new UrlTemplateImageryProvider({
     maximumLevel: 18,
     credit:       new Credit("OpenInfraMap contributors (ODbL)", false),
 })
+
+// ── The map that works with no network at all ────────────────────────────
+//
+// Natural Earth II, which ships inside Cesium's own build and is therefore
+// already on disk in this bundle (dist/cesium/Assets/Textures/NaturalEarthII,
+// about half a megabyte, zoom 0-2). It is coarse — continents and country
+// shapes, no detail past a few hundred kilometres — and that is the point:
+// it is the floor, not the map.
+//
+// IT IS DRAWN UNDERNEATH THE REAL BASEMAP, ALWAYS, rather than swapped in
+// when something decides the app is offline. Online it is invisible because
+// Esri's tiles cover it. Offline, or through a tunnel, or when Esri is
+// simply slow, those tiles never arrive and this shows through instead of a
+// blank blue sphere. No online/offline detection to get wrong, and partial
+// connectivity — the case that actually happens — degrades to "less detail"
+// rather than to "nothing".
+//
+// Returned as a promise because Cesium 1.141 made these providers async;
+// the caller adds the layer when it resolves and the globe renders without
+// it until then.
+export function offlineBasemapProvider() {
+    return TileMapServiceImageryProvider.fromUrl(
+        buildModuleUrl("Assets/Textures/NaturalEarthII"),
+        { credit: new Credit("Natural Earth II", false) })
+}
