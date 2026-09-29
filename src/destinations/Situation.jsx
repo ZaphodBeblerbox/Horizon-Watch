@@ -52,6 +52,7 @@ import TimeStrip from "../components/TimeStrip.jsx"
 import ImagerySidebar from "../components/ImagerySidebar.jsx"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 import LayerSubGroup from "../components/LayerSubGroup.jsx"
+import LayerStatus from "../components/LayerStatus.jsx"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -1051,8 +1052,8 @@ export default function Situation({ onOpenDossier }) {
                                     March and nothing said so. */}
                                 {key === "flows" && contextOn.flows && flowsStatus ? (
                                     <span style={{ display: "block", font: "400 10px var(--font)",
-                                                   color: flowsStatus.state === "error" ? "var(--amber)" : "var(--txt-4)" }}>
-                                        {flowsStatus.text}
+                                                   color: "var(--txt-4)" }}>
+                                        <LayerStatus status={flowsStatus} />
                                     </span>
                                 ) : null}
                             </span>
@@ -1071,10 +1072,13 @@ export default function Situation({ onOpenDossier }) {
                         <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
                             Controlled airspace
                             <span style={{ display: "block", font: "400 10px var(--font)",
-                                           color: airspaceStatus?.state === "error" ? "var(--amber)" : "var(--txt-4)" }}>
-                                {airspaceOn
-                                    ? `floor to ceiling · ${airspaceStatus?.text || "zoom in to draw"}`
-                                    : "floor to ceiling"}
+                                           color: "var(--txt-4)" }}>
+                                {airspaceOn ? (
+                                    <>
+                                        floor to ceiling&nbsp;·{" "}
+                                        <LayerStatus status={airspaceStatus} fallback="zoom in to draw" />
+                                    </>
+                                ) : "floor to ceiling"}
                             </span>
                         </span>
                         <button
@@ -1288,7 +1292,7 @@ export default function Situation({ onOpenDossier }) {
                             <span className="n">{l.label}<em>{l.note}</em></span>
                             <span className="c">
                                 {FACILITY_ROW_TYPE[l.key] && infraOn[l.key] && facStatus
-                                    ? facStatus.text : ""}
+                                    ? <LayerStatus status={facStatus} /> : ""}
                             </span>
                             <span className="eye">
                                 <svg className="icon sm"><use href={infraOn[l.key] ? "#i-eye" : "#i-eye-off"} /></svg>

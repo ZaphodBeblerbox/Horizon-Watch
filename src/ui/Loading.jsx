@@ -24,7 +24,8 @@
  *              `inline`, and always given to screen readers — a spinner with
  *              no name tells you something is happening but not what.
  */
-export default function Loading({ size = 34, label = "Loading", inline = false, style = {} }) {
+export default function Loading({ size = 34, label = "Loading", inline = false,
+                                 labelHidden = false, style = {} }) {
     const mark = (
         <svg className="pxl-loading" width={size} height={size} viewBox="0 0 24 24"
              fill="none" strokeWidth="2.6" strokeLinecap="butt"
@@ -37,10 +38,17 @@ export default function Loading({ size = 34, label = "Loading", inline = false, 
     )
     if (inline) {
         return (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, ...style }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: labelHidden ? 0 : 8, ...style }}>
                 {mark}
-                <span style={{ font: "400 11px var(--font)", color: "var(--txt-4)",
-                               letterSpacing: ".04em" }}>{label}</span>
+                {/* In a column too narrow for the word — a layer rail row —
+                    the label would wrap the row or push the count out. It
+                    stays for screen readers and for the mark's aria-label
+                    rather than being dropped, because "something is
+                    happening" with no name is not much of a status. */}
+                {labelHidden ? null : (
+                    <span style={{ font: "400 11px var(--font)", color: "var(--txt-4)",
+                                   letterSpacing: ".04em" }}>{label}</span>
+                )}
             </span>
         )
     }
