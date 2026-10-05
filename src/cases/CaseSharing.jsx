@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react"
 import { listShares, addShare, removeShare, listUsers } from "../lib/casesApi.js"
 import { toast } from "../ui/toast.js"
 import { currentUserId } from "../lib/capabilities.js"
+import { safeArray } from "../utils/safeArray.js"
 
 export default function CaseSharing({ caseId }) {
     const [state, setState] = useState({ owner_user_id: null, shares: [] })
@@ -28,7 +29,7 @@ export default function CaseSharing({ caseId }) {
         listShares(caseId).then(setState).catch(() => {})
     }, [caseId])
 
-    useEffect(() => { refresh(); listUsers().then(setUsers).catch(() => setUsers([])) }, [refresh])
+    useEffect(() => { refresh(); listUsers().then((v) => setUsers(safeArray(v))).catch(() => setUsers([])) }, [refresh])
 
     const isOwner = state.owner_user_id && state.owner_user_id === currentUserId()
     const sharedIds = new Set(state.shares.map((s) => s.user_id))

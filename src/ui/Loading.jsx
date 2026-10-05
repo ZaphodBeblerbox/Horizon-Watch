@@ -52,10 +52,23 @@ export default function Loading({ size = 34, label = "Loading", inline = false,
             </span>
         )
     }
+    // THE BLOCK FORM FILLS ITS CONTAINER AND SAYS WHAT IT IS WAITING FOR.
+    // It used to be a mark with a little padding, which left it sitting at
+    // the top-left of whatever panel was empty, looking like a stray glyph
+    // rather than the thing that panel was doing. Centred in the space it
+    // owns, with the label under it, it reads as "this area is working".
     return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center",
-                      padding: "var(--space-4) 0", ...style }}>
+        <div role="status" aria-live="polite" style={{
+            flex: 1, minHeight: 140, width: "100%",
+            display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 12,
+            ...style,
+        }}>
             {mark}
+            <span style={{
+                font: "400 11px var(--font)", color: "var(--txt-4)",
+                letterSpacing: ".14em", textTransform: "uppercase",
+            }}>{label}</span>
         </div>
     )
 }

@@ -102,18 +102,89 @@ def _near_named_chokepoint(lat, lon) -> bool:
     )
 
 
+# Written-out numbers that routinely carry a casualty count in a headline.
+# Digits are handled by the regex below; these are the words that are not
+# digits but are still counts.
+_WORD_NUMBERS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "twelve": 12, "dozen": 12, "dozens": 24, "scores": 40, "hundreds": 100,
+    "thousands": 1000,
+}
+# A count only counts when it is ATTACHED to a casualty word. "12 killed"
+# is a magnitude; "12 drones" in a headline that also says "killed" is not.
+_COUNT_NEAR_CASUALTY = re.compile(
+    r"(?:(\d{1,6})|(" + "|".join(_WORD_NUMBERS) + r"))\s+"
+    r"(?:\w+\s+){0,2}?"
+    r"(?:killed|kills|dead|deaths|died|fatalities|fatality|casualties)"
+    r"|(?:killed|kills|dead|deaths|died|fatalities|fatality|casualties)"
+    r"(?:\s+\w+){0,2}?\s+(?:(\d{1,6})|(" + "|".join(_WORD_NUMBERS) + r"))",
+    re.IGNORECASE,
+)
+
+# MASS-CASUALTY THRESHOLD. Ten is where a single incident stops being one
+# and starts being an event with its own response. It is a judgement, and
+# it is written here once so it can be argued with, rather than implied by
+# a keyword list.
+_MASS_CASUALTY_N = 10
+
+
+def _casualty_count(t: str) -> int | None:
+    """The casualty number a headline actually states, or None if it states
+    none. None means 'unknown scale', never 'zero'."""
+    best = None
+    for m in _COUNT_NEAR_CASUALTY.finditer(t):
+        for g in m.groups():
+            if not g:
+                continue
+            n = int(g) if g.isdigit() else _WORD_NUMBERS.get(g.lower())
+            if n is not None:
+                best = n if best is None else max(best, n)
+    return best
+
+
 def classify_severity_deterministic(text: str, lat=None, lon=None) -> str | None:
     """Real rule-based severity check; returns None (defer to _TIER_SEV) when
-    nothing real fires rather than guessing."""
+    nothing real fires rather than guessing.
+
+    WHY THIS GRADES INSTEAD OF FLAGGING. This used to return "critical" for
+    any headline containing a casualty or damage word. Over a feed that is
+    almost entirely conflict reporting, that word is in nearly every
+    headline: measured on the live surface pool, 50 items out of 50 came
+    back critical. A severity scale that puts 100% of its corpus in the top
+    tier carries no information — the colour stops being a reason to look
+    at one row rather than another, which is the only job it has.
+
+    So presence of a casualty word establishes that something violent
+    happened; the SCALE it happened at decides the tier. A headline that
+    states a number is graded on that number. A headline that does not is
+    "significant" — it happened, the scale is unknown, and claiming the top
+    tier on an unknown is the same mistake in a smaller font.
+
+    It also used to return "high", which is not one of the four tiers the
+    rest of the system uses (low / elevated / significant / critical).
+    TIER_RANK did not know the word, so every item that took that branch
+    was scored as rank 0 — the BOTTOM — while reading as though it were
+    near the top.
+    """
     t = (text or "").lower()
     if not t:
         return None
+
+    # A closed strait is critical regardless of body count: the consequence
+    # is the closure, and it is already the thing being watched.
     if _near_named_chokepoint(lat, lon) and _any_whole_word(t, _CORRIDOR_CLOSURE_KEYWORDS):
         return "critical"
+
     if _any_whole_word(t, _CASUALTY_DAMAGE_KEYWORDS):
-        return "critical"
+        n = _casualty_count(t)
+        if n is None:
+            return "significant"
+        return "critical" if n >= _MASS_CASUALTY_N else "significant"
+
     if _any_whole_word(t, _DEGRADATION_OR_ADVISORY_KEYWORDS):
-        return "high"
+        return "elevated"
+
     return None
 
 RING_MARGIN_KM = 15.0

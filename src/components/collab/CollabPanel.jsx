@@ -7,6 +7,7 @@ import {
     listActivity, presenceHeartbeat, getPresence,
 } from "../../lib/collabApi.js"
 import API_BASE from "../../apiBase.js"
+import { safeArray } from "../../utils/safeArray.js"
 
 /**
  * CollabPanel — Workstation round, Part 8. The one real implementation of
@@ -104,7 +105,7 @@ function Assignment({ recordRef }) {
         getAssignment(recordRef).then(setAssignment).catch(() => setAssignment(null))
     }, [recordRef])
     useEffect(() => { load() }, [load])
-    useEffect(() => { getUsersCached().then(setUsers) }, [])
+    useEffect(() => { getUsersCached().then((v) => setUsers(safeArray(v))) }, [])
 
     const usersById = Object.fromEntries(users.map((u) => [u.id, u]))
     const assignee = assignment ? usersById[assignment.assignee_user_id] : null
@@ -277,9 +278,9 @@ function Composer({ recordRef, users, onPosted }) {
 function Comments({ recordRef }) {
     const [comments, setComments] = useState([])
     const [users, setUsers] = useState([])
-    const load = useCallback(() => { listComments(recordRef).then(setComments).catch(() => setComments([])) }, [recordRef])
+    const load = useCallback(() => { listComments(recordRef).then((v) => setComments(safeArray(v))).catch(() => setComments([])) }, [recordRef])
     useEffect(() => { load() }, [load])
-    useEffect(() => { getUsersCached().then(setUsers) }, [])
+    useEffect(() => { getUsersCached().then((v) => setUsers(safeArray(v))) }, [])
     const usersById = Object.fromEntries(users.map((u) => [u.id, u]))
 
     return (
@@ -316,8 +317,8 @@ function Comments({ recordRef }) {
 function Activity({ recordRef }) {
     const [entries, setEntries] = useState([])
     const [users, setUsers] = useState([])
-    useEffect(() => { listActivity(recordRef).then(setEntries).catch(() => setEntries([])) }, [recordRef])
-    useEffect(() => { getUsersCached().then(setUsers) }, [])
+    useEffect(() => { listActivity(recordRef).then((v) => setEntries(safeArray(v))).catch(() => setEntries([])) }, [recordRef])
+    useEffect(() => { getUsersCached().then((v) => setUsers(safeArray(v))) }, [])
     const usersById = Object.fromEntries(users.map((u) => [u.id, u]))
     if (entries.length === 0) return null
 

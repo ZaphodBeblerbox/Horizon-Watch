@@ -87,7 +87,13 @@ export default function GlobeHeatmapLayer({ enabled, domain = "ais", hours = 24,
         cleanup()
         if (!enabled || !cells?.length) return
 
-        const max = Math.max(...cells.map(c => c.count), 1)
+        /* REDUCED, NOT SPREAD. `Math.max(...cells.map(…))` passes one
+           argument per cell, and a spread of more than ~100k arguments
+           throws "Maximum call stack size exceeded" — which is how a
+           density response that grew took down the whole layer with a
+           RangeError rather than drawing a slow heatmap. A reduce has no
+           argument limit. */
+        const max = cells.reduce((m, c) => (c.count > m ? c.count : m), 1)
         const half = cellDeg ? cellDeg / 2 : HALF_CELL
         const added = []
 

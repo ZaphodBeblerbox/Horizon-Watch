@@ -426,6 +426,17 @@ def _notify_shared(case_id: str, target_user_id: str, sharer: dict):
 
 SIGNALS_ROOT = "Signals"
 SCREENSHOTS_ROOT = "Screenshots"
+# The three kinds a case could not hold until now. A case is meant to be
+# everything about one question — the signals, the pictures, AND the
+# products written from them. Filing only the inputs leaves the output
+# living in a browser tab, which is where work goes to be lost.
+BRIEFINGS_ROOT = "Briefings"
+DECKS_ROOT = "Decks"
+DOCUMENTS_ROOT = "Documents"
+# A dictated observation is not a signal with a missing domain. Filing it
+# under Signals / Other is how something you said out loud becomes
+# impossible to find again.
+NOTES_ROOT = "Notes"
 
 # What a saved thing's type is called in the tree. Capability names, never
 # feed names — the same rule the map's layer labels follow (NAMING.md §1).
@@ -438,6 +449,21 @@ SIGNAL_CATEGORIES = {
     "sentinel": "Imagery", "imagery": "Imagery", "detection": "Imagery",
     "firms": "Thermal", "fires": "Thermal",
     "zone": "Zones", "zones": "Zones",
+}
+# Products are filed by what they are about, not by what made them.
+# A product's sub-folder is what it is ABOUT, not what it is — the root
+# already says that. "Decks / Decks / my deck" is a folder apologising for
+# itself; where the two would agree, the product is filed at the root (see
+# the route below).
+PRODUCT_CATEGORIES = {
+    "brief": "Briefs", "briefing": "Briefs", "report": "Briefs",
+    "deck": "Decks", "slides": "Decks", "presentation": "Decks",
+    "doc": "Documents", "document": "Documents",
+    # Files flat under Notes/ — the dedupe rule below drops a folder that
+    # repeats its parent, and a note has no sub-kind worth a folder.
+    "note": "Notes",
+    "assessment": "Assessments", "judgement": "Assessments",
+    "handover": "Handover",
 }
 SCREENSHOT_CATEGORIES = {
     "analytics": "Analytics",
@@ -483,6 +509,41 @@ def _ensure_path(db, case_id: str, user_id: str, *names):
     return node
 
 
+@router.post("/for-theater")
+async def case_for_theater(request: Request):
+    """The case for a theater, created on first use.
+
+    WHY THIS IS A ROUTE AND NOT A DIALOG. Saving a signal should not ask a
+    question. Everything in this app is done while standing in a theater,
+    so that is the obvious home for what you save there, and a case per
+    theater is the smallest structure that keeps one watch's work out of
+    another's. If you want it somewhere else, File to case still moves it.
+
+    Get-or-create, matched on title, so repeated saves do not breed a case
+    per click.
+    """
+    from database import Case, get_db
+    me = _me(request)
+    body = await request.json()
+    name = (body.get("theater") or "").strip()[:120]
+    if not name:
+        raise HTTPException(status_code=400, detail="theater is required")
+
+    with get_db() as db:
+        row = (db.query(Case)
+               .filter(Case.owner_user_id == me["id"], Case.title == name)
+               .order_by(Case.created_at.asc()).first())
+        if row:
+            return {"case_id": row.case_id, "title": row.title, "created": False}
+        case_id = f"CS-{uuid.uuid4().hex[:6].upper()}"
+        row = Case(case_id=case_id, title=name, owner_user_id=me["id"],
+                   status="active", priority="moderate",
+                   summary=f"Everything saved while watching {name}.")
+        db.add(row)
+        db.commit()
+        return {"case_id": case_id, "title": name, "created": True}
+
+
 @router.post("/{case_id}/file-saved")
 async def file_saved_item(case_id: str, request: Request):
     """File a saved signal, or a screenshot, into its folder in this case.
@@ -501,19 +562,54 @@ async def file_saved_item(case_id: str, request: Request):
     body = await request.json()
 
     kind = (body.get("kind") or "signal").strip().lower()
-    if kind not in ("signal", "screenshot"):
-        raise HTTPException(status_code=400, detail="kind must be 'signal' or 'screenshot'")
+    KINDS = {
+        "signal":     (SIGNALS_ROOT,    SIGNAL_CATEGORIES),
+        "screenshot": (SCREENSHOTS_ROOT, SCREENSHOT_CATEGORIES),
+        "briefing":   (BRIEFINGS_ROOT,  PRODUCT_CATEGORIES),
+        "deck":       (DECKS_ROOT,      PRODUCT_CATEGORIES),
+        "document":   (DOCUMENTS_ROOT,  PRODUCT_CATEGORIES),
+        "note":       (NOTES_ROOT,      PRODUCT_CATEGORIES),
+    }
+    if kind not in KINDS:
+        raise HTTPException(status_code=400,
+                            detail=f"kind must be one of {', '.join(sorted(KINDS))}")
     name = (body.get("name") or "").strip()[:255] or "Untitled"
 
-    if kind == "signal":
-        root, table = SIGNALS_ROOT, SIGNAL_CATEGORIES
-    else:
-        root, table = SCREENSHOTS_ROOT, SCREENSHOT_CATEGORIES
+    root, table = KINDS[kind]
     category = _category(body.get("category"), table)
+    # A theater, when the caller is standing in one, becomes the top folder:
+    # "Red Sea watch / Signals / Vessels". Without it everything from every
+    # watch lands in one Signals folder and the tree stops being a filing
+    # system at about forty items.
+    theater = (body.get("theater") or "").strip()[:80] or None
 
     with get_db() as db:
-        _case_access(db, case_id, me["id"], need_edit=True)
-        folder = _ensure_path(db, case_id, me["id"], root, category)
+        c = _case_access(db, case_id, me["id"], need_edit=True)
+        # THE THEATER FOLDER IS DROPPED WHEN IT ONLY REPEATS THE CASE. A
+        # theater's own case is already named after it, so "Red Sea watch /
+        # Red Sea watch / Signals" buys a level of nesting that says nothing.
+        # The folder stays when the case is some other thing — a workup that
+        # gathers work from more than one watch.
+        if theater and (c.title or "").strip().lower() == theater.lower():
+            theater = None
+        # AN EXPLICIT FOLDER WINS OVER THE TAXONOMY. Voice filing says
+        # "file this under vessels", meaning a folder that already exists
+        # and was chosen by a person. Routing it through root/category
+        # anyway would put it somewhere else and quietly ignore the
+        # instruction, which is worse than refusing.
+        explicit = body.get("parent_id")
+        if explicit:
+            folder = db.query(CaseNode).filter(
+                CaseNode.id == explicit, CaseNode.case_id == case_id,
+                CaseNode.kind == "folder").first()
+            if not folder:
+                raise HTTPException(status_code=404, detail="that folder is not in this case")
+        else:
+            # No folder that repeats its parent's name.
+            path = [theater, root] if theater else [root]
+            if category.lower() != root.lower():
+                path.append(category)
+            folder = _ensure_path(db, case_id, me["id"], *path)
 
         image = body.get("image") or ""
         if kind == "screenshot" or image.startswith("data:"):
@@ -539,6 +635,15 @@ async def file_saved_item(case_id: str, request: Request):
             n = CaseNode(id=node_id, case_id=case_id, parent_id=folder.id, kind="file",
                          name=name, owner_user_id=me["id"], mime=mime,
                          size_bytes=len(data), storage_path=rel, sort_index=0)
+        elif body.get("html"):
+            # A briefing, deck or document arrives as the HTML the editor
+            # round-trips. It is a real doc node, so it opens in the case's
+            # own editor rather than being a reference to something that
+            # lives somewhere else.
+            n = CaseNode(case_id=case_id, parent_id=folder.id, kind="doc",
+                         name=name, owner_user_id=me["id"],
+                         mime="text/html", body_html=body["html"],
+                         sort_index=0)
         else:
             # A signal with no crop is a reference, not a file.
             n = CaseNode(case_id=case_id, parent_id=folder.id, kind="signal",

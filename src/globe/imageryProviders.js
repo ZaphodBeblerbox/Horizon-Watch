@@ -37,6 +37,24 @@ export const esriDarkProvider = new UrlTemplateImageryProvider({
     credit:       new Credit("Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community", false),
 })
 
+// THE LIGHT COUNTERPART OF THE DARK BASE, from the same Esri Canvas
+// family and the same tiling scheme, so switching between them is a
+// straight swap with no reprojection and no change in maximum level.
+//
+// It exists because the map is now the canvas behind the WHOLE app
+// (▣ Canvas), and every floating surface is translucent glass over it.
+// Light-theme glass over the dark basemap came out muddy grey instead of
+// cream, and text that was designed against cream lost most of its
+// contrast. The basemap has to follow the theme or the theme is only
+// half-applied.
+export const esriLightProvider = new UrlTemplateImageryProvider({
+    url:          "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    // Same ceiling as the dark base, and for the same measured reason —
+    // these are the same service family with the same published levels.
+    maximumLevel: 16,
+    credit:       new Credit("Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community", false),
+})
+
 // OpenSeaMap nautical seamarks
 export const openSeaMapProvider = new UrlTemplateImageryProvider({
     url:          "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",

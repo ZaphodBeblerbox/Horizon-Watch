@@ -44,8 +44,8 @@ const TYPE = {
 // toggles with the light/dark switch (hw.css:1067-1068's .slide/.slide.light).
 const DECK_CHROME = "#0d1013"
 const PALETTES = {
-    dark:  { bg: "#0d1013", ink: "#e7ebef", dim: "#8b95a1", panel: "#171b20", line: "#2a3138", accent: "#5f95d0" },
-    light: { bg: "#f4f2ee", ink: "#1b1f24", dim: "#5a6270", panel: "#f4f2ee", line: "#d7d2c9", accent: "#3f6fa8" },
+    dark:  { bg: "#0a0e1f", ink: "#f2f3f6", dim: "#878c9a", panel: "#181b25", line: "#2b3040", accent: "#a0b2d2" },
+    light: { bg: "#f3f2ee", ink: "#1a1d2c", dim: "#5c616f", panel: "#fcfbf6", line: "#d9d7cf", accent: "#3c507d" },
 }
 
 // A PRINTED DECK IS A DOCUMENT, NOT A PHOTOGRAPH OF THE SCREEN. The theme

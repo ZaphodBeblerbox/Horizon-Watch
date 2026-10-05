@@ -36,6 +36,10 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 import { coord, safeCartesian } from "./markerOrientation.js"
 
 const TRADE_COLOR = Color.fromCssColorString("#8E9BAA")
+// Amber rather than red: a corridor with something on it is worth looking
+// at, not an emergency. Red here would compete with the severity marks that
+// really do mean one.
+const DISRUPTED_COLOR = Color.fromCssColorString("#b7822c")
 const ENERGY_COLOR = Color.fromCssColorString("#B9A6FF")
 
 /**
@@ -76,23 +80,34 @@ export default function GlobeFlowsLayer({ enabled = false, onStatus = null }) {
         Promise.all([
             fetch(`${API_BASE}/api/infrastructure/shipping-routes`, { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : null)).catch(() => null),
-            fetch(`${API_BASE}/api/infrastructure/pipelines`, { credentials: "include" })
+            // OSM, not GEM. The GOPIT dataset this used to read was
+            // withdrawn — repository and files both 404 — so the energy half
+            // of this layer had been empty since March while the layer went
+            // on calling itself "Trade & energy flows".
+            fetch(`${API_BASE}/api/infrastructure/pipelines-osm`, { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : null)).catch(() => null),
-        ]).then(([tr, pl]) => {
+            // What is actually happening on the corridors, so a disrupted
+            // one can be drawn as disrupted rather than as a line.
+            fetch(`${API_BASE}/api/flows/status`, { credentials: "include" })
+                .then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        ]).then(([tr, pl, st]) => {
             if (cancelled) return
             const routes = safeArray(tr?.routes)
             const pipelines = safeArray(pl?.pipelines)
-            // The reason the energy half is empty, carried through from
-            // the server rather than shown as a zero.
-            const note = !pipelines.length && pl?.error
-                ? `energy unavailable — ${String(pl.error).slice(0, 60)}`
+            const status = {}
+            for (const r of safeArray(st?.routes)) status[r.id] = r
+            const pending = safeArray(pl?.regions_pending).length
+            const note = !pipelines.length && pending
+                ? `energy still loading — ${pending} region(s) pending`
                 : null
-            setData({ routes, pipelines, note })
+            setData({ routes, pipelines, status, note })
+            const disrupted = safeArray(st?.routes).filter((r) => r.disrupted).length
             onStatus?.({
                 state: routes.length || pipelines.length ? "ok" : "error",
                 text: note
                     ? `${routes.length} trade routes · ${note}`
-                    : `${routes.length} trade · ${pipelines.length} energy`,
+                    : `${routes.length} trade · ${pipelines.length} energy`
+                      + (disrupted ? ` · ${disrupted} disrupted` : ""),
             })
         })
 
@@ -113,6 +128,12 @@ export default function GlobeFlowsLayer({ enabled = false, onStatus = null }) {
                     description: r.description,
                     chokepoints: safeArray(r.chokepoints).join(", ") || undefined,
                     waypoints: safeArray(r.coordinates).length,
+                    // What is on it right now, so a click answers the
+                    // question the corridor exists to raise.
+                    vessels_now: data.status?.[r.id]?.traffic?.vessels,
+                    usually: data.status?.[r.id]?.traffic?.baseline ?? undefined,
+                    incidents: data.status?.[r.id]?.incidents?.count,
+                    disrupted_because: (data.status?.[r.id]?.why || []).join("; ") || undefined,
                     geometry_caveat:
                         "SCHEMATIC. A real route is a corridor tens of kilometres "
                         + "wide that each ship chooses its own line through; this is "
@@ -133,6 +154,7 @@ export default function GlobeFlowsLayer({ enabled = false, onStatus = null }) {
                 const positions = routePositions(r?.coordinates)
                 if (positions.length < 2 || !r?.id) return null
                 const mid = midpointOf(r.coordinates)
+                const st = data.status?.[r.id]
                 return (
                     <Entity
                         key={`trade-${r.id}`}
@@ -141,13 +163,19 @@ export default function GlobeFlowsLayer({ enabled = false, onStatus = null }) {
                         position={mid ? Cartesian3.fromDegrees(mid.lon, mid.lat) : undefined}
                         polyline={{
                             positions,
-                            width: 2,
+                            // A DISRUPTED CORRIDOR HAS TO LOOK DIFFERENT, not
+                            // just read differently in a panel. Thicker and
+                            // warm, with a shorter dash so the line reads as
+                            // broken rather than merely schematic — the same
+                            // corridor, visibly not behaving.
+                            width: st?.disrupted ? 3.5 : 2,
                             clampToGround: true,
                             // Dashed, because the line is schematic. A solid
                             // line reads as a surveyed track.
                             material: new PolylineDashMaterialProperty({
-                                color: TRADE_COLOR.withAlpha(0.85),
-                                dashLength: 18,
+                                color: (st?.disrupted ? DISRUPTED_COLOR : TRADE_COLOR)
+                                    .withAlpha(st?.disrupted ? 0.95 : 0.85),
+                                dashLength: st?.disrupted ? 8 : 18,
                             }),
                         }}
                         label={mid ? {

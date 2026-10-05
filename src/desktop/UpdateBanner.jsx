@@ -34,7 +34,7 @@ export default function UpdateBanner() {
         <div role="status" style={{
             position: "fixed", bottom: 12, left: "50%", transform: "translateX(-50%)",
             zIndex: 120, display: "flex", alignItems: "center", gap: 10,
-            padding: "7px 13px", background: "var(--bg-2, #22282f)",
+            padding: "7px 13px", background: "var(--bg-2, #1e212c)",
             border: "1px solid var(--line)", borderRadius: 4,
             boxShadow: "0 4px 18px rgba(0,0,0,.4)", maxWidth: "calc(100vw - 32px)",
             font: "400 12px var(--font)", color: "var(--txt-2)",

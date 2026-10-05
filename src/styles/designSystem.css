@@ -40,8 +40,16 @@
    none` and a transition; callers drive the slide by toggling the
    `transform`/`opacity` inline style (see Situation.jsx), never by adding/
    removing a class that carries its own animation. */
+/* v6 A2 — "Glass" means background var(--glass), backdrop-filter
+   blur(22px) saturate(1.15), border 1px solid var(--gline), box-shadow
+   var(--gshadow). Translucency without the blur is just murk: what makes
+   a pane read as glass is that the map behind it is visibly DEFOCUSED,
+   not merely dimmed. */
 .pane-glass {
     background: var(--pane-glass-bg);
+    backdrop-filter: blur(22px) saturate(1.15);
+    -webkit-backdrop-filter: blur(22px) saturate(1.15);
+    box-shadow: var(--gshadow);
     animation: none;
     transition: transform .24s var(--ease), opacity .18s linear, width .24s var(--ease);
 }
@@ -531,48 +539,86 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack
    --map-inset-l / --map-inset-r, which the host sets from its real pane widths
    (and to 0 when a pane is minimised). Default 0 so a map with no panes is
    unaffected. */
+/* ── Annotation bar · PARALLAX v6 Part A5.3 ──────────────────────────
+   IT IS A PILL, AND HORIZONTAL. It used to be a vertical column of
+   28px squares stacked against the left edge — which put a wall of
+   anonymous glyphs over the geography and, being square, read as part
+   of the panel chrome rather than as something floating on the map.
+
+   A11 is the rule it now obeys: map UI is ROUNDED (pills, 10–22px
+   radii); everything else keeps square corners. That one distinction
+   is what tells you, without reading anything, whether a control acts
+   on the map or on the application. */
 .annobar {
-    position: absolute; top: 10px; z-index: 3;
+    position: absolute; top: 10px; z-index: 23;
     left: calc(var(--map-inset-l, 0px) + 10px);
-    display: flex; flex-direction: column; gap: 4px;
+    height: 34px; display: flex; flex-direction: row; align-items: center;
+    gap: 2px; padding: 0 4px 0 10px; border-radius: 17px;
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(1.15);
+    -webkit-backdrop-filter: blur(22px) saturate(1.15);
+    border: 1px solid var(--gline); box-shadow: var(--gshadow);
 }
+/* A vertical rule between groups, not a horizontal one — the bar runs
+   across now. 1×18, var(--gline2), 4px either side. */
 .annobar .annosep {
-    display: block; height: 1px; margin: 3px 2px;
-    background: var(--line); border: 0;
+    display: block; width: 1px; height: 18px; margin: 0 4px;
+    background: var(--gline2); border: 0;
 }
 .mapbtn, .tool {
-    width: 28px; height: 28px; display: grid; place-items: center;
-    background: var(--bg-2); border: 1px solid var(--line);
-    color: var(--txt-3); cursor: pointer; padding: 0;
+    width: 28px; height: 26px; display: grid; place-items: center;
+    background: transparent; border: 0; border-radius: 10px;
+    color: var(--txt3); cursor: pointer; padding: 0;
     transition: background 100ms linear, color 100ms linear;
 }
-.mapbtn:hover, .tool:hover { background: var(--bg-3); color: var(--txt); }
-.mapbtn.on, .tool.on {
-    color: var(--txt); background: var(--bg-4); border-color: var(--line-strong);
-}
+.mapbtn:hover, .tool:hover { background: var(--hov); color: var(--txt); }
+.mapbtn.on, .tool.on { color: var(--txt); background: var(--accdim); }
 .mapbtn:disabled, .tool:disabled { opacity: .4; cursor: not-allowed; }
 .mapbtn svg, .tool svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .tool.hidden { display: none; }
 
 /* §10.2 — nav cluster, top-right. Horizontal, so the zoom readout can sit
    between the + and − where it belongs rather than below both. */
+/* ── Map controls · PARALLAX v6 Part A5.4 ────────────────────────────
+   BOTTOM-RIGHT, VERTICAL, AND A PILL. It used to be a horizontal strip
+   pinned to the top-right, where it collided with the tool window and
+   sat in the part of the map the eye reads first.
+
+   The one-pixel gaps between buttons are not borders — the GROUP owns a
+   var(--gline) background and the gaps let it show through as hairlines.
+   A border on every button reads as six separate controls; hairlines
+   read as one control with six segments, which is what it is. */
 .mapchrome {
-    position: absolute; top: 10px; z-index: 3;
-    right: calc(var(--map-inset-r, 0px) + 10px);
-    display: flex; align-items: center; gap: 4px;
+    position: absolute; z-index: 23;
+    bottom: var(--pane-bottom);
+    right: calc(var(--map-inset-r, 0px) + 12px);
+    display: flex; flex-direction: column; align-items: stretch; gap: 1px;
+    overflow: hidden; border-radius: 17px;
+    background: var(--gline);
+    backdrop-filter: blur(22px) saturate(1.15);
+    -webkit-backdrop-filter: blur(22px) saturate(1.15);
+    border: 1px solid var(--gline); box-shadow: var(--gshadow);
 }
-.mapchrome .navz {
-    height: 28px; min-width: 62px; padding: 0 7px;
-    display: grid; place-items: center;
-    background: var(--bg-2); border: 1px solid var(--line);
-    font: 10px var(--mono); color: var(--txt-2); white-space: nowrap;
+/* Every child is a 34×30 cell on var(--glass); the shared rules for
+   .mapbtn above would otherwise give these the annotation bar's 10px
+   radius, which a segmented pill must not have. */
+.mapchrome > * {
+    width: 34px; height: 30px; border-radius: 0 !important;
+    background: var(--glass) !important; border: 0 !important;
+    color: var(--txt2);
 }
+.mapchrome > *:hover { background: var(--hov) !important; color: var(--txt); }
+/* A5.4's group is buttons only. The camera height used to ride between
+   + and −, where at 34px it simply clipped — and it was already a second
+   answer to a question .mapmeta answers better bottom-left with a
+   measured scale bar you can hold a finger against. One reading, in the
+   place the spec puts it. */
+.mapchrome .navz { display: none; }
 .mapchrome .compass {
-    width: 28px; height: 28px; display: grid; place-items: center;
-    background: var(--bg-2); border: 1px solid var(--line);
-    color: var(--txt-3); cursor: pointer; padding: 0;
+    display: grid; place-items: center; color: var(--txt3);
+    cursor: pointer; padding: 0;
 }
-.mapchrome .compass:hover { color: var(--txt); background: var(--bg-3); }
+.mapchrome .compass:hover { color: var(--txt); }
 .mapchrome .compass svg {
     width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5;
     transition: transform 160ms var(--ease);
@@ -581,7 +627,12 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack
 /* §8 / §10 — the measured scale bar and cursor readout, bottom-left.
    `left` clears the left pane; the host sets --pane-l. */
 .mapmeta {
-    position: absolute; bottom: 11px; z-index: 2;
+    position: absolute; z-index: 24;
+    /* Clears the floating timeline (A4.1): its own height, plus the 12px
+       it sits off the bottom, plus a 12px gap. --strip-h is the measured
+       height; 30px is the collapsed head, which is the smallest it ever
+       gets. */
+    bottom: var(--pane-bottom);
     left: calc(var(--map-inset-l, 0px) + 12px);
     display: flex; flex-direction: column; gap: 4px;
     font: 10px var(--mono); color: var(--txt-3);
@@ -645,9 +696,21 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack
    binds — undersize the CONTENT and the category chips collide with what is
    above them.
    ------------------------------------------------------------------- */
+/* ── Timeline · v6 A4.1 ──────────────────────────────────────────────
+   A FLOATING DRAWER, NOT A FOOTER. It used to be an in-flow band welded
+   across the bottom with a solid fill, which cost the map 76px of height
+   permanently and read as part of the window frame. A4.1 floats it —
+   left 58, right 12, bottom 12 — so the map runs full-bleed underneath
+   and the timeline is visibly something laid over the geography, which
+   is what it is: a filter on what the map is showing. */
 .timestrip {
-    flex: none; height: 76px; border-top: 1px solid var(--line);
-    background: var(--bg-1); display: flex; flex-direction: column;
+    position: absolute; left: 10px; right: 12px; bottom: 12px; z-index: 24;
+    height: 76px;
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(1.15);
+    -webkit-backdrop-filter: blur(22px) saturate(1.15);
+    border: 1px solid var(--gline); box-shadow: var(--gshadow);
+    display: flex; flex-direction: column;
 }
 .timestrip:has(#gcstrip:not(.hidden)) { height: 150px; max-height: 34vh; }
 .timestrip .head {
@@ -1300,7 +1363,7 @@ table.grid .dim { color: var(--txt-4); }
    reads as working rather than as stalled. Colours come from the theme, so
    the mark is ink-on-paper in light and light-on-slate in dark. */
 .pxl-loading .pxl-ink  { stroke: var(--txt); }
-.pxl-loading .pxl-echo { stroke: var(--accent, #5f95d0); }
+.pxl-loading .pxl-echo { stroke: var(--acc-hi); }
 .pxl-loading .pxl-e1 { animation: pxl-lift 1.15s ease-in-out infinite; }
 .pxl-loading .pxl-e2 { animation: pxl-lift 1.15s ease-in-out .16s infinite; }
 @keyframes pxl-lift {
@@ -1310,3 +1373,16 @@ table.grid .dim { color: var(--txt-4); }
 @media (prefers-reduced-motion: reduce) {
     .pxl-loading .pxl-e1, .pxl-loading .pxl-e2 { animation: none; opacity: 1; }
 }
+
+
+/* ── DocWriter's empty-page prompt ───────────────────────────────────────
+   contentEditable has no placeholder, and an empty sheet with a cursor on
+   it tells a writer nothing about what the toolbar above will do. Shown
+   only while the element is genuinely empty — :empty would not match,
+   because the editor keeps an empty <p> so the first keystroke lands
+   inside a block rather than as a bare text node. */
+.plx-docwriter > p:only-child:empty::before {
+    content: attr(data-ph);
+    color: #9a9a92;
+}
+.plx-docwriter:focus-within > p:only-child:empty::before { opacity: .55; }

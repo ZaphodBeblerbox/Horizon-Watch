@@ -1,1069 +1,616 @@
-import { useState, useEffect, useRef, useCallback } from "react"
-import API_BASE from "../apiBase.js"
-import { addToBriefing } from "../state/briefingBasket.js"
-import { saveForBriefing } from "../state/savedForBriefing.js"
-import Capturable from "../capture/Capturable.jsx"
-import { toast } from "../ui/toast.js"
-import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
-import { SENSOR_OPTIONS, SENSOR_LABEL, AOI_CLASS_ICON, AOI_CLASSES, fmtDate, SceneScrubber, SceneComparison } from "../components/imagery/sceneComparison.jsx"
-import ScanProgress from "../components/imagery/ScanProgress.jsx"
-import AoiMiniMap from "./AoiMiniMap.jsx"
-import Minimap from "../components/Minimap.jsx"
-import CorroboratedPanel from "../components/CorroboratedPanel.jsx"
-import { boundsToPolygon } from "./sourcesLogic.js"
-
-// Imagery — page-by-page rebuild, Part B. A UI over the real, already-
-// existing Sentinel scanner pipeline (backend/sentinel_scanner.py, real
-// YOLO-OBB/DOTA optical detector) — never a second/parallel/demo pipeline.
-// No glass panes (not called for in this part of the spec, unlike
-// Situation/Dossiers) — plain docked panes matching Generate.jsx.
-//
-// Honest scope disclosure: the real pipeline in this codebase is single-
-// scene vessel detection, not the full task/pair/co-register/... pipeline
-// the spec describes. This page bridges that real output into a real
-// two-scene comparison (backend/imagery_pipeline.py: real reference-scan
-// lookup, real spatial new/existing/removed matching, real persistent-
-// false-positive suppression) rather than fabricating the missing stages.
-// SAR is real and deployed as of the SAR-detector round (backend/
-// sar_detector.py, real Sentinel-1 raw VH/VV bands + Faster R-CNN) —
-// this page shows both OPTICAL and SAR detections, per the scan's own
-// real `instrument` field.
-//
-// Real Part [Imagery/Situation top-bar entry point] round: the sensor
-// vocabulary and comparison-view UI (SceneScrubber/SceneComparison) now
-// live in ../components/imagery/sceneComparison.jsx, shared with
-// src/components/ImagerySidebar.jsx (Situation's top-bar imagery/detection
-// entry point) — this file no longer defines its own copy.
-
-const CADENCES = ["daily", "3-day", "weekly", "monthly", "on demand"]
-
-// Object types are stored as schema keys. A person reads "storage tank";
-// "storage_tank" is an implementation detail leaking into a deliverable.
-const readable = (t) => (t || "object").replace(/_/g, " ")
-
 /**
- * NewAreaForm — name the drawn box and say how it should be watched.
+ * Imagery.jsx — PARALLAX v6. Looking at what was photographed.
  *
- * Sensor is chosen HERE rather than defaulted, because it is the decision
- * that determines what the region can ever detect: optical sees what a
- * thing is and fails under cloud and at night; SAR sees through both and
- * cannot tell you what it found. Burying that behind a default would make
- * a region quietly unable to answer the question it was drawn for.
+ * THIS SCREEN AND THE MAP PANEL ARE DIFFERENT JOBS. The panel on the map
+ * is for tasking: draw a box, pull the latest frame, run the detector,
+ * file it. This is for LOOKING — at a scene, at the one before it, at what
+ * moved between them, and at the areas being watched on a schedule.
+ *
+ * WHAT WAS ALREADY GOOD AND IS KEPT. The comparison machinery is real and
+ * does the hard part: ZoomPanViewer gives a shared scale and pan, so the
+ * split view zooms into the same quay on both sides instead of two
+ * independent pictures; the swipe clips one over the other at a single
+ * geometry; the detection boxes are drawn in screen space over whichever
+ * frame is showing. None of that is rewritten here — it is wrapped in the
+ * v6 shell and given what it was missing.
+ *
+ * WHAT WAS MISSING AND IS ADDED:
+ *   · the scene on the globe, georeferenced, instead of only in a frame
+ *   · export as actual pixels — the bytes are already in the payload, so
+ *     the PDF export was the long way round to a worse file
+ *   · deleting a scene, and deleting a single detection
+ *   · the whole thing in the v6 surface rather than the old grey panels
  */
-function NewAreaForm({ bounds, onCancel, onCreate }) {
-    const [name, setName] = useState("")
-    const [sensor, setSensor] = useState("sentinel2_optical")
-    const [cadence, setCadence] = useState(24)
-    const [aoiClass, setAoiClass] = useState("custom")
-    const [busy, setBusy] = useState(false)
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import API_BASE from "../apiBase.js"
+import Loading from "../ui/Loading.jsx"
+import { toast } from "../ui/toast.js"
+import { MODE_SURFACE } from "../plx6/modeWindow.js"
+import Minimap from "../components/Minimap.jsx"
+import { fileSignal } from "../state/filing.js"
+import {
+    SENSOR_OPTIONS, AOI_CLASSES, fmtDate, SceneScrubber, SceneComparison,
+} from "../components/imagery/sceneComparison.jsx"
 
-    // What was actually drawn, in units a person can sanity-check before
-    // committing to a recurring scan of it.
-    const midLat = (bounds.north + bounds.south) / 2
-    const kmW = Math.abs(bounds.east - bounds.west) * 111.32 * Math.cos((midLat * Math.PI) / 180)
-    const kmH = Math.abs(bounds.north - bounds.south) * 111.32
-    const areaKm2 = Math.round(kmW * kmH)
-    // One Sentinel Hub request per 2048px tile at 10 m/px.
-    const tiles = Math.max(1, Math.ceil(kmW / 20.48) * Math.ceil(kmH / 20.48))
+const safeArray = (v) => (Array.isArray(v) ? v : [])
+const ON = "var(--accdim)"
 
-    return (
-        <div style={{ border: "1px solid var(--line)", padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ font: "600 11px var(--font)", color: "var(--txt-2)" }}>New observation area</div>
-            <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}>
-                {kmW.toFixed(1)} × {kmH.toFixed(1)} km · {areaKm2.toLocaleString()} km²<br />
-                ≈ {tiles} API request{tiles === 1 ? "" : "s"} per scan at native 10 m/px
-            </div>
-            <input className="input sm" placeholder="Name (e.g. Kharg Island terminal)"
-                value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-            <select className="input sm" value={sensor} onChange={(e) => setSensor(e.target.value)}>
-                {SENSOR_OPTIONS.filter((o) => o.real).map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-            </select>
-            <select className="input sm" value={aoiClass} onChange={(e) => setAoiClass(e.target.value)}>
-                {AOI_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <label style={{ font: "400 10px var(--font)", color: "var(--txt-3)" }}>
-                Re-scan every
-                <input className="input sm" type="number" min={1} value={cadence}
-                    onChange={(e) => setCadence(e.target.value)}
-                    style={{ width: 60, marginLeft: 6 }} /> h
-            </label>
-            <div style={{ display: "flex", gap: 6 }}>
-                <button className="btn sm" disabled={busy || !name.trim()}
-                    onClick={async () => { setBusy(true); try { await onCreate({ name, sensor, cadence, aoiClass }) } finally { setBusy(false) } }}>
-                    {busy ? "creating…" : "create"}
-                </button>
-                <button className="btn sm" onClick={onCancel}>cancel</button>
-            </div>
-        </div>
-    )
+const EYE = {
+    fontFamily: "var(--mz-font-mono)", fontWeight: 500, fontSize: 10,
+    letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)",
 }
+const BTN = {
+    height: 26, padding: "0 10px", border: "1px solid var(--gline2)",
+    background: "transparent", color: "var(--txt)", font: "inherit",
+    fontSize: 11.5, cursor: "pointer", borderRadius: 0, whiteSpace: "nowrap",
+}
+const FIELD = {
+    width: "100%", height: 28, padding: "0 8px", border: "1px solid var(--gline2)",
+    background: "var(--glass2)", color: "var(--txt)", font: "inherit",
+    fontSize: 12.5, outline: "none", borderRadius: 0,
+}
+const KIND_C = { new: "var(--red)", removed: "var(--acchi)", existing: "var(--txt3)", expanded: "var(--amber)" }
 
+const VIEWS = [["Current", "after"], ["Swipe", "swipe"], ["Split", "split"]]
 
-export default function Imagery({ onOpenGenerate }) {
-    const [aois, setAois] = useState([])
-    const [selectedAoi, setSelectedAoi] = useState(null)
-    // V3 Phase 1, §2.2 — real hook-based extension point, owned and called
-    // by this component itself (never reassigned from outside).
-    const inspectorExtensions = useInspectorExtensions()
-    const [scenes, setScenes] = useState([])
-    const [selectedScanId, setSelectedScanId] = useState(null)
+export default function Imagery({ onOpenGenerate = () => {} }) {
+    const [tab, setTab] = useState("scenes")
+    const [zones, setZones] = useState(null)
+    const [zoneId, setZoneId] = useState(null)
+    const [scans, setScans] = useState([])
+    const [scanId, setScanId] = useState(null)
     const [scene, setScene] = useState(null)
-    // The big scene, zoomable, is the default. Comparison is a deliberate
-    // choice, not the resting state: a tiled scan is tens of megapixels and
-    // splitting the pane in two halves the resolution you can actually
-    // inspect, which is the whole point of fetching it at 10 m/px.
+    const [loadingScene, setLoadingScene] = useState(false)
+    const [err, setErr] = useState(null)
+
+    // comparison controls — the existing machinery's inputs
     const [view, setView] = useState("after")
     const [showBoxes, setShowBoxes] = useState(true)
-    // Real fullscreen toggle for the scene/detection image itself — the
-    // comparison view's images were capped at a small fixed size
-    // (maxWidth 420 / maxHeight 60-70vh) with no way to inspect a scan at
-    // full resolution. This expands the same real <SceneComparison> in
-    // place to fill the viewport rather than opening a second, parallel
-    // "big image" viewer.
-    const [fullscreen, setFullscreen] = useState(false)
-    useEffect(() => {
-        if (!fullscreen) return
-        const onKey = (e) => { if (e.key === "Escape") setFullscreen(false) }
-        window.addEventListener("keydown", onKey)
-        return () => window.removeEventListener("keydown", onKey)
-    }, [fullscreen])
-    const [confFloor, setConfFloor] = useState(0)
-    const [kinds, setKinds] = useState({ new: true, expanded: true, removed: true })
     const [swipePos, setSwipePos] = useState(50)
     const [fadeOn, setFadeOn] = useState(false)
     const [fadeOpacity, setFadeOpacity] = useState(55)
-    const [scopeCountry, setScopeCountry] = useState("")
-    const [running, setRunning] = useState(false)
+    const [confFloor, setConfFloor] = useState(0)
+    const [kinds, setKinds] = useState({ new: true, existing: true, removed: true, expanded: true })
     const [selectedDet, setSelectedDet] = useState(null)
-    // Native-resolution tiled scan: a job id to follow, and the cost of the
-    // plan so the person sees what a scan will spend BEFORE it spends it.
-    // Available scene dates for the selected area. The endpoint that serves
-    // these was returning a 500 until this round, and before that collapsed
-    // an entire history to one entry, so nothing has ever been able to offer
-    // a choice of date.
-    const [dates, setDates] = useState([])
-    const [scanDate, setScanDate] = useState("")
-    // Sentinel-1 change detection: the only route on free imagery to
-    // damaged and new structure, and the way a camp is found.
-    const [changeJob, setChangeJob] = useState(null)
-    const [changeResult, setChangeResult] = useState(null)
-    const [tiledJob, setTiledJob] = useState(null)
-    const [tiledResult, setTiledResult] = useState(null)
-    const viewerRef = useRef(null)
-    // Draw a new observation region directly here. Until now a region could
-    // only be created from Sources or over the API, which made the Imagery
-    // page read-only for the one thing it exists to do.
-    const [drawActive, setDrawActive] = useState(false)
-    const [drawnBounds, setDrawnBounds] = useState(null)
     const clipRef = useRef(null)
     const fadeRef = useRef(null)
+    const viewerRef = useRef(null)
 
-    const pendingLocateRef = useRef(null) // {systemId, scanId} awaiting AOI load
-    const pendingFocusRef = useRef(null)  // detection_id to centre once the scene arrives
+    const zone = useMemo(
+        () => safeArray(zones).find((z) => z.system_id === zoneId) || null, [zones, zoneId])
 
-    useEffect(() => { loadAois() }, [])
-    function loadAois() {
-        fetch(`${API_BASE}/api/imagery/aois`).then((r) => r.json()).then((rows) => {
-            setAois(rows)
-            if (pendingLocateRef.current) {
-                const { systemId, scanId } = pendingLocateRef.current
-                pendingLocateRef.current = null
-                const match = rows.find((r) => r.system_id === systemId)
-                if (match) { setSelectedAoi(match); setSelectedScanId(scanId); return }
-            }
-            if (!selectedAoi && rows.length) setSelectedAoi(rows.find((r) => r.status === "active") || rows[0])
-        })
-    }
-
-    useEffect(() => {
-        if (!selectedAoi) return
-        fetch(`${API_BASE}/api/watch-zones/${selectedAoi.system_id}/scans`).then((r) => r.json()).then((rows) => {
-            setScenes(rows)
-            const firstCompleted = rows.find((s) => s.status === "completed")
-            setSelectedScanId(firstCompleted ? firstCompleted.scan_id : null)
-        })
-    }, [selectedAoi])
-
-    useEffect(() => {
-        if (!selectedScanId) { setScene(null); return }
-        fetch(`${API_BASE}/api/imagery/scenes/${selectedScanId}`).then((r) => r.json()).then(setScene)
-    }, [selectedScanId])
-
-    // "Show me this one." Selecting a detection has to actually take the
-    // person to it: a 4-pixel object inside a 40-megapixel scene is not
-    // findable by being told it is highlighted somewhere. Switches to the
-    // single-scene view because that is the one that can zoom, centres the
-    // object, and the arrow follows from selectedDet.
-    const focusDetection = useCallback((c) => {
-        setSelectedDet(c || null)
-        if (!c?.bbox) return
-        setView("after")
-        // The viewer only exists once that view has rendered.
-        requestAnimationFrame(() => {
-            viewerRef.current?.focus({ x: c.bbox[0], y: c.bbox[1], w: c.bbox[2], h: c.bbox[3] })
-        })
-    }, [])
-
-    // Real deep-link entry point — the Briefings reader's "open change
-    // detection" xref action jumps here with a real detection_id; resolve
-    // its real (system_id, scan_id) and select both, the same state a
-    // direct click through aois/scenes would land on.
-    useEffect(() => {
-        const handler = (e) => {
-            const { detectionId, scanId, systemId } = e.detail || {}
-
-            // An alert may know the scene without knowing which object
-            // anchored it. Open the scene anyway rather than refusing: "we
-            // cannot take you to the exact box" is not a reason to withhold
-            // the picture.
-            if (!detectionId && scanId) {
-                if (systemId) {
-                    const match = aois.find((r) => r.system_id === systemId)
-                    if (match) setSelectedAoi(match)
-                    else pendingLocateRef.current = { systemId, scanId }
-                }
-                setSelectedScanId(scanId)
-                return
-            }
-            if (!detectionId) return
-            fetch(`${API_BASE}/api/imagery/detections/${detectionId}/locate`).then((r) => (r.ok ? r.json() : null)).then((loc) => {
-                if (!loc) return
-                // Remember WHICH detection, not just which scene. A
-                // notification that says "vessel detected at Khor Fakkan"
-                // and then drops the reader into a scene with forty boxes
-                // has made them do the search again by hand.
-                pendingFocusRef.current = detectionId
-                if (!aois.length) { pendingLocateRef.current = { systemId: loc.system_id, scanId: loc.scan_id }; return }
-                const match = aois.find((r) => r.system_id === loc.system_id)
-                if (match) setSelectedAoi(match)
-                setSelectedScanId(loc.scan_id)
-            }).catch(() => {})
-        }
-        window.addEventListener("akili:imagery-open-scene", handler)
-        return () => window.removeEventListener("akili:imagery-open-scene", handler)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [aois])
-
-    useEffect(() => {
-        setDates([]); setScanDate("")
-        if (!selectedAoi?.bbox) return
-        const b = selectedAoi.bbox
-        let cancelled = false
-        fetch(`${API_BASE}/api/sentinel/dates`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-                bounds: { west: b.min_lon, south: b.min_lat, east: b.max_lon, north: b.max_lat },
-                max_cloud: 60, days_back: 180,
-            }),
-        }).then((r) => (r.ok ? r.json() : null))
-          .then((d) => { if (!cancelled) setDates(Array.isArray(d?.dates) ? d.dates : []) })
-          .catch(() => { if (!cancelled) setDates([]) })
-        return () => { cancelled = true }
-    }, [selectedAoi])
-
-    // The scene arrives asynchronously after the deep link resolves, so the
-    // focus has to wait for it rather than firing into an empty viewer.
-    useEffect(() => {
-        const want = pendingFocusRef.current
-        if (!want || !scene) return
-        const target = (scene.changes || []).find(
-            (c) => c.id === want || c.id === `removed-${want}`)
-        if (!target) {
-            // The detection did not survive into this scene's view — say so
-            // rather than silently landing on the scene with nothing
-            // selected, which reads as "we found nothing here".
-            pendingFocusRef.current = null
-            toast("That detection is no longer part of this scene's results", {})
-            return
-        }
-        pendingFocusRef.current = null
-        focusDetection(target)
-    }, [scene, focusDetection])
-
-    async function reRunDetection() {
-        if (!selectedAoi || running) return
-        setRunning(true)
-        await fetch(`${API_BASE}/api/watch-zones/${selectedAoi.system_id}/scan-now`, { method: "POST" })
-        toast("Real detection run started", {})
-        // Poll for a new completed scan (real backend call, real elapsed time — no fixed schedule).
-        const before = new Set(scenes.map((s) => s.scan_id))
-        for (let i = 0; i < 40; i++) {
-            await new Promise((r) => setTimeout(r, 3000))
-            const rows = await fetch(`${API_BASE}/api/watch-zones/${selectedAoi.system_id}/scans`).then((r) => r.json())
-            const fresh = rows.find((s) => !before.has(s.scan_id) && (s.status === "completed" || s.status === "error"))
-            if (fresh) {
-                setScenes(rows)
-                setSelectedScanId(fresh.scan_id)
-                toast(fresh.status === "completed" ? "Detection run complete" : `Run failed: ${fresh.error_message || "unknown error"}`, {})
-                break
-            }
-        }
-        setRunning(false)
-    }
-
-    // Run the AOI at the sensor's own resolution rather than as one
-    // downsampled thumbnail. Uncapped by design, so the cost is shown and
-    // confirmed rather than quietly spent: a zone-sized area is 60 API
-    // requests and several minutes.
-    async function runTiledScan() {
-        if (!selectedAoi || tiledJob) return
-        // A SAR region runs the SAR detector, which is the zone scan path —
-        // the tiled scan is Sentinel-2 optical. Sending it there anyway
-        // produced an optical result labelled as the region's sensor.
-        if (selectedAoi.sensor_preference === "sentinel1_sar") { reRunDetection(); return }
-        const b = selectedAoi.bbox
-        const bounds = { west: b.min_lon, south: b.min_lat, east: b.max_lon, north: b.max_lat }
-        const est = await fetch(`${API_BASE}/api/imagery/scan-tiled`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ bounds, estimate_only: true,
-                                   sensor: selectedAoi.sensor_preference }),
-        }).then((r) => r.json()).catch(() => null)
-        if (!est || est.error) { toast(est?.error || "Could not plan a scan for this area", {}); return }
-        if (est.api_requests > 8 &&
-            !window.confirm(`${est.describe}\n\nRun it?`)) return
-
-        const started = await fetch(`${API_BASE}/api/imagery/scan-tiled`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ bounds, date: scanDate || null,
-                                   system_id: selectedAoi.system_id,
-                                   sensor: selectedAoi.sensor_preference }),
-        }).then((r) => r.json()).catch(() => null)
-        if (!started || started.error) { toast(started?.error || "Scan could not be started", {}); return }
-        setTiledResult(null)
-        setTiledJob(started.job_id)
-    }
-
-    async function onTiledDone(jobId) {
-        const out = await fetch(`${API_BASE}/api/imagery/scan-tiled/${jobId}`, { credentials: "include" })
-            .then((r) => r.json()).catch(() => null)
-        setTiledJob(null)
-        if (!out) return
-        setTiledResult(out)
-        if (out.status === "error") { toast(out.error_message || "Scan failed", {}); return }
-        // Partial coverage is a real qualification on the result, not a
-        // detail to bury: "nothing there" and "never looked there" must not
-        // read the same.
-        // The scan is now part of the region's history, so the scene list
-        // has to pick it up — otherwise the date just scanned is invisible
-        // and cannot be compared against anything.
-        if (out.scan_id && selectedAoi) {
-            const rows = await fetch(`${API_BASE}/api/watch-zones/${selectedAoi.system_id}/scans`,
-                                     { credentials: "include" })
-                .then((r) => r.json()).catch(() => null)
-            if (Array.isArray(rows)) { setScenes(rows); setSelectedScanId(out.scan_id) }
-        }
-        const cov = Math.round((out.coverage_fraction ?? 1) * 100)
-        toast(`${out.detections?.length ?? 0} detection(s) at ${out.m_per_px} m/px` +
-              (cov < 100 ? ` — ${cov}% of the area covered, ${out.tiles_failed?.length || 0} tile(s) failed` : ""), {})
-    }
-
-    // Deleting left the panel showing the region it had just removed:
-    // the list reloaded but selectedAoi still pointed at the dead row, and
-    // loadAois only auto-selects when nothing is selected. It looked as
-    // though the delete had failed.
-    // Delete from the list, with the same warning the editor gives: this
-    // takes the area's whole scan history, which is the baseline every
-    // future change comparison runs against.
-    function deleteAoi(a) {
-        if (!window.confirm(
-            `Delete "${a.name}" (${a.system_id})?\n\n` +
-            `This also deletes every scan of this area and all their detections, ` +
-            `permanently. Change detection has no baseline afterwards.`
-        )) return
-        fetch(`${API_BASE}/api/watch-zones/${a.system_id}`, {
-            method: "DELETE", credentials: "include",
-        })
-            .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-            .then(() => {
-                if (selectedAoi?.system_id === a.system_id) onAoiDeleted()
-                else { loadAois(); toast(`${a.system_id} deleted`, { icon: "i-check" }) }
+    const loadZones = useCallback(() => {
+        fetch(`${API_BASE}/api/watch-zones`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+            .then((d) => {
+                const list = Array.isArray(d) ? d : safeArray(d?.zones)
+                setZones(list)
+                setZoneId((cur) => cur || list[0]?.system_id || null)
             })
-            .catch((e) => toast(`Could not delete ${a.system_id}: ${e.message}`, { icon: "i-alert" }))
-    }
+            .catch((e) => setErr(e.message))
+    }, [])
+    useEffect(() => { loadZones() }, [loadZones])
 
-    function onAoiDeleted() {
-        setSelectedAoi(null)
-        setScenes([])
-        setSelectedScanId(null)
-        setScene(null)
-        setSelectedDet(null)
-        setTiledResult(null)
-        loadAois()
-        toast("Observation area deleted", { icon: "i-check" })
-    }
+    const loadScans = useCallback((zid) => {
+        if (!zid) { setScans([]); return }
+        fetch(`${API_BASE}/api/watch-zones/${zid}/scans`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                const list = Array.isArray(d) ? d : safeArray(d?.scans)
+                setScans(list)
+                setScanId(list[0]?.scan_id || null)
+            })
+            .catch(() => setScans([]))
+    }, [])
+    useEffect(() => { loadScans(zoneId) }, [zoneId, loadScans])
 
-    // Radar change, as a background job: one Sentinel Hub request per
-    // acquisition per side, so a held-open request would be killed by a
-    // proxy long before it finished.
-    async function runChangeDetect() {
-        if (!selectedAoi || changeJob) return
-        const b = selectedAoi.bbox
-        const bounds = { west: b.min_lon, south: b.min_lat, east: b.max_lon, north: b.max_lat }
-        const est = await fetch(`${API_BASE}/api/imagery/change-detect`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ bounds, estimate_only: true }),
-        }).then((r) => r.json()).catch(() => null)
-        if (!est || est.error) { toast(est?.error || "Could not plan change detection", {}); return }
-        if (!window.confirm(`${est.describe}\n\nRun it?`)) return
+    useEffect(() => {
+        if (!scanId) { setScene(null); return undefined }
+        let live = true
+        setLoadingScene(true); setScene(null); setSelectedDet(null)
+        fetch(`${API_BASE}/api/imagery/scenes/${scanId}`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (live) setScene(d) })
+            .catch(() => {})
+            .finally(() => { if (live) setLoadingScene(false) })
+        return () => { live = false }
+    }, [scanId])
 
-        const started = await fetch(`${API_BASE}/api/imagery/change-detect`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ bounds, depth: 5, px: 384,
-                                   system_id: selectedAoi.system_id }),
-        }).then((r) => r.json()).catch(() => null)
-        if (!started || started.error) { toast(started?.error || "Could not start", {}); return }
-        setChangeResult(null); setChangeJob(started.job_id)
+    /* Detections, filtered the way the controls say. */
+    const changes = useMemo(() => {
+        const all = safeArray(scene?.changes)
+        return all.filter((c) => (kinds[c.type] ?? true) && (c.conf ?? 0) >= confFloor)
+    }, [scene, kinds, confFloor])
 
-        // Poll. Results carry their own qualifications, which are reported
-        // rather than reduced to a count.
-        for (let i = 0; i < 400; i++) {
-            await new Promise((r) => setTimeout(r, 3000))
-            const d = await fetch(`${API_BASE}/api/imagery/change-detect/${started.job_id}`,
-                                  { credentials: "include" }).then((r) => r.json()).catch(() => null)
-            if (!d) continue
-            if (d.status === "running") continue
-            setChangeJob(null)
-            if (d.status === "error") { toast(`Change detection: ${d.error}`, { icon: "i-alert" }); return }
-            setChangeResult(d)
-            const n = (d.detections || []).length
-            toast(n
-                ? `${n} structural change region(s) — a cue to look, not a finding`
-                : `No structural change between ${d.dates_before?.at(-1)} and ${d.dates_after?.[0]}`, {})
-            return
-        }
-        setChangeJob(null)
-    }
+    const byKind = useMemo(() => {
+        const m = { new: 0, existing: 0, removed: 0, expanded: 0 }
+        for (const c of safeArray(scene?.changes)) m[c.type] = (m[c.type] || 0) + 1
+        return m
+    }, [scene])
 
-    async function createDrawnArea({ name, sensor, cadence, aoiClass }) {
-        const polygon = boundsToPolygon(drawnBounds)
-        if (!name.trim() || !polygon) { toast("Give the area a name first", {}); return }
-        const res = await fetch(`${API_BASE}/api/watch-zones`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-                name: name.trim(), polygon_geojson: polygon,
-                aoi_class: aoiClass, sensor_preference: sensor,
-                scan_interval_hours: Number(cadence),
-                // A region drawn by hand is one the analyst wants looked at,
-                // so it scans for vessels by default rather than arriving
-                // inert with no tasks and silently never producing anything.
-                ml_tasks: ["ship_detection"],
-            }),
-        })
-        const d = await res.json().catch(() => null)
-        if (!res.ok) { toast(d?.detail || "Could not create the area", {}); return }
-        setDrawnBounds(null); setDrawActive(false)
-        toast(`${d.system_id} created — ${SENSOR_LABEL[sensor] || sensor}, every ${cadence}h`, { icon: "i-check" })
-        loadAois()
-        setSelectedAoi(d)
-    }
+    /* ── the three things this screen could not do ──────────────────── */
 
-    function proposeCoverage() {
-        if (!scopeCountry.trim()) { toast("Enter a country code first", {}); return }
-        fetch(`${API_BASE}/api/imagery/propose-coverage`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ country_code: scopeCountry.trim() }),
-        }).then((r) => r.json()).then((res) => {
-            toast(`${res.created} proposed AOI(s) added — ${res.note}`, {})
-            loadAois()
-        })
-    }
-
-    function acceptAoi(aoi) {
-        fetch(`${API_BASE}/api/imagery/aois/${aoi.system_id}/accept`, { method: "POST" }).then(() => { toast("AOI accepted — real scan loop started", { icon: "i-check" }); loadAois() })
-    }
-
-    function locate(aoi) {
-        const lat = (aoi.bbox.min_lat + aoi.bbox.max_lat) / 2, lon = (aoi.bbox.min_lon + aoi.bbox.max_lon) / 2
-        window.dispatchEvent(new CustomEvent("akili:open-map"))
-        setTimeout(() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat, lon, altitude: 200000 } })), 50)
-    }
-
-    function confirmDet(id) {
-        fetch(`${API_BASE}/api/imagery/detections/${id}/confirm`, { method: "POST" }).then(() => {
-            fetch(`${API_BASE}/api/imagery/scenes/${selectedScanId}`).then((r) => r.json()).then(setScene)
-        })
-    }
-    function rejectDet(id) {
-        fetch(`${API_BASE}/api/imagery/detections/${id}/reject`, { method: "POST" }).then(() => {
-            fetch(`${API_BASE}/api/imagery/scenes/${selectedScanId}`).then((r) => r.json()).then(setScene)
-        })
-    }
-
-    function addToBriefingScene() {
-        if (!scene) return
-        addToBriefing(scene.scan.scan_id, `Sentinel scan — ${scene.zone.name}`)
-
-        // Also keep the artefact itself, so the Editor's reference pane can
-        // put the crop on the page. The basket above only carries an id and
-        // a label — enough for a count, not enough to write with.
-        const b = scene.zone?.bbox || {}
-        const centreLat = b.north != null && b.south != null ? (b.north + b.south) / 2 : null
-        const centreLon = b.east != null && b.west != null ? (b.east + b.west) / 2 : null
-        const det = selectedDet || (scene.detections || [])[0]
-        saveForBriefing({
-            id: `imagery:${scene.scan.scan_id}${det ? `:${det.id}` : ""}`,
-            kind: "imagery",
-            region: scene.zone?.name || null,
-            lat: det?.centroid_lat ?? centreLat,
-            lon: det?.centroid_lon ?? centreLon,
-            imageUrl: det?.image_crop_url || scene.annotated_image_url || null,
-            detail: det
-                ? `${det.label || det.object_type} · ${fmtDate(scene.scan.image_timestamp_utc)}`
-                : `Sentinel scan · ${fmtDate(scene.scan.image_timestamp_utc)}`,
-        })
-        toast("Saved for briefing — it is in the Editor's Saved pane", { icon: "i-check" })
-    }
-    function raiseSignal() {
-        if (!scene || !selectedDet) { toast("Select a detection first", {}); return }
-        confirmDet(selectedDet.id)
-        toast(`Raised: ${selectedDet.label} confirmed as a real finding`, { icon: "i-check" })
-    }
-
-    // Fade-under: writes opacity directly on the clip element ref, no
-    // re-render, so dragging stays smooth (§B4's literal requirement).
-    function onFadeSlider(e) {
-        const v = Number(e.target.value)
-        setFadeOpacity(v)
-        if (fadeRef.current) fadeRef.current.style.opacity = fadeOn ? v / 100 : 1
-    }
-    function onSwipeDrag(e) {
-        const rect = e.currentTarget.getBoundingClientRect()
-        function onMove(ev) {
-            const pct = Math.max(0, Math.min(100, ((ev.clientX - rect.x) / rect.width) * 100))
-            setSwipePos(pct)
-        }
-        function onUp() { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp) }
-        window.addEventListener("pointermove", onMove)
-        window.addEventListener("pointerup", onUp)
-    }
-
-    // The scene as a document, built server-side. Nothing is sent up: the
-    // frame, the detections and the comparison are all already in the
-    // database, so posting the browser's copy would only create a way for
-    // the PDF and the screen to disagree.
-    const [exportingScene, setExportingScene] = useState(false)
-    const exportScene = async () => {
-        if (!selectedScanId || exportingScene) return
-        setExportingScene(true)
+    /** Export the frame you are looking at, as pixels, with its boxes. */
+    const exportPixels = useCallback(async () => {
+        const b64 = view === "after" || !scene?.reference_image_b64
+            ? scene?.image_b64 : scene?.reference_image_b64
+        if (!b64) { toast("No image to export", { icon: "i-alert" }); return }
         try {
-            const res = await fetch(
-                `${API_BASE}/api/imagery/scenes/${encodeURIComponent(selectedScanId)}/export.pdf`,
-                { credentials: "include" })
-            if (!res.ok) throw new Error(`export failed (${res.status})`)
-            const blob = await res.blob()
-            const url = URL.createObjectURL(blob)
+            const img = new Image()
+            await new Promise((res, rej) => {
+                img.onload = res; img.onerror = () => rej(new Error("image did not decode"))
+                img.src = `data:image/jpeg;base64,${b64}`
+            })
+            const c = document.createElement("canvas")
+            c.width = img.naturalWidth; c.height = img.naturalHeight
+            const ctx = c.getContext("2d")
+            ctx.drawImage(img, 0, 0)
+            if (showBoxes) {
+                // The boxes are normalised to the frame, so they scale to
+                // whatever the real pixel size is — the export is the full
+                // resolution, not what happened to fit on screen.
+                ctx.lineWidth = Math.max(2, Math.round(c.width / 500))
+                ctx.font = `${Math.max(11, Math.round(c.width / 90))}px monospace`
+                for (const d of changes) {
+                    const [x, y, w, h] = d.bbox || []
+                    if (![x, y, w, h].every(Number.isFinite)) continue
+                    ctx.strokeStyle = d.type === "new" ? "#f46043"
+                        : d.type === "removed" ? "#a0b2d2"
+                        : d.type === "expanded" ? "#d8a24a" : "#b5b9c3"
+                    ctx.strokeRect(x * c.width, y * c.height, w * c.width, h * c.height)
+                    ctx.fillStyle = ctx.strokeStyle
+                    ctx.fillText(`${d.label} ${Math.round((d.conf ?? 0) * 100)}%`,
+                        x * c.width, Math.max(12, y * c.height - 4))
+                }
+            }
+            const url = c.toDataURL("image/png")
             const a = document.createElement("a")
             a.href = url
-            a.download = `scene-${selectedScanId.slice(0, 8)}.pdf`
-            a.click()
-            URL.revokeObjectURL(url)
+            a.download = `${zone?.system_id || "scene"}-${(scene?.scan?.image_timestamp_utc || "").slice(0, 10)}.png`
+            document.body.appendChild(a); a.click(); a.remove()
+            toast("Exported as PNG")
         } catch (e) {
-            alert(e.message || "export failed")
-        } finally {
-            setExportingScene(false)
+            toast(`Export failed — ${e.message || e}`, { icon: "i-alert" })
         }
-    }
+    }, [scene, view, showBoxes, changes, zone])
 
-    const sceneChanges = (scene?.changes || []).filter((c) => c.conf >= confFloor && kinds[c.type] !== false && !(c.type === "removed" && !kinds.removed))
-
-    // Radar change regions, drawn in the same overlay as optical detections.
-    //
-    // They were computed and then had nowhere to go: a change region could
-    // be located on a map but never shown on the image it was found in,
-    // which is the one place "something appeared here" is legible. Mapped
-    // into the same shape the overlay already understands rather than
-    // given a second rendering path that would drift from it.
-    const changeRegions = (changeResult?.detections || []).map((d, i) => ({
-        id: `chg-${i}-${d.centroid_lat.toFixed(5)}`,
-        label: d.change_direction === "appeared"
-            ? "structure appeared" : "structure removed",
-        // Reuses the existing colour vocabulary: "new" is the warm outline,
-        // "removed" the critical one.
-        type: d.change_direction === "appeared" ? "new" : "removed",
-        // NOT a confidence — PWTT has no calibrated probability. `strength`
-        // is how far past the threshold the region sits, and it is exposed
-        // under conf only because the overlay reads that field.
-        conf: d.strength,
-        bbox: d.bbox,
-        lat: d.centroid_lat, lon: d.centroid_lon,
-        reviewed_status: "pending",
-        radar: true,
-        area_m2: d.area_m2,
-        t_peak: d.t_peak,
-    }))
-
-    const changes = [...sceneChanges, ...changeRegions]
-    const visibleChanges = changes.filter((c) => !(c.suppressed && c.reviewed_status === "pending"))
-
-    // One source for the map, the list and the image overlay. Deriving the
-    // map from a second query would let the three disagree about what was
-    // found, which is worse than not having a map.
-    const mapDetections = visibleChanges
-        .filter((c) => c.lat != null && c.lon != null)
-        .map((c) => ({
-            detection_id: c.id, centroid_lat: c.lat, centroid_lon: c.lon,
-            object_type: c.label, confidence: c.conf,
-            change_type: c.type === "existing" ? "persisted"
-                : c.type === "removed" ? "gone" : c.type,
+    /** Put the scene on the globe, where it belongs geographically. */
+    const showOnMap = useCallback(() => {
+        if (!scene?.image_b64 || !zone?.bbox) { toast("This scene has no bounds", { icon: "i-alert" }); return }
+        const b = zone.bbox
+        window.dispatchEvent(new CustomEvent("akili:imagery-open-scene", {
+            detail: {
+                image_b64: scene.image_b64,
+                bounds: { north: b.max_lat, south: b.min_lat, east: b.max_lon, west: b.min_lon },
+                detections: changes,
+            },
         }))
+        window.dispatchEvent(new CustomEvent("akili:open-map"))
+        window.dispatchEvent(new CustomEvent("akili:fly-to", {
+            detail: {
+                lat: (b.min_lat + b.max_lat) / 2, lon: (b.min_lon + b.max_lon) / 2,
+                altitude: 60000,
+            },
+        }))
+    }, [scene, zone, changes])
+
+    const deleteScene = useCallback(async () => {
+        if (!zone || !scanId) return
+        if (!window.confirm(
+            `Delete this scene of "${zone.name}"?\n\n`
+            + `Its ${safeArray(scene?.changes).length} detections go with it. `
+            + `If it is the reference for a later comparison, that comparison loses its baseline.`
+        )) return
+        try {
+            const r = await fetch(`${API_BASE}/api/watch-zones/${zone.system_id}/scans/${scanId}`,
+                { method: "DELETE", credentials: "include" })
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            toast("Scene deleted")
+            loadScans(zone.system_id)
+        } catch (e) { toast(`Could not delete it — ${e.message}`, { icon: "i-alert" }) }
+    }, [zone, scanId, scene, loadScans])
+
+    const deleteDetection = useCallback(async (det) => {
+        const id = det?.id
+        if (!id) return
+        try {
+            const r = await fetch(`${API_BASE}/api/imagery/detections/${id}`,
+                { method: "DELETE", credentials: "include" })
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            setScene((s) => (s ? { ...s, changes: safeArray(s.changes).filter((c) => c.id !== id) } : s))
+            toast("Detection deleted")
+        } catch (e) { toast(`Could not delete it — ${e.message}`, { icon: "i-alert" }) }
+    }, [])
+
+    const fileScene = useCallback(async () => {
+        if (!scene || !zone) return
+        const out = await fileSignal({
+            id: scanId, kind: "signal", source: "sentinel",
+            headline: `${zone.name} — ${safeArray(scene.changes).length} detections, ${fmtDate(scene.scan?.image_timestamp_utc)}`,
+            region: zone.name, severity: byKind.new > 0 ? "significant" : "routine",
+            lat: zone.bbox ? (zone.bbox.min_lat + zone.bbox.max_lat) / 2 : null,
+            lon: zone.bbox ? (zone.bbox.min_lon + zone.bbox.max_lon) / 2 : null,
+            imageUrl: `data:image/jpeg;base64,${scene.image_b64}`,
+            when: scene.scan?.image_timestamp_utc || null,
+        })
+        toast(out.path ? `Filed to ${out.path.join(" / ")}` : "Saved for briefing")
+    }, [scene, zone, scanId, byKind])
+
+    /* ── render ─────────────────────────────────────────────────────── */
+    if (err) return (
+        <section data-screen-label="Overwatch" style={MODE_SURFACE}>
+            <div style={{ padding: 20, color: "var(--txt3)" }}>Overwatch is unavailable ({err}).</div>
+        </section>
+    )
+    if (!zones) return (
+        <section data-screen-label="Overwatch" style={MODE_SURFACE}>
+            <Loading size={22} inline label="Reading the watched areas" style={{ padding: 20 }} />
+        </section>
+    )
+
+    const meta = zone
+        ? `${zone.name} · ${scans.length} ${scans.length === 1 ? "scene" : "scenes"}`
+          + (scene ? ` · ${safeArray(scene.changes).length} detections` : "")
+        : `${zones.length} areas`
 
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "210px 1fr 280px", height: "100%", minHeight: 0, overflow: "hidden", background: "var(--bg-0)" }}>
-            {/* Left — observation areas */}
-            <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto",
-                          overflowX: "hidden", padding: 8, display: "flex",
-                          flexDirection: "column", gap: 10, minWidth: 0 }}>
-                {/* No drawing here. This page is for LOOKING at what has
-                    been scanned; creating an area is a different job and
-                    already works in Sources, where the map is the size of
-                    the window rather than a 200px thumbnail. */}
-                <div className="field"><label>Scope (country code)</label>
-                    {/* minWidth:0 is the fix. A flex item will not shrink
-                        below its intrinsic content width without it, so the
-                        input held its size and pushed "propose" out of the
-                        column entirely. */}
-                    <div style={{ display: "flex", gap: 4, minWidth: 0 }}>
-                        <input className="input" style={{ flex: "1 1 auto", minWidth: 0 }}
-                            value={scopeCountry} onChange={(e) => setScopeCountry(e.target.value)}
-                            placeholder="e.g. US" />
-                        <button className="btn sm" style={{ flex: "0 0 auto" }}
-                            title="Propose watch areas for this country"
-                            onClick={proposeCoverage}>propose</button>
-                    </div>
-                </div>
-                <div>
-                    <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Areas</div>
-                    {aois.map((a) => (
-                        <div key={a.system_id} role="button" onClick={() => setSelectedAoi(a)}
-                            style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: selectedAoi?.system_id === a.system_id ? "var(--bg-2)" : "transparent", opacity: a.status === "proposed" ? 0.55 : 1 }}>
-                            {/* Delete lives on the row. It used to be only
-                                in the right-hand editor, which is a long way
-                                from the list you are looking at when you
-                                decide an area should go. */}
-                            <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
-                                <svg className="icon sm" style={{ flex: "0 0 auto" }}><use href={`#${AOI_CLASS_ICON[a.aoi_class] || "i-pin"}`} /></svg>
-                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)",
-                                               flex: "1 1 auto", minWidth: 0, overflow: "hidden",
-                                               textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
-                                <button className="btn ghost sm" title={`Delete ${a.system_id} and all its scans`}
-                                    style={{ flex: "0 0 auto", height: 17, padding: "0 4px",
-                                             fontSize: 11, color: "var(--txt-4)" }}
-                                    onClick={(e) => { e.stopPropagation(); deleteAoi(a) }}>×</button>
-                            </div>
-                            <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}>{a.system_id} · {a.aoi_class} · {(a.bbox.max_lon - a.bbox.min_lon).toFixed(1)}°</div>
-                            <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-3)" }}>{a.status === "proposed" ? "proposed" : `every ${a.scan_interval_hours}h`}</div>
-                        </div>
+        <section data-screen-label="Overwatch" style={MODE_SURFACE}>
+            <header style={{
+                display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+                minHeight: 48, boxSizing: "border-box", flex: "none",
+                padding: "6px 10px 6px 16px", borderBottom: "1px solid var(--gline)",
+            }}>
+                <h2 style={{ margin: 0, fontWeight: 600, fontSize: 17, letterSpacing: "-.01em" }}>Overwatch</h2>
+                <nav style={{ display: "flex", gap: 2, padding: 2, border: "1px solid var(--gline)" }}>
+                    {[["Scenes", "scenes"], ["Areas", "areas"]].map(([k, v]) => (
+                        <button key={v} onClick={() => setTab(v)} style={{
+                            height: 26, padding: "0 14px", border: 0, borderRadius: 0,
+                            background: tab === v ? ON : "transparent",
+                            color: tab === v ? "var(--txt)" : "var(--txt3)",
+                            font: "inherit", cursor: "pointer",
+                        }}>{k}</button>
                     ))}
-                </div>
-                {selectedAoi && (
-                    <div>
-                        <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Scenes</div>
-                        {scenes.length === 0 ? <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>No real scenes ingested yet.</div> : scenes.map((s) => (
-                            <div key={s.scan_id} role="button" onClick={() => setSelectedScanId(s.scan_id)}
-                                style={{ padding: "3px 0", font: "400 11px var(--font)", color: selectedScanId === s.scan_id ? "var(--txt)" : "var(--txt-3)", cursor: "pointer" }}>
-                                {fmtDate(s.image_timestamp_utc)} · {s.status}{s.status === "completed" ? ` · ${s.result_summary?.total_detections ?? 0} det` : ""}
-                            </div>
-                        ))}
-                        <div className="field" style={{ marginTop: 10 }}><label>Confidence floor — {confFloor.toFixed(2)}</label>
-                            <input type="range" min={0} max={1} step={0.05} value={confFloor} onChange={(e) => setConfFloor(Number(e.target.value))} />
-                        </div>
-                        <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
-                            {["new", "expanded", "removed"].map((k) => (
-                                <label key={k} style={{ display: "flex", alignItems: "center", gap: 5, font: "400 11px var(--font)", color: "var(--txt-2)" }}>
-                                    <input type="checkbox" className="check" checked={kinds[k]} onChange={(e) => setKinds((p) => ({ ...p, [k]: e.target.checked }))} />{k}
-                                </label>
+                </nav>
+                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>{meta}</span>
+                <div style={{ flex: 1 }} />
+                {tab === "scenes" && scene && (
+                    <>
+                        <button onClick={showOnMap} style={BTN}>Show on map →</button>
+                        <button onClick={exportPixels} style={BTN}>Export PNG</button>
+                        <button onClick={fileScene} style={BTN}>File to case</button>
+                        <button onClick={deleteScene} style={{ ...BTN, color: "var(--red)" }}>Delete scene</button>
+                    </>
+                )}
+            </header>
+
+            {tab === "areas" ? (
+                <AreasTab zones={zones} onChanged={loadZones} onOpen={(z) => { setZoneId(z); setTab("scenes") }} />
+            ) : (
+                <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "230px minmax(0,1fr) 300px" }}>
+                    {/* areas + scenes */}
+                    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, borderRight: "1px solid var(--gline)" }}>
+                        <div style={{ padding: "10px 12px 6px" }}><span style={EYE}>Watched areas</span></div>
+                        <div style={{ maxHeight: 180, overflow: "auto", borderBottom: "1px solid var(--gline)" }}>
+                            {zones.map((z) => (
+                                <button key={z.system_id} onClick={() => setZoneId(z.system_id)} style={{
+                                    display: "grid", gridTemplateColumns: "8px minmax(0,1fr)",
+                                    gap: "2px 8px", width: "100%", padding: "8px 12px", border: 0,
+                                    borderTop: "1px solid var(--gline)",
+                                    background: z.system_id === zoneId ? ON : "transparent",
+                                    color: "var(--txt)", font: "inherit", textAlign: "left", cursor: "pointer",
+                                }}>
+                                    <i style={{
+                                        width: 8, height: 8,
+                                        background: z.status === "active" ? "var(--green)" : "var(--txt4)",
+                                    }} />
+                                    <span style={{
+                                        fontWeight: 600, overflow: "hidden",
+                                        textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                    }}>{z.name}</span>
+                                    <span />
+                                    <span style={{ fontSize: 11, color: "var(--txt3)" }}>
+                                        every {z.scan_interval_hours}h · {z.sensor_preference?.replace(/_/g, " ")}
+                                    </span>
+                                </button>
                             ))}
                         </div>
-                        <button className="btn primary sm" style={{ marginTop: 10, width: "100%" }} disabled={running} onClick={reRunDetection}>
-                            {running ? "running…" : "re-run detection"}
-                        </button>
-                        {running && <div style={{ height: 2, background: "var(--bg-3)", marginTop: 6 }}><div style={{ height: "100%", width: "60%", background: "var(--acc-hi)", animation: "imgpulse 1.2s ease-in-out infinite" }} /></div>}
+                        <div style={{ padding: "10px 12px 6px" }}>
+                            <span style={EYE}>Scenes</span>
+                        </div>
+                        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                            {scans.map((s) => (
+                                <button key={s.scan_id} onClick={() => setScanId(s.scan_id)} style={{
+                                    display: "grid", gridTemplateColumns: "minmax(0,1fr) auto",
+                                    gap: "2px 8px", width: "100%", padding: "8px 12px", border: 0,
+                                    borderTop: "1px solid var(--gline)",
+                                    background: s.scan_id === scanId ? ON : "transparent",
+                                    color: "var(--txt)", font: "inherit", textAlign: "left", cursor: "pointer",
+                                }}>
+                                    <span style={{ fontSize: 12.5 }}>{fmtDate(s.image_timestamp_utc)}</span>
+                                    <span style={{
+                                        fontFamily: "var(--mz-font-mono)", fontSize: 10,
+                                        color: (s.cloud_cover_percent ?? 0) > 30 ? "var(--amber)" : "var(--txt4)",
+                                    }}>{Math.round(s.cloud_cover_percent ?? 0)}% cloud</span>
+                                    <span style={{ gridColumn: "1 / 3", fontSize: 11, color: "var(--txt3)" }}>
+                                        {Object.entries(s.result_summary?.by_type || {})
+                                            .map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`).join(" · ") || "no detections"}
+                                    </span>
+                                </button>
+                            ))}
+                            {!scans.length && (
+                                <div style={{ padding: "12px", fontSize: 12, color: "var(--txt3)" }}>
+                                    This area has not been scanned yet.
+                                </div>
+                            )}
+                        </div>
                     </div>
-                )}
-            </div>
 
-            {/* Centre — comparison. Becomes a real fixed full-viewport
-                overlay (not a second component) when fullscreen is on, so
-                the exact same real <SceneComparison> just renders bigger —
-                no separate "big image" viewer to keep in sync. */}
-            <div style={fullscreen
-                ? { position: "fixed", inset: 0, zIndex: 50, background: "var(--bg-0)", display: "flex", flexDirection: "column" }
-                // Flex, not a fixed grid-row template: the number of
-                // children here varies (progress bar, result strip, scene
-                // scrubber all come and go), so a template with a hardcoded
-                // row count puts the image in an `auto` row and it collapses
-                // to zero height. Measured: 1094x0.
-                : { display: "flex", flexDirection: "column",
-                    minWidth: 0, minHeight: 0, overflow: "hidden" }}>
-                <div style={{ minHeight: 32, flexShrink: 0, background: "var(--bg-2)",
-                              borderBottom: "1px solid var(--line)", display: "flex",
-                              alignItems: "center", gap: 6, padding: "4px 8px",
-                              flexWrap: "wrap" }}>
-                    <span style={{ font: "400 11px var(--mono)", color: "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {scene ? `${scene.scan.scan_id.slice(0, 8)} · ${scene.zone.name} · ${fmtDate(scene.reference_date)} → ${fmtDate(scene.scan.image_timestamp_utc)} · ${SENSOR_LABEL[scene.zone.sensor_preference] || "Sentinel-2 · optical 10m"}` : "No scene selected"}
-                    </span>
-                    <div style={{ flex: 1 }} />
-                    <div className="seg">{["split", "swipe", "after"].map((v) => <button key={v} aria-pressed={view === v} onClick={() => setView(v)}>{v}</button>)}</div>
-                    <label style={{ display: "flex", alignItems: "center", gap: 5, font: "400 11px var(--font)", color: "var(--txt-2)" }}>
-                        <input type="checkbox" className="check" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} />boxes
-                    </label>
-                    {view === "swipe" && (
-                        <>
-                            <label style={{ display: "flex", alignItems: "center", gap: 5, font: "400 11px var(--font)", color: "var(--txt-2)" }}>
-                                <input type="checkbox" className="check" checked={fadeOn} onChange={(e) => { setFadeOn(e.target.checked); if (fadeRef.current) fadeRef.current.style.opacity = e.target.checked ? fadeOpacity / 100 : 1 }} />fade under
+                    {/* the scene */}
+                    <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+                        <div style={{
+                            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                            minHeight: 40, flex: "none", padding: "6px 12px",
+                            borderBottom: "1px solid var(--gline)",
+                        }}>
+                            <div style={{ display: "flex", border: "1px solid var(--gline2)" }}>
+                                {VIEWS.map(([k, v]) => (
+                                    <button key={v} onClick={() => setView(v)} style={{
+                                        height: 26, padding: "0 10px", border: 0,
+                                        background: view === v ? ON : "transparent",
+                                        color: view === v ? "var(--txt)" : "var(--txt3)",
+                                        font: "inherit", fontSize: 11.5, cursor: "pointer",
+                                    }}>{k}</button>
+                                ))}
+                            </div>
+                            <button onClick={() => setShowBoxes((v) => !v)}
+                                style={{ ...BTN, background: showBoxes ? ON : "transparent" }}>boxes</button>
+                            <button onClick={() => setFadeOn((v) => !v)}
+                                style={{ ...BTN, background: fadeOn ? ON : "transparent" }}>fade</button>
+                            {fadeOn && (
+                                <input type="range" min={0} max={100} value={fadeOpacity}
+                                    onChange={(e) => setFadeOpacity(Number(e.target.value))}
+                                    style={{ width: 90, accentColor: "var(--acchi)" }} />
+                            )}
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--txt3)" }}>
+                                conf ≥ {confFloor.toFixed(2)}
+                                <input type="range" min={0} max={0.9} step={0.05} value={confFloor}
+                                    onChange={(e) => setConfFloor(Number(e.target.value))}
+                                    style={{ width: 80, accentColor: "var(--acchi)" }} />
                             </label>
-                            <input type="range" min={0} max={100} value={fadeOpacity} onChange={onFadeSlider} style={{ width: 70, opacity: fadeOn ? 1 : 0.4, pointerEvents: fadeOn ? "auto" : "none" }} />
-                        </>
-                    )}
-                    {/* Real Part 3 fix — "run detection now" reachable directly from
-                        the image/comparison window itself, not only the left rail.
-                        Calls the exact same real reRunDetection() function as the
-                        left rail's "re-run detection" button — one real detector-
-                        invocation entry point, not a second implementation. */}
-                    <button className="btn sm" disabled={!selectedAoi || running} onClick={reRunDetection}>
-                        {running ? "…" : "detect"}
-                    </button>
-                    {/* Native-resolution tiled scan. Distinct from the button
-                        above, which runs the zone's configured single-image
-                        scan: this one covers the AOI at the sensor's own
-                        10 m/px in a grid, which is the difference between a
-                        100m vessel being one pixel and being ten. */}
-                    {/* WHICH DAY. Comparing two dates is the basis of every
-                        change finding, and until this round the picker was
-                        unreachable: the endpoint 500'd on every call, and
-                        beneath that the search collapsed 43 distinct dates
-                        into one. Cloud cover is shown per date because on an
-                        optical sensor it decides whether a scene is worth
-                        scanning at all. */}
-                    <select className="input sm" value={scanDate}
-                        disabled={!dates.length || !!tiledJob}
-                        onChange={(e) => setScanDate(e.target.value)}
-                        title={dates.length
-                            ? "Which pass to scan — cloud cover in brackets"
-                            : "No scene dates loaded for this area"}
-                        style={{ height: 21, maxWidth: 132, fontSize: 11.5,
-                                 textOverflow: "ellipsis" }}>
-                        <option value="">
-                            {dates.length ? `latest pass (${dates.length} available)` : "no dates"}
-                        </option>
-                        {dates.map((d) => (
-                            <option key={d.date} value={d.date}>
-                                {d.date}{d.cloud_cover != null ? ` · ${Math.round(d.cloud_cover)}% cloud` : ""}
-                            </option>
-                        ))}
-                    </select>
-                    <button className="btn sm" disabled={!selectedAoi || !!changeJob}
-                        onClick={runChangeDetect}
-                        title="Sentinel-1 radar change between two time windows — sees through cloud and darkness; finds what appeared or was removed">
-                        {changeJob ? "…" : "change"}
-                    </button>
-                    <button className="btn sm" disabled={!selectedAoi || !!tiledJob} onClick={runTiledScan}
-                        title="Cover this area at the sensor's native resolution (shows the cost first)">
-                        {tiledJob ? "…" : "scan"}
-                    </button>
-                    <button className="btn sm" title="Raise a signal from this scene" onClick={raiseSignal}>signal</button>
-                    <button className="btn sm" title="Add this scene to the briefing basket" onClick={addToBriefingScene}>brief</button>
-                    <button className="btn sm" disabled={!selectedScanId || exportingScene}
-                        title="Download this scene as a document — the frame, its metadata, every detection at real coordinates, and the change against the reference"
-                        onClick={exportScene}>
-                        {exportingScene ? "…" : "export"}
-                    </button>
-                    <button className="btn sm" disabled={!scene || scene.scan.status !== "completed"}
-                        title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen — inspect this scan at full size"}
-                        aria-pressed={fullscreen} onClick={() => setFullscreen((v) => !v)}>
-                        {fullscreen ? "exit" : "full"}
-                    </button>
-                </div>
-
-                <ScanProgress jobId={tiledJob} onDone={onTiledDone} />
-                <ScanProgress jobId={changeJob} />
-
-                {/* Radar change, with the qualifications that make it
-                    readable: what it compared, and that it is a cue. */}
-                {changeResult && changeResult.status === "completed" ? (
-                    <div style={{ padding: "5px 10px", borderBottom: "1px solid var(--bdr)",
-                                  font: "400 10px var(--mono)",
-                                  color: (changeResult.detections || []).length
-                                      ? "var(--sev-high)" : "var(--txt-dim)" }}>
-                        SAR change · {(changeResult.detections || []).length} region(s) ·
-                        {" "}{changeResult.dates_before?.at(-1)} → {changeResult.dates_after?.[0]} ·
-                        {" "}{changeResult.stack_before}+{changeResult.stack_after} acquisitions ·
-                        {" "}{changeResult.m_per_px} m/px
-                        {changeResult.suspect_wholesale_shift
-                            ? " · WHOLE-SCENE SHIFT (weather or orbit, not structure)" : ""}
-                        {(changeResult.detections || []).length
-                            ? " · a cue to look, not a finding" : ""}
-                    </div>
-                ) : null}
-
-                {/* The result of a native-res scan, stated with its own
-                    qualifications. Coverage below 100% is reported because
-                    an unscanned corner must not read as an empty one. */}
-                {tiledResult && tiledResult.status === "completed" ? (
-                    <div style={{ padding: "5px 10px", borderBottom: "1px solid var(--bdr)",
-                                  font: "400 10px var(--mono)", color: "var(--txt-dim)" }}>
-                        native-res scan · {tiledResult.detections?.length ?? 0} detection(s) ·{" "}
-                        {tiledResult.m_per_px} m/px{tiledResult.degraded ? " (coarsened)" : ""} ·{" "}
-                        {Math.round((tiledResult.coverage_fraction ?? 1) * 100)}% of the area covered
-                        {tiledResult.tiles_failed?.length
-                            ? ` · ${tiledResult.tiles_failed.length} tile(s) failed`
-                            : ""}
-                    </div>
-                ) : null}
-
-                <SceneScrubber scenes={scenes} selectedScanId={selectedScanId} onSelect={setSelectedScanId} currentInstrument={scene?.scan?.instrument} />
-
-                {/* The image takes every pixel the toolbar and strips do not.
-                    It used to be centred inside a padded flex box with the
-                    viewer capped at 420px, so a 2048px scene rendered small
-                    in a large empty pane — the resolution the tiling exists
-                    to produce, thrown away at the last step. minHeight:0 is
-                    what actually lets a grid row shrink-to-fit and therefore
-                    grow. */}
-                <div style={{ flex: "1 1 auto", minHeight: 0, minWidth: 0,
-                              overflow: "hidden", padding: 8, display: "flex",
-                              alignItems: "stretch", justifyContent: "stretch" }}>
-                    {!scene ? (
-                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Select an area with a real completed scene.</div>
-                    ) : scene.scan.status !== "completed" ? (
-                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Not yet detected for this scene — run "re-run detection" to call the real detector.</div>
-                    ) : (
-                        // SAVE THE PIXELS, NOT A REFERENCE TO THEM. The scan's
-                        // own image_crop_url is always null (see database.py) —
-                        // the imagery lives on the scan as base64 and is drawn
-                        // here. Capturing this element takes what is actually on
-                        // screen, detection boxes included, which is the thing
-                        // worth putting in a briefing.
-                        <Capturable
-                            kind="imagery"
-                            label={`Sat imagery · ${scene.zone?.name || "scene"}`}
-                            detail={[
-                                scene.scan?.instrument,
-                                fmtDate(scene.scan?.image_timestamp_utc),
-                                selectedDet ? (selectedDet.label || selectedDet.object_type) : null,
-                            ].filter(Boolean).join(" · ")}
-                            style={{ flex: 1, minHeight: 0, display: "flex" }}
-                        >
-                            <SceneComparison scene={scene} view={view} showBoxes={showBoxes} changes={visibleChanges}
-                                swipePos={swipePos} onSwipePos={setSwipePos} fadeOn={fadeOn} fadeOpacity={fadeOpacity}
-                                clipRef={clipRef} fadeRef={fadeRef} onSelectDet={setSelectedDet} selectedDet={selectedDet}
-                                fullscreen={fullscreen} viewerRef={viewerRef} />
-                        </Capturable>
-                    )}
-                </div>
-            </div>
-
-            {/* Right — AOI editor + detections */}
-            <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto", padding: 12 }}>
-                {selectedAoi && <AoiEditor aoi={selectedAoi} onSaved={loadAois} onAccept={() => acceptAoi(selectedAoi)} onLocate={() => locate(selectedAoi)} onDeleted={onAoiDeleted} />}
-                {/* WHERE THIS SCAN WAS RUN — nothing more.
-                    The same locator the Inbox shows for a signal, answering
-                    "where in the world is this" without a camera move. It
-                    briefly plotted every detection as a point, which
-                    duplicated the detection list and competed with the image
-                    for the job of showing what was found. The image does
-                    that; this says where. */}
-                {selectedAoi && (
-                    <div style={{ marginTop: 16 }}>
-                        <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
-                            Where
-                        </div>
-                        {/* key forces a remount on area change so the ping
-                            animation replays — it is the "look here" cue, and
-                            it only fires on mount. span overrides the shared
-                            default of 26°, which frames half a region when the
-                            subject is a port; sized to the area itself with a
-                            floor so a tiny AOI is not framed at street level.
-                            Passed as props rather than changed in Minimap, so
-                            Inbox and Replay are untouched. */}
-                        <Minimap
-                            key={selectedAoi.system_id}
-                            focus={{
-                                lat: (selectedAoi.bbox.min_lat + selectedAoi.bbox.max_lat) / 2,
-                                lon: (selectedAoi.bbox.min_lon + selectedAoi.bbox.max_lon) / 2,
-                            }}
-                            // Floor of 3°, not tighter. The locator's
-                            // basemap is simplified to ~0.06° (that is the
-                            // fix for the old "Minecraft" coastline), so
-                            // below roughly 2° there is no geometry left to
-                            // draw and the pane renders as a grey blob —
-                            // zoomed in on nothing. 3° still frames a port
-                            // and its coast recognisably.
-                            span={Math.max(
-                                3,
-                                Math.max(selectedAoi.bbox.max_lon - selectedAoi.bbox.min_lon,
-                                         selectedAoi.bbox.max_lat - selectedAoi.bbox.min_lat) * 10,
-                            )}
-                            label={selectedAoi.name}
-                            title="Where this was scanned"
-                            color="var(--acc-hi)"
-                        />
-                    </div>
-                )}
-
-                {/* Corroborated first. A place two independent kinds of
-                    source agree on outranks anything one sensor saw alone,
-                    so it sits above this area's own detections rather than
-                    below them. */}
-                <div style={{ marginTop: 16 }}>
-                    <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
-                        Corroborated
-                    </div>
-                    <div style={{ border: "1px solid var(--line)", maxHeight: 220, overflow: "hidden",
-                                  display: "flex", flexDirection: "column" }}>
-                        <CorroboratedPanel hours={168} onFocus={(c) => {
-                            window.dispatchEvent(new CustomEvent("akili:fly-to",
-                                { detail: { lat: c.lat, lon: c.lon } }))
-                            toast(c.headline, {})
-                        }} />
-                    </div>
-                </div>
-
-                <div style={{ marginTop: 16 }}>
-                    <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Detections</div>
-                    {!scene || visibleChanges.length === 0 ? (
-                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>{scene?.scan?.status === "completed" ? "No detections in this scene." : "Not yet detected."}</div>
-                    ) : visibleChanges.map((c) => (
-                        <div key={c.id} role="button" onClick={() => focusDetection(c)}
-                            style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: selectedDet?.id === c.id ? "var(--bg-2)" : "transparent" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between" }}>
-                                <span style={{ font: "400 12px var(--font)", color: "var(--txt)" }}>
-                                    {readable(c.label)} · {c.type}
-                                    {c.radar ? (
-                                        // Say where it came from. A radar
-                                        // change and an optical detection
-                                        // are different kinds of claim and
-                                        // must not read the same.
-                                        <span style={{ font: "400 9px var(--mono)",
-                                                       color: "var(--txt-4)", marginLeft: 4 }}>
-                                            SAR {c.area_m2 >= 10000
-                                                ? `${(c.area_m2 / 10000).toFixed(1)}ha`
-                                                : `${Math.round(c.area_m2)}m²`}
-                                        </span>
-                                    ) : null}
-                                </span>
-                                <span style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{Math.round(c.conf * 100)}%</span>
-                            </div>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
-                                <span style={{ font: "400 10px var(--font)", color: c.reviewed_status === "confirmed" ? "var(--delta-better)" : c.reviewed_status === "rejected" ? "var(--delta-worse)" : "var(--txt-4)" }}>{c.reviewed_status}</span>
-                                <div style={{ display: "flex", gap: 4 }}>
-                                    <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); confirmDet(c.id) }}>confirm</button>
-                                    <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); rejectDet(c.id) }}>reject</button>
-                                </div>
-                            </div>
-                            {selectedDet?.id === c.id && c.interpretation && (
-                                <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", marginTop: 4, lineHeight: 1.4 }}>{c.interpretation}</div>
-                            )}
-                        </div>
-                    ))}
-                </div>
-                {scene && (
-                    <div style={{ marginTop: 16 }}>
-                        <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Object counts — reference → current</div>
-                        <div className="statgrid">
-                            {scene.counts.length === 0 ? (
-                                <div className="stat"><span className="value">—</span><span className="label">no reference scan yet</span></div>
-                            ) : scene.counts.map(([label, current, delta]) => (
-                                <div className="stat" key={label}>
-                                    <span className="value">{current}</span>
-                                    <span className={`delta ${delta > 0 ? "worse" : delta < 0 ? "better" : ""}`} style={{ fontFamily: "var(--mono)" }}>{delta > 0 ? "+" : ""}{delta}</span>
-                                    <span className="label">{label}</span>
-                                </div>
+                            {["new", "existing", "removed"].map((k) => (
+                                <button key={k} onClick={() => setKinds((p) => ({ ...p, [k]: !p[k] }))} style={{
+                                    ...BTN, height: 24, padding: "0 8px",
+                                    borderColor: kinds[k] ? KIND_C[k] : "var(--gline2)",
+                                    color: kinds[k] ? KIND_C[k] : "var(--txt4)",
+                                }}>{k} {byKind[k] || 0}</button>
                             ))}
                         </div>
+
+                        <div style={{ flex: 1, minHeight: 0, background: "var(--sea)", padding: 10 }}>
+                            {loadingScene && <Loading size={20} inline label="Reading the scene" style={{ padding: 16 }} />}
+                            {!loadingScene && !scene && (
+                                <div style={{ padding: 16, color: "var(--txt3)", fontSize: 13, textWrap: "pretty" }}>
+                                    Pick a scene on the left. Each one is a pass over this area, with the
+                                    detector's findings against the pass before it.
+                                </div>
+                            )}
+                            {!loadingScene && scene && (
+                                <SceneComparison
+                                    scene={scene} view={view} showBoxes={showBoxes} changes={changes}
+                                    swipePos={swipePos} onSwipePos={setSwipePos}
+                                    fadeOn={fadeOn} fadeOpacity={fadeOpacity}
+                                    clipRef={clipRef} fadeRef={fadeRef} viewerRef={viewerRef}
+                                    onSelectDet={setSelectedDet} selectedDet={selectedDet}
+                                />
+                            )}
+                        </div>
+
+                        {scans.length > 1 && (
+                            <div style={{ flex: "none", borderTop: "1px solid var(--gline)" }}>
+                                <SceneScrubber scenes={scans} selectedScanId={scanId} onSelect={setScanId} />
+                            </div>
+                        )}
                     </div>
-                )}
-                {inspectorExtensions.map((Ext, i) => (
-                    <Ext key={i} recordRef={selectedAoi ? `aoi:${selectedAoi.system_id}` : null} record={selectedAoi} />
-                ))}
-            </div>
-            <style>{"@keyframes imgpulse{0%,100%{opacity:.5}50%{opacity:1}}"}</style>
-        </div>
+
+                    {/* detections + where it is */}
+                    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, borderLeft: "1px solid var(--gline)" }}>
+                        <div style={{ height: 180, flex: "none", borderBottom: "1px solid var(--gline)", background: "var(--sea)" }}>
+                            {zone?.bbox && (
+                                <Minimap
+                                    focus={{ lat: (zone.bbox.min_lat + zone.bbox.max_lat) / 2,
+                                             lon: (zone.bbox.min_lon + zone.bbox.max_lon) / 2 }}
+                                    framing="scene" width={298} height={180}
+                                    label={zone.name} title="Where this is"
+                                    subtitle={fmtDate(scene?.scan?.image_timestamp_utc)}
+                                />
+                            )}
+                        </div>
+                        <div style={{
+                            display: "flex", alignItems: "center", gap: 8, minHeight: 36, flex: "none",
+                            padding: "0 12px", borderBottom: "1px solid var(--gline)",
+                        }}>
+                            <b style={{ fontWeight: 600, fontSize: 12.5 }}>Detections</b>
+                            <span style={{
+                                marginLeft: "auto", fontFamily: "var(--mz-font-mono)",
+                                fontSize: 10, color: "var(--txt4)",
+                            }}>{changes.length} shown</span>
+                        </div>
+                        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                            {changes.map((d) => (
+                                <div key={d.id} onClick={() => setSelectedDet(d.id)} style={{
+                                    display: "grid", gridTemplateColumns: "8px minmax(0,1fr) auto auto",
+                                    gap: "2px 8px", alignItems: "center", padding: "9px 12px",
+                                    borderBottom: "1px solid var(--gline)",
+                                    background: d.id === selectedDet ? ON : "transparent", cursor: "pointer",
+                                }}>
+                                    <i style={{ width: 8, height: 8, background: KIND_C[d.type] || "var(--steel)" }} />
+                                    <span style={{
+                                        fontSize: 13, overflow: "hidden",
+                                        textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                    }}>{d.label?.replace(/_/g, " ")}</span>
+                                    <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt3)" }}>
+                                        {Math.round((d.conf ?? 0) * 100)}%
+                                    </span>
+                                    <button onClick={(e) => { e.stopPropagation(); deleteDetection(d) }}
+                                        title="Delete this detection — not the same as rejecting it"
+                                        style={{
+                                            border: 0, background: "transparent", color: "var(--txt4)",
+                                            font: "inherit", cursor: "pointer",
+                                        }}>✕</button>
+                                    <span />
+                                    <span style={{ gridColumn: "2 / 5", fontSize: 11, color: "var(--txt3)" }}>
+                                        {d.type}{d.note ? ` · ${d.note}` : ""}
+                                    </span>
+                                </div>
+                            ))}
+                            {scene && !changes.length && (
+                                <div style={{ padding: "12px", fontSize: 12, color: "var(--txt3)", textWrap: "pretty" }}>
+                                    Nothing above {confFloor.toFixed(2)} in the kinds you have on.
+                                    This pass found {safeArray(scene.changes).length} in total.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </section>
     )
 }
 
-function AoiEditor({ aoi, onSaved, onAccept, onLocate, onDeleted }) {
-    const [name, setName] = useState(aoi.name)
-    const [cls, setCls] = useState(aoi.aoi_class)
-    const [cadenceH, setCadenceH] = useState(aoi.scan_interval_hours)
-    const [notes, setNotes] = useState(aoi.description || "")
-    const [owner, setOwner] = useState(aoi.owner || "")
-    const [sensor, setSensor] = useState(aoi.sensor_preference || "sentinel2_optical")
-    useEffect(() => { setName(aoi.name); setCls(aoi.aoi_class); setCadenceH(aoi.scan_interval_hours); setNotes(aoi.description || ""); setOwner(aoi.owner || ""); setSensor(aoi.sensor_preference || "sentinel2_optical") }, [aoi.system_id])
+/**
+ * ▣ Areas — what is being watched, how often, and with what.
+ *
+ * Interval, sensor and class are the three settings that decide what a
+ * region can ever detect, so they are on the row rather than behind an
+ * edit dialog: changing a cadence should not be a four-click operation.
+ */
+function AreasTab({ zones, onChanged, onOpen }) {
+    const [editing, setEditing] = useState(null)
+    const [draft, setDraft] = useState({})
 
-    function save() {
-        fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, {
-            method: "PUT", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, aoi_class: cls, scan_interval_hours: cadenceH, description: notes, owner, sensor_preference: sensor }),
-        }).then(() => { toast("Area saved", { icon: "i-check" }); onSaved() })
+    const start = (z) => { setEditing(z.system_id); setDraft({ ...z }) }
+    const save = async (z) => {
+        try {
+            const r = await fetch(`${API_BASE}/api/watch-zones/${z.system_id}`, {
+                method: "PUT", credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: draft.name, aoi_class: draft.aoi_class,
+                    scan_interval_hours: Number(draft.scan_interval_hours) || 24,
+                    sensor_preference: draft.sensor_preference,
+                    description: draft.description || "",
+                }),
+            })
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            toast("Area saved"); setEditing(null); onChanged()
+        } catch (e) { toast(`Could not save it — ${e.message}`, { icon: "i-alert" }) }
     }
-    function togglePause() {
-        fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, {
-            method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: aoi.status !== "active", status: aoi.status === "active" ? "paused" : "active" }),
-        }).then(() => onSaved())
+    const togglePause = async (z) => {
+        const active = z.status === "active"
+        await fetch(`${API_BASE}/api/watch-zones/${z.system_id}`, {
+            method: "PUT", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: !active, status: active ? "paused" : "active" }),
+        }).catch(() => {})
+        onChanged()
     }
-    function del() {
-        // Irreversible, and it takes the region's whole scan history with
-        // it — including the detections that are the baseline every future
-        // change comparison runs against. Worth one sentence of warning
-        // that says what is actually lost, rather than "are you sure?".
+    const scanNow = async (z) => {
+        toast(`Scanning ${z.name}…`)
+        await fetch(`${API_BASE}/api/watch-zones/${z.system_id}/scan-now`,
+            { method: "POST", credentials: "include" }).catch(() => {})
+        onChanged()
+    }
+    const del = async (z) => {
         if (!window.confirm(
-            `Delete "${aoi.name}" (${aoi.system_id})?\n\n` +
-            `This also deletes every scan of this area and all their ` +
-            `detections, permanently. Change detection has no baseline ` +
-            `to compare against afterwards.`
+            `Delete "${z.name}" (${z.system_id})?\n\n`
+            + `This also deletes every scan of this area and all their detections, `
+            + `permanently. Change detection has no baseline to compare against afterwards.`
         )) return
-        fetch(`${API_BASE}/api/watch-zones/${aoi.system_id}`, {
-            method: "DELETE", credentials: "include",
-        })
-            .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-            .then((d) => onDeleted(d))
-            // A delete that fails silently leaves the region on screen and
-            // the person assuming it worked.
-            .catch((e) => toast(`Could not delete ${aoi.system_id}: ${e.message}`, { icon: "i-alert" }))
+        try {
+            const r = await fetch(`${API_BASE}/api/watch-zones/${z.system_id}`,
+                { method: "DELETE", credentials: "include" })
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            toast("Area deleted"); onChanged()
+        } catch (e) { toast(`Could not delete it — ${e.message}`, { icon: "i-alert" }) }
     }
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div className="field"><label>Name</label><input className="input" value={name} onChange={(e) => setName(e.target.value)} /></div>
-            <div className="field"><label>Class</label>
-                <select className="input" value={cls} onChange={(e) => setCls(e.target.value)}>{AOI_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-            </div>
-            <div className="field"><label>Cadence (hours)</label><input className="input" type="number" value={cadenceH} onChange={(e) => setCadenceH(Number(e.target.value))} /></div>
-            <div className="field">
-                <label>Sensor</label>
-                <select className="input" value={sensor} onChange={(e) => setSensor(e.target.value)}>
-                    {SENSOR_OPTIONS.map((s) => (
-                        <option key={s.value} value={s.value} disabled={!s.real} title={s.real ? "" : "No real scan/detection pipeline is deployed for this sensor yet"}>
-                            {s.label}{s.real ? "" : " (not yet implemented)"}
-                        </option>
-                    ))}
-                </select>
-                {!SENSOR_OPTIONS.find((s) => s.value === sensor)?.real && (
-                    <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)", marginTop: 3 }}>
-                        Saved as this area's real stated preference, but no real scan/detection pipeline exists for it yet — a scan attempt will be honestly rejected until one is built.
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", border: "1px solid var(--gline)" }}>
+                <div style={{
+                    display: "grid", gridTemplateColumns: "1.6fr .9fr .7fr 1fr .7fr auto",
+                    gap: 12, padding: "9px 14px", borderBottom: "1px solid var(--gline)", ...EYE,
+                }}>
+                    <span>Area</span><span>Class</span><span>Every</span>
+                    <span>Sensor</span><span>Last pass</span><span />
+                </div>
+                {zones.map((z) => {
+                    const on = editing === z.system_id
+                    return (
+                        <div key={z.system_id} style={{
+                            display: "grid", gridTemplateColumns: "1.6fr .9fr .7fr 1fr .7fr auto",
+                            gap: 12, alignItems: "center", padding: "10px 14px",
+                            borderBottom: "1px solid var(--gline)", fontSize: 13,
+                        }}>
+                            {on ? (
+                                <>
+                                    <input value={draft.name || ""} style={FIELD}
+                                        onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
+                                    <select value={draft.aoi_class || "custom"} style={FIELD}
+                                        onChange={(e) => setDraft((d) => ({ ...d, aoi_class: e.target.value }))}>
+                                        {AOI_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                    <input type="number" min={1} value={draft.scan_interval_hours || 24} style={FIELD}
+                                        onChange={(e) => setDraft((d) => ({ ...d, scan_interval_hours: e.target.value }))} />
+                                    <select value={draft.sensor_preference || "sentinel2_optical"} style={FIELD}
+                                        onChange={(e) => setDraft((d) => ({ ...d, sensor_preference: e.target.value }))}>
+                                        {SENSOR_OPTIONS.map((s) => (
+                                            <option key={s.key || s} value={s.key || s}>{s.label || s}</option>
+                                        ))}
+                                    </select>
+                                    <span style={{ color: "var(--txt4)", fontSize: 11 }}>—</span>
+                                    <span style={{ display: "flex", gap: 4 }}>
+                                        <button onClick={() => save(z)} style={{ ...BTN, border: 0, background: "var(--acc)", color: "var(--mz-cream)" }}>Save</button>
+                                        <button onClick={() => setEditing(null)} style={BTN}>Cancel</button>
+                                    </span>
+                                </>
+                            ) : (
+                                <>
+                                    <button onClick={() => onOpen(z.system_id)} style={{
+                                        border: 0, background: "transparent", color: "var(--txt)",
+                                        font: "inherit", fontWeight: 600, textAlign: "left",
+                                        cursor: "pointer", padding: 0, minWidth: 0,
+                                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                    }}>{z.name}</button>
+                                    <span style={{ color: "var(--txt2)" }}>{z.aoi_class}</span>
+                                    <span style={{ fontFamily: "var(--mz-font-mono)", color: "var(--txt2)" }}>
+                                        {z.scan_interval_hours}h
+                                    </span>
+                                    <span style={{ color: "var(--txt2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {z.sensor_preference?.replace(/_/g, " ")}
+                                    </span>
+                                    <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt3)" }}>
+                                        {z.last_scanned_at ? fmtDate(z.last_scanned_at) : "never"}
+                                    </span>
+                                    <span style={{ display: "flex", gap: 4 }}>
+                                        <button onClick={() => start(z)} style={BTN}>Edit</button>
+                                        <button onClick={() => scanNow(z)} style={BTN}>Scan now</button>
+                                        <button onClick={() => togglePause(z)} style={BTN}>
+                                            {z.status === "active" ? "Pause" : "Resume"}
+                                        </button>
+                                        <button onClick={() => del(z)} style={{ ...BTN, color: "var(--red)" }}>Delete</button>
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                    )
+                })}
+                {!zones.length && (
+                    <div style={{ padding: 16, fontSize: 12.5, color: "var(--txt3)", textWrap: "pretty" }}>
+                        No areas are being watched. Draw one on the map with the Overwatch panel —
+                        that is where tasking happens; this screen is for looking at what came back.
                     </div>
                 )}
-            </div>
-            <div className="field"><label>Owner</label><input className="input" value={owner} onChange={(e) => setOwner(e.target.value)} /></div>
-            <div className="field"><label>Standing note</label><textarea className="input" style={{ minHeight: 50 }} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
-            <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>Status: {aoi.status}</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <button className="btn primary sm" onClick={save}>save area</button>
-                {aoi.status === "proposed" ? (
-                    <button className="btn sm" onClick={onAccept}>accept</button>
-                ) : (
-                    <button className="btn sm" onClick={togglePause}>{aoi.status === "active" ? "pause" : "resume"}</button>
-                )}
-                <button className="btn sm" onClick={onLocate}>locate</button>
-                <button className="btn danger sm" onClick={del}>delete</button>
             </div>
         </div>
     )

@@ -159,6 +159,24 @@ export function installOfflineCache({
     const native = win.fetch.bind(win)
     let lastState = null
 
+    /* Writes are fire-and-forget (see the success path below), which makes
+       the cache eventually-consistent: a response is served to the caller
+       before its copy has landed on disk. That is the right trade for a
+       request, and it is a real part of the contract, so it is observable
+       rather than implied — `whenCacheIdle()` resolves once every write
+       issued so far has settled. Tests await it instead of sleeping, and
+       anything that needs the cache durable before teardown can too. */
+    const pending = new Set()
+    const track = (promise) => {
+        pending.add(promise)
+        promise.finally(() => pending.delete(promise))
+        return promise
+    }
+    const whenIdle = async () => {
+        while (pending.size) await Promise.allSettled([...pending])
+    }
+    win.__parallaxCacheIdle = whenIdle
+
     const announce = (state, at) => {
         if (state === lastState) return
         lastState = state
@@ -189,16 +207,30 @@ export function installOfflineCache({
             const res = await native(input, ctl ? { ...init, signal: init.signal || ctl.signal } : init)
             if (timer) clearTimeout(timer)
             if (res.ok) {
-                // Clone before anyone reads it — a Response body is a
-                // one-shot stream and consuming it here would empty it for
-                // the caller.
-                try {
-                    const body = await res.clone().text()
-                    await backing.set(url, {
-                        body, at: now(),
-                        contentType: res.headers.get("content-type") || "application/json",
-                    })
-                } catch { /* a full disk must not fail the request */ }
+                /* THE WRITE DOES NOT BLOCK THE RESPONSE.
+                   This used to `await res.clone().text()` and `await
+                   backing.set(...)` before returning, so every caller's
+                   fetch was gated on an IndexedDB round-trip finishing.
+                   When that write stalled — and under concurrent writes it
+                   does — the response never reached the caller even though
+                   it had arrived. Measured: /api/surface completed on the
+                   wire at 13.3s and the Home screen's `.then` never ran at
+                   all, which is why Home sat at zero signals with a healthy
+                   200 in the network panel.
+
+                   Caching is a side effect of the request, not a step in
+                   it. The clone is taken synchronously (the body is a
+                   one-shot stream, so it must be claimed before the caller
+                   reads it) and drained on its own time. A cache that
+                   fails to write costs a cache miss later; a cache that
+                   hangs costs the feature. */
+                const copy = res.clone()
+                const contentType = res.headers.get("content-type") || "application/json"
+                track((async () => {
+                    try {
+                        await backing.set(url, { body: await copy.text(), at: now(), contentType })
+                    } catch { /* a full disk must not fail the request */ }
+                })())
                 announce("live")
             }
             return res
@@ -241,6 +273,7 @@ export function installOfflineCache({
         win.__parallaxCacheInstalled = false
     }
     win.__parallaxCacheUninstall = uninstall
+    uninstall.whenIdle = whenIdle
     return uninstall
 }
 

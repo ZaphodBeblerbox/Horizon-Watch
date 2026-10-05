@@ -31,8 +31,21 @@ export function useChrome(key) {
         updateSetting(`chrome.${key}`, next)
     }, [key])
 
+    /* NO SIDE EFFECT INSIDE THE UPDATER. updateSetting() used to be called
+       from within setOpenLocal's updater function, and React runs updaters
+       during the RENDER phase — so toggling a panel notified every settings
+       subscriber mid-render and React warned "Cannot update a component
+       (Situation) while rendering a different component (App)". With enough
+       subscribers that is not just a warning; it is a render that reads
+       state written halfway through itself.
+
+       The next value comes from the store rather than from `prev`, which is
+       both side-effect free and more correct: the store is what the other
+       subscribers are about to be told, so it is what this should negate. */
     const toggle = useCallback(() => {
-        setOpenLocal((prev) => { updateSetting(`chrome.${key}`, !prev); return !prev })
+        const next = !readChrome()[key]
+        setOpenLocal(next)
+        updateSetting(`chrome.${key}`, next)
     }, [key])
 
     return [open, toggle, setOpen]

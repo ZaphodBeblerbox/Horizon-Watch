@@ -40,6 +40,13 @@ _PRICE_TABLE: dict[str, tuple[float, float]] = {
     "claude-haiku":  (0.000001, 0.000005),
     "claude-sonnet": (0.000003, 0.000015),
     "claude-opus":   (0.000005, 0.000025),
+    # OpenAI, the cheap all-rounder (see openai_gate.py). In the SAME table
+    # because the question "what has this system spent" has one answer, and
+    # two separate ledgers have to be added up by hand to get it.
+    "gpt-4o-mini":   (0.00000015, 0.0000006),
+    "gpt-4.1-nano":  (0.0000001,  0.0000004),
+    "gpt-4.1-mini":  (0.0000004,  0.0000016),
+    "gpt-4o":        (0.0000025,  0.00001),
 }
 # Preserves the old flat-rate behaviour for any call site that doesn't (yet) pass
 # a model= or a recognised call_type — i.e. this is the previous hardcoded price,
@@ -441,3 +448,28 @@ def rule_based_summary(
         summary += f" {count} incidents detected in the past {hours} hours."
     summary += " Signal strength below threshold — automated summary only."
     return summary
+
+
+def openai_cost_for_month(month: str) -> float:
+    """What the OpenAI models have cost in a calendar month, "YYYY-MM".
+
+    Summed from the per-call log rather than from a running total, because a
+    running total cannot be scoped to a month without a second counter that
+    can drift from the log it is supposed to summarise.
+    """
+    with _lock:
+        data = _load()
+        total = 0.0
+        for entry in data.get("call_log", []) or []:
+            model = (entry.get("model") or "").lower()
+            if not model.startswith("gpt-"):
+                continue
+            # The log stores `ts` as an epoch float and `cost` in USD —
+            # reading the field names the writer actually uses, not the
+            # ones that would be tidier.
+            ts = entry.get("ts")
+            if not isinstance(ts, (int, float)):
+                continue
+            if datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m") == month:
+                total += float(entry.get("cost") or 0.0)
+        return total

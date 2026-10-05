@@ -712,7 +712,7 @@ export function adaptCountryRisk(data = {}) {
     const counts = Object.values(comps)
         .map(c => c && (c.n_events ?? c.recent_count ?? c.count))
         .filter(n => typeof n === "number")
-    const evidence = counts.length ? Math.max(...counts) : null
+    const evidence = counts.length ? counts.reduce((m, c) => (c > m ? c : m), -Infinity) : null
 
     const attributes = compact([
         attr("Risk score", data.score != null

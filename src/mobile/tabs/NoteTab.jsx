@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { getForgeAlerts, sendDeskNote, listDeskNotes } from "../mobileApi.js"
+import { safeArray } from "../../utils/safeArray.js"
 
 const ROUTES = [
     { id: "duty_desk", label: "Duty desk" },
@@ -24,7 +25,7 @@ export default function NoteTab({ pendingReference, onReferenceConsumed }) {
     const timerRef = useRef(null)
     const cancelledRef = useRef(false)
 
-    function refreshOutbox() { listDeskNotes().then(setOutbox).catch(() => {}) }
+    function refreshOutbox() { listDeskNotes().then((v) => setOutbox(safeArray(v))).catch(() => {}) }
     useEffect(() => { refreshOutbox() }, [])
 
     // Real on-call queue (escalated/critical/high, capped at 12) for the

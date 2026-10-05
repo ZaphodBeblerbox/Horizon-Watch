@@ -1,96 +1,113 @@
+/**
+ * MapControlStack.jsx — PARALLAX v6 Part A5.4, the map controls.
+ *
+ * TWO PILL GROUPS, NOT ONE STACK. Zoom is one thing and view is another,
+ * and the spec separates them by an 8px gap so the hand knows which it is
+ * reaching for without the eye checking. Inside a group the buttons are
+ * separated by a 1px gap that shows the group's own var(--gline)
+ * background through as a hairline — a border on each button would read
+ * as five buttons; a hairline reads as one control with segments.
+ *
+ * GEOMETRY. Group: column, gap 1, border 1px var(--gline), radius 17,
+ * overflow hidden, var(--gshadow), blurred. Button: 34×30, background
+ * var(--glass), mono 12 weight 500, var(--txt2); hover var(--hov) /
+ * var(--txt). The glyphs are text, not icons, because +, −, ◎ and ⤢ are
+ * already universally legible and an icon of a plus sign is a worse plus
+ * sign.
+ *
+ * ZOOM HIDES ON TOUCH. A5.4: when `(hover: none) and (pointer: coarse)`
+ * matches, the zoom group is not rendered at all — pinch already does it,
+ * and two buttons that duplicate a gesture are two buttons in the way.
+ */
+import { useEffect, useState } from "react"
 import Icon from "../ui/Icon.jsx"
 import LayersFlyout from "./LayersFlyout.jsx"
 
-/**
- * The map control stack — full UI rebuild spec section 4, updated per the
- * UI correction pass Part 9: the layers control is now the shared
- * LayersFlyout (a translucent flyout, same visual family as these other
- * buttons) instead of a separate always-docked rail — this is the ONE
- * layers-control pattern in the app now, used identically on every map
- * instance (Globe home screen, Dashboard, each Canonical operational view).
- * Lower-right, vertical stack of 32x32px buttons, 8px radius, --bg-card
- * fill, 1px --border, 6px gap: layers, locate, zoom in, zoom out,
- * fullscreen/exit-fullscreen. These are the ONLY controls in this position —
- * no other zoom/layer controls duplicated elsewhere on screen.
- *
- * `layers` (optional): {active, onToggle, onLayerSet, autoModeEnabled,
- * onAutoMode, onExportView} — passed straight through to LayersFlyout. Omit
- * entirely on a map instance with no real toggleable layers (e.g. a fixed,
- * already-collected dataset view) to render the stack without a layers
- * button at all, rather than a dead/no-op one.
- */
-function ControlButton({ name, title, onClick, active = false }) {
+const BASEMAP_PRESETS = [
+    { key: "dark",      icon: "basemapDark",    title: "Dark basemap" },
+    { key: "satellite", icon: "satellite",      title: "Satellite basemap (Esri World Imagery)" },
+    { key: "terrain",   icon: "basemapTerrain", title: "Terrain basemap (3D elevation)" },
+]
+
+const GROUP = {
+    display: "flex", flexDirection: "column", gap: 1, overflow: "hidden",
+    background: "var(--gline)",
+    backdropFilter: "blur(22px) saturate(1.15)",
+    WebkitBackdropFilter: "blur(22px) saturate(1.15)",
+    border: "1px solid var(--gline)", boxShadow: "var(--gshadow)",
+    borderRadius: 17,
+}
+
+function Btn({ glyph, label, onClick, active = false, children = null }) {
     return (
         <button
-            onClick={onClick}
-            title={title}
-            aria-label={title}
-            aria-pressed={active}
+            onClick={onClick} title={label} aria-label={label} aria-pressed={active}
             style={{
-                width: 32, height: 32, borderRadius: "var(--radius-md)",
-                background: "var(--bg-card)", border: "1px solid var(--border)",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                cursor: "pointer", color: active ? "var(--accent-blue)" : "var(--text-secondary)",
+                width: 34, height: 30, border: 0,
+                background: active ? "var(--accdim)" : "var(--glass)",
+                color: active ? "var(--txt)" : "var(--txt2)",
+                fontFamily: "var(--mz-font-mono)", fontWeight: 500, fontSize: 12,
+                cursor: "pointer",
             }}
-        >
-            <Icon name={name} size={16} />
-        </button>
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--hov)"; e.currentTarget.style.color = "var(--txt)" }}
+            onMouseLeave={(e) => {
+                e.currentTarget.style.background = active ? "var(--accdim)" : "var(--glass)"
+                e.currentTarget.style.color = active ? "var(--txt)" : "var(--txt2)"
+            }}
+        >{children || glyph}</button>
     )
 }
 
-const BASEMAP_PRESETS = [
-    { key: "dark",      icon: "basemapDark",     title: "Dark basemap" },
-    { key: "satellite", icon: "satellite",       title: "Satellite basemap (Esri World Imagery)" },
-    { key: "terrain",   icon: "basemapTerrain",  title: "Terrain basemap (3D elevation)" },
-]
+export default function MapControlStack({
+    layers = null, onLocate, onZoomIn, onZoomOut,
+    onFullscreen, isFullscreen = false, basemap = null, rightInset = 0,
+}) {
+    const [touch, setTouch] = useState(false)
+    useEffect(() => {
+        try { setTouch(window.matchMedia("(hover: none) and (pointer: coarse)").matches) }
+        catch { setTouch(false) }
+    }, [])
 
-/**
- * `basemap` (optional): {value: "dark"|"satellite"|"terrain", onChange(key)}
- * — omit to render the stack without the basemap group at all. Grouped
- * directly under the existing nav buttons (same 32px/--bg-card/--border
- * ControlButton, a thin divider instead of a second floating box) so it
- * reads as one continuous control cluster rather than a disconnected one.
- */
-export default function MapControlStack({ layers = null, onLocate, onZoomIn, onZoomOut, onFullscreen, isFullscreen = false, basemap = null, rightInset = 0 }) {
     return (
         <div style={{
-            // Round 4 layout fix — the map is now a real full-bleed canvas
-            // behind the Layers/Inspector overlay panes (previously they
-            // were flex siblings, so this stack's own right:16 always fell
-            // within the map's own narrower flex-allocated width — now
-            // that same fixed 16 would fall underneath the Inspector pane
-            // whenever it's open). rightInset shifts this stack left by
-            // Inspector's real width so it stays in the visible map gutter.
-            position: "absolute", right: 16 + rightInset, bottom: 16, zIndex: 40,
-            display: "flex", flexDirection: "column", gap: 6,
+            // rightInset keeps the stack in the visible gutter when the
+            // Inspector pane is open over the map.
+            position: "absolute", right: 12 + rightInset, bottom: 12, zIndex: 23,
+            display: "flex", flexDirection: "column", gap: 8,
+            background: "transparent", border: 0,
             transition: "right 0.15s ease",
         }}>
             {layers && (
-                <LayersFlyout
-                    active={layers.active} onToggle={layers.onToggle} onLayerSet={layers.onLayerSet}
-                    autoModeEnabled={layers.autoModeEnabled} onAutoMode={layers.onAutoMode}
-                    onExportView={layers.onExportView} buttonSize={32}
-                />
+                <div style={GROUP}>
+                    <LayersFlyout
+                        active={layers.active} onToggle={layers.onToggle} onLayerSet={layers.onLayerSet}
+                        autoModeEnabled={layers.autoModeEnabled} onAutoMode={layers.onAutoMode}
+                        onExportView={layers.onExportView} buttonSize={30}
+                    />
+                </div>
             )}
-            <ControlButton name="locate" title="Locate" onClick={onLocate} />
-            <ControlButton name="zoomIn" title="Zoom In" onClick={onZoomIn} />
-            <ControlButton name="zoomOut" title="Zoom Out" onClick={onZoomOut} />
-            {/* Fullscreen is gone from the map controls too. The OS and the
-                browser both already offer it, and on the desktop build the
-                app is its own window — a third control for it earned
-                nothing but a slot in a stack people reach for often. */}
-            {basemap && (
-                <>
-                    <div style={{ height: 1, background: "var(--border)", margin: "2px 2px" }} />
-                    {BASEMAP_PRESETS.map((p) => (
-                        <ControlButton
-                            key={p.key} name={p.icon} title={p.title}
-                            active={basemap.value === p.key}
-                            onClick={() => basemap.onChange(p.key)}
-                        />
-                    ))}
-                </>
+
+            {!touch && (
+                <div style={GROUP}>
+                    <Btn glyph="+" label="Zoom in" onClick={onZoomIn} />
+                    <Btn glyph="−" label="Zoom out" onClick={onZoomOut} />
+                </div>
             )}
+
+            <div style={GROUP}>
+                <Btn glyph="◎" label="Recentre on selection" onClick={onLocate} />
+                <Btn glyph="⤢" label="Fit all tracks" onClick={onLocate} />
+                {basemap && BASEMAP_PRESETS.map((p) => (
+                    <Btn
+                        key={p.key} label={p.title}
+                        active={basemap.value === p.key}
+                        onClick={() => basemap.onChange(p.key)}
+                    >
+                        <Icon name={p.icon} size={14} />
+                    </Btn>
+                ))}
+            </div>
         </div>
     )
 }

@@ -45,6 +45,25 @@ function _publish() {
 }
 
 export function getCurrentUser() { return _currentUser }
+
+/**
+ * Replace the signed-in user with a fresher copy of themselves.
+ *
+ * Profile saves through PUT /api/users/{id} and gets the updated row back.
+ * Without this, that row lived in Profile's own state: you could change
+ * your picture and watch the rail and Home keep showing the old initials
+ * until the next full reload, which reads as the save not having worked.
+ *
+ * It refuses a different user on purpose — this is "I changed my own
+ * details", never "become someone else", and a store that accepts an
+ * arbitrary identity from a component is one bug away from a session mix-up.
+ */
+export function updateCurrentUser(next) {
+    if (!next?.id || !_currentUser || next.id !== _currentUser.id) return _currentUser
+    _currentUser = { ..._currentUser, ...next }
+    _publish()
+    return _currentUser
+}
 export function isAuthChecked() { return _authChecked }
 export function isAuthTransientError() { return _authTransientError }
 export function subscribeAuth(fn) {

@@ -30,19 +30,19 @@ export default function DrawModeBanner({ active, drawMode = "rectangle", stage =
                 position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)",
                 zIndex: 60, display: "flex", alignItems: "center", gap: 12,
                 padding: "7px 12px", borderRadius: 3,
-                background: "var(--bg-2, #22282f)", border: "1px solid var(--acc-hi, #5f95d0)",
+                background: "var(--bg-2, #1e212c)", border: "1px solid var(--acc-hi, #a0b2d2)",
                 boxShadow: "0 3px 14px rgba(0,0,0,.45)", pointerEvents: "auto",
                 maxWidth: "min(560px, calc(100% - 24px))",
             }}
         >
             <span aria-hidden="true" style={{
                 width: 9, height: 9, flexShrink: 0, borderRadius: "50%",
-                background: "var(--acc-hi, #5f95d0)",
+                background: "var(--acc-hi, #a0b2d2)",
             }} />
-            <span style={{ font: "600 11px var(--font)", color: "var(--txt, #d5dae0)", whiteSpace: "nowrap" }}>
+            <span style={{ font: "600 11px var(--font)", color: "var(--txt, #f2f3f6)", whiteSpace: "nowrap" }}>
                 Drawing {drawMode === "polygon" ? "an outline" : "an area"}
             </span>
-            <span style={{ font: "400 11px var(--font)", color: "var(--txt-3, #818c96)" }}>{how}</span>
+            <span style={{ font: "400 11px var(--font)", color: "var(--txt-3, #b5b9c3)" }}>{how}</span>
             <span style={{ flex: 1 }} />
             {onCancel && (
                 <button

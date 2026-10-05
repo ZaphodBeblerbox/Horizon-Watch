@@ -26,6 +26,7 @@ import ForecastScenarioView from "./ForecastScenarioView.jsx"
 import { TEMPLATE_KEYS, TEMPLATE_LABEL } from "./forecastTemplate.js"
 import { safeArray } from "../utils/safeArray.js"
 import { pct, rows, departure, tickLeft, barWidth, residualOf } from "./forecastBars.js"
+import ForecastToday from "./ForecastToday.jsx"
 
 export default function Forecast() {
     const [boards, setBoards] = useState(null)
@@ -33,7 +34,11 @@ export default function Forecast() {
     const [board, setBoard] = useState(null)
     const [error, setError] = useState(null)
     const [sel, setSel] = useState(null)
-    const [mode, setMode] = useState("board")
+    /* TODAY IS THE DEFAULT. The board is the statistical layer and is worth
+       keeping, but it answers category-level questions over a quarter and
+       cannot be wrong about anything in particular. What an analyst opens
+       this module for is what may happen and where, so that is what opens. */
+    const [mode, setMode] = useState("today")
     const [built, setBuilt] = useState(null)
     const [proposing, setProposing] = useState(false)
     const [local, setLocal] = useState([])     // proposals added this session
@@ -101,15 +106,19 @@ export default function Forecast() {
             {/* ── left pane (F3.1) ─────────────────────────────── */}
             <aside style={{ width: 270, flex: "0 0 270px", borderRight: "1px solid var(--line)",
                             overflow: "auto", minHeight: 0 }}>
-                <Head>Forecast<Sub>{mode === "board" ? "scenario board" : "build a scenario"}</Sub></Head>
+                <Head>Forecast<Sub>{mode === "today" ? "what today may bring"
+                    : mode === "board" ? "scenario board" : "build a scenario"}</Sub></Head>
 
                 <div style={{ display: "flex", gap: 6, padding: "0 14px 10px" }}>
+                    <button className={`btn sm${mode === "today" ? " primary" : ""}`}
+                            onClick={() => setMode("today")}>today</button>
                     <button className={`btn sm${mode === "board" ? " primary" : ""}`}
                             onClick={() => setMode("board")}>board</button>
                     <button className={`btn sm${mode === "build" ? " primary" : ""}`}
                             onClick={() => setMode("build")}>build</button>
                 </div>
 
+                {mode === "today" ? <ForecastToday /> : null}
                 {mode === "build" ? <ForecastBuilder onOpen={setBuilt} /> : null}
                 {mode === "board" ? (
                 <>

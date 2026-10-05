@@ -132,9 +132,41 @@ describe("serving from cache", () => {
         installOfflineCache({ win, apiBase: API, store, timeoutMs: 0 })
         await win.fetch(`${API}/api/a`)
         await win.fetch(`${API}/api/b`)
+        // The cache write no longer blocks the response — a stalled
+        // IndexedDB write used to hang the caller's fetch forever. So wait
+        // for the writes to settle rather than assuming they already have.
+        await win.__parallaxCacheIdle()
         online = false
         expect((await (await win.fetch(`${API}/api/a`)).json()).which).toBe("a")
         expect((await (await win.fetch(`${API}/api/b`)).json()).which).toBe("b")
+    })
+
+    it("hands back the response without waiting for the cache write", async () => {
+        /* THE REGRESSION THIS EXISTS FOR. The success path used to
+           `await backing.set(...)` before returning, so every caller's
+           fetch was gated on an IndexedDB round-trip. When a write stalled
+           the response never reached the caller even though it had already
+           arrived on the wire — measured in the running app as
+           /api/surface completing in 3s while the Home screen's .then()
+           never ran at all, leaving it reading "0 signals" against a
+           healthy 200. It failed silently, with no error anywhere, which
+           is exactly why it needs a test. */
+        let release
+        const stalled = new Promise((r) => { release = r })
+        const slowStore = {
+            get: async () => null,
+            set: () => stalled,          // never settles until released
+            keys: async () => [],
+        }
+        const win = fakeWindow(async () => json({ ok: true }))
+        installOfflineCache({ win, apiBase: API, store: slowStore, timeoutMs: 0 })
+
+        const res = await Promise.race([
+            win.fetch(`${API}/api/slow`),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("fetch waited on the cache write")), 50)),
+        ])
+        expect((await res.json()).ok).toBe(true)
+        release()
     })
 
     it("leaves other hosts alone entirely", async () => {

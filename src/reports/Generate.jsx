@@ -5,6 +5,10 @@ import { getBriefingItems, useBriefingCount } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import Icon from "../ui/Icon.jsx"
 import { getSettings } from "../state/settingsStore.js"
+import {
+    normaliseUrgency, sectorOfSnapshotSection, applyFilters, facetCounts,
+    group, sectorsPresent, urgenciesPresent,
+} from "../state/signalPicker.js"
 
 // Generate — page-by-page rebuild. Layout 290px / 1fr / 322px. A single-shot
 // "configure, run, watch it happen" screen — not a persistent task browser
@@ -86,11 +90,47 @@ const SECTION_TO_SNAPSHOT = {
     alerts_events: ["fusion_events", "surge_events"], outlook_watch: ["foresight_risks"],
 }
 
+/* The corpus grid picks by the same two facets as the writer's aside, in
+   the same words — see state/signalPicker.js. A snapshot bucket IS a
+   sector; the severity words the snapshot uses are folded into the five
+   urgency bands the rest of the app files by. */
+const CORPUS_READ = {
+    urgency: (it) => normaliseUrgency(it.severity),
+    sector: (it) => it.sector,
+    text: (it) => it.label,
+}
+
 const STEP_LABELS = [
     "Resolve parameters and scope", "Assemble evidence set", "Deduplicate and cluster signals",
     "Score exposure against asset register", "Draft judgement and section text",
     "Apply house style and classification", "Compile document and paginate",
 ]
+
+/* A facet chip in the corpus grid. The count is of what pressing it would
+   actually yield — see facetCounts. */
+function GenChip({ label, count, on, onClick }) {
+    return (
+        <button
+            type="button" onClick={onClick}
+            style={{
+                display: "inline-flex", alignItems: "center", gap: 5, height: 20, padding: "0 7px",
+                border: `1px solid ${on ? "var(--acc-line)" : "var(--line)"}`,
+                background: on ? "var(--acc-dim)" : "transparent",
+                color: on ? "var(--txt)" : "var(--txt-3)",
+                font: "400 10.5px var(--font)", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+        >
+            {label}
+            {count != null && <span style={{ font: "400 9.5px var(--mono)", color: "var(--txt-3)" }}>{count}</span>}
+        </button>
+    )
+}
+
+function SEV_TINT(u) {
+    return u === "critical" ? "var(--sev-critical)"
+        : u === "significant" || u === "high" ? "var(--sev-high)"
+        : u === "elevated" ? "var(--acc-hi)" : "var(--txt-3)"
+}
 
 function nowMs() { return performance.now() }
 
@@ -119,6 +159,10 @@ export default function Generate({ onOpenTab }) {
 
     const [corpus, setCorpus] = useState(null) // { task, snapshotContent }
     const [selected, setSelected] = useState({}) // { itemKey: true }
+    // The corpus is picked by urgency and sector, like the writer's aside.
+    const [urg, setUrg] = useState(() => new Set())
+    const [sec, setSec] = useState(() => new Set())
+    const [groupBy, setGroupBy] = useState("urgency")
     const [emptyOverride, setEmptyOverride] = useState(false)
 
     const [running, setRunning] = useState(false)
@@ -130,7 +174,15 @@ export default function Generate({ onOpenTab }) {
     const runIdRef = useRef(0)
     const briefingCount = useBriefingCount()
 
-    useEffect(() => { listWatchZones().then(setWatchZones).catch(() => {}) }, [])
+    // Coerced, not assigned straight through. asJson() returns null for a
+    // 200 whose body will not parse, and a null here replaced the [] default
+    // and crashed the render at watchZones.map — a resolution, so .catch
+    // never saw it. Anything that is not a list is no list.
+    useEffect(() => {
+        listWatchZones()
+            .then((z) => setWatchZones(Array.isArray(z) ? z : []))
+            .catch(() => setWatchZones([]))
+    }, [])
 
     function buildEvidenceItems(snapshotContent, sectionToggles) {
         if (!snapshotContent) return []
@@ -145,6 +197,10 @@ export default function Generate({ onOpenTab }) {
                     out.push({
                         key: `${snapSection}:${id}`, snapSection, id: String(id), section,
                         severity: item.severity || "info",
+                        // The bucket the snapshot put it in IS its sector, in
+                        // the same words the case tree and the writer's aside
+                        // use — so "Imagery" means one thing in the whole app.
+                        sector: sectorOfSnapshotSection(snapSection),
                         label: item.location_name || item.title || item.headline || item.object_type || item.zone || String(id),
                     })
                 }
@@ -156,6 +212,14 @@ export default function Generate({ onOpenTab }) {
     }
 
     const items = buildEvidenceItems(corpus?.snapshotContent, sectionsOn)
+    const facets = facetCounts(items, CORPUS_READ, { urgency: urg, sector: sec })
+    const urgBands = urgenciesPresent(items, CORPUS_READ)
+    const secBands = sectorsPresent(items, CORPUS_READ)
+    const shown = applyFilters(items, CORPUS_READ, { urgency: urg, sector: sec })
+    const shownGroups = group(shown, CORPUS_READ, groupBy)
+    const toggleFacet = (put) => (v) => put((p) => {
+        const n = new Set(p); n.has(v) ? n.delete(v) : n.add(v); return n
+    })
 
     // §S4.4 — "The briefing basket PRE-SELECTS into it, so 'add to basket'
     // from anywhere in the console lands here."
@@ -405,6 +469,42 @@ export default function Generate({ onOpenTab }) {
                     }}>select top 12 by severity</button>
                     <button className="btn ghost sm" onClick={() => setSelected(Object.fromEntries(items.map((i) => [i.key, false])))}>clear</button>
                 </div>
+
+                {/* PICK BY URGENCY AND SECTOR. Eighty signals sorted by one
+                    key is a list you scroll past, not one you choose from.
+                    Filtering here changes what is SHOWN; it never silently
+                    deselects, because what is selected is the analyst's own
+                    decision and a filter is a way of looking, not an edit. */}
+                {items.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
+                            <span style={{ font: "500 10px var(--mono)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt-3)", marginRight: 4 }}>Urgency</span>
+                            {urgBands.map((u) => (
+                                <GenChip key={u} label={u} count={facets.urgency[u] || 0}
+                                         on={urg.has(u)} onClick={() => toggleFacet(setUrg)(u)} />
+                            ))}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
+                            <span style={{ font: "500 10px var(--mono)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt-3)", marginRight: 4 }}>Sector</span>
+                            {secBands.map((x) => (
+                                <GenChip key={x} label={x} count={facets.sector[x] || 0}
+                                         on={sec.has(x)} onClick={() => toggleFacet(setSec)(x)} />
+                            ))}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ font: "500 10px var(--mono)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt-3)", marginRight: 4 }}>Group</span>
+                            {[["urgency", "urgency"], ["sector", "sector"], ["none", "flat"]].map(([k, l]) => (
+                                <GenChip key={k} label={l} on={groupBy === k} onClick={() => setGroupBy(k)} />
+                            ))}
+                            {(urg.size || sec.size) ? (
+                                <button className="btn ghost sm" style={{ marginLeft: "auto" }}
+                                        onClick={() => { setUrg(new Set()); setSec(new Set()) }}>
+                                    show all {items.length}
+                                </button>
+                            ) : null}
+                        </div>
+                    </div>
+                )}
                 {!corpus ? (
                     <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)", display: "flex", alignItems: "center", gap: 8 }}>
                         <span style={{
@@ -419,13 +519,38 @@ export default function Generate({ onOpenTab }) {
                     </div>
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        {items.map((it) => (
-                            <label key={it.key} style={{ display: "flex", alignItems: "center", gap: 8, font: "400 12px var(--font)", color: "var(--txt-2)", padding: "3px 0", borderBottom: "1px solid var(--line-soft)" }}>
-                                <input type="checkbox" className="check" checked={selected[it.key] !== false} onChange={() => setSelected((p) => ({ ...p, [it.key]: p[it.key] === false }))} />
-                                <span style={{ width: 60, flexShrink: 0, color: it.severity === "critical" ? "var(--sev-critical)" : it.severity === "high" ? "var(--sev-high)" : "var(--txt-3)" }}>{it.severity}</span>
-                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.label}</span>
-                            </label>
-                        ))}
+                        {!shown.length && (
+                            <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>
+                                Nothing in the corpus matches this filter.
+                            </div>
+                        )}
+                        {shownGroups.map((grp) => {
+                            const keys = grp.items.map((i) => i.key)
+                            const allOn = keys.every((k) => selected[k] !== false)
+                            return (
+                                <div key={grp.key ?? "__all__"} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                    {grp.key != null && (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, paddingBottom: 3, borderBottom: "1px solid var(--line)" }}>
+                                            <input type="checkbox" className="check" checked={allOn}
+                                                   aria-label={`Select all in ${grp.key}`}
+                                                   onChange={() => setSelected((p) => ({
+                                                       ...p, ...Object.fromEntries(keys.map((k) => [k, allOn ? false : true])),
+                                                   }))} />
+                                            <span style={{ font: "500 10px var(--mono)", letterSpacing: ".14em", textTransform: "uppercase", color: SEV_TINT(grp.key) }}>{grp.key}</span>
+                                            <span style={{ font: "400 10px var(--mono)", color: "var(--txt-3)" }}>{grp.items.length}</span>
+                                        </div>
+                                    )}
+                                    {grp.items.map((it) => (
+                                        <label key={it.key} style={{ display: "flex", alignItems: "center", gap: 8, font: "400 12px var(--font)", color: "var(--txt-2)", padding: "3px 0", borderBottom: "1px solid var(--line-soft)" }}>
+                                            <input type="checkbox" className="check" checked={selected[it.key] !== false} onChange={() => setSelected((p) => ({ ...p, [it.key]: p[it.key] === false }))} />
+                                            <span style={{ width: 66, flexShrink: 0, color: SEV_TINT(normaliseUrgency(it.severity)) }}>{normaliseUrgency(it.severity)}</span>
+                                            <span style={{ width: 92, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--txt-3)" }}>{it.sector}</span>
+                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.label}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            )
+                        })}
                     </div>
                 )}
                 {corpus && evCount === 0 && (

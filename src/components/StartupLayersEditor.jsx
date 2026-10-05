@@ -86,7 +86,7 @@ export default function StartupLayersEditor() {
                 )}
                 <span style={{ flex: 1 }} />
                 <span style={{ font: "400 11px var(--font)", color:
-                    state === "error" ? "var(--red, #c4453c)"
+                    state === "error" ? "var(--red, #f46043)"
                     : state === "saved" ? "var(--green, #4b8b5a)"
                     : dirty ? "var(--amber, #b8863b)" : "var(--txt-4)" }}>
                     {state === "error" ? `Not saved — ${err}`

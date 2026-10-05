@@ -3,6 +3,7 @@ import { getReportBundle, patchReport, listReports } from "./reportApi.js"
 import DocumentRenderer, { allEvidenceClaims, buildRegionDistribution } from "./DocumentRenderer.jsx"
 import Minimap from "../components/Minimap.jsx"
 import { replayOnMap } from "../services/replayOnMap.js"
+import { safeArray } from "../utils/safeArray.js"
 
 const WALKTHROUGH_INTERVAL_MS = 3600
 
@@ -155,7 +156,7 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpen
     const dirtyRef = useRef(false)
     const docRef = useRef(null)
 
-    useEffect(() => { listReports().then(setReports).catch(() => {}) }, [])
+    useEffect(() => { listReports().then((v) => setReports(safeArray(v))).catch(() => {}) }, [])
     useEffect(() => { if (initialReportId) setReportId(initialReportId) }, [initialReportId])
 
     useEffect(() => {

@@ -109,6 +109,10 @@ MAX_BUCKET = 400
 SIGNAL_LOG_INTERVAL_S = 30
 
 
+
+# Said once per process, not once per fusion — see the None check below.
+_NARRATIVE_OFF_REPORTED = False
+
 class FusionEngine:
     def __init__(self):
         # geo_key → [signal, ...]
@@ -708,6 +712,21 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
   ]
 }}"""
             client = llm_gate.get_client("fusion_narrative")
+            if client is None:
+                # NOT AN ERROR, AND SAID ONCE. The purpose is switched off
+                # or unconfigured, and the deterministic template is the
+                # designed fallback — but this fell through to
+                # `client.messages` anyway and logged
+                # "[fusion] Haiku assessment error: 'NoneType' object has no
+                # attribute 'messages'" once per fusion event, which makes a
+                # feature that is merely off look like one that is broken.
+                global _NARRATIVE_OFF_REPORTED
+                if not _NARRATIVE_OFF_REPORTED:
+                    print("[fusion] the narrative model is not enabled "
+                          "(HW_LLM_PURPOSES has no 'fusion_narrative') — "
+                          "every fusion will use the deterministic template")
+                    _NARRATIVE_OFF_REPORTED = True
+                return self._template_narrative(signals, domains, location_name)
 
             def _call_and_parse():
                 msg = client.messages.create(

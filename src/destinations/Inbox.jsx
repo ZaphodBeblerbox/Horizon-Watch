@@ -29,6 +29,8 @@ import {
     emptyStateMessage, severityDistribution, distribution, unreadCount, hhmm,
 } from "./inboxLogic.js"
 import { subscribeLive } from "../state/liveEvents.js"
+import { MODE_SURFACE } from "../plx6/modeWindow.js"
+import Loading from "../ui/Loading.jsx"
 
 const SEV_FLOORS = [
     { key: null, label: "all" },
@@ -160,183 +162,241 @@ export default function Inbox() {
 
     const arrow = (key) => (sort.key !== key ? "" : sort.dir === "asc" ? "▲" : "▼")
 
+    /* ── v6 ▣ Inbox · LIST AND READER, NOT A TABLE WITH TWO SIDEBARS ──
+       The old shape was three panes: a distributions sidebar, a sortable
+       table, and an inspector. It came from an earlier spec whose argument
+       was "triage is comparison, not reading" — true of a queue you are
+       sorting, and wrong about this one. The rows carry a headline written
+       by a journalist; the thing you do with one is read it.
+
+       v6 puts the filters inline above the list as counted chips, the list
+       in a 260–360px column, and gives the rest of the window to the
+       signal itself at a 30px headline. Sorting moves to the chips, which
+       is the only sort anyone used.
+
+       THE LOCATOR STAYS. It is not in the spec's reader, and it is the one
+       thing this screen had that answered "where is this" without a camera
+       move, so it sits at the top of the reader where the eye lands before
+       the body text. */
+    const FILTERS = [
+        ["all", "all", allRows.length],
+        ["new", "unread", allRows.filter((r) => (r.status || "new") === "new").length],
+        ["ack", "acknowledged", allRows.filter((r) => r.status === "ack").length],
+        ["esc", "escalated", allRows.filter((r) => r.status === "esc").length],
+    ]
+    const sevC = (k) => SEV_COLOR[k] || "var(--steel)"
+
     return (
-        <div data-testid="view-root-inbox" className="inboxview">
-            {/* ── left: distributions, not checkboxes (§S2.6) ── */}
-            <aside className="pane">
-                <div className="panehead"><h3>Triage</h3></div>
-                <div className="scroll" id="inbox-filters">
-                    <span className="tipl">Severity</span>
-                    {sevDist.map((d) => (
-                        <button key={d.key} type="button" className="distrow"
-                                aria-pressed={sevFloor === d.key}
-                                onClick={() => setSevFloor(sevFloor === d.key ? null : d.key)}>
-                            <i className="dia" style={{ background: SEV_COLOR[d.key] || "var(--grey)" }} />
-                            <span className="n">{d.key}</span>
-                            <span className="bar"><i style={{ width: `${d.pct}%`, background: SEV_COLOR[d.key] || "var(--grey)" }} /></span>
-                            <span className="c">{d.n}</span>
-                        </button>
-                    ))}
-
-                    <span className="tipl" style={{ marginTop: 12 }}>Region</span>
-                    {placeDist.map((d) => (
-                        <button key={d.key} type="button" className="distrow" onClick={() => setQ(d.key)}>
-                            <i className="dia" style={{ background: "var(--steel)" }} />
-                            <span className="n">{d.key}</span>
-                            <span className="bar"><i style={{ width: `${d.pct}%`, background: "var(--steel)" }} /></span>
-                            <span className="c">{d.n}</span>
-                        </button>
-                    ))}
-
-                    <span className="tipl" style={{ marginTop: 12 }}>Severity floor</span>
-                    <div className="seg" style={{ margin: "0 9px" }}>
-                        {SEV_FLOORS.map((f) => (
-                            <button key={f.label} type="button" aria-pressed={sevFloor === f.key}
-                                    onClick={() => setSevFloor(f.key)}>{f.label}</button>
-                        ))}
-                    </div>
-                </div>
-            </aside>
-
-            {/* ── centre: toolbar + the table ── */}
-            <div className="pane">
-                <div className="toolbar">
-                    <div className="seg" id="inbox-status">
-                        {[["all", "all"], ["new", "unread"], ["ack", "acked"], ["esc", "escalated"]].map(([k, l]) => (
-                            <button key={k} type="button" aria-pressed={status === k} onClick={() => setStatus(k)}>{l}</button>
-                        ))}
-                    </div>
-                    <input className="input" id="inbox-q" placeholder="Filter signals…"
-                           style={{ width: 200, height: 26 }} value={q} onChange={(e) => setQ(e.target.value)} />
-                    <div className="sp" />
-                    <span className="lbl" id="inbox-count">{rows.length} signals · {unread} unread</span>
-                    <span className="lbl" id="inbox-freshness" title={lastLoad ? new Date(lastLoad).toLocaleTimeString() : ""}>
-                        {loading ? "refreshing…"
-                            : lastLoad ? `updated ${freshnessLabel(lastLoad, nowTick)}`
-                            : ""}
+        <section data-testid="view-root-inbox" data-screen-label="Inbox" style={{
+            ...MODE_SURFACE,
+            display: "grid",
+            gridTemplateColumns: "minmax(280px,340px) minmax(0,1fr)",
+        }}>
+            {/* ── the queue ─────────────────────────────────────────── */}
+            <div style={{
+                display: "flex", flexDirection: "column", minHeight: 0,
+                borderRight: "1px solid var(--gline)",
+            }}>
+                <div style={{
+                    display: "flex", alignItems: "center", gap: 8, height: 36, flex: "none",
+                    padding: "0 12px", borderBottom: "1px solid var(--gline)",
+                }}>
+                    <h3 style={{ margin: 0, fontSize: 12, fontWeight: 600 }}>Inbox</h3>
+                    <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>
+                        {rows.length} shown · {unread} unread
                     </span>
-                    <button className="btn sm" id="inbox-refresh" onClick={load} disabled={loading}
-                            title="Refresh the queue now">
-                        <svg className="icon sm"><use href="#i-refresh" /></svg> refresh
-                    </button>
-                    <button className="btn sm" disabled={!sel} onClick={() => { setStatusFor(sel, "ack"); toast("Acknowledged", { icon: "i-check" }) }}>acknowledge</button>
-                    <button className="btn sm danger" disabled={!sel} onClick={() => { setStatusFor(sel, "esc"); toast("Escalated", { icon: "i-up" }) }}>escalate</button>
-                    <button className="btn sm primary" disabled={!sel}
-                            onClick={() => { addToBriefing(sel, selected?.title || sel); toast("Added to briefing basket", { icon: "i-add-brief" }) }}>
-                        <svg className="icon sm"><use href="#i-add-brief" /></svg> brief
-                    </button>
+                    <button onClick={load} disabled={loading} title="Refresh the queue now" style={{
+                        marginLeft: "auto", height: 22, padding: "0 8px",
+                        border: "1px solid var(--gline2)", background: "transparent",
+                        color: "var(--txt3)", font: "inherit", fontSize: 11,
+                        cursor: loading ? "default" : "pointer", borderRadius: 0,
+                    }}>{loading ? <Loading size={11} inline label="refreshing" labelHidden /> : "refresh"}</button>
                 </div>
 
-                <div className="scroll">
-                    {!loaded ? (
-                        <div className="inboxempty"><b>Reading the queue…</b></div>
-                    ) : rows.length === 0 ? (
-                        // §S2.7 — name the stage that emptied it.
-                        <div className="inboxempty">
-                            <b>{empty.headline}</b>
-                            {empty.detail && <span>{empty.detail}</span>}
+                <div style={{
+                    display: "flex", flexWrap: "wrap", gap: 4, padding: "8px 12px",
+                    borderBottom: "1px solid var(--gline)", flex: "none",
+                }}>
+                    {FILTERS.map(([k, label, n]) => (
+                        <button key={k} onClick={() => setStatus(k)} style={{
+                            display: "flex", alignItems: "center", gap: 6, height: 24, padding: "0 8px",
+                            border: "1px solid var(--gline2)",
+                            background: status === k ? "var(--accdim)" : "transparent",
+                            color: status === k ? "var(--txt)" : "var(--txt3)",
+                            font: "inherit", fontSize: 11, cursor: "pointer", borderRadius: 0,
+                        }}>
+                            {label}
+                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>{n}</span>
+                        </button>
+                    ))}
+                    {SEV_FLOORS.filter((f) => f.key).map((f) => (
+                        <button key={f.key} onClick={() => setSevFloor(sevFloor === f.key ? null : f.key)} style={{
+                            display: "flex", alignItems: "center", gap: 6, height: 24, padding: "0 8px",
+                            border: `1px solid ${sevFloor === f.key ? sevC(f.key) : "var(--gline2)"}`,
+                            background: sevFloor === f.key ? "var(--accdim)" : "transparent",
+                            color: sevFloor === f.key ? "var(--txt)" : "var(--txt3)",
+                            font: "inherit", fontSize: 11, cursor: "pointer", borderRadius: 0,
+                        }}>
+                            <i style={{ width: 6, height: 6, background: sevC(f.key) }} />{f.label}
+                        </button>
+                    ))}
+                </div>
+
+                <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--gline)", flex: "none" }}>
+                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter signals…" style={{
+                        width: "100%", height: 28, padding: "0 9px", border: "1px solid var(--gline2)",
+                        background: "var(--canvas)", color: "var(--txt)", fontSize: 12,
+                        outline: "none", borderRadius: 0,
+                    }} />
+                </div>
+
+                <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                    {!loaded && <Loading size={18} inline label="Reading the queue" style={{ padding: "16px 12px" }} />}
+                    {loaded && rows.length === 0 && (
+                        <div style={{ padding: "16px 12px", color: "var(--txt3)" }}>
+                            <b style={{ display: "block", fontWeight: 600, color: "var(--txt)" }}>{empty.headline}</b>
+                            {empty.detail && <span style={{ fontSize: 12 }}>{empty.detail}</span>}
                         </div>
-                    ) : (
-                        <table className="grid" id="inbox-table">
-                            <thead>
-                                <tr>
-                                    {COLUMNS.map((c) => (
-                                        <th key={c.key} style={c.width ? { width: c.width } : undefined}
-                                            onClick={() => setSort((s) => nextSort(s, c.key))}>
-                                            {c.label}<span className="ar">{arrow(c.key)}</span>
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {rows.map((r) => (
-                                    <tr key={r.id} data-id={r.id} aria-selected={r.id === sel}
-                                        className={r.status === "ack" ? "ack" : ""}
-                                        onClick={() => select(r)}>
-                                        {/* .keep — acknowledged rows dim EXCEPT time and
-                                            severity. You still need to scan when and how
-                                            bad across handled items. */}
-                                        <td className="mono dim keep">{hhmm(r.ts)}</td>
-                                        <td className="keep">
-                                            <span className="sev" style={{ color: SEV_COLOR[r.sev] }}>
-                                                <i className="dia" style={{ background: SEV_COLOR[r.sev] }} />{r.sev}
-                                            </span>
-                                        </td>
-                                        <td className="title">
-                                            <div>
-                                                {r.status === "esc" && <span className="tag red">ESC</span>}
-                                                {r.title}
-                                            </div>
-                                        </td>
-                                        <td><div className="clip">{r.place || "—"}</div></td>
-                                        <td><span className="tag">{r.domain}</span></td>
-                                        <td>
-                                            {/* A bar for scanning the column, a number for
-                                                quoting it. Neither alone does both jobs. */}
-                                            <span className="conf">
-                                                <span className="bar"><i style={{ width: `${(r.conf ?? 0) * 100}%`, background: "var(--grey)" }} /></span>
-                                                {r.conf == null ? "—" : Math.round(r.conf * 100)}
-                                            </span>
-                                        </td>
-                                        <td className="mono dim">{r.source}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
                     )}
+                    {rows.map((r) => {
+                        const isSel = r.id === sel
+                        const isNew = (r.status || "new") === "new"
+                        return (
+                            <button key={r.id} data-id={r.id} onClick={() => select(r)} style={{
+                                display: "grid", gridTemplateColumns: "1fr auto", gap: "2px 10px",
+                                width: "100%", padding: "10px 12px", border: 0,
+                                borderBottom: "1px solid var(--gline)",
+                                background: isSel ? "var(--accdim)" : "transparent",
+                                color: "var(--txt)", font: "inherit", textAlign: "left", cursor: "pointer",
+                                opacity: r.status === "ack" && !isSel ? 0.72 : 1,
+                            }}>
+                                <b style={{
+                                    fontWeight: isNew ? 600 : 400, minWidth: 0,
+                                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                }}>{r.title}</b>
+                                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>
+                                    {hhmm(r.ts)}
+                                </span>
+                                <span style={{
+                                    fontSize: 11, color: "var(--txt3)", minWidth: 0,
+                                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                }}>{r.place || r.source}</span>
+                                <span style={{
+                                    fontFamily: "var(--mz-font-mono)", fontSize: 10,
+                                    letterSpacing: ".06em", color: sevC(r.sev),
+                                }}>{r.sev}</span>
+                            </button>
+                        )
+                    })}
                 </div>
             </div>
 
-            {/* ── right: THE SAME inspector component as Situation ── */}
-            <aside className="pane">
-                <div className="panehead">
-                    <h3>Signal detail</h3>
-                    <div className="right">
-                        {/* An imagery finding has a picture behind it. "Show
-                            on map" answers where; this answers what it
-                            actually looked like, landing on the detected
-                            object itself rather than on a scene full of
-                            boxes with no indication which one is meant. */}
-                        {imageryTarget(selected) ? (
-                            <button className="btn ghost sm"
-                                    onClick={() => window.dispatchEvent(new CustomEvent("akili:imagery-open-scene", {
-                                        detail: imageryTarget(selected),
-                                    }))}>open imagery →</button>
-                        ) : null}
-                        <button className="btn ghost sm" disabled={!selected?.row?.lat}
-                                onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", {
-                                    detail: { lat: selected.row.lat, lon: selected.row.lon },
-                                }))}>show on map →</button>
+            {/* ── the reader ────────────────────────────────────────── */}
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+                <div style={{
+                    display: "flex", alignItems: "center", gap: 6, height: 36, flex: "none",
+                    padding: "0 8px 0 20px", borderBottom: "1px solid var(--gline)", overflow: "hidden",
+                }}>
+                    {[["acknowledge", () => { setStatusFor(sel, "ack"); toast("Acknowledged", { icon: "i-check" }) }],
+                      ["escalate", () => { setStatusFor(sel, "esc"); toast("Escalated", { icon: "i-up" }) }],
+                      ["+ briefing", () => {
+                          /* The record is in hand here, so the sidebar gets
+                             the whole thing rather than a label and a
+                             coordinate pair — headline, where, who and
+                             when are what you write a briefing from. */
+                          addToBriefing(sel, selected?.title || sel, {
+                              kind: "signal",
+                              headline: selected?.title || null,
+                              region: selected?.place || null,
+                              source: selected?.source || null,
+                              severity: selected?.sev || null,
+                              when: selected?.ts ? new Date(selected.ts).toISOString() : null,
+                              lat: selected?.row?.lat ?? null,
+                              lon: selected?.row?.lon ?? null,
+                              url: selected?.row?.raw?.url || null,
+                          })
+                          toast("Added to briefing basket", { icon: "i-add-brief" })
+                      }],
+                      ...(imageryTarget(selected) ? [["open imagery →", () => window.dispatchEvent(
+                          new CustomEvent("akili:imagery-open-scene", { detail: imageryTarget(selected) }))]] : []),
+                      ...(selected?.row?.lat != null ? [["show on map →", () => window.dispatchEvent(
+                          new CustomEvent("akili:fly-to", { detail: { lat: selected.row.lat, lon: selected.row.lon } }))]] : []),
+                    ].map(([k, go]) => (
+                        <button key={k} onClick={go} disabled={!selected} style={{
+                            height: 24, padding: "0 10px", border: "1px solid var(--gline2)",
+                            background: "transparent", color: selected ? "var(--txt2)" : "var(--txt4)",
+                            font: "inherit", fontSize: 11, whiteSpace: "nowrap",
+                            cursor: selected ? "pointer" : "default", borderRadius: 0,
+                        }}>{k}</button>
+                    ))}
+                    <span style={{
+                        marginLeft: "auto", fontFamily: "var(--mz-font-mono)",
+                        fontSize: 10, color: "var(--txt4)", whiteSpace: "nowrap", paddingRight: 8,
+                    }}>
+                        {loading
+                            ? <Loading size={12} inline label="refreshing" />
+                            : lastLoad ? `updated ${freshnessLabel(lastLoad, nowTick)}` : ""}
+                    </span>
+                </div>
+
+                {!selected ? (
+                    <div style={{ padding: "22px 28px", color: "var(--txt3)" }}>
+                        <b style={{ display: "block", fontWeight: 600, color: "var(--txt)", marginBottom: 4 }}>
+                            Nothing selected
+                        </b>
+                        <span>Pick a signal to read it.</span>
                     </div>
-                </div>
-                {/* §S3.5's locator, the same component Replay and the
-                    briefing reader use — "where in the world is this, and
-                    what is near it", answered without a camera move. */}
-                <Minimap
-                    focus={selected?.row?.lat != null ? { lat: selected.row.lat, lon: selected.row.lon } : null}
-                    // §M4 — the locator paints by heat (severity × recency),
-                    // so it needs the timestamp and the tier, not a colour.
-                    context={rows.filter((r) => r.id !== sel && r.row?.lat != null)
-                                 .map((r) => ({ id: r.id, lat: r.row.lat, lon: r.row.lon, ts: r.ts, severity: r.sev, title: r.title }))}
-                    framing="signal"
-                    label={selected ? String(selected.title).slice(0, 26) : ""}
-                    title="Locator"
-                    subtitle={selected ? "" : "no signal selected"}
-                />
-                <div className="scroll" id="inbox-detail">
-                    {!selected ? (
-                        <div className="inboxempty"><b>Nothing selected</b><span>Pick a row to read it.</span></div>
-                    ) : (
-                        <InspectorPanel
-                            bare
-                            entityType={selected.row.kind === "fusion" ? "fusion" : "event"}
-                            entityId={selected.id}
-                            data={selected.row.raw}
-                            onClose={() => setSel(null)}
-                        />
-                    )}
-                </div>
-            </aside>
-        </div>
+                ) : (
+                    <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "24px 32px 40px" }}>
+                        <div>
+                            <div style={{
+                                fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em",
+                                textTransform: "uppercase", color: "var(--txt4)",
+                            }}>
+                                {[selected.source, hhmm(selected.ts), selected.sev].filter(Boolean).join(" · ")}
+                            </div>
+                            {/* The spec sets this at 30px against a 720px
+                                measure. The reader is far wider than that
+                                here, and a headline has to grow with its
+                                column or it reads as a caption on a page. */}
+                            <h2 style={{
+                                margin: "10px 0 16px", fontFamily: "var(--mz-font-body)",
+                                fontSize: "clamp(30px, 2.6vw, 42px)",
+                                fontWeight: 600, lineHeight: 1.04, letterSpacing: "-.015em",
+                                textWrap: "pretty", maxWidth: 1100,
+                            }}>{selected.title}</h2>
+
+                            {/* The locator, before the body — "where in the
+                                world is this, and what is near it" is the
+                                question you ask before you read a word. */}
+                            <div style={{ border: "1px solid var(--gline)", marginBottom: 18 }}>
+                                <Minimap
+                                    focus={selected.row?.lat != null ? { lat: selected.row.lat, lon: selected.row.lon } : null}
+                                    context={rows.filter((r) => r.id !== sel && r.row?.lat != null)
+                                        .map((r) => ({ id: r.id, lat: r.row.lat, lon: r.row.lon, ts: r.ts, severity: r.sev, title: r.title }))}
+                                    framing="signal"
+                                    width={1180}
+                                    height={260}
+                                    label={String(selected.title).slice(0, 26)}
+                                    title={selected.place || "Locator"}
+                                    subtitle={selected.row?.lat == null ? "this signal has no location" : ""}
+                                />
+                            </div>
+
+                            <div style={{ borderTop: "1px solid var(--gline)", paddingTop: 14 }}>
+                                <InspectorPanel
+                                    bare
+                                    entityType={selected.row.kind === "fusion" ? "fusion" : "event"}
+                                    entityId={selected.id}
+                                    data={selected.row.raw}
+                                    onClose={() => setSel(null)}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </section>
     )
 }
+

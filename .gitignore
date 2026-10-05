@@ -57,3 +57,22 @@ backend/data/case_files/
 
 # Airspace tiles fetched from openAIP — a cache on the data volume, not source.
 backend/data/airspace_cache/
+
+# One-off browser probes written during a debugging session. They are
+# throwaway by design — each targets one bug and is rewritten for the next
+# — so they are kept out of the tree rather than rotting in it as tests
+# nobody runs.
+_*.mjs
+_*.png
+
+# Working copies of the database made during the 2026-10-05 prune, and the
+# enrichment cache. Both are generated, both are large, and the cache is
+# keyed on signal text so it is worthless on another machine.
+backend/data/akili.db.vacuumed
+backend/data/akili.db.prepruned*
+backend/data/enrichment_cache.json
+
+# Files people attached in chat, and the OSM pipeline cache. The first is
+# user data and the second is regenerated from the source on demand.
+backend/data/chat_files/
+backend/data/pipelines_osm/

@@ -25,6 +25,7 @@
  */
 
 const SPRITE = `
+<symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 10.5L12 4l8 6.5V19a1 1 0 01-1 1h-4.5v-5.5h-5V20H5a1 1 0 01-1-1z"/></symbol>
 <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.4 4 5.6 4 9s-1.4 6.6-4 9c-2.6-2.4-4-5.6-4-9s1.4-6.6 4-9z"/></symbol>
 <symbol id="i-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 13l2.4-7.2A1.5 1.5 0 016.8 4.8h10.4a1.5 1.5 0 011.4 1L21 13v5.4a1.6 1.6 0 01-1.6 1.6H4.6A1.6 1.6 0 013 18.4z"/><path d="M3 13h5l1.2 2.2h5.6L16 13h5"/></symbol>
 <symbol id="i-dossier" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 5.5h6l1.6 2.2H20v10.8H4z"/><path d="M8 12h8M8 15h5"/></symbol>
@@ -35,6 +36,7 @@ const SPRITE = `
 <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.4 15.4L21 21"/></symbol>
 <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5v14M5 12h14"/></symbol>
 <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 16V11a6 6 0 1112 0v5l1.6 2.4H4.4z"/><path d="M10 20.5a2.2 2.2 0 004 0"/></symbol>
+<symbol id="i-inspector" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.5" y="4" width="17" height="16" rx="1"/><path d="M14 4v16M16.5 9h2M16.5 12h2M16.5 15h2"/></symbol>
 <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l9 4.8-9 4.8L3 7.8z"/><path d="M3 12.4l9 4.8 9-4.8M3 16.6l9 4.8 9-4.8"/></symbol>
 <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.4 12S6 6.4 12 6.4 21.6 12 21.6 12 18 17.6 12 17.6 2.4 12 2.4 12z"/><circle cx="12" cy="12" r="2.6"/></symbol>
 <symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 4l16 16"/><path d="M9.6 6.8A9.6 9.6 0 0112 6.4c6 0 9.6 5.6 9.6 5.6a17 17 0 01-2.6 3.2M6.4 8.4A16.6 16.6 0 002.4 12s3.6 5.6 9.6 5.6c.9 0 1.7-.1 2.5-.4"/></symbol>

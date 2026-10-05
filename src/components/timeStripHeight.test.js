@@ -57,7 +57,7 @@ describe("the strip's height and --strip-h are one fact", () => {
 describe("the rails end at the strip (§1.5)", () => {
     it("both panes stop where the strip starts", () => {
         const sit = readFileSync(path.join(root, "src/destinations/Situation.jsx"), "utf8")
-        const hits = sit.match(/bottom: "var\(--strip-h, 0px\)"/g) || []
+        const hits = sit.match(/bottom: "var\(--pane-bottom\)"/g) || []
         expect(hits.length, "both the Layers and Inspector panes must end at the strip").toBe(2)
     })
 

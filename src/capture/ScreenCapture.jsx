@@ -111,7 +111,7 @@ export default function ScreenCapture({ open, onClose, onCaptured }) {
         >
             <div style={{
                 position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)",
-                padding: "6px 12px", borderRadius: 3, background: "var(--bg-2, #22282f)",
+                padding: "6px 12px", borderRadius: 3, background: "var(--bg-2, #1e212c)",
                 border: "1px solid var(--line)", font: "400 11px var(--font)",
                 color: "var(--txt-2)", whiteSpace: "nowrap",
             }}>
@@ -126,12 +126,12 @@ export default function ScreenCapture({ open, onClose, onCaptured }) {
                     <div style={{
                         position: "absolute", left: rect.x, top: rect.y, width: rect.w, height: rect.h,
                         boxShadow: "0 0 0 9999px rgba(8,10,13,.28)",
-                        border: "1px solid var(--acc-hi, #5f95d0)", background: "transparent",
+                        border: "1px solid var(--acc-hi, #a0b2d2)", background: "transparent",
                     }} />
                     <div style={{
                         position: "absolute", left: rect.x, top: Math.max(0, rect.y - 20),
                         font: "400 10px var(--mono)", color: "var(--txt-2)",
-                        background: "var(--bg-2, #22282f)", padding: "1px 5px", borderRadius: 2,
+                        background: "var(--bg-2, #1e212c)", padding: "1px 5px", borderRadius: 2,
                     }}>{Math.round(rect.w)} × {Math.round(rect.h)}</div>
                 </>
             )}

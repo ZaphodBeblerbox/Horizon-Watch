@@ -151,57 +151,57 @@
            and the component library only. ────────────────────────────── */
         :root {
             /* ── Surfaces — 5 steps, neutral blue-grey, never pure black ── */
-            --bg-0: #171b20; /* app background, active tab, log/input wells */
-            --bg-1: #1c2127; /* pane background */
-            --bg-2: #22282f; /* pane headers, toolbars, cards, top bar */
-            --bg-3: #2a3138; /* hover, default button */
-            --bg-4: #333b43; /* pressed/selected, button hover, chart tracks */
+            --bg-0: #14161f; /* app background, active tab, log/input wells */
+            --bg-1: #181b25; /* pane background */
+            --bg-2: #1e212c; /* pane headers, toolbars, cards, top bar */
+            --bg-3: #252936; /* hover, default button */
+            --bg-4: #2f3545; /* pressed/selected, button hover, chart tracks */
 
             /* ── Lines ─────────────────────────────────────────────────── */
-            --line:        #30373f;
-            --line-soft:   #262c33;
-            --line-strong: #3d454e;
+            --line:        #2b3040;
+            --line-soft:   #222632;
+            --line-strong: #3a4154;
 
             /* ── Text — 4 steps only ──────────────────────────────────── */
-            --txt:   #d5dae0;
-            --txt-2: #a4adb6;
-            --txt-3: #818c96;
-            --txt-4: #616b75;
+            --txt:   #f2f3f6;
+            --txt-2: #dde0e6;
+            --txt-3: #b5b9c3;
+            --txt-4: #878c9a;
 
             /* ── Accent — selection and interaction, nothing else ────── */
-            --acc:      #3f6fa8;
-            --acc-hi:   #5f95d0;
-            --acc-dim:  rgba(63,111,168,.22);
-            --acc-line: rgba(95,149,208,.42);
+            --acc:      #3c507d;
+            --acc-hi:   #a0b2d2;
+            --acc-dim:  rgba(60,80,125,.22);
+            --acc-line: rgba(160,178,210,.42);
 
             /* ── Semantic ──────────────────────────────────────────────── */
-            --red: #c4453c; --amber: #b7822c; --steel: #4f7fa6; --green: #4c7d63; --grey: #77828c;
-            --sev-critical: #c4453c; --sev-high: #b7822c; --sev-moderate: #4f7fa6; --sev-low: #6d7883;
+            --red: #f46043; --amber: #e0a94e; --steel: #7c93c4; --green: #7fc4a0; --grey: #878c9a;
+            --sev-critical: #f46043; --sev-high: #f5d98f; --sev-moderate: #8fb0e8; --sev-low: #80858f;
 
             /* ── Derived ───────────────────────────────────────────────── */
-            --delta-worse:  #b0645c;
-            --delta-better: #6d9a83;
-            --tag-red:    #cf6259; --tag-red-border:   #5c3b38;
-            --tag-amber:  #c19446; --tag-amber-border: #5a4a2c;
-            --tag-green:  #699781; --tag-green-border: #3a5346;
-            --tag-blue:   #78a5d4; --tag-blue-border:  #39536e;
-            --chart-area-fill:   rgba(63,111,168,.13);
-            --chart-area-stroke: #7d97b3;
-            --chart-grid:        #262c33;
-            --chart-hist:        #4a545e;
-            --chart-hist-hot:    #8d5348;
+            --delta-worse:  #e07a62;
+            --delta-better: #7fc4a0;
+            --tag-red:    #f17a60; --tag-red-border:   #6b3b31;
+            --tag-amber:  #dcb068; --tag-amber-border: #5e4a28;
+            --tag-green:  #8ecbab; --tag-green-border: #37544a;
+            --tag-blue:   #a0b2d2; --tag-blue-border:  #39476a;
+            --chart-area-fill:   rgba(60,80,125,.13);
+            --chart-area-stroke: #8fa6c6;
+            --chart-grid:        #222632;
+            --chart-hist:        #4a5165;
+            --chart-hist-hot:    #9a5a48;
             /* Sequential, one hue, light->dark — the same blue the share bars
                use, so magnitude reads the same way everywhere on the page.
                `empty` is the panel ground: a cell with no data should read as
                absence, not as the smallest real value. */
-            --heatmap-lo: #26313d; --heatmap-hi: #7fa8cf; --heatmap-empty: #1c2127;
+            --heatmap-lo: #222a3d; --heatmap-hi: #8fb0dc; --heatmap-empty: #181b25;
             /* Share-of-window bars. One hue, not a category ramp: domain /
                region / source breakdowns name every row in text, so colour
                carries magnitude, not identity. The old 14-step grey ramp is
                gone — it coloured categories by a hash of their name, so a
                90% class and an 8% class could land two hex points apart. */
-            --chart-bar:     #7d97b3; /* share-of-window bars (3.0:1 on --bg-1) */
-            --chart-bar-track: #262c33;
+            --chart-bar:     #8fa6c6; /* share-of-window bars (3.0:1 on --bg-1) */
+            --chart-bar-track: #222632;
 
             /* ── Real glass-pane tokens (Parallax theming pass) — the
                previously-untokenized rgba() literals .pane-glass and
@@ -209,9 +209,13 @@
                Real dark-theme tint kept as the previous literal values;
                a real, distinct light-theme tint is defined below (never
                the dark theme's translucent black reused — see index.css). */
-            --pane-glass-bg:     #1c2127;   /* solid: was rgba(26,31,37,.72) — same colour, no transparency */
-            --akili-glass-bg:    #171b20;   /* solid: matches --bg-0 */
-            --akili-glass-border: rgba(255, 255, 255, 0.07);
+            --pane-glass-bg:     var(--glass); /* v6 A2: panes are GLASS. This was
+                                      deliberately flattened to a solid
+                                      #181b25 at some point; the whole
+                                      v6 look is translucency over the
+                                      map, so it goes back. */
+            --akili-glass-bg:    #14161f;   /* solid: matches --bg-0 */
+            --akili-glass-border: rgba(242,243,246,0.07);
 
             /* ── Real map-overlay tooltip tokens (Parallax theming pass) —
                previously-untokenized literals in index.css's Leaflet
@@ -221,38 +225,38 @@
                different real hues today, not consolidated into one — a
                real, separate design decision from this pass's scope) —
                just tokenized so they're themeable, not decorative/hardcoded. */
-            --map-tooltip-bg:      #22282f; /* solid: matches --bg-2 (floating card over the map) */
-            --map-tooltip-text:    #e2e8f0;
-            --map-tooltip-text-strong: #f0f4f8;
-            --map-tooltip-border:  rgba(255, 255, 255, 0.12);
+            --map-tooltip-bg:      #1e212c; /* solid: matches --bg-2 (floating card over the map) */
+            --map-tooltip-text:    #dde0e6;
+            --map-tooltip-text-strong: #f2f3f6;
+            --map-tooltip-border:  rgba(242,243,246,0.12);
             --map-vessel-accent:   #38bdf8;
-            --map-vessel-border:   rgba(56, 189, 248, 0.35);
-            --map-country-border:  rgba(56, 189, 248, 0.3);
-            --map-eez-border:      rgba(13, 148, 136, 0.35);
-            --map-infra-bg:        #1A2433;
-            --map-infra-border:    #2C3645;
-            --map-infra-text:      #9AA4B5;
-            --map-infra-text-hover: #E8ECF1;
-            --map-detection-label-bg: rgba(0, 0, 0, 0.75);
-            --map-detection-label-text: #f0f4f8;
-            --leaflet-bg:          #111827;
-            --scrollbar-thumb:       rgba(255, 255, 255, 0.12);
-            --scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
-            --focus-ring: rgba(26, 110, 181, 0.6);
+            --map-vessel-border:   rgba(172,176,187,0.35);
+            --map-country-border:  rgba(172,176,187,0.3);
+            --map-eez-border:      rgba(125,130,146,0.35);
+            --map-infra-bg:        #1e212c;
+            --map-infra-border:    #2b3040;
+            --map-infra-text:      #b5b9c3;
+            --map-infra-text-hover: #f2f3f6;
+            --map-detection-label-bg: rgba(0,0,0,0.75);
+            --map-detection-label-text: #f2f3f6;
+            --leaflet-bg:          #14161f;
+            --scrollbar-thumb:       rgba(242,243,246,0.12);
+            --scrollbar-thumb-hover: rgba(242,243,246,0.2);
+            --focus-ring: rgba(99,105,124,0.6);
 
             /* ── Real component-specific tokens (Parallax theming pass) —
                previously-untokenized literals in designSystem.css's
                .btn.primary/.btn.danger/.check/.xref/.tooltip rules. */
-            --btn-primary-border: #4a7cb5;
-            --btn-primary-text:   #f2f6fa;
-            --btn-primary-hover:  #487cba;
-            --check-mark-color:   #eef3f8;
-            --xref-color:       #82aede;
-            --xref-hover-color: #a8c8ee;
-            --xref-hover-bg:    rgba(63,111,168,.16);
-            --xref-active-bg:   rgba(63,111,168,.28);
-            --xref-active-color: #cfe0f4;
-            --tooltip-bg: #20262c;
+            --btn-primary-border: #4b6195;
+            --btn-primary-text:   #f2f3f6;
+            --btn-primary-hover:  #46588a;
+            --check-mark-color:   #f2f3f6;
+            --xref-color:       #a0b2d2;
+            --xref-hover-color: #c5d4ee;
+            --xref-hover-bg:    rgba(60,80,125,.16);
+            --xref-active-bg:   rgba(60,80,125,.28);
+            --xref-active-color: #ebf6ff;
+            --tooltip-bg: #1e212c;
             --scrim-bg: rgba(0,0,0,.5);
             --sheet-shadow-color: rgba(0,0,0,.4);
 
@@ -300,32 +304,32 @@
                Track glyphs, tooltips and the archive chart reference
                these directly; without them those rules resolve to
                nothing and the glyph silently disappears. */
-            --t7fadde:#7fadde;--t3a4249:#3a4249;--t48525b:#48525b;--t4c7d63:#4c7d63;--t4a7cb5:#4a7cb5;--tf2f6fa:#f2f6fa;
-            --t487cba:#487cba;--tcf6259:#cf6259;--t3a2c2b:#3a2c2b;--t5c3b38:#5c3b38;--teef3f8:#eef3f8;--tc19446:#c19446;
-            --t5a4a2c:#5a4a2c;--t699781:#699781;--t3a5346:#3a5346;--t78a5d4:#78a5d4;--t39536e:#39536e;--t12161a:#12161a;
-            --t232a30:#232a30;--t2e363d:#2e363d;--t2a3138:#2a3138;--t333a3c:#333a3c;--t39424a:#39424a;--t20262b:#20262b;
-            --t262d33:#262d33;--te8edf2:#e8edf2;--tb9c2ca:#b9c2ca;--t8d4a44:#8d4a44;--t20262c:#20262c;--t4a545e:#4a545e;
-            --t8d5348:#8d5348;--tb0645c:#b0645c;--t6d9a83:#6d9a83;--t111417:#111417;--t1b1f24:#1b1f24;--t33383f:#33383f;
-            --t22272d:#22272d;--t5f6772:#5f6772;--t5a6270:#5a6270;--tb7822c:#b7822c;--tc8a04a:#c8a04a;--t171b20:#171b20;
-            --tdcc48c:#dcc48c;--t5f95d0:#5f95d0;--t8ebdf0:#8ebdf0;--t7fa8c9:#7fa8c9;--tc4453c:#c4453c;--ta8b6c2:#a8b6c2;
-            --t5f7b91:#5f7b91;--t7b8792:#7b8792;--t8d99a4:#8d99a4;--t242b31:#242b31;--t2f373e:#2f373e;--tc2cbd3:#c2cbd3;
-            --t4c5762:#4c5762;--t4d5964:#4d5964;--t7b8894:#7b8894;--t262c33:#262c33;--t616b75:#616b75;--t7f8b96:#7f8b96;
-            --t232a31:#232a31;--t3d454e:#3d454e;--t2b333b:#2b333b;--td5dae0:#d5dae0;--t0f1317:#0f1317;--t4f7fa6:#4f7fa6;
-            --t82aede:#82aede;--ta8c8ee:#a8c8ee;--tcfe0f4:#cfe0f4;--t0d1013:#0d1013;--t818c96:#818c96;--ta4adb6:#a4adb6;
-            --t3a4048:#3a4048;--t30373f:#30373f;--t1c2127:#1c2127;--t7c8792:#7c8792;--t9aa5ae:#9aa5ae;
-            --tr0:rgba(26,31,37,.72);
-            --tr1:rgba(34,40,47,.8);--tr2:rgba(61,69,78,.7);--tr3:rgba(196,69,60,.07);--tr4:rgba(28,33,39,.9);--tr5:rgba(23,27,32,.6);--tr6:rgba(34,40,47,.94);
-            --tr7:rgba(12,15,18,.9);--tr8:rgba(0,0,0,.5);--tr9:rgba(12,15,18,.6);--tr10:rgba(34,40,47,.72);--tr11:rgba(34,40,47,.6);--tr12:rgba(34,40,47,.55);
-            --tr13:rgba(22,27,33,.66);--tr14:rgba(200,160,74,.10);--tr15:rgba(22,27,33,.9);--tr16:rgba(95,149,208,.10);--tr17:rgba(23,27,32,.82);--tr18:rgba(34,40,47,.85);
-            --tr19:rgba(196,69,60,.12);--tr20:rgba(232,237,242,.5);--tr21:rgba(130,174,222,.5);--tr22:rgba(63,111,168,.16);--tr23:rgba(63,111,168,.28);--tr24:rgba(63,111,168,.20);
-            --tr25:rgba(63,111,168,.34);--tr26:rgba(196,69,60,.14);--tr27:rgba(196,69,60,.16);--tr28:rgba(63,111,168,.12);--tr29:rgba(63,111,168,.07);--tr30:rgba(95,149,208,.06);
-            --tr31:rgba(183,130,44,.12);
+            --t7fadde:#8fb0dc;--t3a4249:#3a4154;--t48525b:#495064;--t4c7d63:var(--green);--t4a7cb5:var(--btn-primary-border);--tf2f6fa:var(--btn-primary-text);
+            --t487cba:var(--btn-primary-hover);--tcf6259:var(--tag-red);--t3a2c2b:#2a2f3e;--t5c3b38:var(--tag-red-border);--teef3f8:var(--check-mark-color);--tc19446:var(--tag-amber);
+            --t5a4a2c:var(--tag-amber-border);--t699781:var(--tag-green);--t3a5346:var(--tag-green-border);--t78a5d4:var(--tag-blue);--t39536e:var(--tag-blue-border);--t12161a:#13151f;
+            --t232a30:#252936;--t2e363d:#2f3446;--t2a3138:var(--bg-3);--t333a3c:#32384a;--t39424a:#3a4054;--t20262b:#212531;
+            --t262d33:#272c3a;--te8edf2:#eaecf0;--tb9c2ca:#bcc0c9;--t8d4a44:#8a4038;--t20262c:var(--tooltip-bg);--t4a545e:var(--chart-hist);
+            --t8d5348:var(--chart-hist-hot);--tb0645c:var(--delta-worse);--t6d9a83:var(--delta-better);--t111417:#10131f;--t1b1f24:#1b1e29;--t33383f:#313749;
+            --t22272d:#222632;--t5f6772:#5e6578;--t5a6270:#5a6175;--tb7822c:var(--amber);--tc8a04a:#c89a45;--t171b20:var(--bg-0);
+            --tdcc48c:#ddc28e;--t5f95d0:var(--acc-hi);--t8ebdf0:#a8c4e8;--t7fa8c9:#8fa6c6;--tc4453c:var(--red);--ta8b6c2:#afb3be;
+            --t5f7b91:#5a6e8f;--t7b8792:#7f8493;--t8d99a4:#9196a3;--t242b31:#262a37;--t2f373e:#303547;--tc2cbd3:#c5c9d1;
+            --t4c5762:#4e5569;--t4d5964:#50576b;--t7b8894:#808594;--t262c33:var(--line-soft);--t616b75:var(--txt-4);--t7f8b96:#848997;
+            --t232a31:#252936;--t3d454e:var(--line-strong);--t2b333b:#2d3142;--td5dae0:var(--txt);--t0f1317:#0e121f;--t4f7fa6:var(--steel);
+            --t82aede:var(--xref-color);--ta8c8ee:var(--xref-hover-color);--tcfe0f4:var(--xref-active-color);--t0d1013:#0b0f1f;--t818c96:var(--txt-3);--ta4adb6:var(--txt-2);
+            --t3a4048:#383f52;--t30373f:var(--line);--t1c2127:var(--bg-1);--t7c8792:#7f8493;--t9aa5ae:#9da1ae;
+            --tr0:rgba(24,27,37,.72);
+            --tr1:rgba(30,33,44,.8);--tr2:rgba(58,65,84,.7);--tr3:rgba(244,96,67,.07);--tr4:rgba(24,27,37,.9);--tr5:rgba(20,22,31,.6);--tr6:rgba(30,33,44,.94);
+            --tr7:rgba(10,14,31,.9);--tr8:rgba(0,0,0,.5);--tr9:rgba(10,14,31,.6);--tr10:rgba(30,33,44,.72);--tr11:rgba(30,33,44,.6);--tr12:rgba(30,33,44,.55);
+            --tr13:rgba(20,22,31,.66);--tr14:rgba(224,169,78,.10);--tr15:rgba(20,22,31,.9);--tr16:rgba(160,178,210,.10);--tr17:rgba(20,22,31,.82);--tr18:rgba(30,33,44,.85);
+            --tr19:rgba(244,96,67,.12);--tr20:rgba(242,243,246,.5);--tr21:rgba(160,178,210,.5);--tr22:rgba(60,80,125,.16);--tr23:rgba(60,80,125,.28);--tr24:rgba(60,80,125,.20);
+            --tr25:rgba(60,80,125,.34);--tr26:rgba(244,96,67,.14);--tr27:rgba(244,96,67,.16);--tr28:rgba(60,80,125,.12);--tr29:rgba(60,80,125,.07);--tr30:rgba(160,178,210,.06);
+            --tr31:rgba(224,169,78,.12);
 
             /* Tooltips are frosted, never opaque: on a map the thing under
                the cursor is the thing being asked about, and an opaque card
                answers the question by hiding the subject. */
-            --tip-bg:#22282f;
-            --tip-line:rgba(190,205,220,.20);
+            --tip-bg:#1e212c;
+            --tip-line:rgba(198,202,210,.20);
 
             /* Declared at :root deliberately. Scoped to .panes it is
                invisible to position:fixed elements — which is exactly how a
@@ -348,7 +352,7 @@
             --bg-input:    var(--bg-0);
             --border:        var(--line);
             --border-strong: var(--line-strong);
-            --overlay-map: rgba(23,27,32,0.55);
+            --overlay-map: rgba(20,22,31,0.55);
 
             /* Translucency is gone this round (§1: "every panel... is
                opaque, using one of the five --bg steps") — these legacy
@@ -506,125 +510,125 @@
                dark theme's relationship. Contrast verified against all
                three grounds: body text 4.58-14.39:1, semantics 4.62+,
                de-emphasised labels 3.07+. */
-            --bg-0: #eee8dc;
-            --bg-1: #f4efe5;
-            --bg-2: #f9f5ec;
-            --bg-3: #e6dfd0;
-            --bg-4: #dad1be;
+            --bg-0: #eceae4;
+            --bg-1: #f3f2ee;
+            --bg-2: #fcfbf6;
+            --bg-3: #e4e2db;
+            --bg-4: #d8d6cd;
 
             /* ── Lines — warm, visible-but-subtle on paper ───────────── */
-            --line:        #dbd3c3;
-            --line-soft:   #e7e0d2;
-            --line-strong: #c6bca7;
+            --line:        #d9d7cf;
+            --line-soft:   #e7e5de;
+            --line-strong: #bfbcb1;
 
             /* ── Text — dark ink, 4 steps (real computed contrast in the
                block comment above) ──────────────────────────────────── */
-            --txt:   #26231e;
-            --txt-2: #4e4840;
-            --txt-3: #6e675b;
-            --txt-4: #8b8375;
+            --txt:   #1a1d2c;
+            --txt-2: #3e4250;
+            --txt-3: #5c616f;
+            --txt-4: #6a6f7d;
 
             /* ── Accent — same hue family, deepened for real contrast on
                paper (still "selection/interaction, nothing else") ────── */
-            --acc:      #2f5c90;
-            --acc-hi:   #1f4f85;
-            --acc-dim:  rgba(47,92,144,.13);
-            --acc-line: rgba(47,92,144,.45);
+            --acc:      #272a38;
+            --acc-hi:   #3c507d;
+            --acc-dim:  rgba(142,141,132,.13);
+            --acc-line: rgba(142,141,132,.45);
 
             /* ── Semantic — amber-family (sev-high/tag-amber) gets real
                extra chroma + darkening, never a naive invert, to stay
                legible on a warm-paper ground ───────────────────────────── */
-            --red: #a8322a; --amber: #8a5f16; --steel: #3a6685; --green: #2f5c48; --grey: #6e675b;
-            --sev-critical: #a8322a; --sev-high: #8a5f16; --sev-moderate: #3a6685; --sev-low: #6b6459;
+            --red: #c2402a; --amber: #8a6320; --steel: #3c507d; --green: #2f6b52; --grey: #6a6f7d;
+            --sev-critical: #96270f; --sev-high: #9a7016; --sev-moderate: #28427a; --sev-low: #6f7480;
 
             /* ── Derived ───────────────────────────────────────────────── */
-            --delta-worse:  #9c4f47;
-            --delta-better: #3f7a5e;
+            --delta-worse:  #a8402f;
+            --delta-better: #2f6b52;
             /* ── Generated theme tokens, light (PARALLAX spec §2) ───────
                Each one is the warm-paper counterpart of the dark value of
                the same name. Chromatic colours keep their hue and are
                darkened to hold contrast on paper; cold neutrals become
                warm neutrals on a reversed lightness curve. */
-            --t7fadde:#2369b3;--t3a4249:#d0c4b3;--t48525b:#c5b7a1;--t4c7d63:#448563;--t4a7cb5:#3668a1;--tf2f6fa:#201d19;
-            --t487cba:#3266a4;--tcf6259:#af3227;--t3a2c2b:#eae2e1;--t5c3b38:#ece0df;--teef3f8:#211f1a;--tc19446:#886220;
-            --t5a4a2c:#efe8dc;--t699781:#4f876c;--t3a5346:#e1eae5;--t78a5d4:#2b6aab;--t39536e:#325375;--t12161a:#efeae2;
-            --t232a30:#e1d9ce;--t2e363d:#d8cfc0;--t2a3138:#dcd3c5;--t333a3c:#d7cdbe;--t39424a:#d0c4b3;--t20262b:#e6ddd0;
-            --t262d33:#dfd6ca;--te8edf2:#25221d;--tb9c2ca:#403a32;--t8d4a44:#95433c;--t20262c:#e5dccf;--t4a545e:#bbb3a7;
-            --t8d5348:#964d3f;--tb0645c:#99463d;--t6d9a83:#4f876a;--t111417:#f1ece4;--t1b1f24:#e9e2d7;--t33383f:#d6ccbc;
-            --t22272d:#e4dbcd;--t5f6772:#8e816d;--t5a6270:#8f826e;--tb7822c:#926317;--tc8a04a:#8b681d;--t171b20:#ece5dc;
-            --tdcc48c:#8b6a1d;--t5f95d0:#2868ae;--t8ebdf0:#0f62bd;--t7fa8c9:#37719f;--tc4453c:#ad3229;--ta8b6c2:#506d86;
-            --t5f7b91:#4c6f8a;--t7b8792:#827664;--t8d99a4:#7a6f60;--t242b31:#e0d8cc;--t2f373e:#d8cebf;--tc2cbd3:#3a352e;
-            --t4c5762:#948774;--t4d5964:#938673;--t7b8894:#807565;--t262c33:#dfd6ca;--t616b75:#8d806c;--t7f8b96:#7f7464;
-            --t232a31:#e0d9cd;--t3d454e:#cec1ae;--t2b333b:#dad1c3;--td5dae0:#302c26;--t0f1317:#f1ede5;--t4f7fa6:#3d709a;
-            --t82aede:#2468b2;--ta8c8ee:#175fb5;--tcfe0f4:#1c60b0;--t0d1013:#f3efe9;--t818c96:#7f7464;--ta4adb6:#4d463c;
-            --t3a4048:#d1c5b3;--t30373f:#d7cdbe;--t1c2127:#e8e0d4;--t7c8792:#827664;--t9aa5ae:#524b40;
-            --tr0:rgba(233,226,215,.72);
-            --tr1:rgba(225,218,207,.8);--tr2:rgba(206,193,174,.7);--tr3:rgba(173,50,41,.07);--tr4:rgba(232,224,212,.9);--tr5:rgba(236,229,220,.6);--tr6:rgba(225,218,207,.94);
-            --tr7:rgba(244,240,234,.9);--tr8:rgba(72,60,42,.20);--tr9:rgba(244,240,234,.6);--tr10:rgba(225,218,207,.72);--tr11:rgba(225,218,207,.6);--tr12:rgba(225,218,207,.55);
-            --tr13:rgba(236,229,220,.66);--tr14:rgba(139,104,29,.10);--tr15:rgba(236,229,220,.9);--tr16:rgba(40,104,174,.10);--tr17:rgba(236,229,220,.82);--tr18:rgba(225,218,207,.85);
-            --tr19:rgba(173,50,41,.12);--tr20:rgba(37,34,29,.5);--tr21:rgba(36,104,178,.5);--tr22:rgba(50,102,164,.16);--tr23:rgba(50,102,164,.28);--tr24:rgba(50,102,164,.20);
-            --tr25:rgba(50,102,164,.34);--tr26:rgba(173,50,41,.14);--tr27:rgba(173,50,41,.16);--tr28:rgba(50,102,164,.12);--tr29:rgba(50,102,164,.07);--tr30:rgba(40,104,174,.06);
-            --tr31:rgba(146,99,23,.12);
+            --t7fadde:#3c507d;--t3a4249:#b7b5ab;--t48525b:#9d9b92;--t4c7d63:var(--green);--t4a7cb5:var(--btn-primary-border);--tf2f6fa:var(--btn-primary-text);
+            --t487cba:var(--btn-primary-hover);--tcf6259:var(--tag-red);--t3a2c2b:#d4d2c9;--t5c3b38:var(--tag-red-border);--teef3f8:var(--check-mark-color);--tc19446:var(--tag-amber);
+            --t5a4a2c:var(--tag-amber-border);--t699781:var(--tag-green);--t3a5346:var(--tag-green-border);--t78a5d4:var(--tag-blue);--t39536e:var(--tag-blue-border);--t12161a:#f5f4f0;
+            --t232a30:#dcdad2;--t2e363d:#cbc9bf;--t2a3138:var(--bg-3);--t333a3c:#c6c4ba;--t39424a:#b7b5ab;--t20262b:#e2e0d9;
+            --t262d33:#d9d7ce;--te8edf2:#262938;--tb9c2ca:#525765;--t8d4a44:#9a4034;--t20262c:var(--tooltip-bg);--t4a545e:var(--chart-hist);
+            --t8d5348:var(--chart-hist-hot);--tb0645c:var(--delta-worse);--t6d9a83:var(--delta-better);--t111417:#f7f6f2;--t1b1f24:#e9e8e3;--t33383f:#c7c5bc;
+            --t22272d:#e0ded7;--t5f6772:#7d7f7f;--t5a6270:#808180;--tb7822c:var(--amber);--tc8a04a:#8a6320;--t171b20:var(--bg-0);
+            --tdcc48c:#8a6a24;--t5f95d0:var(--acc-hi);--t8ebdf0:#2f4a7d;--t7fa8c9:#5a7599;--tc4453c:var(--red);--ta8b6c2:#5a5f6d;
+            --t5f7b91:#4a5f7f;--t7b8792:#696e7c;--t8d99a4:#646977;--t242b31:#dbd9d1;--t2f373e:#c9c7be;--tc2cbd3:#4c505e;
+            --t4c5762:#95948a;--t4d5964:#929188;--t7b8894:#696e7c;--t262c33:var(--line-soft);--t616b75:var(--txt-4);--t7f8b96:#676c7a;
+            --t232a31:#dcdad2;--t3d454e:var(--line-strong);--t2b333b:#cfcdc4;--td5dae0:var(--txt);--t0f1317:#f8f7f3;--t4f7fa6:var(--steel);
+            --t82aede:var(--xref-color);--ta8c8ee:var(--xref-hover-color);--tcfe0f4:var(--xref-active-color);--t0d1013:#fbfaf5;--t818c96:var(--txt-3);--ta4adb6:var(--txt-2);
+            --t3a4048:#bab8ae;--t30373f:var(--line);--t1c2127:var(--bg-1);--t7c8792:#696e7c;--t9aa5ae:#606573;
+            --tr0:rgba(54,58,72,.72);
+            --tr1:rgba(63,68,82,.8);--tr2:rgba(81,85,99,.7);--tr3:rgba(134,134,128,.07);--tr4:rgba(57,61,75,.9);--tr5:rgba(49,53,67,.6);--tr6:rgba(63,68,82,.94);
+            --tr7:rgba(31,34,49,.9);--tr8:rgba(189,187,177,.20);--tr9:rgba(31,34,49,.6);--tr10:rgba(63,68,82,.72);--tr11:rgba(63,68,82,.6);--tr12:rgba(63,68,82,.55);
+            --tr13:rgba(49,53,67,.66);--tr14:rgba(121,123,127,.10);--tr15:rgba(49,53,67,.9);--tr16:rgba(125,127,127,.10);--tr17:rgba(49,53,67,.82);--tr18:rgba(63,68,82,.85);
+            --tr19:rgba(134,134,128,.12);--tr20:rgba(229,227,221,.5);--tr21:rgba(125,126,127,.5);--tr22:rgba(126,128,127,.16);--tr23:rgba(126,128,127,.28);--tr24:rgba(126,128,127,.20);
+            --tr25:rgba(126,128,127,.34);--tr26:rgba(134,134,128,.14);--tr27:rgba(134,134,128,.16);--tr28:rgba(126,128,127,.12);--tr29:rgba(126,128,127,.07);--tr30:rgba(125,127,127,.06);
+            --tr31:rgba(121,124,127,.12);
 
-            --tip-bg:#f9f5ec;
-            --tip-line:rgba(96,84,64,.24);
+            --tip-bg:#fcfbf6;
+            --tip-line:rgba(149,148,139,.24);
 
             /* derived from the semantic tokens above — kept equal to them
                so a tag and its severity never drift apart */
-            --tag-red:    #a8322a; --tag-red-border:   #d9c3ab;
-            --tag-amber:  #8a5f16; --tag-amber-border: #d9c3ab;
-            --tag-green:  #2f5c48; --tag-green-border: #c7d3ab;
-            --tag-blue:   #2f5c90; --tag-blue-border:  #abc0d9;
-            --chart-area-fill:   rgba(47,92,143,.13);
-            --chart-area-stroke: #3a5f80;
-            --chart-grid:        #e2d9c7;
-            --chart-hist:        #b3a48a;
-            --chart-hist-hot:    #8a4a3a;
-            --heatmap-lo: #d4e2f2; --heatmap-hi: #2f5c90; --heatmap-empty: #f4efe5;
-            --chart-bar:     #3a5f80; /* share-of-window bars (5.4:1 on --bg-1) */
-            --chart-bar-track: #e2d9c7;
+            --tag-red:    #b03a26; --tag-red-border:   #e6d2cb;
+            --tag-amber:  #85601f; --tag-amber-border: #e5dcc6;
+            --tag-green:  #2d6349; --tag-green-border: #cfe0d6;
+            --tag-blue:   #35497a; --tag-blue-border:  #ccd6e8;
+            --chart-area-fill:   rgba(142,141,132,.13);
+            --chart-area-stroke: #4a5f8f;
+            --chart-grid:        #e7e5de;
+            --chart-hist:        #9a9892;
+            --chart-hist-hot:    #b05a42;
+            --heatmap-lo: #e3e6ef; --heatmap-hi: #3c507d; --heatmap-empty: #f3f2ee;
+            --chart-bar:     #4a5f8f; /* share-of-window bars (5.4:1 on --bg-1) */
+            --chart-bar-track: #e7e5de;
 
-            --shadow: 0 10px 26px rgba(70,60,45,.16), 0 1px 3px rgba(70,60,45,.14);
+            --shadow: 0 10px 26px rgba(190,188,178,.16), 0 1px 3px rgba(190,188,178,.14);
 
             /* ── Glass panes — a real, distinct light-theme tint, never
                the dark theme's translucent black reused (that would read
                muddy on a warm-paper ground) ──────────────────────────── */
-            --pane-glass-bg:      #f4efe5; /* solid: matches --bg-1 */
-            --akili-glass-bg:     #f4efe5; /* solid: matches --bg-1 */
-            --akili-glass-border: rgba(70, 60, 45, 0.10);
+            --pane-glass-bg:      var(--glass); /* v6 A2 — glass, not a solid fill */
+            --akili-glass-bg:     #eceae4; /* solid: matches --bg-1 */
+            --akili-glass-border: rgba(190,188,178,0.10);
 
             /* ── Map overlay tooltips — same real per-type accent hues,
                real light backing/border/text ────────────────────────── */
-            --map-tooltip-bg:      #f9f5ec; /* solid: matches --bg-2 */
-            --map-tooltip-text:    #262019;
-            --map-tooltip-text-strong: #14110c;
-            --map-tooltip-border:  rgba(70, 60, 45, 0.16);
-            --map-country-border:  rgba(31, 77, 125, 0.35);
-            --map-eez-border:      rgba(40, 108, 98, 0.4);
-            --map-infra-bg:        #efe9dc;
-            --map-infra-border:    #d4c9b0;
-            --map-infra-text:      #6b6355;
-            --map-infra-text-hover: #221d16;
-            --map-detection-label-bg: rgba(245, 240, 230, 0.88);
-            --map-detection-label-text: #221d16;
-            --leaflet-bg:          #efe9dc;
-            --scrollbar-thumb:       rgba(70, 60, 45, 0.16);
-            --scrollbar-thumb-hover: rgba(70, 60, 45, 0.28);
-            --focus-ring: rgba(31, 77, 125, 0.5);
+            --map-tooltip-bg:      #fcfbf6; /* solid: matches --bg-2 */
+            --map-tooltip-text:    #3e4250;
+            --map-tooltip-text-strong: #1a1d2c;
+            --map-tooltip-border:  rgba(190,188,178,0.16);
+            --map-country-border:  rgba(167,165,155,0.35);
+            --map-eez-border:      rgba(128,129,128,0.4);
+            --map-infra-bg:        #fcfbf6;
+            --map-infra-border:    #d9d7cf;
+            --map-infra-text:      #5c616f;
+            --map-infra-text-hover: #1a1d2c;
+            --map-detection-label-bg: rgba(31,34,49,0.88);
+            --map-detection-label-text: #1a1d2c;
+            --leaflet-bg:          #eceae4;
+            --scrollbar-thumb:       rgba(190,188,178,0.16);
+            --scrollbar-thumb-hover: rgba(190,188,178,0.28);
+            --focus-ring: rgba(167,165,155,0.5);
 
             /* ── Real component-specific light-theme tokens ──────────── */
-            --btn-primary-border: #1f4d7d;
-            --btn-primary-text:   #f5f0e6;
-            --btn-primary-hover:  #1a4269;
-            --check-mark-color:   #f5f0e6;
-            --xref-color:       #2f5c8f;
-            --xref-hover-color: #1f4d7d;
-            --xref-hover-bg:    rgba(47,92,143,.14);
-            --xref-active-bg:   rgba(47,92,143,.24);
-            --xref-active-color: #14324f;
-            --tooltip-bg: #efe9dc;
-            --scrim-bg: rgba(35,30,22,.45);
-            --sheet-shadow-color: rgba(70,60,45,.28);
+            --btn-primary-border: #35497a;
+            --btn-primary-text:   #fcfbf6;
+            --btn-primary-hover:  #1f3058;
+            --check-mark-color:   #fcfbf6;
+            --xref-color:       #2f4a7d;
+            --xref-hover-color: #1f3058;
+            --xref-hover-bg:    rgba(142,141,132,.14);
+            --xref-active-bg:   rgba(142,141,132,.24);
+            --xref-active-color: #16244a;
+            --tooltip-bg: #fcfbf6;
+            --scrim-bg: rgba(233,232,226,.45);
+            --sheet-shadow-color: rgba(190,188,178,.28);
         }
 
         /* ── --strip-h raise rules (PARALLAX spec §2) ──────────────────────
@@ -648,6 +652,22 @@
            collapsing while the timeline is showing leaves 150px of gap
            where the chart used to be. */
         html:has(#timestrip.collapsed) { --strip-h: 30px; }
+
+        /* ── --pane-bottom: ONE statement of "clear the strip" ─────────────
+           Five files had each grown their own copy of
+           calc(max(var(--strip-h,0px),30px) + 24px). Five copies of a
+           geometry fact is five chances for one of them to be stale, which
+           is exactly how the Imagery sidebar ended up running under the
+           timeline while the Layers pane beside it cleared it correctly.
+
+           It is keyed off the strip's EXISTENCE, not floored with max(), so
+           a screen that has no strip does not reserve 54px for a strip that
+           is not there. Where a strip does exist, --strip-h already reports
+           which face is showing (density 76 / archive 150 / collapsed 30),
+           so this tracks a resize instead of guessing at one. +24 clears the
+           strip's own bottom:12 inset and leaves a 12px gap above it. */
+        :root { --pane-bottom: 22px; }
+        html:has(#timestrip) { --pane-bottom: calc(var(--strip-h) + 24px); }
         /* The status bar collapses to a grip. Keyed off the element so
            every consumer of --status (docked panels, the notification
            stack, the map chrome) reclaims the space rather than floating
@@ -780,6 +800,107 @@
             0%, 100% { transform: scale(1);   opacity: 0.25; }
             50%       { transform: scale(1.45); opacity: 0.08; }
         }
+    </style>
+    <!-- ══════════════════════════════════════════════════════════════════
+         PARALLAX v6 · Part G theme tokens, verbatim.
+
+         THE WHOLE LOOK IS TRANSLUCENCY. Every floating surface in v6 is
+         glass: background var(--glass), backdrop-filter blur(22px)
+         saturate(1.15), a 1px var(--gline) border and var(--gshadow). Our
+         panels were opaque blocks, which is why the app read as a stack of
+         cards instead of instruments laid over a map. These tokens come
+         first because they change every surface at once; the geometry
+         (Part A2) and the element specs (Part B) build on them.
+
+         The legacy bridge at the bottom re-points this codebase's older
+         token names at the v6 ones, so a component written months ago
+         becomes glass without being touched.
+         ══════════════════════════════════════════════════════════════════ -->
+    <style id="plx6-tokens">
+        :root, :root[data-theme="dark"] {
+            --canvas:#14161f; --sea:#181b25; --land:#252936;
+            --landline:rgba(181,185,195,.16); --grat:rgba(221,224,230,.05);
+            --glass:rgba(30,33,44,.52); --glass2:rgba(52,56,70,.28);
+            --bar:rgba(24,27,37,.9); --solid:#1e212c;
+            --gline:rgba(242,243,246,.09); --gline2:rgba(242,243,246,.17);
+            --gshadow:0 14px 36px rgba(10,14,31,.45),0 1px 2px rgba(10,14,31,.35);
+            --txt:#f2f3f6; --txt2:#dde0e6; --txt3:#b5b9c3; --txt4:#878c9a;
+            --acc:#3c507d; --acchi:#a0b2d2; --acchov:#3a5281;
+            --accdim:rgba(160,178,210,.13);
+            --red:#f46043; --amber:oklch(0.78 0.13 72); --steel:#878c9a; --green:#a0b2d2;
+            --hov:rgba(242,243,246,.05); --scrim:rgba(10,14,31,.3);
+        }
+        :root[data-theme="light"] {
+            --canvas:#f3f2ee; --sea:#fafaf7; --land:#e9e8e3;
+            --landline:#d4d3cc; --grat:rgba(39,42,56,.05);
+            --glass:rgba(252,251,246,.56); --glass2:rgba(236,235,230,.35);
+            --bar:rgba(252,251,246,.9); --solid:#fcfbf6;
+            --gline:rgba(39,42,56,.10); --gline2:rgba(39,42,56,.19);
+            --gshadow:0 8px 28px rgba(26,29,44,.08),0 2px 6px rgba(26,29,44,.05);
+            --txt:#1a1d2c; --txt2:#3e4250; --txt3:#5c616f; --txt4:#6a6f7d;
+            --acc:#272a38; --acchi:#3c507d; --acchov:#1a1d2c;
+            --accdim:rgba(39,42,56,.08);
+            --red:#d4492e; --amber:oklch(0.64 0.13 66); --steel:#5c616f; --green:#3c507d;
+            --hov:rgba(39,42,56,.05); --scrim:rgba(39,42,56,.05);
+        }
+
+        /* Muzzo family aliases. The spec names three voices; we bind them
+           to the families this build actually ships so a component copied
+           from Part B renders instead of falling back to Times. */
+        :root {
+            --mz-font-body: var(--font);
+            --mz-font-display: var(--font);
+            --mz-font-edit: Georgia, 'Times New Roman', serif;
+            --mz-font-mono: var(--mono);
+            --mz-cream:#fcfbf6; --mz-navy:#01164d; --mz-klein:#0724a1;
+            --mz-sky:#ebf6ff; --mz-orange:#f46043; --mz-rule:rgba(1,22,77,.18);
+            --mz-ink-40:#5c616f; --mz-ink-55:#3e4250; --mz-ink-60:#50545f;
+            --mz-paper-04:#fcfbf6; --mz-sapphire:#3c507d; --mz-navy-400:#5a719c;
+            --mz-shadow-lg:0 8px 28px rgba(1,22,77,.10),0 2px 6px rgba(1,22,77,.06);
+            --mz-ease:cubic-bezier(.22,.61,.36,1);
+        }
+
+        /* ── Legacy bridge ──────────────────────────────────────────────
+           Older components name surfaces --bg-0..--bg-4 and lines
+           --line*. Re-pointing them here is what turns the existing app
+           translucent without editing 40 files. --bg-2 in particular was
+           the opaque chrome fill; it is now the glass bar. */
+        :root {
+            --bg-0: var(--canvas);
+            --bg-1: var(--sea);
+            --bg-2: var(--bar);
+            --bg-3: var(--hov);
+            --bg-4: var(--accdim);
+            --line: var(--gline);
+            --line-soft: var(--gline);
+            --line-strong: var(--gline2);
+            --txt-2: var(--txt2);
+            --txt-3: var(--txt3);
+            --txt-4: var(--txt4);
+            --acc-hi: var(--acchi);
+            --acc-hover: var(--acchov);
+        }
+
+        /* Translucency only reads as glass when what is behind it is
+           blurred; without this a semi-transparent panel is just murky.
+           22px/1.15 are the spec's numbers. */
+        .plx-glass,
+        .pane, .panel, .card, .bar, .dlg, .sheet, .popover, .menu,
+        [data-glass] {
+            backdrop-filter: blur(22px) saturate(1.15);
+            -webkit-backdrop-filter: blur(22px) saturate(1.15);
+        }
+
+        /* Map UI is rounded (A11): pills and 10–22px radii. Everything
+           else keeps square corners. */
+
+        /* Part A9.1 / Part G — the two accent strokes of the X mark, and
+           the pulse that wraps it. Used only as loading indicators. */
+        @keyframes plx-e1{0%,15%{opacity:0;transform:translate(-3px,4.4px)}40%,75%{opacity:1;transform:none}100%{opacity:0;transform:none}}
+        @keyframes plx-e2{0%,35%{opacity:0;transform:translate(-3px,4.4px)}60%,75%{opacity:1;transform:none}100%{opacity:0;transform:none}}
+        @keyframes plx-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+        @keyframes plx-fade{to{opacity:0;visibility:hidden}}
+        .plx-pill { border-radius: 999px; }
     </style>
 </head>
 

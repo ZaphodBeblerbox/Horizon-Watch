@@ -62,6 +62,13 @@ export const DEFAULTS = {
         leftPanel:  false,
         rightPanel: false,
         bottomBar:  true,
+        /* The event-density strip across the bottom of the map. OFF by
+           default and driven by the rail's Timeline button — it used to
+           render unconditionally while the button toggled a `plxDrawer`
+           flag nothing read, so the strip was always there and the control
+           for it did nothing. It covers the bottom ~100px of the map, so
+           "always on" is not a neutral default. */
+        timeline:   false,
         // Workstation panes. Open by default — unlike the Situation panes,
         // these are the surface itself rather than an overlay on a map.
         caseTree:     true,

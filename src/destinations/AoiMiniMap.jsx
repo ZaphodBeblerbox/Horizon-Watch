@@ -242,7 +242,7 @@ export default function AoiMiniMap({
             // a detection on a repeat scan is whether it is new, gone or
             // simply still there.
             const COLOUR = {
-                new: "#e8a33d", gone: "#d4553f", moved: "#5f95d0",
+                new: "#f5d98f", gone: "#f46043", moved: "#a0b2d2",
                 persisted: "#6f8fa8", baseline: "#6f8fa8", unconfirmed: "#4a5a66",
             }
 

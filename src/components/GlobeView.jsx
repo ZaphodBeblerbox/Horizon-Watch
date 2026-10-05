@@ -6,7 +6,7 @@ import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, Ces
 import { publishCameraState } from "../globe/cameraState.js"
 import { publishCursor, publishScale, getScale, scaleFor, zoomLabelFor } from "../globe/mapReadout.js"
 import "cesium/Build/Cesium/Widgets/widgets.css"
-import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, openSeaMapProvider, openInfraRasterProvider, offlineBasemapProvider } from "../globe/imageryProviders.js"
+import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, esriLightProvider, openSeaMapProvider, openInfraRasterProvider, offlineBasemapProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
@@ -230,6 +230,17 @@ export default function GlobeView({
     // Real annotation drawing tool — "select"|"marker"|"route"|"area"|"measure"
     annotationTool = "select",
 }) {
+    /* The theme lives on <html data-theme>, not in React state, because a
+       synchronous bootstrap applies it before first paint to avoid a flash.
+       So to re-pick the basemap when it changes we have to watch the
+       attribute. A MutationObserver on that one attribute is cheaper than
+       threading a theme prop through every caller of this component. */
+    const [themeTick, setThemeTick] = useState(0)
+    useEffect(() => {
+        const ob = new MutationObserver(() => setThemeTick((n) => n + 1))
+        ob.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
+        return () => ob.disconnect()
+    }, [])
     const viewerRef = useRef(null)
     const baseLayerRef = useRef(null) // the one ImageryLayer this component manages imperatively for basemap swaps
     const offlineBaseRef = useRef(null) // the Natural Earth floor beneath it, added once
@@ -523,6 +534,17 @@ export default function GlobeView({
                 if (!w || !h) return
 
                 const carto = viewer.camera.positionCartographic
+                /* WHERE THE CAMERA IS, published for anything that needs to
+                   capture it. The theater editor's "use the current map
+                   view" is the caller: the only way anybody knows the
+                   latitude that frames the Bab el-Mandeb is to fly there
+                   and take the number. Written on the camera-change handler
+                   that already runs, so it costs nothing extra. */
+                window.__akiliCamera = {
+                    lat: CesiumMath.toDegrees(carto.latitude),
+                    lon: CesiumMath.toDegrees(carto.longitude),
+                    height: carto.height,
+                }
                 const span = 120
                 const a = viewer.camera.pickEllipsoid(new Cartesian2(w / 2 - span / 2, h / 2))
                 const b = viewer.camera.pickEllipsoid(new Cartesian2(w / 2 + span / 2, h / 2))
@@ -747,7 +769,15 @@ export default function GlobeView({
             // shows through, so the globe is a coarse world map instead of
             // a blank sphere. Added once, and never removed by a basemap
             // swap, which is why it is not tracked in baseLayerRef.
-            const provider = basemap === "dark" ? esriDarkProvider : esriSatelliteProvider
+            /* "dark" is the PLAIN CARTOGRAPHIC basemap, and plain
+               follows the theme. It is not a colour the user picked —
+               Satellite and Terrain are, and those are left alone. Since
+               the map became the canvas behind every mode, a dark base
+               under light-theme glass turned the whole app muddy grey. */
+            const lightTheme = document.documentElement.dataset.theme === "light"
+            const provider = basemap === "dark"
+                ? (lightTheme ? esriLightProvider : esriDarkProvider)
+                : esriSatelliteProvider
             // APPENDED, NOT INSERTED AT A FIXED INDEX. The offline floor
             // below resolves asynchronously, so "put the real basemap at
             // index 1" raced it: on a cold start the collection was still
@@ -873,7 +903,7 @@ export default function GlobeView({
                 offTileErrRef.current = null
             }
         }
-    }, [basemap])
+    }, [basemap, themeTick])
 
     // Track camera viewport bounds for event layer scoping
     useEffect(() => {
@@ -1018,6 +1048,16 @@ export default function GlobeView({
                     opacity: 0.3 !important;
                 }
                 .cesium-viewer-bottom { bottom: 0 !important; }
+                /* Cesium hardcodes these to white, which was invisible on
+                   the light basemap — the one real contrast failure a
+                   sweep of every text node on this screen turned up. Esri's
+                   terms require the attribution to stay VISIBLE, so it is
+                   recoloured rather than hidden. */
+                :root[data-theme="light"] .cesium-viewer .cesium-credit-textContainer,
+                :root[data-theme="light"] .cesium-viewer .cesium-credit-textContainer *,
+                :root[data-theme="light"] .cesium-viewer .cesium-credit-expand-link {
+                    color: var(--txt3) !important;
+                }
                 /* Suppress the default selection indicator green ring */
                 .cesium-selection-wrapper { display: none !important; }
                 /* Esri's usage terms require VISIBLE attribution — the
@@ -1191,7 +1231,18 @@ export default function GlobeView({
                 <MapMeta
                     data-testid="map-bottom-chrome"
                     style={{
-                        left: 12 + mapChromeLeftInset, bottom: 12 + mapChromeBottomInset,
+                        left: 12 + mapChromeLeftInset,
+                        /* THE TIMELINE FLOATS NOW, so the readout has to
+                           clear it. This was a flat 12px off the bottom,
+                           which put the coordinates directly underneath
+                           the drawer the moment the drawer stopped being
+                           an in-flow footer — and being an inline style it
+                           beat the stylesheet rule that tried to fix it.
+                           max() rather than a var fallback because
+                           --strip-h is declared (0px at :root), so a
+                           fallback would never apply; 30px is the drawer
+                           collapsed to its head. */
+                        bottom: `calc(var(--pane-bottom) + ${mapChromeBottomInset}px)`,
                         zIndex: 40, transition: "left 0.15s ease, bottom 0.15s ease",
                     }}
                 />

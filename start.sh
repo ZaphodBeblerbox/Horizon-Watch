@@ -1,12 +1,11 @@
 #!/bin/bash
 echo "Killing any existing processes..."
-kill -9 $(lsof -ti:8001) 2>/dev/null
+kill -9 $(lsof -ti:8000) 2>/dev/null
 kill -9 $(lsof -ti:5173) 2>/dev/null
 
 echo "Starting backend..."
 cd "/Users/marcamaylunau/NAGINI 2.0/backend"
-source venv/bin/activate
-uvicorn main:app --reload --port 8001 &
+uvicorn main:app --reload --port 8000 &
 
 sleep 3
 

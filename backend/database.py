@@ -11,16 +11,57 @@ DATABASE_URL = f"sqlite:///{os.getenv('DATA_DIR', './data')}/akili.db"
 # imagery) on a network-backed Railway volume, and a writer that has to wait
 # longer than five seconds for the lock does not wait, it raises. Sixty-two
 # such lines appeared in a two-minute window while the app returned 502.
+# POOL SIZE IS A LATENCY SETTING HERE, NOT A THROUGHPUT ONE. The default
+# QueuePool is 5 connections with 10 overflow. This process writes from
+# about a dozen background loops at once, so the pool was permanently over
+# its mark and SQLAlchemy opened — and then discarded — connections
+# continuously. Every one of those paid the full pragma sequence below,
+# and the loop-lag sampler caught _set_sqlite_pragmas holding the event
+# loop for 78% of a 5.4-second stall. Sizing the pool above the number of
+# concurrent writers means a connection is reused instead of rebuilt, and
+# the pragma cost is paid once per connection rather than once per query
+# burst. pool_recycle keeps a long-lived connection from going stale.
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False, "timeout": 30},
+    pool_size=24,
+    max_overflow=24,
+    pool_recycle=1800,
+    pool_pre_ping=True,
 )
+
+# journal_mode IS A PROPERTY OF THE DATABASE FILE, NOT OF A CONNECTION.
+# It is written into the file header and persists across every connection
+# and every restart, so re-issuing it per connect achieved nothing — except
+# that it is the one pragma here that needs an exclusive lock, so under
+# concurrency each new connection could sit on that lock behind a writer,
+# up to the 30s busy_timeout, on the event loop. Set once, at import, by a
+# connection that is allowed to wait.
+def _ensure_wal() -> None:
+    try:
+        raw = engine.raw_connection()
+        try:
+            cur = raw.cursor()
+            cur.execute("PRAGMA journal_mode = WAL")
+            mode = (cur.fetchone() or [None])[0]
+            cur.close()
+            if str(mode).lower() != "wal":
+                print(f"[db] journal_mode is {mode!r}, not WAL — "
+                      "expect lock contention under concurrent writers")
+        finally:
+            raw.close()
+    except Exception as ex:                                  # noqa: BLE001
+        # A database that cannot be opened at import is a startup problem
+        # that belongs to the caller, not a reason to crash on a pragma.
+        print(f"[db] could not set journal_mode: {type(ex).__name__}: {ex}")
+
 
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    """Per-connection pragmas only. journal_mode is deliberately absent —
+    see _ensure_wal above."""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA cache_size = -65536")  # cap page cache at 64 MB
-    cursor.execute("PRAGMA journal_mode = WAL")   # WAL reduces lock contention
     cursor.execute("PRAGMA mmap_size = 0")        # disable memory-mapped I/O
     # THE ONE THAT ACTUALLY MATTERS ON A NETWORK VOLUME. synchronous
     # defaults to FULL, which fsyncs on every single commit. On Railway's
@@ -35,6 +76,10 @@ def _set_sqlite_pragmas(dbapi_connection, connection_record):
     # this covers any statement that reaches SQLite by another path.
     cursor.execute("PRAGMA busy_timeout = 30000")
     cursor.close()
+
+
+_ensure_wal()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -79,6 +124,27 @@ class User(Base):
     # randomized; timezone/shift are real settings a user sets for
     # themselves, defaulted honestly rather than invented.
     initials            = Column(String, nullable=True)
+    # Profile picture, stored inline as a data URL. A column rather than a
+    # file store because there is no object storage in this deployment and
+    # a filesystem path is not portable across the Railway container's
+    # restarts; the write path caps it (see api_users_update), so this
+    # cannot become a place large blobs accumulate.
+    avatar              = Column(Text, nullable=True)
+    # The rest of what a person's page shows. A banner behind the picture,
+    # who they work for, where they sit, and what they actually do — the
+    # last of which is the only part a colleague reading the page is
+    # really after, and the only part the roster could never carry.
+    cover               = Column(Text, nullable=True)   # data URL, like avatar
+    # WHERE in each picture the subject is, as a CSS object-position string
+    # ("50% 32%"). The crop is NOT baked into the stored image: a face that
+    # the square landed badly on is the usual reason somebody uploads the
+    # same photograph four times, and a stored focal point makes that a
+    # drag instead of a re-upload.
+    avatar_pos          = Column(String, nullable=True)
+    cover_pos           = Column(String, nullable=True)
+    company             = Column(String, nullable=True)
+    location            = Column(String, nullable=True)
+    bio                 = Column(Text, nullable=True)
     color               = Column(String, nullable=True)
     timezone            = Column(String, nullable=True)
     shift                = Column(String, nullable=True)
@@ -404,6 +470,160 @@ class ActivityLogEntry(Base):
     verb           = Column(String, nullable=False)  # assigned | reassigned | done | commented | resolved_comment | reopened_comment
     detail_json    = Column(Text, nullable=False, default="{}")
     created_at     = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class Post(Base):
+    """An observation published to the desk.
+
+    THE ORG IS THE AUDIENCE, NOT A FOLLOWER LIST. A follow graph in a team
+    where everybody works the same handful of theaters means everybody
+    follows everybody, which filters nothing and adds a step. What people
+    actually want to narrow by is the theater and how urgent it is, and
+    both of those are on the row.
+
+    A REPLY IS A POST. `parent_id` pointing at another Post, because the
+    useful thing about an observation is the second person saying "I have
+    the ADS-B for that window" — and modelling replies separately means
+    writing every listing, deletion and permission check twice.
+
+    A deleted post keeps its row. Removing it outright leaves replies
+    hanging off nothing, and "this was deleted" is information the people
+    who already read it are entitled to.
+    """
+    __tablename__ = "posts"
+    id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    author_user_id  = Column(String, nullable=False, index=True)
+    parent_id       = Column(String, nullable=True, index=True)     # Post.id — a reply
+    body            = Column(Text, nullable=False, default="")
+    theater         = Column(String, nullable=True, index=True)
+    urgency         = Column(String, nullable=True, index=True)     # the five bands
+    attachment_json = Column(Text, nullable=True)                   # a signal, or a file
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    edited_at       = Column(DateTime, nullable=True)
+    deleted_at      = Column(DateTime, nullable=True)
+
+
+class PostAck(Base):
+    """"Seen, and I agree it matters." One row per person per post.
+
+    Not a like. On a desk the question a published observation raises is
+    whether anyone else has picked it up, and a count of people who said
+    so answers it. One kind deliberately — a palette of reactions turns a
+    watch log into a mood board.
+    """
+    __tablename__ = "post_acks"
+    id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    post_id    = Column(String, nullable=False, index=True)
+    user_id    = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("post_id", "user_id", name="uq_post_ack"),)
+
+
+class Theater(Base):
+    """A region somebody watches: where the camera goes, and what is on.
+
+    THEY WERE THREE OBJECTS IN A useState. The tab strip holds theaters —
+    Red Sea watch, Hormuz transit, Taiwan Strait — and they were seeded in
+    app.jsx as a literal, so there was no way to add a fourth, no way to
+    change one, and nothing survived a different browser.
+
+    PER USER, like cases. A theater is a statement about what this analyst
+    is watching, and "the whole org watches the same regions" is a
+    different product decision that would need its own sharing story. A new
+    account gets the three defaults seeded on first read, so nobody starts
+    at an empty tab strip.
+
+    `view` and `layers` are JSON because they are the camera and a set of
+    layer keys — both shapes the map already owns, and a column per key
+    would need a migration every time a layer is added.
+    """
+    __tablename__ = "theaters"
+    id            = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_user_id = Column(String, nullable=False, index=True)
+    name          = Column(String, nullable=False)
+    sev           = Column(String, nullable=False, default="steady")  # critical|elevated|steady
+    view          = Column(JSON, nullable=True)    # {lat, lon, height}
+    layers        = Column(JSON, nullable=True)    # {groups[], infra[], tracks[]}
+    sort_index    = Column(Integer, nullable=False, default=0)
+    created_at    = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class Conversation(Base):
+    """A chat: either between two people, or a named group.
+
+    ONE TABLE FOR BOTH, with `kind` telling them apart, because every
+    operation — list my chats, post, mark read, count unread — is the same
+    operation for a direct message as for a group of nine. Modelling them
+    separately means writing each of those twice and watching the two
+    copies drift.
+
+    A direct conversation has no title; it is named after whoever you are
+    not. Giving it one would mean deciding whose name it takes, and the
+    answer is different for each of the two people in it.
+
+    `last_message_at` is denormalised from the messages deliberately: the
+    conversation list is sorted by it on every open, and computing it with
+    a correlated subquery over a growing message table is the query that
+    gets slow first.
+    """
+    __tablename__ = "conversations"
+    id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    kind            = Column(String, nullable=False, default="direct")   # direct | group
+    title           = Column(String, nullable=True)        # group only
+    avatar          = Column(Text, nullable=True)          # group only, data URL
+    created_by      = Column(String, nullable=True, index=True)
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow)
+    last_message_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class ConversationMember(Base):
+    """Who is in a conversation, and how much of it they have read.
+
+    MEMBERSHIP IS THE WHOLE ACCESS RULE. There is no "visible to the team"
+    conversation and no role that reads everything: if there is no row
+    here, you cannot see the chat, you cannot post to it, and it is not in
+    your list. A superadmin is not an exception — administering accounts is
+    not a licence to read colleagues' messages.
+
+    `last_read_at` rather than a per-message read table: unread is "what
+    arrived after the last time I looked", which is one timestamp, and a
+    row per person per message is a table that grows with the product of
+    both.
+    """
+    __tablename__ = "conversation_members"
+    id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    conversation_id = Column(String, nullable=False, index=True)
+    user_id         = Column(String, nullable=False, index=True)
+    role            = Column(String, nullable=False, default="member")   # member | admin
+    joined_at       = Column(DateTime, default=datetime.datetime.utcnow)
+    last_read_at    = Column(DateTime, nullable=True)
+    muted           = Column(Boolean, default=False)
+
+
+class ChatMessage(Base):
+    """One message.
+
+    `kind` carries what it IS: ordinary text, a signal somebody sent from
+    the map, a case they shared, or a system line ("Marc added Hannes").
+    The system lines are messages rather than a separate event feed so the
+    history reads in one order — a group that gained four people over a
+    week makes no sense if the joins are kept somewhere else.
+
+    A deleted message keeps its row with `deleted_at` set. Removing it
+    outright leaves a reply to nothing, and "this message was deleted" is
+    information the other people in the chat are entitled to.
+    """
+    __tablename__ = "chat_messages"
+    id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    conversation_id = Column(String, nullable=False, index=True)
+    sender_id       = Column(String, nullable=True, index=True)   # NULL for system lines
+    kind            = Column(String, nullable=False, default="text")  # text | signal | case | system
+    body            = Column(Text, nullable=False, default="")
+    attachment_json = Column(Text, nullable=True)   # the signal/case the message carries
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    edited_at       = Column(DateTime, nullable=True)
+    deleted_at      = Column(DateTime, nullable=True)
 
 
 class DirectMessage(Base):
@@ -1838,6 +2058,18 @@ def migrate_db():
         ('capability_role', 'TEXT'),
         ('theme', 'TEXT'),
         ('settings', 'TEXT'),
+        # Profile picture as a data URL (see User.avatar). Declaring the
+        # column on the model is not enough on an existing database —
+        # SQLAlchemy will happily SELECT a column SQLite does not have, and
+        # every /api/users call 500s until the migration runs.
+        ('avatar', 'TEXT'),
+        # The profile page's own fields — same reason as avatar above.
+        ('cover', 'TEXT'),
+        ('avatar_pos', 'TEXT'),
+        ('cover_pos', 'TEXT'),
+        ('company', 'TEXT'),
+        ('location', 'TEXT'),
+        ('bio', 'TEXT'),
     ]
     existing = [row[1] for row in cur.execute('PRAGMA table_info(users)').fetchall()]
     for col, typ in cols:

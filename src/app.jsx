@@ -9,6 +9,12 @@ import { REGION_COORDS } from "./data/regionCoords.js"
 const GlobeView = lazy(() => import("./components/GlobeView.jsx"))
 import IconSprite from "./ui/IconSprite.jsx"
 import TopBar from "./components/TopBar.jsx"
+import PlxIcons from "./plx6/PlxIcons.jsx"
+import PlxTabBar from "./plx6/PlxTabBar.jsx"
+import PlxMenuBar from "./plx6/PlxMenuBar.jsx"
+import PlxRail from "./plx6/PlxRail.jsx"
+import { PlxMenu, PlxToast, PlxAlerts } from "./plx6/PlxOverlays.jsx"
+import { useChrome } from "./state/useChrome.js"
 import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayManager.js"
 import NotificationStack from "./components/NotificationStack.jsx"
 import NotificationTray from "./components/NotificationTray.jsx"
@@ -17,7 +23,7 @@ import { subscribeLive } from "./state/liveEvents.js"
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
-import { checkSession, subscribeAuth, isAuthTransientError, canLoginOffline } from "./state/authStore.js"
+import { checkSession, subscribeAuth, isAuthTransientError, canLoginOffline, getCurrentUser } from "./state/authStore.js"
 import { reconcileTheme, getThemeMode, setThemeMode } from "./state/themeStore.js"
 import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from "./state/settingsStore.js"
 import CommandPalette from "./components/CommandPalette.jsx"
@@ -28,6 +34,7 @@ import SettingsModal from "./components/SettingsModal.jsx"
 // useInspectorExtensions() picks it up automatically once registered.
 import "./components/collab/CollabPanel.jsx"
 import ToastHost from "./ui/ToastHost.jsx"
+import Home from "./destinations/Home.jsx"
 import Situation from "./destinations/Situation.jsx"
 import { MODULES } from "./data/modules.js"
 
@@ -38,17 +45,90 @@ import { MODULES } from "./data/modules.js"
 // this is the one small seam that lets the new 7-module TopBar reuse them
 // where a real 1:1 mapping exists, rather than duplicating working
 // destinations under a second type string.
+/* The v6 rail (A2.3) names nine modes; this routes each onto the
+   destination that actually exists here. Two are approximations and are
+   named as such rather than left to look deliberate:
+     assets  → Sources, which is where watch areas and detection rules
+               already live — the nearest thing we have to a register of
+               things being watched. A real asset register is still owed.
+     fusion  → AI Council, our existing correlation surface; Crucible's
+               own four tabs (pipeline, side channels, tip-and-cue,
+               boundaries) are not built yet.
+   The older keys below them are kept so existing callers keep working. */
 const MODULE_TO_TAB_TYPE = {
-    situation: "situation", inbox: "watchlists", dossiers: "dossiers",
-    analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
-    ontology: "ontology", imagery: "imagery", forecast: "forecast",
-    cases: "cases", team: "team", editor: "editor",
+    home: "home", map: "situation", graph: "ontology", inbox: "watchlists",
+    briefings: "briefings", analytics: "analytics", assets: "sources",
+    fusion: "aiCouncil", work: "cases",
+    situation: "situation", dossiers: "dossiers", generate: "generate",
+    replay: "replay", ontology: "ontology", imagery: "imagery",
+    forecast: "forecast", cases: "cases", caseWork: "work", team: "team", editor: "editor",
+    chat: "chat", desk: "desk",
 }
+/* Reverse, so the rail lights the right button for whatever tab is open.
+   Forecast resolves to `analytics` because Insight is one surface with
+   three tabs (changes · risk · what happens next), not three modes. */
+/* ── A1.2 / ▣ Canvas — THE MAP IS THE BACKGROUND OF THE WHOLE APP ─────
+   The spec opens with a canvas at `position:absolute; inset:0` holding the
+   map, and then puts every mode — Home, Inbox, Insight, Constellation —
+   on top of it as a glass sheet at z-index 22. That is the entire reason
+   the v6 shell looks the way it does: `backdrop-filter: blur(22px)` has
+   something to blur.
+
+   We had the glass but not the canvas. Every mode screen carried the
+   correct blur over a flat var(--canvas), which is a no-op — blurring a
+   solid colour returns the solid colour. Reported as "home is not
+   transluscent", and it was true of every screen, not just Home.
+
+   Hoisting <GlobeView> itself to the root was the obvious fix and the
+   wrong one: it takes ~50 props off Situation's layer state, so moving it
+   means moving all of that too. Instead the Situation layer simply stops
+   hiding. When it is not the active mode it stays mounted and visible at
+   z 0 with pointer-events off, showing only its map — see `asCanvas` in
+   Situation.jsx, which suppresses that screen's own panes, chrome and
+   time strip so they do not punch through the mode on top. */
+const modeLayer = (on) => ({
+    /* ONE WINDOW, EVERY MODE. The frame used to be spread by whichever
+       screen remembered to — four did, thirteen rendered bare onto the
+       canvas, so moving between modes flipped between a glass sheet and
+       loose content on the background. Applying it here means a mode
+       cannot opt out of it by forgetting.
+
+       IT IS SPREAD FIRST, AND `display` IS SET AFTER IT. MODE_FRAME
+       carries display:flex; spreading it last overwrote the conditional
+       and every mode layer rendered at once, stacked at the same
+       coordinates. The symptom was that nothing closed anything — the
+       ✕ hid Team and uncovered Inbox, which looked identical to the ✕
+       doing nothing at all. */
+    ...MODE_FRAME,
+    position: "absolute", inset: 0, zIndex: 22,
+    minWidth: 0,
+    display: on ? "flex" : "none",
+})
+const canvasLayer = (on, chrome) => ({
+    position: "absolute",
+    /* Off-mode it breaks OUT of the content area's 84/48 offset and runs
+       the full window, so the tab bar, menu bar and rail — all glass — have
+       the globe behind them rather than a flat fill. On-mode it stays
+       inside the content area, because then it owns panes and a time strip
+       that must not slide under the chrome. The chrome sits at z 39-41 and
+       this at z 0, so it is painted over either way. */
+    top: on ? 0 : (chrome ? -84 : 0),
+    left: on ? 0 : (chrome ? -48 : 0),
+    right: 0, bottom: 0,
+    zIndex: on ? 22 : 0,
+    display: "flex", flexDirection: "column",
+    minWidth: 0, overflow: "hidden",
+    // Off-mode the canvas is scenery, not a target: clicks belong to the
+    // glass sheet above it.
+    pointerEvents: on ? "auto" : "none",
+})
+
 const TAB_TYPE_TO_MODULE = {
-    situation: "situation", watchlists: "inbox", dossiers: "dossiers",
-    analytics: "analytics", generate: "generate", briefings: "briefings", replay: "replay",
-    ontology: "ontology", imagery: "imagery", forecast: "forecast",
-    cases: "cases", team: "team", editor: "editor",
+    home: "home", situation: "map", ontology: "graph", watchlists: "inbox",
+    briefings: "briefings", analytics: "analytics", forecast: "analytics",
+    sources: "assets", aiCouncil: "fusion", cases: "work",
+    dossiers: "dossiers", generate: "generate", replay: "replay",
+    imagery: "imagery", team: "team", editor: "editor",
 }
 // Mode, not modules (§7.1) — which real module keys a tab type routes to
 // belongs to which mode's rail. Opening a tab whose module is work-mode
@@ -56,7 +136,7 @@ const TAB_TYPE_TO_MODULE = {
 // exactly like the doc's own HWX.onModule-equivalent correction — guarded
 // by MODE_SWITCH_GUARD_MS below so the mode-setter and any other effect
 // reacting to the same tab change can't fight each other.
-const WORK_MODULE_KEYS = new Set(["cases", "team", "editor", "ontology", "forecast"])
+const WORK_MODULE_KEYS = new Set(["cases", "caseWork", "team", "editor", "ontology", "forecast"])
 const MODE_STORAGE_KEY = "akili-mode-v1"
 import MapControlStack from "./components/MapControlStack.jsx"
 import { DESTINATION_KEYS } from "./data/destinations.js"
@@ -64,9 +144,9 @@ import { summarizeHealth } from "./utils/systemHealth.js"
 import Inbox from "./destinations/Inbox.jsx"
 import Dashboard from "./destinations/Dashboard.jsx"
 import Sources from "./destinations/Sources.jsx"
-import AICouncil from "./destinations/AICouncil.jsx"
 import Generate from "./reports/Generate.jsx"
 import Briefings from "./reports/Briefings.jsx"
+import BriefingStudio from "./reports/BriefingStudio.jsx"
 import PrintLayout from "./reports/PrintLayout.jsx"
 import Deck from "./reports/Deck.jsx"
 import MobileApp from "./mobile/MobileApp.jsx"
@@ -78,9 +158,22 @@ import { loadProfile, saveProfileToStorage } from "./components/MissionProfilePa
 import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
 import { playAlert, resumeAudio } from "./soundSystem.js"
 import HealthPanel from "./components/HealthPanel.jsx"
-import Analytics from "./destinations/Analytics.jsx"
+import Insight from "./destinations/Insight.jsx"
+import { exportPdf } from "./print/printSurface.jsx"
+import { MODE_FRAME } from "./plx6/modeWindow.js"
+import { setActiveTheater } from "./state/filing.js"
 import Dossiers from "./destinations/Dossiers.jsx"
-import Ontology from "./destinations/Ontology.jsx"
+import Constellation from "./destinations/Constellation.jsx"
+import Profile from "./destinations/Profile.jsx"
+import Chat from "./chat/Chat.jsx"
+import Desk from "./desk/Desk.jsx"
+import ExplanationPanel from "./voice/ExplanationPanel.jsx"
+import TheaterEditor from "./components/TheaterEditor.jsx"
+import {
+    listTheaters, createTheater, updateTheater, deleteTheater,
+} from "./lib/theatersApi.js"
+import Crucible from "./destinations/Crucible.jsx"
+import MyWork from "./destinations/MyWork.jsx"
 import Replay from "./destinations/Replay.jsx"
 import Imagery from "./destinations/Imagery.jsx"
 import Forecast from "./destinations/Forecast.jsx"
@@ -113,6 +206,15 @@ const KNOWN_TAB_TYPES = new Set([
     "situation", "watchlists", "dossiers", "analytics", "generate",
     "briefings", "replay", "ontology", "imagery", "forecast",
     "cases", "team", "editor", "dashboard", "sources",
+    // The case WORKSPACE, distinct from "cases" — which is now My work's
+    // queue. Two different screens were sharing one tab type, so opening a
+    // case from the queue reopened the queue.
+    "caseWork",
+    // Reached from the rail's Account button; not a landing tab (see
+    // NON_LANDING_TABS) because it is somewhere you go and then leave.
+    "profile", "home", "aiCouncil",
+    // Messages, and the desk feed.
+    "chat", "desk",
 ])
 
 function defaultTabs() {
@@ -134,6 +236,10 @@ function defaultTabs() {
  * Situation. Persisted UI state is an input from an older version of the
  * program, and inputs get validated.
  */
+/** Modules you visit deliberately and leave — never the view the app
+ *  opens on, however recently you were there. */
+const NON_LANDING_TABS = new Set(["team", "profile", "editor", "chat"])
+
 function loadTabsFromStorage() {
     try {
         const raw = localStorage.getItem(TAB_STORAGE_KEY)
@@ -434,6 +540,33 @@ export default function App() {
     }, [])
 
     // ── Mission profile ───────────────────────────────────────────────────────
+    // Which section the account screen opens on — the rail's shield opens
+    // it on Administration, everything else on the profile itself.
+    const [profileSection, setProfileSection] = useState(null)
+    // The unread count on the rail. Polled here rather than inside Chat so
+    // the badge is right before you have ever opened the screen — which is
+    // the only time a badge is doing any work.
+    const [unreadMessages, setUnreadMessages] = useState(0)
+    // Poll for the unread badge. Every 20 seconds, and never while the tab
+    // is hidden: a backgrounded console asking forever is how a laptop
+    // ends up warm in somebody's bag.
+    useEffect(() => {
+        let alive = true
+        const tick = async () => {
+            if (!alive || document.hidden) return
+            try {
+                const { unreadTotal } = await import("./lib/chatApi.js")
+                const d = await unreadTotal()
+                if (alive) setUnreadMessages(d?.unread || 0)
+            } catch { /* signed out, or the server is away */ }
+        }
+        tick()
+        const t = setInterval(tick, 20000)
+        const vis = () => { if (!document.hidden) tick() }
+        document.addEventListener("visibilitychange", vis)
+        return () => { alive = false; clearInterval(t); document.removeEventListener("visibilitychange", vis) }
+    }, [])
+
     const [profile, setProfile] = useState(() => loadProfile())
     const [focusRegions, setFocusRegions] = useState(() => loadProfile()?.focusRegions || [])
     const initialProfilePanRef = useRef(false)
@@ -483,6 +616,135 @@ export default function App() {
 
     // ── Tab system ────────────────────────────────────────────────────────────
     const [tabs, setTabs] = useState(() => loadTabsFromStorage())
+
+    /* ── PARALLAX v6 chrome ──────────────────────────────────────────────
+       A THEATER IS NOT A TAB OF THIS APP. In v6 the tab strip holds
+       theaters — regions you watch, each with its own severity, its own
+       scan-area count and its own default view — while the rail holds the
+       modes that operate inside whichever theater is selected (A2.1/A3).
+       Seeded here with the spec's own first-run defaults (A10.1) until the
+       theater data model lands; the shape is already the real one, so
+       replacing the seed is a data change, not a layout change. */
+    /* A THEATER CARRIES ITS OWN VIEW AND ITS OWN LAYERS. Selecting one was
+       setting an id and nothing else — the map stayed wherever it was and
+       showed whatever was already on, so "Taiwan Strait" and "Red Sea
+       watch" were the same picture with a different label on it.
+
+       `view` is where the camera goes. `layers` is what that theater is
+       FOR: a strait watch wants chokepoints, ports and hulls; an air
+       theater wants aircraft and airfields. Anything not named is turned
+       off, so switching theater is a clean change of subject rather than
+       an accumulation of everything you have ever switched on. */
+    /* The SEED IS NOW A FALLBACK, not the data. Theaters are rows the
+       account owns (backend/routers/theaters.py) and are loaded below;
+       this is what the strip shows for the half-second before they arrive,
+       and what it falls back to if the server cannot be reached. The three
+       match the seeded defaults exactly, so nothing flickers into
+       something different. */
+    const [theaters, setTheaters] = useState(() => ([
+        { id: "redsea", name: "Red Sea watch",  sev: "critical", n: 8,
+          view: { lat: 13.6, lon: 43.3, height: 2_400_000 },
+          layers: { groups: ["maritime", "news"],
+                    infra: ["chokepoints", "ports", "cables"],
+                    tracks: ["vessels"] } },
+        { id: "hormuz", name: "Hormuz transit", sev: "elevated", n: 7,
+          view: { lat: 26.6, lon: 56.4, height: 2_000_000 },
+          layers: { groups: ["maritime", "news"],
+                    infra: ["chokepoints", "ports"],
+                    tracks: ["vessels"] } },
+        { id: "taiwan", name: "Taiwan Strait",  sev: "steady",   n: 6,
+          view: { lat: 24.3, lon: 119.6, height: 2_600_000 },
+          layers: { groups: ["maritime", "air", "news"],
+                    infra: ["chokepoints", "ports", "airfields"],
+                    tracks: ["vessels", "aircraft"] } },
+    ]))
+    const [theaterId, setTheaterId] = useState("redsea")
+    const [editingTheater, setEditingTheater] = useState(null)   // row | "new" | null
+
+    const refreshTheaters = useCallback(async (selectId) => {
+        try {
+            const rows = await listTheaters()
+            if (!rows?.length) return
+            setTheaters(rows)
+            setTheaterId((cur) => {
+                if (selectId) return selectId
+                // The id the fallback used ("redsea") is not a real row id,
+                // so the first load has to re-point at a real one.
+                return rows.some((t) => t.id === cur) ? cur : rows[0].id
+            })
+        } catch { /* signed out, or offline — the fallback strip stands */ }
+    }, [])
+    useEffect(() => { refreshTheaters() }, [refreshTheaters])
+
+    /* A case shared in a chat opens the case workspace. The tab has to be
+       opened HERE — Cases only hears the event once it is mounted, and
+       until somebody has visited it once, it is not. The event is
+       re-dispatched after the tab opens so the listener that just mounted
+       actually receives it. */
+    useEffect(() => {
+        const open = (e) => {
+            const id = e?.detail?.caseId
+            if (!id || e.detail.__relayed) return
+            openTabRef.current?.("caseWork")
+            setTimeout(() => window.dispatchEvent(new CustomEvent("akili:open-case", {
+                detail: { caseId: id, __relayed: true },
+            })), 60)
+        }
+        window.addEventListener("akili:open-case", open)
+        return () => window.removeEventListener("akili:open-case", open)
+    }, [])
+    /* Filing needs the theater from the first render, not from the first
+       tab click — otherwise anything saved before you touch the tab bar
+       lands in whatever case was last used. */
+    useEffect(() => {
+        setActiveTheater((theaters.find((t) => t.id === theaterId) || {}).name || null)
+    }, [theaterId, theaters])
+
+    const [plxNarrow, setPlxNarrow] = useState(() => window.innerWidth < 1200)
+    const [plxClock, setPlxClock] = useState("")
+    const [plxHour, setPlxHour] = useState(() => new Date().getHours() + new Date().getMinutes() / 60)
+    const [plxThemeMode, setPlxThemeMode] = useState(() => getThemeMode())
+    const [plxMenu, setPlxMenu] = useState(null)
+    /* THE TOOL BUTTONS DRIVE THE REAL PANES, not a local mirror of them.
+       They were setting a `plxLeft` string that nothing else in the app
+       read, so the Layers button lit up and no pane ever appeared. The
+       panes read the persisted chrome store, so the rail has to as well —
+       then the button and the pane cannot disagree, and the state
+       survives a reload like every other chrome setting. */
+    const [layersOpen, toggleLayers] = useChrome("leftPanel")
+    const [inspectorOpen, toggleInspector] = useChrome("rightPanel")
+    const plxLeft = layersOpen ? "layers" : inspectorOpen ? "selection" : null
+    /* The rail's Timeline button drives the REAL strip, through the same
+       persisted chrome store the Layers and Inspector panes read. It used
+       to set a local flag nothing consumed. */
+    const [plxDrawer, togglePlxDrawer] = useChrome("timeline")
+    const [plxStar, setPlxStar] = useState(false)
+    const [plxMenuPos, setPlxMenuPos] = useState({ l: 60, t: 74 })
+    const [plxToast, setPlxToast] = useState(null)
+    const [plxAlertsOpen, setPlxAlertsOpen] = useState(false)
+    const plxOpenedAt = useRef(new Date().toISOString().slice(11, 16) + "Z")
+
+    useEffect(() => {
+        // A6.4 — one toast at a time, cleared 2.6 s after the text changes.
+        if (!plxToast) return
+        const t = setTimeout(() => setPlxToast(null), 2600)
+        return () => clearTimeout(t)
+    }, [plxToast])
+
+    useEffect(() => {
+        // A2.2: the clock refreshes every 20 s, and the auto theme is
+        // re-evaluated on the same tick (A9.2) — one timer, not two.
+        const tick = () => {
+            const d = new Date()
+            setPlxClock(d.toISOString().slice(11, 16) + "Z")
+            setPlxHour(d.getHours() + d.getMinutes() / 60)
+        }
+        tick()
+        const iv = setInterval(tick, 20000)
+        const onRs = () => setPlxNarrow(window.innerWidth < 1200)
+        window.addEventListener("resize", onRs)
+        return () => { clearInterval(iv); window.removeEventListener("resize", onRs) }
+    }, [])
     const [activeTabId, setActiveTabId] = useState(() => {
         const saved = loadTabsFromStorage()
         try {
@@ -490,7 +752,15 @@ export default function App() {
             // The saved id must still name a tab that survived validation.
             // A stale id left every real view hidden, because activeTabType
             // matched none of them.
-            if (s && saved.find(t => t.id === s)) return s
+            const hit = s && saved.find(t => t.id === s)
+            /* SOME MODULES ARE NOT A PLACE TO LAND.
+               The roster and the account page are things you go to on
+               purpose and then leave; the v6 chrome has no close button for
+               a module (the tab bar holds theaters, not modules), so
+               restoring one as the active view strands you on it with no
+               way out. Reported as "I can't close the roster" — it was
+               simply the last thing open, restored. */
+            if (hit && !NON_LANDING_TABS.has(hit.type)) return s
         } catch { /* ignore */ }
         // THE MAP IS THE FRONT DOOR. Falling back to saved[0] meant opening
         // on whatever happened to be first in a restored list — in practice
@@ -1140,6 +1410,25 @@ export default function App() {
             if (e.key === "Escape" && paletteOpen) { closeOverlay("overlay:palette"); return }
             if (isTextEntry(e.target)) return
 
+            /* ESC FALLS BACK TO THE MAP. Every module is a sheet over the
+               canvas, and until now leaving one meant finding the right
+               rail button — so the way out of a screen depended on knowing
+               which screen you were on.
+
+               It is deliberately LAST among the Escape handlers: the
+               palette, a dialog, a draw mode and a module's own ✕ all get
+               the key first, because the nearest thing you opened is the
+               thing you meant to close. Only when nothing is listening
+               does Escape mean "take me back to the map". */
+            if (e.key === "Escape") {
+                const landing = MODULE_TO_TAB_TYPE.situation
+                if (activeTabType && activeTabType !== landing) {
+                    e.preventDefault()
+                    openTab(landing)
+                }
+                return
+            }
+
             // ⌘/Ctrl + 1..9 jumps to a module. This was a BARE digit, and
             // its guard matched the editable host but nothing inside it —
             // so typing "1" inside a bold span in a document switched the
@@ -1154,7 +1443,7 @@ export default function App() {
         }
         window.addEventListener("keydown", handler)
         return () => window.removeEventListener("keydown", handler)
-    }, [paletteOpen, openTab, mode, switchMode])
+    }, [paletteOpen, openTab, mode, switchMode, activeTabType])
 
     // Real, destination-neutral navigation event (introduced for the strategic
     // zone tooltip's "Manage in Sources" action; that layer is gone, the event
@@ -1387,15 +1676,15 @@ export default function App() {
             <div style={{
                 position: "fixed", inset: 0, display: "flex", flexDirection: "column",
                 alignItems: "center", justifyContent: "center", gap: 14,
-                background: "var(--bg-0, #171b20)",
+                background: "var(--bg-0, #14161f)",
             }}>
                 <svg width="46" height="46" viewBox="0 0 24 24" fill="none"
                      strokeWidth="2.2" strokeLinecap="butt" aria-hidden="true">
-                    <path stroke="var(--txt, #d5dae0)" d="M3 4L14 20M14 4L3 20" />
-                    <path stroke="var(--acc-hi, #5f95d0)" d="M18 4L12.5 12M22 4L19.25 8" />
+                    <path stroke="var(--txt, #f2f3f6)" d="M3 4L14 20M14 4L3 20" />
+                    <path stroke="var(--acc-hi, #a0b2d2)" d="M18 4L12.5 12M22 4L19.25 8" />
                 </svg>
                 <div style={{
-                    font: "400 11px var(--font, system-ui)", color: "var(--txt-3, #818c96)",
+                    font: "400 11px var(--font, system-ui)", color: "var(--txt-3, #b5b9c3)",
                     letterSpacing: ".16em", textTransform: "uppercase",
                 }}>Parallax</div>
             </div>
@@ -1463,99 +1752,259 @@ export default function App() {
 
     return (
         <div style={{
+            /* A1.2 — the root is fixed, inset 0, overflow hidden, on
+               var(--canvas). The chrome inside it is absolutely
+               positioned at the geometry in A2, so this is no longer a
+               flex column; every band measures from the top-left. */
             position:      "fixed",
             inset:         0,
-            background:    "var(--bg-0)",
-            display:       "flex",
-            flexDirection: "column",
+            background:    "var(--canvas)",
+            color:         "var(--txt)",
             overflow:      "hidden",
-            fontFamily:    "system-ui, -apple-system, sans-serif",
+            fontFamily:    "var(--mz-font-body)",
+            font:          "13px/1.45 var(--mz-font-body)",
+            WebkitFontSmoothing: "antialiased",
         }}>
         <IconSprite />
-            {/* ── Top bar + tab strip — redesign Round 2, §1/§2/§3 ───────────── */}
-            {!showAutoMode && !presenting && (
+            <PlxIcons />
+
+            {/* ── PARALLAX v6 chrome · Part A2 ────────────────────────────
+                Three absolutely-positioned bands, in the spec's geometry:
+                  tab bar   top 0,  height 40,              z 40
+                  menu bar  top 40, left 48, height 34,     z 39
+                  rail      left 0, top 40, bottom 0, w 48, z 41
+                Everything below them starts at top 84 / left 48. All three
+                are glass — var(--bar) over blur(22px) saturate(1.15) —
+                which is the single change that makes this read as
+                instruments over a map rather than a stack of cards. */}
+            {!showAutoMode && !presenting && !isMobile && (
                 <>
-                    <TopBar
-                        activeModule={TAB_TYPE_TO_MODULE[activeTabType] || "situation"}
-                        onSelectModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
-                        unreadCount={unreadCount}
-                        inboxCount={inboxCount}
-                        dataUpdatedAt={surfaceUpdatedAt}
-                        systemHealth={systemHealth}
-                        onOpenPalette={() => openOverlay("overlay:palette")}
-                        mode={mode}
-                        // switchMode, not setMode: the toggle in the top
-                        // bar is how most people change mode, and calling
-                        // setMode directly skipped the last-page memory
-                        // entirely — so the keyboard shortcut returned you
-                        // to where you were and clicking the control did
-                        // not.
-                        onToggleMode={() => switchMode(mode === "work" ? "watch" : "work")}
-                        onOpenSettings={() => openOverlay("overlay:settings")}
-                        onOpenTray={() => openOverlay("overlay:tray")}
-                        onScreenshot={() => setCaptureOpen(true)}
-                        sessionControl={<SessionControl mode={mode} onSetMode={switchMode} />}
+                    <PlxTabBar
+                        narrow={plxNarrow}
+                        tabs={theaters}
+                        activeTab={theaterId}
+                        onTab={(id) => {
+                            setTheaterId(id)
+                            // Filing needs to know where you are standing.
+                            setActiveTheater((theaters.find((x) => x.id === id) || {}).name || null)
+                            const t = theaters.find((x) => x.id === id)
+                            if (!t) return
+                            /* The map is the canvas, so it is already
+                               mounted and already flying — no need to open
+                               the Map tab first, and forcing it would yank
+                               someone out of Insight for a tab click whose
+                               point is to change the backdrop. */
+                            window.dispatchEvent(new CustomEvent("akili:theater-select", {
+                                detail: { id, name: t.name, view: t.view, layers: t.layers },
+                            }))
+                        }}
+                        onCloseTab={(id) => {
+                            // Never the last one (A2.1); if the closed tab
+                            // was active, the first survivor opens.
+                            const rest = theaters.filter((t) => t.id !== id)
+                            if (!rest.length) return
+                            const gone = theaters.find((t) => t.id === id)
+                            if (!confirm(`Remove “${gone?.name || "this theater"}” from the strip? Anything you filed while watching it stays where it is.`)) return
+                            setTheaters(rest)
+                            if (theaterId === id) setTheaterId(rest[0].id)
+                            // The strip is a view of rows now, so closing a
+                            // tab has to remove the row or it comes back on
+                            // the next load.
+                            deleteTheater(id).catch((e) => {
+                                setPlxToast(e.message || "Could not remove that theater")
+                                refreshTheaters()
+                            })
+                        }}
+                        onEditTab={(id) => setEditingTheater(theaters.find((t) => t.id === id) || null)}
+                        onAddTab={() => setEditingTheater("new")}
+                        onHome={() => openTab("home")}
+                        onSearch={() => openOverlay("overlay:palette")}
+                        onFiles={() => openOverlay("overlay:palette")}
+                        /* THE CHAT BUTTON OPENS THE CHAT. It opened the
+                           notification tray, which is where alerts go — a
+                           reasonable place for it to have pointed while
+                           there was no chat to open, and the wrong one now
+                           that there is. */
+                        onChat={() => openTab("chat")}
+                        chatOpen={activeTabType === "chat"}
+                        chatCount={unreadMessages || ""}
+                        themeMode={plxThemeMode}
+                        hour={plxHour}
+                        onCycleTheme={(next) => { setThemeMode(next); setPlxThemeMode(next) }}
+                        alertsOpen={plxAlertsOpen}
+                        onAlerts={() => setPlxAlertsOpen((v) => !v)}
+                        alertCount={unreadCount}
+                    />
+                    <PlxMenuBar
+                        narrow={plxNarrow}
+                        menu={plxMenu}
+                        onMenu={(v, e) => {
+                            const r = e?.currentTarget?.getBoundingClientRect()
+                            if (r) setPlxMenuPos({ l: Math.round(r.left), t: Math.round(r.bottom + 2) })
+                            setPlxMenu(plxMenu === v ? null : v)
+                        }}
+                        savedAt={plxClock}
+                        starred={plxStar}
+                        onStar={() => setPlxStar((v) => !v)}
+                        curTitle={(theaters.find((t) => t.id === theaterId) || {}).name || "Workspace"}
+                        onTitle={() => openOverlay("overlay:palette")}
+                        onShare={() => openOverlay("overlay:tray")}
+                        clock={plxClock}
+                        busy={false}
+                        onRefresh={() => window.location.reload()}
+                    />
+                    <PlxRail
+                        mode={TAB_TYPE_TO_MODULE[activeTabType] || "home"}
+                        onMode={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
+                        left={plxLeft}
+                        onLeft={(k) => {
+                            if (k === "layers") { openTab("situation"); toggleLayers() }
+                            else if (k === "selection") { openTab("situation"); toggleInspector() }
+                            // Overwatch is a destination of its own here, not
+                            // a tool window — v6 folds imagery into the tool
+                            // window; our imagery surface is a full screen.
+                            else if (k === "imagery") openTab("imagery")
+                            /* THE FOLDER ICON OPENS THE FOLDERS. It opened
+                               the command palette, which is a search box —
+                               a reasonable thing to reach for and not what
+                               a folder icon promises. Case files are the
+                               app's filing system now, so that is what it
+                               opens. */
+                            else if (k === "files") openTab("caseWork")
+                        }}
+                        drawer={plxDrawer}
+                        onDrawer={togglePlxDrawer}
+                        menu={plxMenu}
+                        onNewMenu={(e) => {
+                            const r = e?.currentTarget?.getBoundingClientRect()
+                            if (r) setPlxMenuPos({ l: Math.round(r.right + 6), t: Math.round(r.top) })
+                            setPlxMenu(plxMenu === "new" ? null : "new")
+                        }}
+                        onSnapshot={() => setCaptureOpen(true)}
+                        /* Account is the account, not the app's settings
+                           dialog. Name, picture, password and the team
+                           roster live together on one screen. */
+                        onAccount={() => { setProfileSection(null); openTab("profile") }}
+                        isSuperAdmin={!!getCurrentUser()?.is_super_admin}
+                        onHelp={() => openOverlay("overlay:settings")}
+                        feedsOk={systemHealth?.status === "operational"}
+                        feedsLabel={systemHealth?.detail || "7 feeds connected"}
                     />
                 </>
             )}
-            {/* SCREEN CAPTURE. ⌘⇧4 mirrors the macOS gesture people
-                already have in their hands for exactly this. What it adds
-                over the system tool is where the image goes: the Saved
-                pane, and from there a document. */}
-            <ScreenCapture
-                open={captureOpen}
-                onClose={() => setCaptureOpen(false)}
-                onCaptured={(dataUrl) => {
-                    const mod = TAB_TYPE_TO_MODULE[activeTabType] || "screen"
-                    const ok = saveCapture(dataUrl, { label: `Capture · ${mod}`, of: mod })
-                    toast(ok === false ? "Already saved" : "Saved — it is in the Editor's Saved pane",
-                          { icon: "i-check" })
-                }}
-            />
-            <Tutorial />
-            <UpdateBanner />
-            <ToastHost />
-            <NotificationStack
-                onOpen={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
-                    openTab("situation")
-                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
-                } }}
-                onAcknowledge={(n) => markNotificationRead(n.id)}
-            />
-            <NotificationTray
-                open={trayOpen}
-                onClose={() => closeOverlay("overlay:tray")}
-                onOpenItem={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
-                    openTab("situation")
-                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
-                } }}
-            />
-            <CommandPalette
-                open={paletteOpen}
-                onClose={() => closeOverlay("overlay:palette")}
-                signals={notifItems}
-                onOpenModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
-                onOpenEntity={(r) => {
-                    openTab("situation")
-                    if (r.lat != null && r.lon != null) setSearchTarget({ lat: r.lat, lon: r.lon, zoom: 7, key: Date.now() })
-                }}
-                onOpenSignal={(s) => {
-                    openTab("situation")
-                    if (s.lat != null && s.lon != null) {
-                        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: s.lat, lon: s.lon, altitude: 250000 } }))
-                    }
-                }}
-                onOpenReport={() => openTab("briefings")}
-            />
-            {settingsOpen && (
-                <SettingsModal
-                    onClose={() => closeOverlay("overlay:settings")}
-                    onOpenSources={() => openTab("sources")}
-                />
-            )}
 
             {/* ── Body — flex row, fills remaining height ───────────────────── */}
-            <div style={{ flex: 1, display: "flex", minHeight: 0, paddingBottom: (isMobile && !showAutoMode) ? 56 : 0 }}>
+            {/* ── Floating layer · A6 + A7 ────────────────────────────
+                Menus, the bell's panel and the toast. These sit above the
+                content area and below nothing, so they are rendered last
+                in document order and positioned absolutely. */}
+            {!showAutoMode && !presenting && !isMobile && (() => {
+                const say = (t) => () => setPlxToast(t)
+                const MENUS = {
+                    file: [
+                        ["New theater…", () => setEditingTheater("new"), "⇧⌘T"],
+                        ["New document", () => openTab("editor")],
+                        ["Open file…", () => openOverlay("overlay:palette"), "⌘O"],
+                        ["Save", say("Saved"), "⌘S"],
+                        ["Export view · SVG", () => setCaptureOpen(true)],
+                        ["Export document · .doc", say("Export is not wired to the document yet")],
+                        ["Import data", () => openTab("sources")],
+                        /* exportPdf(), never the browser's own print call.
+                           The print surface is an allowlist — it has to be
+                           mounted and laid out before the dialog snapshots
+                           it, and exportPdf waits the two frames that
+                           guarantees. Invoking the dialog straight from a
+                           menu prints whatever happened to be on screen,
+                           app chrome included. */
+                        ["Print", () => exportPdf()],
+                    ],
+                    edit: [
+                        ["Undo", () => document.execCommand("undo"), "⌘Z"],
+                        ["Redo", () => document.execCommand("redo"), "⇧⌘Z"],
+                        ["Clear annotations", say("Annotations cleared")],
+                        ["Clear selection", say("Selection cleared")],
+                        ["Alert rules", () => openTab("sources")],
+                    ],
+                    view: [
+                        /* THE ONLY CLICKABLE WAY BACK TO THE OTHER MODE.
+                           The old TopBar carried a Watch/Workstation
+                           toggle; the v6 chrome replaced that bar and the
+                           control went with it, leaving ⌘⇧W as the sole
+                           entry point — a feature reachable only by a
+                           shortcut nobody is told about. It goes through
+                           switchMode, not setMode, because switchMode is
+                           what remembers the page you were last on in the
+                           mode you are returning to. */
+                        [mode === "work" ? "Watch mode" : "Workstation mode",
+                         () => switchMode(mode === "work" ? "watch" : "work"), "⇧⌘W"],
+                        ["Show / hide timeline", togglePlxDrawer, "T"],
+                        ["Map data", () => { openTab("situation"); toggleLayers() }, "L"],
+                        ["Messages", () => openTab("chat")],
+                        // The label names what you will GET, so it has to
+                        // read the theme that is actually applied, not the
+                        // mode — in "auto" those differ by time of day.
+                        [(document.documentElement.dataset.theme === "dark") ? "Light theme" : "Dark theme",
+                         () => {
+                             const n = document.documentElement.dataset.theme === "dark" ? "light" : "dark"
+                             setThemeMode(n); setPlxThemeMode(n)
+                         }],
+                        ["Full screen", () => {
+                            if (document.fullscreenElement) document.exitFullscreen()
+                            else document.documentElement.requestFullscreen?.().catch(() => {})
+                        }, "F"],
+                    ],
+                    support: [
+                        // Superadmins only, and only when the session says
+                        // so — see destinations/Admin.jsx.
+                        ...(getCurrentUser()?.is_super_admin
+                            ? [["Administration", () => { setProfileSection("admin"); openTab("profile") }]]
+                            : []),
+                        ["Keyboard shortcuts", () => openOverlay("overlay:settings"), "?"],
+                        ["Guided tour", say("The guided tour is not built yet")],
+                        ["Setup and interests", () => openOverlay("overlay:settings")],
+                        ["Data sources", () => openTab("sources")],
+                    ],
+                    new: [
+                        ["Theater", () => setEditingTheater("new")],
+                        ["Document", () => openTab("editor")],
+                        ["Message", () => openTab("watchlists")],
+                        ["Case", () => openTab("caseWork")],
+                        ["Area of interest", () => openTab("situation")],
+                        ["Import data", () => openTab("sources")],
+                    ],
+                }
+                return (
+                    <>
+                        <PlxMenu
+                            open={!!plxMenu} pos={plxMenuPos}
+                            items={MENUS[plxMenu] || []}
+                            onClose={() => setPlxMenu(null)}
+                        />
+                        <PlxAlerts
+                            open={plxAlertsOpen}
+                            since={plxOpenedAt.current}
+                            alerts={[]}
+                            onClose={() => setPlxAlertsOpen(false)}
+                            onHome={() => { setPlxAlertsOpen(false); openTab("home") }}
+                        />
+                        <PlxToast text={plxToast} />
+                    </>
+                )
+            })()}
+
+            {/* ── Content area — A2: top 84 (40 + 34 + 10), left 48 ─── */}
+            <div style={{
+                position: "absolute",
+                top: (!showAutoMode && !presenting && !isMobile) ? 84 : 0,
+                left: (!showAutoMode && !presenting && !isMobile) ? 48 : 0,
+                right: 0, bottom: 0,
+                display: "flex", minHeight: 0,
+                paddingBottom: (isMobile && !showAutoMode) ? 56 : 0,
+            }}>
+                {/* The modules now live in PlxRail (Part A2.3), mounted
+                    above as one of the three absolutely-positioned chrome
+                    bands. The old in-flow SideRail is gone: two rails were
+                    briefly on screen at once while the shell moved over. */}
 
                 {/* ── Full-screen panels — all mounted while tab exists, hidden via display:none ── */}
 
@@ -1586,50 +2035,81 @@ export default function App() {
                     it isn't one of the header/nav/footer/bell components
                     this round's ground rule calls out for deletion, and no
                     later round has explicitly claimed it yet. */}
-                {tabs.some(t => t.type === "situation") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "situation" ? "flex" : "none", flexDirection: "column" }}>
-                        <Situation onOpenDossier={() => openTab("dossiers")} />
+                {/* Home — the brief. Guarded on its own tab like every
+                    other pane, so it mounts only once opened and keeps its
+                    fetched state while you are elsewhere. */}
+                {tabs.some(t => t.type === "home") && (
+                    <div style={modeLayer(activeTabType === "home")}>
+                        <Home
+                            onOpenSearch={() => openOverlay("overlay:palette")}
+                            onOpenModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
+                            onFocusSignal={(sig) => {
+                                if (sig?.lat == null || sig?.lon == null) return
+                                openTab("situation")
+                                window.dispatchEvent(new CustomEvent("akili:fly-to", {
+                                    detail: { lat: sig.lat, lon: sig.lon, altitude: 250000 },
+                                }))
+                            }}
+                        />
+                    </div>
+                )}
+                {/* No `tabs.some(...)` guard: the map is the canvas, so it is
+                    mounted whether or not a Map tab exists. Gating it on the
+                    tab meant a fresh workspace — which opens on Home with no
+                    Map tab yet — had nothing behind the glass. */}
+                {!isMobile && (
+                    <div style={canvasLayer(activeTabType === "situation", !showAutoMode && !presenting && !isMobile)}>
+                        <Situation
+                            asCanvas={activeTabType !== "situation"}
+                            onOpenDossier={() => openTab("dossiers")}
+                        />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "dashboard") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "dashboard" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "dashboard")}>
                         <Dashboard canonicalView={canonicalView} onFullscreenChange={setDashboardFullscreen} />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "dossiers") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "dossiers" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "dossiers")}>
                         <Dossiers onOpenGenerate={() => openTab("generate")} />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "replay") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "replay" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "replay")}>
                         <Replay isVisible={activeTabType === "replay"} />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "ontology") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "ontology" ? "flex" : "none", flexDirection: "column" }}>
-                        <Ontology onOpenGenerate={() => openTab("generate")} />
+                    <div style={modeLayer(activeTabType === "ontology")}>
+                        {/* Ontology is called Constellation in v6, and the
+                            rulebook behind it is called Semantics — two views
+                            of one screen rather than two screens. */}
+                        <Constellation
+                            theater={(theaters.find((t) => t.id === theaterId) || {}).name || ""}
+                            onOpenModule={(m) => openTab(MODULE_TO_TAB_TYPE[m] || m)}
+                        />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "imagery") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "imagery" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "imagery")}>
                         <Imagery onOpenGenerate={() => openTab("generate")} />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "forecast") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "forecast" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "forecast")}>
                         <Forecast />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "generate") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "generate" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "generate")}>
                         <Generate onOpenTab={(reportId, title, kind) => {
                             setBriefingsInitialId(reportId)
                             setPrintReportId(kind === "print" ? reportId : null)
@@ -1642,13 +2122,25 @@ export default function App() {
                 )}
 
                 {tabs.some(t => t.type === "briefings") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "briefings" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "briefings")}>
                         {deckReportId ? (
                             <Deck reportId={deckReportId} onBack={() => setDeckReportId(null)} />
                         ) : printReportId ? (
                             <PrintLayout reportId={printReportId} onBack={() => setPrintReportId(null)} onOpenDeck={(id) => { setPrintReportId(null); setDeckReportId(id) }} />
                         ) : (
-                            <Briefings initialReportId={briefingsInitialId} onPrint={(id) => setPrintReportId(id)} onOpenDeck={(id) => setDeckReportId(id)} onOpenGenerate={() => openTab("generate")} isVisible={activeTabType === "briefings"} />
+                            /* v6 ▣ Briefing studio — one Reports surface with
+                               Generate / Reader / Deck as tabs, instead of a
+                               generator tab, a reader tab and a deck that
+                               opened over the reader. PrintLayout and Deck
+                               still render their own pages, so the PARALLAX
+                               wordmark and the Trifecta Technologies line
+                               (print/PageFrame.jsx) are untouched. */
+                            <BriefingStudio
+                                initialReportId={briefingsInitialId}
+                                onPrint={(id) => setPrintReportId(id)}
+                                onOpenTab={(rid, title, kind) => { if (kind === "print") setPrintReportId(rid) }}
+                                isVisible={activeTabType === "briefings"}
+                            />
                         )}
                     </div>
                 )}
@@ -1659,35 +2151,48 @@ export default function App() {
                     type stays "watchlists" because handlers across this file
                     key off it; what renders is the real queue. */}
                 {tabs.some(t => t.type === "watchlists") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "watchlists" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "watchlists")}>
                         <Inbox />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "sources") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "sources" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "sources")}>
                         <Sources />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "aiCouncil") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "aiCouncil" ? "flex" : "none", flexDirection: "column" }}>
-                        <AICouncil onOpenReport={(reportId) => {
-                            setBriefingsInitialId(reportId)
-                            openTab("briefings", { recordRef: `brf:${reportId}`, label: `Briefing · ${reportId}` })
-                        }} />
+                    <div style={modeLayer(activeTabType === "aiCouncil")}>
+                        {/* v6 ▣ Crucible. What was here was AICouncil.jsx, a
+                            129-line placeholder behind the rail's Crucible
+                            entry. */}
+                        <Crucible onOpenModule={(m) => openTab(MODULE_TO_TAB_TYPE[m] || m)} />
                     </div>
                 )}
 
-                {/* Analytics — full-width tab, the one module with no side
-                    panes at all per the Exact Replication Manual. */}
+                {/* Insight — v6 Part B ▣ Insight. Full-width, no side panes.
+                    ONE SURFACE, THREE TABS. "Analytics" and "Forecast" were
+                    two rail entries asking the same question — is this
+                    getting worse — and because only one icon could win, the
+                    Analytics module ended up living behind the forecast
+                    glyph, which is what the user saw. The spec has a single
+                    destination whose tabs are what changed / risk ranking /
+                    what happens next, so that is what this is. */}
                 {tabs.some(t => t.type === "analytics") && (
-                    <div style={{
-                        flex: 1, minWidth: 0, height: "100%", overflow: "hidden",
-                        display: activeTabType === "analytics" ? "flex" : "none",
-                        flexDirection: "column",
-                    }}>
-                        <Analytics />
+                    <div style={modeLayer(activeTabType === "analytics")}>
+                        <Insight
+                            theaterKey={theaterId}
+                            onOpenModule={(m) => openTab(MODULE_TO_TAB_TYPE[m] || "situation")}
+                            onFocusSignal={(sig) => {
+                                openTab("situation")
+                                if (sig?.lat != null && sig?.lon != null) {
+                                    window.dispatchEvent(new CustomEvent("akili:set-camera", {
+                                        detail: { lat: sig.lat, lon: sig.lon, height: 900_000 },
+                                    }))
+                                }
+                            }}
+                        />
                     </div>
                 )}
 
@@ -1695,21 +2200,96 @@ export default function App() {
                     display:none-when-inactive pattern as every other tab
                     type above. */}
                 {tabs.some(t => t.type === "cases") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "cases" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "cases")}>
+                        {/* v6 ▣ Module, instanced as My work. Cases.jsx is
+                            still the case workspace itself; this is the
+                            queue that says what is waiting on you. */}
+                        <MyWork
+                            onClose={() => openTab("home")}
+                            onOpenCase={() => openTab("caseWork")}
+                            onOpenModule={(m) => openTab(MODULE_TO_TAB_TYPE[m] || m)}
+                        />
+                    </div>
+                )}
+                {tabs.some(t => t.type === "caseWork") && (
+                    <div style={modeLayer(activeTabType === "caseWork")}>
                         <Cases />
                     </div>
                 )}
 
                 {tabs.some(t => t.type === "editor") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "editor" ? "flex" : "none", flexDirection: "column" }}>
+                    <div style={modeLayer(activeTabType === "editor")}>
                         <Editor />
                     </div>
                 )}
                 {tabs.some(t => t.type === "team") && (
-                    <div style={{ flex: 1, minWidth: 0, height: "100%", overflow: "hidden", display: activeTabType === "team" ? "flex" : "none", flexDirection: "column" }}>
-                        <Team />
+                    <div style={modeLayer(activeTabType === "team")}>
+                        <Team onClose={() => openTab("home")} />
                     </div>
                 )}
+                {tabs.some(t => t.type === "profile") && (
+                    <div style={modeLayer(activeTabType === "profile")}>
+                        <Profile section={profileSection} onClose={() => openTab("home")} />
+                    </div>
+                )}
+
+                {/* Messages. Mounted once opened and left mounted, so going
+                    back to a chat does not re-fetch the thread you were
+                    already reading. */}
+                {tabs.some(t => t.type === "chat") && (
+                    <div style={modeLayer(activeTabType === "chat")}>
+                        <Chat />
+                    </div>
+                )}
+
+                {/* The answer to "explain the situation in X". Mounted
+                    always and empty until something is explained. */}
+                <ExplanationPanel />
+
+                {/* The desk feed — observations published to everyone. */}
+                {tabs.some(t => t.type === "desk") && (
+                    <div style={modeLayer(activeTabType === "desk")}>
+                        <Desk />
+                    </div>
+                )}
+
+                {/* Making or changing a theater. It reads the map's current
+                    camera for "use the current view", which is the only way
+                    anybody actually knows where to point one. */}
+                {editingTheater && (
+                    <TheaterEditor
+                        theater={editingTheater === "new" ? null : editingTheater}
+                        canDelete={theaters.length > 1}
+                        readView={() => {
+                            const v = window.__akiliCamera
+                            return (v && Number.isFinite(v.lat))
+                                ? { lat: +v.lat.toFixed(4), lon: +v.lon.toFixed(4), height: Math.round(v.height) }
+                                : null
+                        }}
+                        onSave={async (body) => {
+                            if (editingTheater === "new") {
+                                const t = await createTheater(body)
+                                await refreshTheaters(t.id)
+                                window.dispatchEvent(new CustomEvent("akili:theater-select", {
+                                    detail: { id: t.id, name: t.name, view: t.view, layers: t.layers },
+                                }))
+                            } else {
+                                await updateTheater(editingTheater.id, body)
+                                await refreshTheaters()
+                            }
+                            setEditingTheater(null)
+                        }}
+                        onDelete={async (t) => {
+                            try {
+                                await deleteTheater(t.id)
+                                setEditingTheater(null)
+                                await refreshTheaters()
+                            } catch (e) { setPlxToast(e.message || "Could not delete that theater") }
+                        }}
+                        onClose={() => setEditingTheater(null)}
+                    />
+                )}
+
 
                 {/* ── Right panel slot — 300px, only one at a time ──────────── */}
                 {rightPanel === "detail" && selectedSurface && (

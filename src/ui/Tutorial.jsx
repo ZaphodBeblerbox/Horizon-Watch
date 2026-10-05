@@ -85,7 +85,7 @@ export default function Tutorial() {
             background: "rgba(8,10,13,.62)", backdropFilter: "blur(2px)",
         }}>
             <div style={{
-                width: 480, maxWidth: "calc(100vw - 32px)", background: "var(--bg-2, #22282f)",
+                width: 480, maxWidth: "calc(100vw - 32px)", background: "var(--bg-2, #1e212c)",
                 border: "1px solid var(--line)", borderRadius: 4, padding: "22px 24px 18px",
             }}>
                 <div style={{

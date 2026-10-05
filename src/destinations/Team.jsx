@@ -12,9 +12,16 @@ async function getJSON(path) {
     return r.json()
 }
 
-export default function Team() {
+export default function Team({ onClose = null }) {
     const [teams, setTeams] = useState([])
     const [membersByTeam, setMembersByTeam] = useState({})
+
+    useEffect(() => {
+        if (!onClose) return undefined
+        const onKey = (e) => { if (e.key === "Escape") onClose() }
+        window.addEventListener("keydown", onKey)
+        return () => window.removeEventListener("keydown", onKey)
+    }, [onClose])
 
     useEffect(() => {
         getJSON("/api/teams").then(async (rows) => {
@@ -26,8 +33,31 @@ export default function Team() {
     }, [])
 
     return (
-        <div data-testid="view-root-team" style={{ padding: 20, overflowY: "auto", height: "100%", background: "var(--bg-0)" }}>
-            <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Roster</div>
+        <div data-testid="view-root-team" data-screen-label="Team" style={{
+            display: "flex", flexDirection: "column", height: "100%", minHeight: 0,
+        }}>
+            {/* A WAY OUT. The v6 chrome has no close control for a module —
+                the tab bar holds theaters, not modules — so a screen you
+                reach deliberately has to carry its own exit or it is a dead
+                end. This one was: opened, and then nothing on screen would
+                leave it. */}
+            <div style={{
+                display: "flex", alignItems: "center", gap: 10, height: 40, flex: "none",
+                padding: "0 8px 0 16px", borderBottom: "1px solid var(--gline)",
+            }}>
+                <span style={{
+                    fontFamily: "var(--mz-font-mono)", fontWeight: 500, fontSize: 10,
+                    letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)",
+                }}>Roster</span>
+                {onClose && (
+                    <button onClick={onClose} title="Close (Esc)" aria-label="Close the roster" style={{
+                        marginLeft: "auto", width: 28, height: 28, border: "1px solid var(--gline2)",
+                        background: "transparent", color: "var(--txt3)", font: "inherit",
+                        cursor: "pointer", borderRadius: 0,
+                    }}>✕</button>
+                )}
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 20 }}>
             {teams.length === 0 && <div style={{ font: "400 12px var(--font)", color: "var(--txt-4)" }}>No real team configured yet.</div>}
             {teams.map((t) => (
                 <div key={t.id} style={{ marginBottom: 24 }}>
@@ -58,6 +88,7 @@ export default function Team() {
                     </div>
                 </div>
             ))}
+            </div>
         </div>
     )
 }

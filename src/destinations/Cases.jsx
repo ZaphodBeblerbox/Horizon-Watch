@@ -16,9 +16,10 @@ import { label, open as openRef } from "../lib/ref.js"
 import { can, requireCapability, currentUserId } from "../lib/capabilities.js"
 import { toast } from "../ui/toast.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
-import CaseFiles from "../cases/CaseFiles.jsx"
+import FileExplorer from "../cases/FileExplorer.jsx"
 import CaseSharing from "../cases/CaseSharing.jsx"
 import { setFilingCase } from "../state/filingCase.js"
+import { safeArray } from "../utils/safeArray.js"
 
 const PRIORITY_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-high)", moderate: "var(--sev-moderate)", low: "var(--sev-low)" }
 const STAGES = ["draft", "review", "approved", "issued"]
@@ -77,8 +78,26 @@ export default function Cases() {
     const [cases, setCases] = useState([])
     const [users, setUsers] = useState([])
     const [activeCaseId, setActiveCaseId] = useState(null)
+
+    /* OPENING A CASE FROM SOMEWHERE ELSE. A case shared into a chat is a
+       link, and a link that does not go anywhere is a worse answer than
+       no link — so the chat says which case, and this opens it. An event
+       rather than a prop because the sender (a message bubble) is four
+       screens away from this list and threading a callback between them
+       would tie the two together for one gesture. */
+    useEffect(() => {
+        const open = (e) => {
+            const id = e?.detail?.caseId
+            if (id) setActiveCaseId(id)
+        }
+        window.addEventListener("akili:open-case", open)
+        return () => window.removeEventListener("akili:open-case", open)
+    }, [])
     const [activeCase, setActiveCase] = useState(null)
-    const [tab, setTab] = useState("overview")
+    /* FILES FIRST. A case is the folder its signals, pictures and products
+       live in — opening on an Overview of counts put the thing you came for
+       one click away every time. */
+    const [tab, setTab] = useState("files")
     const [rfis, setRfis] = useState([])
     const [newNote, setNewNote] = useState("")
     const [newCaseTitle, setNewCaseTitle] = useState("")
@@ -88,8 +107,8 @@ export default function Cases() {
     const [answerDrafts, setAnswerDrafts] = useState({})
     const [newRef, setNewRef] = useState("")
 
-    const refreshList = useCallback(() => { listCases().then(setCases).catch(() => {}) }, [])
-    useEffect(() => { refreshList(); listUsers().then(setUsers).catch(() => {}) }, [refreshList])
+    const refreshList = useCallback(() => { listCases().then((v) => setCases(safeArray(v))).catch(() => {}) }, [])
+    useEffect(() => { refreshList(); listUsers().then((v) => setUsers(safeArray(v))).catch(() => {}) }, [refreshList])
     useEffect(() => {
         if (!cases.length) return
         setActiveCaseId((prev) => prev && cases.some((c) => c.case_id === prev) ? prev : cases[0].case_id)
@@ -102,7 +121,7 @@ export default function Cases() {
         // rather than asking which case every time.
         setFilingCase(activeCaseId)
         getCase(activeCaseId).then(setActiveCase).catch(() => setActiveCase(null))
-        listRfis({ case_id: activeCaseId }).then(setRfis).catch(() => setRfis([]))
+        listRfis({ case_id: activeCaseId }).then((v) => setRfis(safeArray(v))).catch(() => setRfis([]))
     }, [activeCaseId])
     useEffect(() => { refreshActive() }, [refreshActive])
 
@@ -170,7 +189,7 @@ export default function Cases() {
         try {
             await createRfi({ case_id: activeCaseId, from_user_id: currentUserId(), to_user_id: newRfiTo, question })
             setNewRfiQuestion(""); setNewRfiTo("")
-            listRfis({ case_id: activeCaseId }).then(setRfis)
+            listRfis({ case_id: activeCaseId }).then((v) => setRfis(safeArray(v)))
             toast("RFI raised", { icon: "i-check" })
         } catch (e) { toast(e.message || "Could not raise RFI", { icon: "i-alert" }) }
     }
@@ -181,7 +200,7 @@ export default function Cases() {
         try {
             await answerRfi(rfiId, text)
             setAnswerDrafts((p) => ({ ...p, [rfiId]: "" }))
-            listRfis({ case_id: activeCaseId }).then(setRfis)
+            listRfis({ case_id: activeCaseId }).then((v) => setRfis(safeArray(v)))
             toast("RFI answered", { icon: "i-check" })
         } catch (e) { toast(e.message || "Could not answer RFI", { icon: "i-alert" }) }
     }
@@ -209,7 +228,7 @@ export default function Cases() {
     const uid = currentUserId()
 
     return (
-        <div data-testid="view-root-cases" style={{ display: "grid", gridTemplateColumns: "260px 1fr 280px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
+        <div data-testid="view-root-cases" style={{ display: "grid", gridTemplateColumns: "260px 1fr 280px", height: "100%", overflow: "hidden", background: "transparent" }}>
             {/* Left — case list */}
             <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", display: "flex", flexDirection: "column" }}>
                 <div style={{ padding: 10, borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -305,7 +324,11 @@ export default function Cases() {
                             the bottom of its container. */}
                         {tab === "files" && (
                             <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-                                <CaseFiles caseId={activeCaseId} />
+                                <FileExplorer
+                                    caseId={activeCaseId}
+                                    rootLabel={activeCase.title}
+                                    onNewCase={() => setCreatingCase(true)}
+                                />
                             </div>
                         )}
 

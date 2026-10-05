@@ -25,6 +25,10 @@ async function req(path, opts) {
 export const listUsers = () => req("/api/users")
 
 export const listCases = () => req("/api/cases")
+
+/** The case for a theater, created on first use. */
+export const caseForTheater = (theater) =>
+    req("/api/cases/for-theater", { method: "POST", body: JSON.stringify({ theater }) })
 export const getCase = (caseId) => req(`/api/cases/${encodeURIComponent(caseId)}`)
 export const createCase = (data) => req("/api/cases", { method: "POST", body: JSON.stringify(data) })
 export const deleteCase = (caseId) =>
@@ -70,6 +74,20 @@ export const getDoc = (caseId, nodeId) =>
  * lets the tree be the server's business — a client that builds the path
  * itself is a second definition of the filing system, and the two drift.
  */
+/**
+ * File a product — a briefing, a deck, a document — into the case.
+ *
+ * It goes in as a doc node carrying the HTML, so it opens in the case's own
+ * editor rather than as a link to something that lives in a browser tab.
+ * That is the difference between a case that holds the work and a case that
+ * holds bookmarks to it.
+ */
+export const fileProduct = (caseId, { kind, category, name, html }) =>
+    req(`/api/cases/${encodeURIComponent(caseId)}/file-saved`, {
+        method: "POST",
+        body: JSON.stringify({ kind, category: category || kind, name, html }),
+    })
+
 export const fileSavedItem = (caseId, data) =>
     req(`/api/cases/${encodeURIComponent(caseId)}/file-saved`,
         { method: "POST", body: JSON.stringify(data) })

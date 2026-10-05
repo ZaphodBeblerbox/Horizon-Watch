@@ -4,6 +4,7 @@ backed by the TrackDensity aggregation table."""
 from __future__ import annotations
 
 import datetime
+import threading
 import time as _time
 import json
 from typing import Optional
@@ -41,7 +42,13 @@ _SEV_DISPLAY = {"critical": "critical", "high": "high", "medium": "moderate", "i
 _TIER_SEV = {1: "critical", 2: "high", 3: "moderate", 4: "low"}
 _SEV_ORDER = ["critical", "high", "moderate", "low"]
 
-_RANGE_DAYS = {"7d": 7, "30d": 30, "90d": 90}
+# 24h is one day. The window machinery is day-based, so this needs no
+# special case — but it DOES need to exist: Insight offers a 24h button and
+# the endpoint answered it with a 422, so the screen went blank the moment
+# anyone pressed it. The daily timeseries degenerates to one or two buckets
+# at this width, which is the honest shape of a one-day window rather than
+# a defect.
+_RANGE_DAYS = {"24h": 1, "7d": 7, "30d": 30, "90d": 90}
 
 _DOMAIN_LABELS = {"maritime": "Maritime", "air": "Air", "news": "News", "imagery": "Imagery", "zones": "Zones"}
 
@@ -281,23 +288,45 @@ def _pct_delta(cur: int, prior: int):
 # the reader nothing and takes the endpoint out of the contention entirely
 # after the first call. A real fix for the twelve seconds is aggregation in
 # SQL rather than in Python, which is a larger change than this one.
-_OVERVIEW_TTL_S = 60
+# TEN MINUTES, NOT ONE, AND SERVED STALE WHILE IT REFRESHES.
+#
+# A sixty-second TTL meant that one request in every sixty paid the full
+# eight-to-ten seconds — and when a module opens, this request is queued
+# behind about seventy others, so that unlucky request routinely passed the
+# client's thirty-second ceiling and the page said "Failed to load
+# analytics" about a server that was answering fine.
+#
+# The window is seven days or more and the figures move by fractions of a
+# percent in ten minutes, so a longer TTL costs the reader nothing real.
+# Past it, the stale answer is returned immediately and a refresh runs
+# behind it, so nobody ever waits for the recompute.
+_OVERVIEW_TTL_S = 10 * 60
+
+# How long a stale entry may still be served while its refresh runs. Past
+# this the data is old enough that showing it without saying so would be
+# worse than making someone wait.
+_OVERVIEW_STALE_S = 60 * 60
+
+_overview_refreshing: set = set()
 _overview_cache: dict[tuple, tuple[float, dict]] = {}
 
 
 def _cache_get(key):
+    """(value, is_stale) or (None, False). Stale entries are still returned;
+    the caller kicks off a refresh behind them."""
     hit = _overview_cache.get(key)
     if not hit:
-        return None
+        return None, False
     at, value = hit
-    if _time.time() - at > _OVERVIEW_TTL_S:
+    age = _time.time() - at
+    if age > _OVERVIEW_STALE_S:
         _overview_cache.pop(key, None)
-        return None
-    return value
+        return None, False
+    return value, age > _OVERVIEW_TTL_S
 
 
 def _cache_put(key, value):
-    # Bounded: three ranges x a dozen regions x six domains is the whole key
+    # Bounded: four ranges x a dozen regions x six domains is the whole key
     # space, but an unbounded dict in a long-lived process is how a cache
     # becomes a leak.
     if len(_overview_cache) > 200:
@@ -305,9 +334,36 @@ def _cache_put(key, value):
     _overview_cache[key] = (_time.time(), value)
 
 
+def _refresh_overview(key):
+    """Recompute one cached overview off the request path."""
+    rng, region, domain = key
+    try:
+        get_overview(range=rng, region=region, domain=domain)
+    except Exception:
+        pass
+    finally:
+        _overview_refreshing.discard(key)
+
+
+def warm_overview():
+    """Fill the cache for what the app actually opens with, once, at startup.
+
+    Without this the first person to open Analytics after a deploy pays the
+    full rebuild while seventy other requests are in flight, which is the
+    case that was failing.
+    """
+    for rng in ("24h", "7d", "30d"):
+        key = (rng, "all", "all")
+        if key in _overview_refreshing:
+            continue
+        _overview_refreshing.add(key)
+        _refresh_overview(key)
+    print("[analytics] overview cache warmed")
+
+
 @router.get("/overview")
 def get_overview(
-    range: str = Query("30d", pattern="^(7d|30d|90d)$"),
+    range: str = Query("30d", pattern="^(24h|7d|30d|90d)$"),
     region: str = Query("all"),
     domain: str = Query("all", pattern="^(all|maritime|air|news|imagery|zones)$"),
 ):
@@ -325,9 +381,16 @@ def get_overview(
         region = "all"
 
     cache_key = (range, region, domain)
-    cached = _cache_get(cache_key)
+    cached, is_stale = _cache_get(cache_key)
     if cached is not None:
-        return cached
+        if is_stale and cache_key not in _overview_refreshing:
+            # Refresh behind the answer, not in front of it. One at a time
+            # per key: without the guard every request arriving during a
+            # ten-second rebuild would start its own.
+            _overview_refreshing.add(cache_key)
+            threading.Thread(
+                target=_refresh_overview, args=(cache_key,), daemon=True).start()
+        return {**cached, "cached": True, "stale": is_stale}
 
     with get_db() as db:
         signals, truncated = _fetch_and_normalize_signals(db, prior_start, region=region, domain=domain)

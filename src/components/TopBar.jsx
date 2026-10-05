@@ -1,7 +1,6 @@
 import { Wordmark, Glyph } from "../ui/Wordmark.jsx"
 import Freshness from "./Freshness.jsx"
 import { useState, useEffect } from "react"
-import { WATCH_MODULES, WORK_MODULES } from "../data/modules.js"
 import ThemeControl from "./ThemeControl.jsx"
 
 /**
@@ -34,7 +33,6 @@ export default function TopBar({
     // Mode, not modules (§7.1) — the rendered rail set is filtered off one
     // real registry field (data/modules.js's `set`), re-derived fresh every
     // render from current `mode` — never patched/re-applied after the fact.
-    const railModules = mode === "work" ? WORK_MODULES : WATCH_MODULES
     // Tools cluster, per §2, is deliberately narrower than the spec's literal
     // "new-tab, create-AOI, export, alerts" list — investigation found no
     // real generic "export the current view" or "create AOI" flow this
@@ -71,56 +69,12 @@ export default function TopBar({
                 </span>
             </div>
 
-            {/* Module rail — real set filtered by mode, with `hidden` modules
-                excluded (PARALLAX spec §1.3). 8 in Watch, 4 in Workstation
-                today; the spec's fifth work module, Register (asset
-                register), has no destination in this codebase yet, so it is
-                deliberately absent rather than a rail button pointing at
-                nothing. */}
-            <div style={{ display: "flex", alignItems: "stretch" }}>
-                {railModules.map((m) => {
-                    const active = activeModule === m.key
-                    return (
-                        <button
-                            key={m.key}
-                            role="tab"
-                            aria-selected={active}
-                            onClick={() => onSelectModule(m.key)}
-                            title={m.label}
-                            style={{
-                                position: "relative", width: 62, display: "flex", flexDirection: "column",
-                                alignItems: "center", justifyContent: "center", gap: 3,
-                                background: active ? "var(--bg-0)" : "transparent", border: "none",
-                                borderBottom: active ? "2px solid var(--acc-hi)" : "2px solid transparent",
-                                color: active ? "var(--txt)" : "var(--txt-3)", cursor: "pointer",
-                                transition: "background 100ms linear, color 100ms linear",
-                            }}
-                            onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = "var(--bg-3)"; e.currentTarget.style.color = "var(--txt)" } }}
-                            onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--txt-3)" } }}
-                        >
-                            <span style={{ position: "relative" }}>
-                                <svg className="icon" style={{ width: 15, height: 15 }}><use href={`#${m.icon}`} /></svg>
-                                {/* The INBOX's own count, not the
-                                    notification tray's. These were the
-                                    same number, so the inbox badge
-                                    reported how many alerts were
-                                    unread in a different surface. */}
-                                {m.key === "inbox" && inboxCount > 0 && (
-                                    <span style={{
-                                        position: "absolute", top: -4, right: -8, minWidth: 12, height: 12,
-                                        borderRadius: "50%", background: "var(--red)", color: "#fff",
-                                        font: "400 8.5px var(--mono)", display: "flex", alignItems: "center",
-                                        justifyContent: "center", lineHeight: 1, padding: "0 2px",
-                                    }}>
-                                        {inboxCount > 99 ? "99+" : inboxCount}
-                                    </span>
-                                )}
-                            </span>
-                            <span style={{ font: "400 10px var(--font)" }}>{m.label}</span>
-                        </button>
-                    )
-                })}
-            </div>
+            {/* THE MODULE RAIL LEFT THIS BAR. It is now a 48px column down
+                the left edge (components/SideRail.jsx) — eight 62px buttons
+                across the top cost a full band of vertical height on every
+                screen, and height is the scarce axis for a list, a map or a
+                document alike. What stays here is what belongs to the whole
+                session rather than to one module. */}
 
             {/* Tools cluster */}
             <div style={{

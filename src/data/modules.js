@@ -37,6 +37,10 @@
 // real registry field, never re-derive/patch after the fact — is what's
 // applied below regardless.
 export const MODULES = [
+    // Home is first because it is the question you arrive with. The globe
+    // shows everything at once and therefore ranks nothing, which makes it
+    // a good second screen and a poor first one.
+    { key: "home",      label: "Home",      icon: "i-home",    built: true, set: "watch" },
     { key: "situation", label: "Situation", icon: "i-globe",   built: true, set: "watch" },
     { key: "inbox",     label: "Inbox",     icon: "i-inbox",   built: true, set: "watch" },
     { key: "dossiers",  label: "Dossiers",  icon: "i-dossier", built: true, set: "watch" },

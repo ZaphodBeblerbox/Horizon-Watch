@@ -62,7 +62,9 @@ function Sparkline({ history, width = 168, height = 42 }) {
     const yMax = Math.max(1, ...points.map((p) => p.score))
     const y = scaleLinear().domain([0, yMax]).range([height - 4, 4])
     const areaGen = d3area().x((p) => x(p.date)).y0(height - 4).y1((p) => y(p.score)).curve(curveMonotoneX)
-    const min = Math.min(...points.map((p) => p.score))
+    // Reduced rather than spread: a spread of a large array throws a
+    // RangeError. See GlobeHeatmapLayer for the one that actually did.
+    const min = points.reduce((m, p) => (p.score < m ? p.score : m), Infinity)
     const max = yMax
     const now = points[points.length - 1].score
     return (

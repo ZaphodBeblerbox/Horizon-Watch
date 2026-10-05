@@ -39,7 +39,16 @@ describe("switching between Watch and Workstation", () => {
     it("the shortcut handler sees the live mode", () => {
         // Without `mode` in the deps the toggle computes against a stale
         // value and stops switching after the first press.
-        expect(APP).toMatch(/\}, \[paletteOpen, openTab, mode, switchMode\]\)/)
+        //
+        // Matched as a SET rather than as an exact array: the list grows
+        // when the handler gains a key (Escape needed activeTabType), and
+        // a test that spells the whole array out fails on every addition
+        // while saying nothing about the thing it is guarding.
+        const deps = APP.match(/\}, \[([^\]]*paletteOpen[^\]]*)\]\)/)
+        expect(deps, "the keydown effect's dependency array").toBeTruthy()
+        for (const needed of ["paletteOpen", "openTab", "mode", "switchMode"]) {
+            expect(deps[1], needed).toContain(needed)
+        }
     })
 
     it("the mode toggle is a chord, not a bare key", () => {
@@ -51,7 +60,23 @@ describe("switching between Watch and Workstation", () => {
         // last-page memory — so the keyboard shortcut returned you to
         // where you were and clicking the control did not. Any entry
         // point that bypasses switchMode loses the behaviour silently.
-        expect(APP).toMatch(/onToggleMode=\{\(\) => switchMode\(/)
-        expect(APP).toMatch(/onSetMode=\{switchMode\}/)
+        //
+        // The v6 chrome removed that TopBar, so this no longer names its
+        // props. It asserts the thing the original was protecting: nobody
+        // calls the raw setter, and there is still a CLICKABLE way to
+        // change mode, not only the ⌘⇧W chord.
+        // A bare TOGGLE — "take me to the other mode" with no destination
+        // of its own — must go through switchMode, because switchMode is
+        // what lands you on the page you last had open there. (setMode is
+        // still called directly in three places that each name their own
+        // destination, or that follow the active module rather than being
+        // a user's decision; those are not toggles and do not want the
+        // memory.)
+        //
+        // And there must still be a CLICKABLE one. The v6 chrome removed
+        // the TopBar that used to carry the toggle, which left ⌘⇧W as the
+        // only way to change mode at all.
+        expect(APP).toMatch(/\(\) => switchMode\(mode === "work" \? "watch" : "work"\), "⇧⌘W"\]/)
+        expect(APP).toMatch(/switchMode\(mode === "work" \? "watch" : "work"\)/)
     })
 })

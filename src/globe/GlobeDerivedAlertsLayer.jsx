@@ -37,9 +37,9 @@ import {
     tickBearings, offset, pulseAlpha, prefersReducedMotion,
 } from "./derivedMarkGeometry.js"
 
-const AMBER = Color.fromCssColorString("#b7822c")
-const RED = Color.fromCssColorString("#c4453c")
-const BG0 = Color.fromCssColorString("#171b20")
+const AMBER = Color.fromCssColorString("#f5d98f")   // --sev-high
+const RED = Color.fromCssColorString("#f46043")     // --sev-critical
+const BG0 = Color.fromCssColorString("#14161f")     // --bg-0
 
 const labelCond = new DistanceDisplayCondition(0, LABEL_MAX_DISTANCE_M)
 

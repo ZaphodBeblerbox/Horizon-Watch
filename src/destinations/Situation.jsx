@@ -49,10 +49,13 @@ import CoveragePanel from "../components/CoveragePanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import LayerGroup from "../components/LayerGroup.jsx"
 import TimeStrip from "../components/TimeStrip.jsx"
-import ImagerySidebar from "../components/ImagerySidebar.jsx"
+import VoiceBar from "../voice/VoiceBar.jsx"
+import { setVoiceSelection } from "../voice/voiceContext.js"
+import ImagerySidebar, { IMAGERY_PANE_W } from "../components/ImagerySidebar.jsx"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 import LayerSubGroup from "../components/LayerSubGroup.jsx"
 import LayerStatus from "../components/LayerStatus.jsx"
+import FlowsPanel from "../components/FlowsPanel.jsx"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -332,7 +335,14 @@ function SeverityLegend({ legendCounts }) {
     )
 }
 
-export default function Situation({ onOpenDossier }) {
+export default function Situation({ onOpenDossier, asCanvas = false }) {
+    /* ▣ Canvas — this screen doubles as the app's background.
+       When another mode is on top, everything here except the map itself
+       has to go: the Layers and Inspector panes sit at z 25/26 and the
+       time strip at z 24, all of them ABOVE the z-22 glass sheet the mode
+       renders into, so leaving them mounted would punch Situation's
+       furniture straight through Home. The map stays, which is the whole
+       point — it is what the glass is blurring. */
     const [surfaceItems, setSurfaceItems] = useState([])
     // Real "as of" honesty indicator — GET /api/surface can genuinely serve
     // a real persisted snapshot (its own DB cache, up to 4h old) rather than
@@ -675,6 +685,20 @@ export default function Situation({ onOpenDossier }) {
     const rightMin = !rightOpen
     const setLeftMin = (v) => setLeftOpen(!v)
     const setRightMin = (v) => setRightOpen(!v)
+
+    /* CLICKING A SIGNAL HAS TO SHOW THE SIGNAL. Selecting a marker set
+       `inspectorPopup`, but nothing opened the pane that renders it — so
+       with the Inspector collapsed (its persisted default for anyone who
+       had ever closed it) a click on the map did nothing at all. The
+       selection was real and invisible, which is the worst of both: the
+       marker highlighted and no reason for it appeared anywhere.
+
+       Opening on selection, rather than asking people to find the pane
+       first, is also what A4 describes: `openObj(id)` opens the object
+       view as part of selecting. */
+    useEffect(() => {
+        if (inspectorPopup) setRightOpen(true)
+    }, [inspectorPopup, setRightOpen])
     useEffect(() => {
         const t = setTimeout(() => setEntered(true), 20)
         return () => clearTimeout(t)
@@ -874,9 +898,116 @@ export default function Situation({ onOpenDossier }) {
     // that is what starved the archive chart to 33px." Both panes stop where
     // the time strip starts, so the strip is never underneath them and is
     // never covered; --strip-h tracks which face the strip is showing.
+    /* v6 A4 — THE PANES FLOAT, they are not welded to the window edge.
+       A pane flush to all three edges reads as a column of the layout; the
+       same pane inset 10/12px with a border on all four sides and a shadow
+       under it reads as a sheet of glass lying ON the map. That difference
+       is the entire reason the map stays legible underneath. */
+    /* ▣ Canvas — SCENERY DOES NOT FETCH.
+       While this screen is the app's background it must draw the basemap
+       and nothing else. Leaving the data layers on cost far more than GPU:
+       every camera move re-issued /api/airports/in-viewport,
+       /api/ports/in-viewport and friends, and with the globe now rendering
+       behind every other mode those requests never stopped. Chrome allows
+       six connections per origin and /api/stream permanently holds one, so
+       the queue stayed full and any screen that mounted later — Home,
+       Insight — had its own fetches starved behind them. Measured: 19
+       requests in flight, /api/surface unresolved after 16s, while the
+       same endpoint answered curl in 4ms.
+
+       So off-mode every toggle reads false. The user's real settings are
+       untouched in state and come straight back when Map is opened. */
+    /* ▣ Theater tabs — SELECTING ONE CHANGES THE SUBJECT.
+       app.jsx owns the tab strip but this screen owns the layer state and
+       the camera, so the tab dispatches and we apply. Everything the
+       theater does not name is switched off: a theater is a statement
+       about what matters here, and leaving the previous one's layers on
+       turns it into an accumulation instead. */
+    useEffect(() => {
+        const onTheater = (e) => {
+            const d = e.detail || {}
+            const L = d.layers || {}
+            const set = (list) => Object.fromEntries((list || []).map((k) => [k, true]))
+            if (L.groups) setGroupsOn((prev) =>
+                Object.fromEntries(Object.keys(prev).map((k) => [k, L.groups.includes(k)])))
+            if (L.infra) setInfraOn((prev) =>
+                Object.fromEntries(Object.keys(prev).map((k) => [k, L.infra.includes(k)])))
+            if (L.tracks) setTracksOn((prev) =>
+                Object.fromEntries(Object.keys(prev).map((k) => [k, L.tracks.includes(k)])))
+            void set
+            if (d.view && Number.isFinite(d.view.lat) && Number.isFinite(d.view.lon)) {
+                window.dispatchEvent(new CustomEvent("akili:set-camera", {
+                    detail: {
+                        lat: d.view.lat, lon: d.view.lon,
+                        height: d.view.height || 2_000_000,
+                        heading: 0, pitch: -Math.PI / 2, roll: 0,
+                    },
+                }))
+            }
+        }
+        window.addEventListener("akili:theater-select", onTheater)
+        return () => window.removeEventListener("akili:theater-select", onTheater)
+    }, [])
+
+    /* The event-density strip is opt-in, driven by the rail's Timeline
+       button through the shared chrome store. It used to be unconditional
+       while that button toggled a flag nothing read. */
+    /* ── Voice: what is selected, and what a spoken filter does ──────
+       The parser needs to know what "this" means, and the only thing that
+       knows is this screen. Filters are applied here too rather than in the
+       dispatcher, because the toggles are this component's state — and the
+       previous set is kept so Undo can put it back exactly. */
+    useEffect(() => { setVoiceSelection(inspectorPopup || null) }, [inspectorPopup])
+
+    const voicePrev = useRef(null)
+    useEffect(() => {
+        const GROUP_FOR = { maritime: "maritime", air: "air", news: "news", imagery: "imagery", zones: "zones" }
+        const onFilter = (e) => {
+            const { typeIds = [], sinceHours } = e.detail || {}
+            voicePrev.current = { groups: groupsOn, window: timeWindow }
+            if (typeIds.length) {
+                const want = new Set(typeIds.map((t) => GROUP_FOR[t]).filter(Boolean))
+                if (want.size) setGroupsOn((prev) =>
+                    Object.fromEntries(Object.keys(prev).map((k) => [k, want.has(k)])))
+            }
+            if (Number.isFinite(sinceHours)) {
+                /* The window is one of four fixed steps, not a free number,
+                   so "last 48 hours" lands on the nearest one the map can
+                   actually show rather than being quietly ignored. */
+                const best = TIME_WINDOWS.reduce((a, b) =>
+                    Math.abs(b.hours - sinceHours) < Math.abs(a.hours - sinceHours) ? b : a)
+                setTimeWindow(best.key)
+            }
+        }
+        const onRestore = () => {
+            const p = voicePrev.current
+            if (!p) return
+            setGroupsOn(p.groups)
+            setTimeWindow(p.window)
+            voicePrev.current = null
+        }
+        window.addEventListener("akili:voice-filter", onFilter)
+        window.addEventListener("akili:voice-filter-restore", onRestore)
+        return () => {
+            window.removeEventListener("akili:voice-filter", onFilter)
+            window.removeEventListener("akili:voice-filter-restore", onRestore)
+        }
+    }, [groupsOn, timeWindow])
+
+    const [timelineOn] = useChrome("timeline")
+
+    const off = (o) => (asCanvas ? {} : o)
+    const groupsOnV   = off(groupsOn)
+    const infraOnV    = off(infraOn)
+    const tracksOnV   = off(tracksOn)
+    const contextOnV  = off(contextOn)
+    const theatresOnV = off(theatresOn)
+    const gfwOnV      = off(gfwOn)
+
     const leftPaneStyle = {
-        position: "absolute", left: 0, top: 0, bottom: "var(--strip-h, 0px)", zIndex: 3,
-        width: "var(--pane-l)", borderRight: "1px solid var(--line)",
+        position: "absolute", left: 10, top: 10,
+        bottom: "var(--pane-bottom)", zIndex: 25,
+        width: "var(--pane-l)", border: "1px solid var(--gline)",
         display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(-14px)",
         opacity: entered ? 1 : 0,
@@ -888,8 +1019,9 @@ export default function Situation({ onOpenDossier }) {
         // this is also now the Inspector's real width when a map marker is
         // clicked (see the pane content below), so one token now drives
         // Layers, this pane's default view, AND the marker-click Inspector.
-        position: "absolute", right: 0, top: 0, bottom: "var(--strip-h, 0px)", zIndex: 3,
-        width: "var(--pane-r)", borderLeft: "1px solid var(--line)",
+        position: "absolute", right: 12, top: 10,
+        bottom: "var(--pane-bottom)", zIndex: 25,
+        width: "var(--pane-r)", border: "1px solid var(--gline)",
         display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
         transform: entered ? "translateX(0)" : "translateX(14px)",
         opacity: entered ? 1 : 0,
@@ -906,7 +1038,7 @@ export default function Situation({ onOpenDossier }) {
     // Inspector (var(--pane-r), same 312px width) — while open it visually
     // covers Inspector, so map chrome should clear THIS width instead of
     // Inspector's whenever it's the active right-side overlay.
-    const activeRightOverlayWidth = imageryPanelOpen ? 312 : inspectorOverlayWidth
+    const activeRightOverlayWidth = imageryPanelOpen ? IMAGERY_PANE_W : inspectorOverlayWidth
 
     return (
         <div data-testid="view-root-situation" style={{ display: "flex", position: "relative", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
@@ -914,9 +1046,13 @@ export default function Situation({ onOpenDossier }) {
                 corrects an earlier round's "no translucency anywhere"
                 reversal of this; only the panel's own background is glass,
                 everything inside — .chip/.card/.seg etc — stays flat/opaque) */}
-            {leftMin ? (
-                <div className="panetab" role="button" tabIndex={0} onClick={() => setLeftMin(false)} title="Restore Layers">Layers</div>
-            ) : (
+            {/* THE ROTATED EDGE TAB IS GONE. A minimised pane used to leave
+                the word "Layers" turned on its side against the window
+                edge — a control with no home, discoverable only by
+                noticing it. These panes are reached from the rail's tools
+                group now, which is where every other way into a surface
+                already lives. */}
+            {(asCanvas || leftMin) ? null : (
             <div className="pane-glass" data-testid="glass-layers-pane" style={leftPaneStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Layers</span>
@@ -1066,6 +1202,15 @@ export default function Situation({ onOpenDossier }) {
                             </button>
                         </div>
                     ))}
+                    {/* The corridors' own numbers, where the switch that
+                        draws them is. A panel three clicks away from the
+                        layer it describes is a panel nobody opens. */}
+                    {contextOn.flows && (
+                        <LayerSubGroup id="flows-detail" title="Corridor traffic" defaultOpen>
+                            <FlowsPanel />
+                        </LayerSubGroup>
+                    )}
+
                     <LayerSubGroup id="airspace" title="Airspace"
                                    activeCount={airspaceOn ? 1 : 0}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
@@ -1510,15 +1655,15 @@ export default function Situation({ onOpenDossier }) {
                         it's now explicitly wired to the same real toggle. */}
                     
                     <GlobeView
-                        eventsEnabled={groupsOn.news} precisionEventsEnabled={groupsOn.news && geoConfirmedOn}
-                        geoConfirmedEnabled={groupsOn.news && geoConfirmedOn}
-                        gdeltEnabled={groupsOn.news && gdeltOn}
+                        eventsEnabled={groupsOnV.news} precisionEventsEnabled={groupsOnV.news && geoConfirmedOn}
+                        geoConfirmedEnabled={groupsOnV.news && geoConfirmedOn}
+                        gdeltEnabled={groupsOnV.news && gdeltOn}
                         gdeltTypes={gdeltTypes}
-                        firesEnabled={groupsOn.imagery && firesOn}
+                        firesEnabled={groupsOnV.imagery && firesOn}
                         geoConfirmedTheatres={geoConfirmedTheatres}
                         geoConfirmedEndDate={geoConfirmedEndDate}
-                        derivedAlertsEnabled={groupsOn.alerts}
-                        coverageEnabled={contextOn.coverage}
+                        derivedAlertsEnabled={groupsOnV.alerts}
+                        coverageEnabled={contextOnV.coverage}
                         mapChromeLeftInset={leftMin ? 0 : 250}
                         /* Real root-cause fix — the Time window/severity-
                            floor selector previously never reached the map
@@ -1529,24 +1674,24 @@ export default function Situation({ onOpenDossier }) {
                         signalWindowHours={windowHours} signalMaxRank={maxRank}
                         dockExternally
                         onInspectorPopupChange={handleInspectorPopupChange}
-                        cablesEnabled={infraOn.cables} chokepointsEnabled={infraOn.chokepoints}
-                        riskEnabled={contextOn.risk}
-                        frontlinesEnabled={contextOn.frontlines && !!theatresOn.ukraine}
+                        cablesEnabled={infraOnV.cables} chokepointsEnabled={infraOnV.chokepoints}
+                        riskEnabled={contextOnV.risk}
+                        frontlinesEnabled={contextOnV.frontlines && !!theatresOnV.ukraine}
                         frontlinesAt={frontlinesAt}
-                        gfwKinds={Object.keys(gfwOn).filter((k) => gfwOn[k])}
-                        gfwHeatmapEnabled={gfwHeatOn}
-                        airspaceEnabled={airspaceOn}
+                        gfwKinds={Object.keys(gfwOnV).filter((k) => gfwOnV[k])}
+                        gfwHeatmapEnabled={(!asCanvas && gfwHeatOn)}
+                        airspaceEnabled={(!asCanvas && airspaceOn)}
                         onAirspaceStatus={setAirspaceStatus}
-                        flowsEnabled={contextOn.flows}
+                        flowsEnabled={contextOnV.flows}
                         onFlowsStatus={setFlowsStatus}
                         onBasemapHealth={setBasemapHealth}
                         onFacilityStatus={setFacStatus}
                         facilityTypes={Object.entries(FACILITY_ROW_TYPE)
-                            .filter(([k]) => infraOn[k])
+                            .filter(([k]) => infraOnV[k])
                             .map(([, v]) => v)}
-                        warmapTheatres={contextOn.frontlines
+                        warmapTheatres={contextOnV.frontlines
                             ? frontlineTheatres
-                                .filter((t) => t.kind === "points" && theatresOn[t.key])
+                                .filter((t) => t.kind === "points" && theatresOnV[t.key])
                                 .map((t) => {
                                     const tl = warTimelines[t.key]
                                     const stop = (tl && tl.idx != null)
@@ -1555,19 +1700,19 @@ export default function Situation({ onOpenDossier }) {
                                     return { key: t.key, revid: stop?.revid ?? null }
                                 })
                             : []}
-                        gpsInterferenceEnabled={groupsOn.air && gpsInterferenceOn}
-                        satelliteEnabled={groupsOn.imagery} infraEnabled={infraOn.power}
-                        nauticalEnabled={infraOn.nautical}
-                        eezEnabled={groupsOn.zones}
+                        gpsInterferenceEnabled={groupsOnV.air && (!asCanvas && gpsInterferenceOn)}
+                        satelliteEnabled={groupsOnV.imagery} infraEnabled={infraOnV.power}
+                        nauticalEnabled={infraOnV.nautical}
+                        eezEnabled={groupsOnV.zones}
                         /* Context layers — separate from event domains, per build spec v2 §4.2 */
-                        graticuleEnabled={contextOn.graticule}
-                        cityLabelsEnabled={contextOn.labels}
+                        graticuleEnabled={contextOnV.graticule}
+                        cityLabelsEnabled={contextOnV.labels}
                         /* Live tracks — real raw position rendering, independent of the
                            event-domain toggles above (a vessel's SIGNAL can be shown
                            without its live position, and vice versa). All off by
                            default per §1. */
-                        aisEnabled={tracksOn.vessels} adsbEnabled={tracksOn.aircraft}
-                        portsEnabled={infraOn.ports} airportsEnabled={infraOn.airfields}
+                        aisEnabled={tracksOnV.vessels} adsbEnabled={tracksOnV.aircraft}
+                        portsEnabled={infraOnV.ports} airportsEnabled={infraOnV.airfields}
                         annotationTool={annotationTool}
                         basemap={basemap}
                         /* Real Imagery/detection draw + overlay + detection
@@ -1578,7 +1723,7 @@ export default function Situation({ onOpenDossier }) {
                            neither app.jsx's own Overwatch sidebar nor
                            Dashboard.jsx's <GlobeView> ever wired these props
                            through). */
-                        overwatchEnabled={imageryPanelOpen}
+                        overwatchEnabled={(!asCanvas && imageryPanelOpen)}
                         overwatchDetections={imageryDetections}
                         overwatchDrawActive={imageryDrawActive}
                         onOverwatchDrawCancel={() => setImageryDrawActive(false)}
@@ -1624,7 +1769,7 @@ export default function Situation({ onOpenDossier }) {
                             setContextOn((p) => ({ ...p, [field]: !p[field] }))
                         }}
                     />
-                    <MapChrome basemap={{ value: basemap, onChange: setBasemap }} />
+                    {!asCanvas && <MapChrome basemap={{ value: basemap, onChange: setBasemap }} />}
                     {/* MapMeta is rendered by GlobeView itself — one readout
                         per map. Rendering a second one here is what put two
                         coordinate/scale stacks in the same corner. */}
@@ -1641,7 +1786,7 @@ export default function Situation({ onOpenDossier }) {
                         makes it the timeline FACE of the strip below, so the
                         strip's height is a fact about the layout rather than
                         something reported after the fact. */}
-                    {imageryPanelOpen && (
+                    {!asCanvas && imageryPanelOpen && (
                         <ImagerySidebar
                             onClose={closeImageryPanel}
                             drawMode={imageryDrawMode} onDrawModeChange={setImageryDrawMode}
@@ -1657,20 +1802,20 @@ export default function Situation({ onOpenDossier }) {
                     same real playhead the map filters by (geoConfirmedEndDate),
                     so scrubbing here and the pins on the globe cannot
                     disagree. */}
-                <TimeStrip
+                {!asCanvas && <VoiceBar active={!asCanvas} />}
+                {!asCanvas && timelineOn && <TimeStrip
                     densityBuckets={densityBuckets}
                     windowHours={windowHours}
                     nowMs={nowMs}
                     theatres={geoConfirmedTheatres}
                     endDate={geoConfirmedEndDate}
                     onEndDateChange={setGeoConfirmedEndDate}
-                />
+                />}
             </div>
 
             {/* Right — Inspector (real frosted glass, see Layers pane comment above) */}
-            {rightMin ? (
-                <div className="panetab" role="button" tabIndex={0} onClick={() => setRightMin(false)} title="Restore Inspector">Inspector</div>
-            ) : (
+            {/* Same as the Layers tab above — reached from the rail. */}
+            {(asCanvas || rightMin) ? null : (
             <div className="pane-glass" data-testid="glass-inspector-pane" style={rightPaneStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Inspector</span>

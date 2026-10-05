@@ -20,8 +20,6 @@
 
 import { useEffect, useState } from "react"
 import { getSettings, subscribeSettings, updateSetting } from "./settingsStore.js"
-import { getFilingCase, categoryOf } from "./filingCase.js"
-import { fileSavedItem } from "../lib/casesApi.js"
 
 /**
  * Also file it in the open case, under Signals/<type> or Screenshots/<type>.
@@ -33,27 +31,6 @@ import { fileSavedItem } from "../lib/casesApi.js"
  * already in the pane either way, and a red toast for a background copy
  * teaches people that saving is unreliable when it is not.
  */
-function fileInCase(item) {
-    const caseId = getFilingCase()
-    if (!caseId || !item) return
-    const isShot = item.kind === "capture"
-    const image = typeof item.imageUrl === "string" && item.imageUrl.startsWith("data:")
-        ? item.imageUrl : null
-    Promise.resolve()
-        .then(() => fileSavedItem(caseId, {
-            kind: isShot ? "screenshot" : "signal",
-            category: isShot ? (item.captureOf || "other") : categoryOf(item),
-            name: item.headline || item.label || item.id,
-            image,
-            payload: {
-                ref: item.id, headline: item.headline || null, region: item.region || null,
-                source: item.source || null, severity: item.severity || null,
-                when: item.when || null, lat: item.lat ?? null, lon: item.lon ?? null,
-                context: item.context || null, url: item.url || null,
-            },
-        }))
-        .catch(() => {})
-}
 
 /** kind: "imagery" | "signal" | "entity" | "note" */
 function read() {
@@ -80,6 +57,14 @@ export function saveForBriefing(item) {
         region: item.region || null,
         source: item.source || null,
         severity: item.severity || null,
+        // THE SECTOR IS CARRIED, NOT RE-DERIVED. filing.js works it out
+        // from the record as it then was — domain, source, kind — and this
+        // cache keeps only a thinned copy of that record. Dropping the
+        // sector here (which it did) meant the picker had to guess it back
+        // from four fields that are no longer present, and everything
+        // saved from the map landed in "Other".
+        sector: item.sector || null,
+        urgency: item.urgency || item.severity || null,
         when: item.when || null,
         url: item.url || null,
         context: item.context || null,
@@ -90,7 +75,11 @@ export function saveForBriefing(item) {
         savedAt: Date.now(),
     }, ...now].slice(0, 120)   // a sidebar, not an archive
     updateSetting("savedForBriefing", next)
-    fileInCase(item)
+    /* FILING IS NOT THIS STORE'S JOB ANY MORE. state/filing.js owns it,
+       because it is the one place that knows the theater and can create
+       the case. Calling it from here as well filed everything twice —
+       once without a theater, into whatever case happened to be last
+       used. This function is the local cache; nothing else. */
     return true
 }
 
@@ -124,6 +113,19 @@ export function useSaved() {
  */
 export function savedLabel(item) {
     if (item.headline) return item.headline
+
+    /* THEN THE LABEL, WHICH IS WHERE THE SENTENCE ACTUALLY IS.
+       Every caller of addToBriefing() passes the record's own title as the
+       label — "Sanctioned vessel VEGA in the Baltic Sea", "Protests mark
+       President Naqi's 1st visit". Only a handful also pass a `headline`
+       in `extra`, so this fell through to the generic for nearly
+       everything and the sidebar read "Signal (50.5°N 30.4°E)" — a line
+       you cannot write a briefing from, which is the one job it has.
+
+       The id is excluded explicitly: saveForBriefing stores `label ||
+       id`, so an item saved without a label would otherwise put a uuid on
+       screen, which is worse than the generic. */
+    if (item.label && item.label !== item.id) return item.label
 
     const base = item.kind === "imagery" ? "Sat image detection"
               : item.kind === "entity"  ? "Entity"

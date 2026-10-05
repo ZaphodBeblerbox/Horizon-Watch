@@ -10,6 +10,7 @@
 // spends mounting, which was previously a flash of half-built UI.
 import { useState } from "react"
 import { login } from "../state/authStore.js"
+import { requestAccess } from "../lib/adminApi.js"
 import { ParallaxMark } from "../print/PageFrame.jsx"
 
 const FADE_MS = 620
@@ -20,6 +21,22 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
     const [error, setError] = useState(null)
     const [submitting, setSubmitting] = useState(false)
     const [leaving, setLeaving] = useState(false)
+    // "signin" | "request" | "requested"
+    const [mode, setMode] = useState("signin")
+    const [name, setName] = useState("")
+    const [note, setNote] = useState("")
+
+    async function handleRequest(e) {
+        e.preventDefault()
+        setError(null)
+        setSubmitting(true)
+        try {
+            await requestAccess({ email: email.trim(), name: name.trim(), password, note: note.trim() })
+            setMode("requested")
+        } catch (err) {
+            setError(err?.message || "Could not send the request.")
+        } finally { setSubmitting(false) }
+    }
 
     async function handleSubmit(e) {
         e.preventDefault()
@@ -53,7 +70,7 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
         <div
             style={{
                 position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                background: "var(--bg-0, #171b20)", fontFamily: "var(--font, system-ui)",
+                background: "var(--bg-0, #14161f)", fontFamily: "var(--font, system-ui)",
                 opacity: leaving ? 0 : 1,
                 transform: leaving ? "scale(1.02)" : "none",
                 transition: `opacity ${FADE_MS}ms ease, transform ${FADE_MS}ms ease`,
@@ -68,9 +85,9 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
                 }
             `}</style>
 
-            <form onSubmit={handleSubmit} style={{
-                width: 340, padding: "34px 30px 28px", background: "var(--bg-2, #22282f)",
-                border: "1px solid var(--line, #30373f)", borderRadius: "var(--r, 2px)",
+            <form onSubmit={mode === "request" ? handleRequest : handleSubmit} style={{
+                width: 340, padding: "34px 30px 28px", background: "var(--bg-2, #1e212c)",
+                border: "1px solid var(--line, #2b3040)", borderRadius: "var(--r, 2px)",
                 display: "flex", flexDirection: "column", gap: 12,
             }}>
                 {/* The mark at a size that reads as identity rather than as
@@ -80,7 +97,7 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
                     <LoginMark />
                 </div>
                 <div style={{
-                    font: "400 11px var(--font)", color: "var(--txt-3, #818c96)",
+                    font: "400 11px var(--font)", color: "var(--txt-3, #b5b9c3)",
                     textAlign: "center", letterSpacing: ".1em", textTransform: "uppercase",
                     marginBottom: 12,
                 }}>
@@ -93,8 +110,8 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
                     grant with stale data behind it. */}
                 {offline && (
                     <div style={{
-                        font: "400 11px/1.55 var(--font)", color: "var(--txt-3, #818c96)",
-                        background: "var(--bg-0, #171b20)", border: "1px solid var(--line, #30373f)",
+                        font: "400 11px/1.55 var(--font)", color: "var(--txt-3, #b5b9c3)",
+                        background: "var(--bg-0, #14161f)", border: "1px solid var(--line, #2b3040)",
                         borderRadius: 3, padding: "8px 10px", marginBottom: 4,
                     }}>
                         <b style={{ color: "var(--txt-2, #b6bec6)" }}>Working offline.</b> The server
@@ -103,8 +120,44 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
                     </div>
                 )}
 
+                {/* ASKING FOR AN ACCOUNT IS NOT SIGNING UP. Nothing is
+                    granted here: the request creates an account that cannot
+                    sign in until a superadmin approves it, and the form says
+                    so rather than letting someone discover it at the 403. */}
+                {mode === "request" && (
+                    <div style={{
+                        font: "400 11px/1.55 var(--font)", color: "var(--txt-3, #b5b9c3)",
+                        background: "var(--bg-0, #14161f)", border: "1px solid var(--line, #2b3040)",
+                        borderRadius: 3, padding: "8px 10px", marginBottom: 4,
+                    }}>
+                        An administrator reviews every request. You will be able to sign in once
+                        yours is approved.
+                    </div>
+                )}
+
+                {mode === "requested" && (
+                    <div role="status" style={{
+                        font: "400 12px/1.65 var(--font)", color: "var(--txt-2, #dde0e6)",
+                        background: "var(--bg-0, #14161f)", border: "1px solid var(--line, #2b3040)",
+                        borderRadius: 3, padding: "12px 12px", marginBottom: 6,
+                    }}>
+                        <b style={{ fontWeight: 600 }}>Request recorded.</b> You will be able to sign in
+                        with this email and password once an administrator has approved it.
+                    </div>
+                )}
+
+                {mode === "request" && (
+                    <input
+                        type="text" placeholder="Full name" value={name} autoFocus
+                        onChange={(e) => setName(e.target.value)}
+                        disabled={submitting}
+                        className="input"
+                        style={{ padding: "8px 10px", font: "400 13px var(--font)" }}
+                    />
+                )}
+
                 <input
-                    type="email" placeholder="Email" value={email} autoFocus
+                    type="email" placeholder="Email" value={email} autoFocus={mode !== "request"}
                     onChange={(e) => setEmail(e.target.value)}
                     disabled={submitting}
                     className="input"
@@ -117,10 +170,18 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
                     className="input"
                     style={{ padding: "8px 10px", font: "400 13px var(--font)" }}
                 />
-                {error && (
-                    <div role="alert" style={{ font: "400 12px var(--font)", color: "var(--red, #c4453c)" }}>{error}</div>
+                {mode === "request" && (
+                    <textarea
+                        placeholder="Why you need access — who you are, and what for"
+                        value={note} onChange={(e) => setNote(e.target.value)}
+                        disabled={submitting} className="input" rows={3}
+                        style={{ padding: "8px 10px", font: "400 12.5px var(--font)", resize: "vertical" }}
+                    />
                 )}
-                <button type="submit" className="btn primary" disabled={submitting}
+                {error && (
+                    <div role="alert" style={{ font: "400 12px var(--font)", color: "var(--red, #f46043)" }}>{error}</div>
+                )}
+                <button type="submit" className="btn primary" disabled={submitting || mode === "requested"}
                         style={{
                             marginTop: 4, padding: "8px 0", display: "flex",
                             alignItems: "center", justifyContent: "center", gap: 8,
@@ -136,7 +197,23 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
                             }}
                         />
                     )}
-                    {submitting ? "Signing in…" : "Sign in"}
+                    {submitting
+                        ? (mode === "request" ? "Sending…" : "Signing in…")
+                        : mode === "request" ? "Request access"
+                        : mode === "requested" ? "Waiting for approval"
+                        : "Sign in"}
+                </button>
+
+                <button
+                    type="button"
+                    onClick={() => { setError(null); setMode(mode === "signin" ? "request" : "signin") }}
+                    style={{
+                        marginTop: 2, border: 0, background: "transparent",
+                        color: "var(--txt-3, #b5b9c3)", font: "400 11.5px var(--font)",
+                        cursor: "pointer", textAlign: "center",
+                    }}
+                >
+                    {mode === "signin" ? "No account? Request access" : "Back to sign in"}
                 </button>
             </form>
         </div>
@@ -151,11 +228,11 @@ function LoginMark() {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
             <svg width="58" height="58" viewBox="0 0 24 24" fill="none"
                  strokeWidth="2.2" strokeLinecap="butt" aria-hidden="true">
-                <path stroke="var(--txt, #d5dae0)" d="M3 4L14 20M14 4L3 20" />
-                <path stroke="var(--acc-hi, #5f95d0)" d="M18 4L12.5 12M22 4L19.25 8" />
+                <path stroke="var(--txt, #f2f3f6)" d="M3 4L14 20M14 4L3 20" />
+                <path stroke="var(--acc-hi, #a0b2d2)" d="M18 4L12.5 12M22 4L19.25 8" />
             </svg>
             <span style={{
-                font: "700 19px var(--font)", color: "var(--txt, #d5dae0)",
+                font: "700 19px var(--font)", color: "var(--txt, #f2f3f6)",
                 letterSpacing: ".22em", textTransform: "uppercase", lineHeight: 1,
             }}>Parallax</span>
         </div>

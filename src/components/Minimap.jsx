@@ -148,13 +148,21 @@ export default function Minimap({
     windowMs = 72 * 3_600_000,
     now = Date.now(),
     height = MINIMAP_HEIGHT,
+    /* THE VIEWBOX WIDTH, which is also the aspect the projection is built
+       for. It was the constant 300, and the svg carries
+       preserveAspectRatio="none", so the locator stretched to fill
+       whatever box it was given: fine at the inset size it was written
+       for, visibly wrong the moment it is asked to fill a pane — Europe
+       smeared across a 1,200px panel. Hosts that render it large measure
+       their box and pass it, so the projection and the box agree. */
+    width = 300,
     title = "Locator",
     subtitle = "",
 }) {
     const [land, setLand] = useState({ polygons: [], countries: [], cities: [] })
     const [pings, setPings] = useState([])
     const timers = useRef([])
-    const W = 300
+    const W = Math.max(120, Math.round(width))
 
     useEffect(() => { let off = false; loadLand().then((d) => { if (!off) setLand(d) }); return () => { off = true } }, [])
 

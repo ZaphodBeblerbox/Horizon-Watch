@@ -384,6 +384,25 @@ app.include_router(_case_workspace_router.router)
 app.include_router(_geoconfirmed_router.router)
 app.include_router(_risk_index_router.router)
 app.include_router(_alerts_derived_router.router)
+# Who gets in, and who decides — see routers/admin_users.py.
+from routers import admin_users as _admin_users_router
+app.include_router(_admin_users_router.router)
+# Messages between people and in groups — see routers/chat.py.
+from routers import chat as _chat_router
+app.include_router(_chat_router.router)
+# The regions somebody watches — see routers/theaters.py.
+from routers import theaters as _theaters_router
+app.include_router(_theaters_router.router)
+# Observations published to the desk — see routers/desk.py.
+from routers import desk as _desk_router
+app.include_router(_desk_router.router)
+# The spoken sentence the rule parser could not place — see routers/voice_ai.py.
+from routers import voice_ai as _voice_ai_router
+app.include_router(_voice_ai_router.router)
+# Making a signal usable, and making mentions of one thing converge —
+# see routers/enrichment.py and enrich.py.
+from routers import enrichment as _enrichment_router
+app.include_router(_enrichment_router.router)
 
 # ── Optional fastapi-cache2 response caching ──────────────────────────────────
 try:
@@ -3968,6 +3987,52 @@ async def api_forecast_scenario_create(request: Request):
         conn.close()
 
 
+@app.post("/api/forecast/scenarios/draft")
+async def api_forecast_scenario_draft(request: Request):
+    """Read a paragraph into scenario fields. SAVES NOTHING.
+
+    A scenario is a hypothesis somebody will forecast from, so it is
+    reviewed before it exists. This returns fields and a list of what is
+    still missing; the POST above is what creates one.
+    """
+    _require_current_user(request)
+    import scenario_reader as _sr
+    body = await request.json()
+    return _sr.draft_from_text(str(body.get("text") or ""))
+
+
+@app.post("/api/forecast/scenarios/{sid}/read")
+def api_forecast_scenario_read(sid: str, request: Request):
+    """What today's signals say about this scenario, and what to watch for.
+
+    The signals come from the console's own surface pool, filtered to the
+    scenario's target — so the reading is against what this system actually
+    holds, and every line it quotes can be checked against a signal that is
+    on screen somewhere.
+    """
+    _require_current_user(request)
+    import forecast_scenarios as _fs
+    import scenario_reader as _sr
+    from routers.voice_ai import gather_situation
+    conn = _fc_conn()
+    try:
+        scen = _fs.get(conn, sid)
+    finally:
+        conn.close()
+    if not scen:
+        raise HTTPException(status_code=404, detail="no such scenario")
+    # The place first if there is one, then the country — a scenario about
+    # Hormuz is not well served by every signal in Iran.
+    signals = []
+    for place in (scen.get("target_place"), scen.get("target")):
+        if place:
+            signals = gather_situation(place, limit=30)
+            if signals:
+                break
+    out = _sr.read_against_signals(scen, signals)
+    return {"scenario": scen, **out}
+
+
 @app.patch("/api/forecast/scenarios/{sid}")
 async def api_forecast_scenario_update(sid: str, request: Request):
     import forecast_scenarios as _fs
@@ -4566,6 +4631,95 @@ async def api_stream(request: Request):
         # turns a live stream into a batch delivered at the end.
         "X-Accel-Buffering": "no",
     })
+
+
+@app.get("/api/infrastructure/pipelines-osm")
+def api_pipelines_osm(region: str = Query(None)):
+    """Oil and gas transmission pipelines, from OpenStreetMap.
+
+    Replaces the withdrawn GEM/GOPIT dataset — see pipelines_osm.py for why
+    OSM, and for what crowd-mapped coverage does and does not tell you.
+    Served from a disk cache; fetching is a background job because a single
+    regional Overpass query takes over a minute.
+    """
+    import pipelines_osm as _po
+    if region:
+        data = _po.load_region(region)
+        if not data:
+            return {"pipelines": [], "total": 0, "region": region,
+                    "pending": True,
+                    "note": "This region has not been fetched yet."}
+        return data
+    return _po.all_cached()
+
+
+@app.post("/api/infrastructure/pipelines-osm/refresh")
+def api_pipelines_osm_refresh(region: str = Query(None)):
+    """Fetch pipeline regions in the background. Returns at once."""
+    import pipelines_osm as _po
+    keys = [region] if region else [r[0] for r in _po.REGIONS if _po.region_is_stale(r[0])]
+
+    def _run():
+        for k in keys:
+            try:
+                # 150s: the query itself declares [timeout:120], so the
+                # HTTP read has to outlast what the server is allowed to
+                # spend, or we hang up on an answer that was coming.
+                out = _po.fetch_region(
+                    k, lambda q: _fetch_overpass(q, retries=2, timeout=150))
+                print(f"[pipelines] {k}: {out.get('count', 0)} ways")
+            except Exception as ex:
+                print(f"[pipelines] {k} failed: {type(ex).__name__}: {ex}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"started": keys, "note": "Fetching in the background; poll the read endpoint."}
+
+
+@app.get("/api/flows/status")
+def api_flows_status(hours: int = Query(24, ge=1, le=720)):
+    """Trade corridors with what is actually happening on them.
+
+    See flow_status.py for what "disrupted" is allowed to mean here, and why
+    the four measures are reported separately instead of being summed into a
+    score nobody can reconstruct.
+    """
+    from database import Alert as _Alert
+    import flow_status as _fs
+
+    routes = list(_SHIPPING_ROUTES)
+
+    with _AIS_LOCK:
+        vessels = list(_AIS_VESSELS.values())
+
+    since = datetime.utcnow() - timedelta(hours=hours)
+    with get_db() as db:
+        rows = (db.query(_Alert)
+                  .filter(_Alert.created_at >= since)
+                  .filter(_Alert.lat.isnot(None))
+                  .order_by(_Alert.created_at.desc())
+                  .limit(5000).all())
+    alerts = [{"lat": r.lat, "lon": r.lon, "severity": r.severity,
+               "title": r.title, "source": r.source} for r in rows]
+
+    cells = []
+    try:
+        cells = _gps_interference.cells()
+    except Exception:
+        pass
+
+    out = [_fs.assess(r, vessels=vessels, alerts=alerts, interference=cells)
+           for r in routes]
+    return {
+        "routes": out,
+        "disrupted": sum(1 for r in out if r["disrupted"]),
+        "total": len(out),
+        "hours": hours,
+        "method": (
+            f"Vessels and incidents within {_fs.CORRIDOR_KM:.0f} km of the corridor "
+            "centre line. Traffic is compared with that corridor's own recent "
+            "average, never a global one, and the four measures are reported "
+            "separately rather than combined into a score."),
+    }
 
 
 @app.get("/api/gps-interference")
@@ -6354,8 +6508,15 @@ _OVERPASS_URLS = [
 ]
 
 
-def _fetch_overpass(query: str, retries: int = 3) -> dict:
-    """Fetch from Overpass API with retry (429/504) and URL rotation for redundancy."""
+def _fetch_overpass(query: str, retries: int = 3, timeout: int = 40) -> dict:
+    """Fetch from Overpass API with retry (429/504) and URL rotation for redundancy.
+
+    `timeout` is a parameter because these queries are not one size. A
+    facilities lookup over a city returns in seconds; the pipeline
+    transmission network over a continent takes over a minute, and at the
+    old fixed 40s it timed out on every mirror and returned an empty list —
+    which looked exactly like "there are no pipelines in Europe".
+    """
     data_bytes = urllib.parse.urlencode({"data": query}).encode()
     for attempt in range(retries):
         url = _OVERPASS_URLS[attempt % len(_OVERPASS_URLS)]
@@ -6364,7 +6525,7 @@ def _fetch_overpass(query: str, retries: int = 3) -> dict:
                 url, data=data_bytes,
                 headers={"User-Agent": "Akili/1.0", "Content-Type": "application/x-www-form-urlencoded"},
             )
-            with urllib.request.urlopen(req, timeout=40) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return _json.loads(resp.read())
         except urllib.error.HTTPError as ex:
             if ex.code in (429, 504) and attempt < retries - 1:
@@ -8481,6 +8642,50 @@ def _plus_code_location(plus_code: str | None) -> str | None:
     return parts[1].strip() if len(parts) > 1 else plus_code.strip()
 
 
+
+# ── Surface relevance ────────────────────────────────────────────────────
+# WHAT THIS REPLACED, AND WHY. Every item on the surface pool carried
+# `relevance_score: _SEV_WORD_RISK.get(tier, 42)` — a lookup of its own
+# severity tier. Relevance was therefore a restatement of severity in a
+# different unit, and measured on the live pool it was the constant 92 on
+# all 50 items. A field that is the same on every row cannot rank anything,
+# and two fields that say one thing look like corroboration when they are
+# an echo.
+#
+# WHAT THIS IS NOT. It is not relevance to YOU. That would need your
+# theaters and your areas of interest, and the pool is built once for
+# everybody before any request arrives, so it has no one to be relevant to.
+# This is "how hard should this compete for attention right now", from the
+# two things the item genuinely carries: how bad it is, and how fresh.
+# Freshness is included because a critical event from nine days ago should
+# not outrank a significant one from this morning on a surface whose whole
+# purpose is what is happening now.
+_SURFACE_TIER_WEIGHT = {"critical": 100, "significant": 70, "elevated": 45, "low": 20}
+_SURFACE_HALF_LIFE_H = 36.0   # a day and a half: one working cycle
+
+
+def _surface_relevance(tier: str, published_at) -> int:
+    """0-100. Severity sets the ceiling; age decays it."""
+    base = _SURFACE_TIER_WEIGHT.get(str(tier or "").lower(), 45)
+    try:
+        ts = published_at
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if ts is None:
+            return base
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age_h = max(0.0, (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0)
+    except Exception:
+        # An unparseable date is not evidence of staleness, so it does not
+        # get penalised as though it were.
+        return base
+    decay = 0.5 ** (age_h / _SURFACE_HALF_LIFE_H)
+    # Never below a third of base: an old critical event is still critical,
+    # it just stops leading.
+    return int(round(base * max(0.34, decay)))
+
+
 def _build_surface_pool() -> list:
     """
     Build ranked surface pool (top 50 items) from real GeoConfirmed
@@ -8536,7 +8741,8 @@ def _build_surface_pool() -> list:
                         "severity_tier":   tier,
                         "headline":        headline,
                         "context":         context,
-                        "relevance_score": _SEV_WORD_RISK.get(tier, 42),
+                        "relevance_score": _surface_relevance(
+                            tier, p.date.isoformat() if p.date else None),
                         "analysed":        True,
                         "source":          "geoconfirmed",
                         "published_at":    p.date.isoformat() if p.date else datetime.now(timezone.utc).isoformat(),
@@ -8592,7 +8798,8 @@ def _build_surface_pool() -> list:
                     "severity_tier":   tier,
                     "headline":        pin["title"],
                     "context":         pin.get("context") or "",
-                    "relevance_score": _SEV_WORD_RISK.get(tier, 42),
+                    "relevance_score": _surface_relevance(
+                        tier, pin.get("first_seen_at") or pin.get("date")),
                     "analysed":        True,
                     "source":          "gdelt",
                     # First-seen, not event_date: GDELT dates are
@@ -10823,9 +11030,60 @@ async def api_ais_status():
 # SYSTEM 2 — ADS-B and AIS History Recording
 # ══════════════════════════════════════════════════════════════════════════════
 
+#: One ADS-B write at a time. The work below is dispatched to a single
+#: worker, so without this a slow batch simply queues behind the previous
+#: one and the backlog grows for as long as the feed keeps polling.
+_ADSB_WRITE_INFLIGHT = threading.Event()
+
+
 def _record_adsb_history(aircraft_list):
+    """Stage an ADS-B batch for writing, off the event loop.
+
+    THIS USED TO WRITE INLINE AND IT STOPPED THE WHOLE PROCESS. The
+    loop-lag sampler attributed a 49.6-second block to this function and
+    to aggregate_tracks beneath it: a per-cell SELECT-then-upsert over a
+    full batch of aircraft is thousands of SQLite round trips, and every
+    one of them ran on the event loop. While it ran, /api/notifications
+    took 59 seconds and analytics and forecast timed out outright — the
+    "everything stalls at once" symptom, which was always this.
+
+    The AIS side of exactly this pair was fixed long ago and this one was
+    missed (see _record_ais_history, which stages into a buffer that a
+    worker thread flushes). This is the same move: the caller returns at
+    once, the write happens on the maintenance worker, and a batch that
+    arrives while the previous one is still going is dropped rather than
+    queued — position history is a sampled record, so the next poll
+    carries the same aircraft along anyway.
+    """
+    batch = list(aircraft_list or ())
+    if not batch:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop here: a sync caller (a test, a script). Nothing to
+        # protect, so do the work directly.
+        _record_adsb_history_sync(batch)
+        return
+    if _ADSB_WRITE_INFLIGHT.is_set():
+        return
+    _ADSB_WRITE_INFLIGHT.set()
+
+    def _run():
+        try:
+            _record_adsb_history_sync(batch)
+        finally:
+            _ADSB_WRITE_INFLIGHT.clear()
+
+    loop.run_in_executor(_maintenance_executor, _run)
+
+
+def _record_adsb_history_sync(aircraft_list):
     """Record ADS-B positions to history (throttled per aircraft per 60s) AND
-    aggregate to track_density grid cells (always)."""
+    aggregate to track_density grid cells (always).
+
+    Always called on a worker thread — never on the event loop.
+    """
     try:
         from database import AircraftHistory, get_db
         from track_aggregator import aggregate_tracks
@@ -12524,12 +12782,14 @@ async def _generate_weekly_snapshot():
     threat_assessment = '{}'
     trends = '{}'
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if api_key:
+    # THROUGH THE GATE. This built its own client from the raw env var, so
+    # "Claude is for briefings only" was true of every call site except this
+    # one, which quietly ran Haiku on a weekly schedule.
+    _weekly_client = llm_gate.get_client("weekly_snapshot", _api_key)
+    if _weekly_client:
         try:
-            import anthropic as _anthropic
             def _call_claude():
-                client = _anthropic.Anthropic(api_key=api_key)
+                client = _weekly_client
                 resp = client.messages.create(
                     model="claude-haiku-4-5-20251001",
                     max_tokens=1500,
@@ -13144,10 +13404,12 @@ def _run_inference_on_image(cropped, bounds, confidence, enhance=False, model_ke
     # ── Optional Claude enhance pass ──────────────────────────────────────────
     if enhance and detections:
         import base64 as _b64
-        _ant_key = os.getenv("ANTHROPIC_API_KEY")
-        if _ant_key:
+        # Also through the gate. This one is the most expensive thing in
+        # the file when it runs: a model call per detection, each carrying
+        # an image crop, up to ten per scene.
+        _ant = llm_gate.get_client("imagery", _api_key)
+        if _ant:
             try:
-                _ant = anthropic.Anthropic(api_key=_ant_key)
                 for det in detections[:10]:
                     x1, y1, x2, y2 = det.pop("_px")
                     pad = 20
@@ -13483,7 +13745,20 @@ Provide a concise intelligence assessment:
 
 Write in intelligence briefing style — 3–4 paragraphs maximum."""
 
-        client = anthropic.Anthropic()
+        # THE LAST UNGATED CALL, and the most expensive model in the file.
+        # It also built its client with no key argument at all, so it threw
+        # rather than degraded when there was no key. The detections and
+        # the summary are real work that does not need a model; only the
+        # prose assessment does, so without a client the endpoint returns
+        # everything except the prose and says why.
+        client = llm_gate.get_client("imagery", _api_key)
+        if client is None:
+            return JSONResponse({
+                "analysis": None,
+                "summary": summary,
+                "note": "Scene analysis needs the imagery purpose enabled — "
+                        "the detections below are real and unaffected.",
+            })
         resp   = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=600,
@@ -14150,6 +14425,12 @@ async def _loop_lag_watchdog():
     stay on in production, which is the only place the problem appears.
     """
     import time as _t
+    import loop_blame as _blame
+    # The watchdog can only ever report the SIZE of a stall: the coroutine
+    # that would record its cause is the thing that cannot run. The sampler
+    # is a plain OS thread outside the loop, so the stack it captured during
+    # the block is already waiting when we wake up.
+    _blame.start()
     INTERVAL = 1.0
     WARN_S = 1.0          # report a stall only once it is user-visible
     worst = 0.0
@@ -14157,12 +14438,19 @@ async def _loop_lag_watchdog():
     while True:
         t0 = _t.monotonic()
         await asyncio.sleep(INTERVAL)
-        lag = _t.monotonic() - t0 - INTERVAL
+        t1 = _t.monotonic()
+        lag = t1 - t0 - INTERVAL
         if lag > worst:
             worst = lag
         if lag >= WARN_S:
             print(f"[loop-lag] event loop blocked {lag:.2f}s "
-                  f"(worst so far {worst:.2f}s)")
+                  f"(worst so far {worst:.2f}s)\n"
+                  f"[loop-lag] blame: {_blame.blame(t0, t1)}")
+            # A stall measured in minutes needs the path, not the leaf.
+            if lag >= 20:
+                chain = _blame.deep_blame(t0, t1)
+                if chain:
+                    print(f"[loop-lag] path:  {chain}")
         # A periodic high-water mark, so a stall that happened while
         # nobody was watching is still visible in the log afterwards.
         if worst > worst_reported and _t.monotonic() % 300 < INTERVAL:
@@ -14705,10 +14993,45 @@ def _fusion_fire_callback(fusion_dict: dict, suppressed_alert_ids: list):
         _correlation_assessments.append(assessment)
 
 
+async def _outlook_refresh_loop():
+    """Rebuild the day's outlook on a timer, never inside a request.
+
+    A model reading forty signals takes one to three minutes. Computing it
+    when somebody opens Home meant the Home screen waited that long — so it
+    is built here, in the background, and every request serves whatever the
+    last build produced.
+
+    Twenty minutes, not five: the surface pool turns over on a scale of
+    hours, and the cost is per build. Rebuilding four times as often would
+    quadruple the spend to say the same thing.
+    """
+    await asyncio.sleep(90)          # let the surface pool start filling
+    while True:
+        built = False
+        try:
+            from routers import enrichment as _en
+            out = await asyncio.to_thread(_en.refresh_outlook)
+            built = bool(out and out.get("ok") and not out.get("skipped"))
+        except Exception as e:                                  # noqa: BLE001
+            # Said, not swallowed. A background loop that fails silently
+            # disables a whole feature and nothing in the UI can tell.
+            print(f"[outlook] refresh failed: {type(e).__name__}: {e}", flush=True)
+        # Twenty minutes once there is something to show; a minute while
+        # there is not. The surface pool turns over on a scale of hours, so
+        # rebuilding more often than that would multiply the spend to say
+        # the same thing — but waiting twenty minutes for the FIRST one
+        # because the pool was empty at boot is just a blank screen.
+        await asyncio.sleep(20 * 60 if built else 60)
+
+
 @app.on_event("startup")
 async def startup_event():
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
+    # The day's outlook — concrete, cited, resolvable forecasts for the Home
+    # and Forecast screens. Built on a timer because a page view must never
+    # wait on a model.
+    _spawn(_outlook_refresh_loop)
     # NOT RETRIED AT STARTUP, DELIBERATELY. The GEM/GOPIT pipeline dataset
     # is gone: both file URLs 404, and so does the repository itself
     # (api.github.com/repos/GlobalEnergyMonitor/GOPIT), so it was withdrawn
@@ -14937,6 +15260,17 @@ async def startup_event():
             _refresh_findings(key, lim, 0.05)
         print("[ontology] findings cache warmed")
     threading.Thread(target=_warm_findings, daemon=True).start()
+
+    # Same reason: Analytics' overview takes eight to ten seconds to rebuild
+    # and, when a module opens, queues behind about seventy other requests.
+    # Whoever opened it first paid for that and saw "Failed to load".
+    def _warm_analytics():
+        try:
+            from routers.analytics import warm_overview
+            warm_overview()
+        except Exception:
+            logger.exception("analytics warm failed")
+    threading.Thread(target=_warm_analytics, daemon=True).start()
     # Forge detection engine
     if _HAS_DETECTORS:
         _weights_file = os.path.join(DATA_DIR, "forge", "forge_weights.json")
@@ -22324,6 +22658,55 @@ def api_watch_zone_scan_now(system_id: str):
             "message": "Scan launched — check GET /api/watch-zones/{id}/scans for status"}
 
 
+@app.delete("/api/watch-zones/{zone_id}/scans/{scan_id}")
+def api_scan_delete(zone_id: str, scan_id: str):
+    """Delete one scan and the detections that belong to it.
+
+    A watched zone accumulates a scan per interval forever — ZONE-001 has
+    36 — and most of them are cloud, or a repeat of the one before. Without
+    a delete, the only way to stop looking at a bad scene is to scroll past
+    it, and the useful history gets buried under the noise.
+
+    The detections go with it. A detection whose scene is gone cannot be
+    reviewed, confirmed or located, so leaving the rows behind would only
+    put unreachable findings in the counts.
+    """
+    from database import SentinelDetection, SentinelScan, WatchZone, get_db
+    with get_db() as db:
+        zone = db.query(WatchZone).filter(WatchZone.system_id == zone_id).first()
+        if not zone:
+            raise HTTPException(404, f"Zone {zone_id} not found")
+        scan = (db.query(SentinelScan)
+                .filter(SentinelScan.scan_id == scan_id, SentinelScan.zone_id == zone.id)
+                .first())
+        if not scan:
+            raise HTTPException(404, f"Scan {scan_id} not found in {zone_id}")
+        n = db.query(SentinelDetection).filter(SentinelDetection.scan_id == scan.id).delete()
+        db.delete(scan)
+        db.commit()
+        return {"ok": True, "scan_id": scan_id, "detections_deleted": n}
+
+
+@app.delete("/api/imagery/detections/{detection_id}")
+def api_detection_delete(detection_id: str):
+    """Delete one detection outright.
+
+    Distinct from reject: rejecting records that a person looked and said
+    no, which is worth keeping — it is how a detector's precision is
+    measured. Deleting is for a row that should never have been a finding
+    at all, usually a duplicate or a scan that was re-run.
+    """
+    from database import SentinelDetection, get_db
+    with get_db() as db:
+        d = (db.query(SentinelDetection)
+             .filter(SentinelDetection.detection_id == detection_id).first())
+        if not d:
+            raise HTTPException(404, f"Detection {detection_id} not found")
+        db.delete(d)
+        db.commit()
+        return {"ok": True, "detection_id": detection_id}
+
+
 @app.get("/api/watch-zones/{zone_id}/scans/{scan_id}/detections")
 def api_scan_detections(zone_id: str, scan_id: str):
     """Return all detections for a specific scan as a GeoJSON FeatureCollection."""
@@ -23841,6 +24224,152 @@ def get_report_pdf(report_id: str):
     return FastAPIResponse(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{report_id}.pdf"'},
+    )
+
+
+# A briefing that can only leave as a PDF cannot be worked on by whoever
+# receives it. These two produce files people continue editing — and both
+# carry the PARALLAX wordmark and the Trifecta Technologies line on every
+# page and slide, so a file that leaves the system keeps its provenance.
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def _safe_filename(title: str) -> str:
+    """A title becomes a filename. Anything a filesystem or a
+    Content-Disposition header would choke on is dropped rather than
+    escaped — a download named `brief"; rm -rf.docx` is not a download."""
+    base = re.sub(r"[^A-Za-z0-9 _.-]+", "", str(title or "")).strip()
+    base = re.sub(r"\s+", "-", base)[:80]
+    return base or "parallax-export"
+
+
+def _report_or_404(report_id: str):
+    from database import Report, get_db as _gdb_office
+    with _gdb_office() as db:
+        row = db.query(Report).filter(Report.report_id == report_id).first()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        return _report_to_dict(row)
+
+
+@app.get("/api/country-codes")
+def api_country_codes():
+    """The ISO2 ↔ ISO3 table, so the frontend stops needing its own copy.
+
+    world-land.json carries ISO2 (it is a map asset), the risk index is
+    keyed by ISO3, and joining them client-side meant shipping a second
+    copy of a table that already exists in country_codes.py — two copies
+    of a lookup is one that goes stale.
+    """
+    import country_codes as _cc
+    return {
+        "iso2_to_iso3": _cc.ISO2_TO_ISO3,
+        "count": len(_cc.ISO2_TO_ISO3),
+    }
+
+
+@app.get("/api/reports/{report_id}/docx")
+def get_report_docx(report_id: str):
+    """The briefing as an editable Word document."""
+    import report_office as _office
+    data = _office.render_report_docx(_report_or_404(report_id))
+    return FastAPIResponse(
+        content=data, media_type=_DOCX_MIME,
+        # attachment, not inline: a browser cannot render these, and an
+        # inline disposition leaves you looking at a blank tab.
+        headers={"Content-Disposition": f'attachment; filename="{report_id}.docx"'},
+    )
+
+
+@app.get("/api/reports/{report_id}/pptx")
+def get_report_pptx(report_id: str):
+    """The briefing as an editable PowerPoint deck."""
+    import report_office as _office
+    data = _office.render_report_pptx(_report_or_404(report_id))
+    return FastAPIResponse(
+        content=data, media_type=_PPTX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{report_id}.pptx"'},
+    )
+
+
+# ── Authoring exports ───────────────────────────────────────────────────
+#
+# The two above export a REPORT the pipeline generated. These two export
+# what someone wrote themselves, which has no report row behind it and
+# should not need one: making a user generate a report before they are
+# allowed to write a document is the kind of rule that exists because of
+# how the storage happens to be arranged.
+
+@app.post("/api/documents/export.docx")
+async def post_document_docx(request: Request):
+    """A hand-written briefing as Word."""
+    import report_office as _office
+    body = await request.json()
+    doc = {
+        "report_id": body.get("id") or "",
+        "title": body.get("title") or "Untitled briefing",
+        "classification": body.get("classification") or "UNCLASSIFIED",
+        "scope": body.get("scope") or "",
+        "audience": body.get("audience") or "",
+        "horizon": body.get("horizon") or "",
+        # The writer's prose arrives as the editor's HTML; render_report_docx
+        # strips tags, so headings and lists survive as their text.
+        "narrative": body.get("html") or body.get("body") or "",
+        "key_judgments": body.get("key_judgments") or "",
+        "exposure": body.get("exposure") or "",
+        "claims": body.get("claims") or [],
+    }
+    data = _office.render_report_docx(doc)
+    name = _safe_filename(doc["title"]) + ".docx"
+    return FastAPIResponse(
+        content=data, media_type=_DOCX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@app.post("/api/decks/export.pptx")
+async def post_deck_pptx(request: Request):
+    """A hand-built deck as PowerPoint."""
+    import report_office as _office
+    body = await request.json()
+    slides = body.get("slides")
+    if not isinstance(slides, list):
+        raise HTTPException(400, "slides must be a list")
+    doc = {
+        "report_id": body.get("id") or "",
+        "title": body.get("title") or "Untitled deck",
+        "classification": body.get("classification") or "UNCLASSIFIED",
+        "scope": body.get("scope") or "",
+        "audience": body.get("audience") or "",
+        "horizon": body.get("horizon") or "",
+    }
+    data = _office.render_report_pptx(doc, slides)
+    name = _safe_filename(doc["title"]) + ".pptx"
+    return FastAPIResponse(
+        content=data, media_type=_PPTX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@app.post("/api/reports/{report_id}/pptx")
+async def post_report_pptx(report_id: str, request: Request):
+    """The deck AS EDITED ON SCREEN, rather than rebuilt from the record.
+
+    The deck editor lets you retitle slides, rewrite bodies, reorder and
+    add speaker notes. Regenerating from the report on export would throw
+    all of that away and hand back something the user had already changed
+    — so the edited slides come up in the body and are what gets written.
+    """
+    import report_office as _office
+    body = await request.json()
+    slides = body.get("slides")
+    if slides is not None and not isinstance(slides, list):
+        raise HTTPException(400, "slides must be a list")
+    data = _office.render_report_pptx(_report_or_404(report_id), slides)
+    return FastAPIResponse(
+        content=data, media_type=_PPTX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{report_id}.pptx"'},
     )
 
 
@@ -27257,7 +27786,13 @@ def _get_current_user(request: Request) -> dict | None:
     from database import User, get_db as _gdb_auth
     with _gdb_auth() as db:
         u = db.query(User).filter(User.id == user_id).first()
-        return _user_to_dict(u) if u else None
+        # A REVOKED ACCOUNT IS OUT NOW. Checking approval only at login
+        # means revoking someone leaves them working until their session
+        # expires — up to a week — which is exactly the window the act of
+        # revoking was meant to close.
+        if not u or not u.approved:
+            return None
+        return _user_to_dict(u)
 
 def _require_current_user(request: Request) -> dict:
     """Real 401-raising variant — used by routes whose security posture
@@ -27310,6 +27845,15 @@ async def api_auth_login(request: Request, response: Response):
             # Same real 401 either way — never discloses whether the email
             # exists vs. the password being wrong.
             raise HTTPException(status_code=401, detail="invalid email or password")
+        # APPROVAL IS A GATE, NOT A LABEL. This column has existed since
+        # the table was created and nothing read it, so a row created
+        # without approval was a fully working account. 403 and not 401:
+        # the credentials were right, and telling someone their password
+        # is wrong when it is not sends them to the reset flow forever.
+        if not u.approved:
+            raise HTTPException(
+                status_code=403,
+                detail="This account is waiting to be approved. You will be able to sign in once an administrator has reviewed it.")
         token = _create_session_token(u.id)
         response.set_cookie(key="hw_session", value=token, max_age=JWT_SESSION_HOURS * 3600, **_cookie_kwargs(request))
         out = _user_to_dict(u)
@@ -27402,11 +27946,23 @@ def _user_initials(name: str, email: str) -> str:
 def _user_to_dict(u) -> dict:
     return {
         "id": u.id, "email": u.email, "name": u.name, "role": u.role,
+        # BOTH FLAGS TRAVEL WITH THE IDENTITY. They were on the row and in
+        # nothing the app ever saw, so every check that should have been
+        # made could not be made.
+        "is_super_admin": bool(u.is_super_admin),
+        "approved": bool(u.approved),
         "initials": u.initials or _user_initials(u.name, u.email),
+        "avatar": u.avatar,
         "color": u.color or _user_color(u.id),
         "timezone": u.timezone or "UTC",
         "shift": u.shift,
         "title": u.title,
+        "company": u.company,
+        "location": u.location,
+        "bio": u.bio,
+        "cover": u.cover,
+        "avatar_pos": u.avatar_pos or "50% 50%",
+        "cover_pos": u.cover_pos or "50% 50%",
         "team_id": u.team_id,
         "capability_role": u.capability_role,
         # Auto is the default: a console that opens dark at midday reads as
@@ -27420,9 +27976,15 @@ def _team_to_dict(t) -> dict:
     return {"id": t.id, "name": t.name, "created_at": t.created_at.isoformat() if t.created_at else None}
 
 @app.get("/api/users")
-def api_users_list():
+def api_users_list(request: Request):
     """This org's real roster (§7.4) — whatever real User rows actually
-    exist, not padded to look like a bigger team than it is."""
+    exist, not padded to look like a bigger team than it is.
+
+    SIGNED IN ONLY. This was open to anyone who could reach the port, and
+    it returns every colleague's name, email and team. A staff directory
+    is not public just because it is internal.
+    """
+    _require_current_user(request)
     from database import User, get_db as _gdb_users
     with _gdb_users() as db:
         rows = db.query(User).order_by(User.name).all()
@@ -27441,12 +28003,23 @@ async def api_set_own_theme(request: Request):
     if theme not in ("dark", "light", "auto"):
         raise HTTPException(status_code=400, detail="theme must be 'dark', 'light', or 'auto'")
     from database import User, get_db as _gdb_theme
-    with _gdb_theme() as db:
-        u = db.query(User).filter(User.id == user["id"]).first()
-        if not u:
-            raise HTTPException(status_code=404, detail="user not found")
-        u.theme = theme
-        db.commit()
+
+    # OFF THE LOOP. This is three SQLite statements and it has no business
+    # being slow, but the loop-lag sampler caught it holding the event loop
+    # for 95% of a 5.1-second stall: under write contention the commit waits
+    # on the lock, and an `async def` that waits does not yield — it stops
+    # the process. Every request in flight pays for one user changing theme.
+    def _write() -> bool:
+        with _gdb_theme() as db:
+            u = db.query(User).filter(User.id == user["id"]).first()
+            if not u:
+                return False
+            u.theme = theme
+            db.commit()
+            return True
+
+    if not await asyncio.to_thread(_write):
+        raise HTTPException(status_code=404, detail="user not found")
     return {"theme": theme}
 
 
@@ -27477,10 +28050,17 @@ async def api_patch_own_settings(request: Request):
     import copy
     from sqlalchemy.orm.attributes import flag_modified
     from database import User, get_db as _gdb_settings
-    with _gdb_settings() as db:
+
+    # OFF THE LOOP, for the same reason as api_set_own_theme above: the
+    # loop-lag sampler caught this holding the event loop for 92% of a
+    # 9.1-second stall. An `async def` that waits on a SQLite write lock
+    # does not yield, it stops the process, and every other request in
+    # flight pays for one person toggling a setting.
+    def _write():
+      with _gdb_settings() as db:
         u = db.query(User).filter(User.id == user["id"]).first()
         if not u:
-            raise HTTPException(status_code=404, detail="user not found")
+            return None
         # Real bug found and fixed while writing this endpoint's own
         # verification script: a shallow dict(u.settings or {}) shares every
         # NESTED dict by reference with the ORM-tracked value, so
@@ -27500,21 +28080,132 @@ async def api_patch_own_settings(request: Request):
         db.commit()
         return merged
 
+    merged = await asyncio.to_thread(_write)
+    if merged is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    return merged
+
+
+# How large a stored avatar may be, as a data URL. 256x256 JPEG at a
+# sensible quality lands around 20-40 KB; 400 KB is generous headroom and
+# still small enough that the users table cannot become a blob store. The
+# client downscales before it sends, so hitting this means something is
+# wrong rather than someone having a large photograph.
+_AVATAR_MAX_CHARS = 400_000
+
+# A focal point goes into a CSS object-position, so it is matched against a
+# shape rather than trusted: two percentages and nothing else.
+_POS_RE = re.compile(r"^\d{1,3}(?:\.\d+)?%\s+\d{1,3}(?:\.\d+)?%$")
+
+# A banner is 1500x400 rather than 256x256, so it gets its own ceiling.
+# The client downscales before sending; this is the backstop.
+_COVER_MAX_CHARS = 1_200_000
+
 
 @app.put("/api/users/{user_id}")
 async def api_users_update(user_id: str, request: Request):
+    """Update a user's own display fields.
+
+    IT CHECKS WHO IS ASKING. This route took a user id out of the path and
+    wrote whatever the body contained, with no session check at all — any
+    caller could rename, recolour or re-avatar any account by id, and the
+    ids are handed out by GET /api/users. Adding a profile editor on top of
+    that would have turned a latent hole into a used one.
+    """
     from database import User, get_db as _gdb_users
+    me = _get_current_user(request)
+    if not me:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    if me["id"] != user_id and not (me.get("is_super_admin") or me.get("role") == "admin"):
+        # Same 403 whether or not the target exists: a probe must not be
+        # able to enumerate ids through the difference.
+        raise HTTPException(status_code=403, detail="you can only edit your own profile")
     body = await request.json()
     with _gdb_users() as db:
         u = db.query(User).filter(User.id == user_id).first()
         if not u:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found")
-        for f in ("timezone", "shift", "color", "initials", "name"):
+        for f in ("timezone", "shift", "color", "initials", "name", "title",
+                  "company", "location"):
             if f in body:
-                setattr(u, f, body[f])
+                v = body[f]
+                setattr(u, f, (v or "").strip()[:120] if isinstance(v, str) else v)
+        # The bio gets its own length, because 120 characters is a job
+        # title and this is meant to be a paragraph.
+        if "bio" in body:
+            v = body["bio"]
+            u.bio = (v or "").strip()[:1200] if isinstance(v, str) else None
+        for f in ("avatar_pos", "cover_pos"):
+            if f in body:
+                v = body[f]
+                if v in (None, ""):
+                    setattr(u, f, None)
+                elif isinstance(v, str) and _POS_RE.match(v.strip()):
+                    setattr(u, f, v.strip())
+                else:
+                    raise HTTPException(status_code=400,
+                                        detail=f"{f} must look like '50% 32%'")
+        if "avatar" in body:
+            av = body["avatar"]
+            if av in (None, ""):
+                u.avatar = None
+            elif not isinstance(av, str) or not av.startswith("data:image/"):
+                raise HTTPException(status_code=400, detail="avatar must be an image data URL")
+            elif len(av) > _AVATAR_MAX_CHARS:
+                raise HTTPException(status_code=413, detail="avatar is too large — send it downscaled")
+            else:
+                u.avatar = av
+        # The banner is wider than it is tall and gets its own, larger
+        # ceiling — a 1500x400 JPEG does not fit in an avatar's budget, and
+        # making it fit would mean a banner that looks like a thumbnail.
+        if "cover" in body:
+            cv = body["cover"]
+            if cv in (None, ""):
+                u.cover = None
+            elif not isinstance(cv, str) or not cv.startswith("data:image/"):
+                raise HTTPException(status_code=400, detail="cover must be an image data URL")
+            elif len(cv) > _COVER_MAX_CHARS:
+                raise HTTPException(status_code=413, detail="cover image is too large — send it downscaled")
+            else:
+                u.cover = cv
         db.commit()
         db.refresh(u)
         return _user_to_dict(u)
+
+
+@app.post("/api/auth/change-password")
+async def api_auth_change_password(request: Request):
+    """Change the signed-in user's own password.
+
+    Requires the CURRENT password even though the session already proves
+    identity: a session can be a borrowed laptop, and a password change is
+    the one action that locks the real owner out.
+    """
+    from database import User, get_db as _gdb_pw
+    from passlib.context import CryptContext
+    pwd = CryptContext(schemes=["bcrypt"])
+    me = _get_current_user(request)
+    if not me:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    body = await request.json()
+    current = body.get("current_password") or ""
+    new = body.get("new_password") or ""
+    if len(new) < 10:
+        # Length is the only rule. Composition rules push people toward
+        # Password1! and a longer passphrase beats every one of them.
+        raise HTTPException(status_code=400, detail="new password must be at least 10 characters")
+    if new == current:
+        raise HTTPException(status_code=400, detail="the new password is the same as the current one")
+    with _gdb_pw() as db:
+        u = db.query(User).filter(User.id == me["id"]).first()
+        if not u or not pwd.verify(current, u.password_hash):
+            raise HTTPException(status_code=401, detail="current password is incorrect")
+        u.password_hash = pwd.hash(new)
+        # Any outstanding reset link is void once the password changes.
+        u.reset_token = None
+        u.reset_token_expires = None
+        db.commit()
+    return {"ok": True}
 
 
 # Real case approval-chain stages, hoisted to module level (Workstation
@@ -28131,6 +28822,85 @@ def _assignment_row_to_dict(a) -> dict:
         "due_at": a.due_at.isoformat() if a.due_at else None, "done": a.done,
         "created_at": a.created_at.isoformat() if a.created_at else None,
     }
+
+@app.get("/api/my-work")
+def api_my_work(request: Request):
+    """Everything waiting on the signed-in person, in one call.
+
+    WHY THIS ROUTE EXISTS. Assignments, comments and the activity log are
+    all keyed by `record_ref` and queried one record at a time — which is
+    right for a record's own panel and useless for the question "what is
+    waiting on me". Answering that from the client would mean fetching
+    every record and asking about each one.
+
+    The data was already there. RecordAssignment has assignee_user_id and
+    Comment has mentioned_user_ids_json; neither was reachable by user.
+
+    It returns counts and rows together so the module's KPI strip and its
+    tables come from one request and cannot disagree with each other.
+    """
+    from database import (Case, CaseShare, Comment, RFI, RecordAssignment,
+                          get_db as _gdb_mine)
+    user = _require_current_user(request)
+    uid = user["id"]
+
+    with _gdb_mine() as db:
+        assignments = [
+            {
+                "id": a.id, "record_ref": a.record_ref,
+                "assigned_by": a.assigned_by_user_id,
+                "due_at": a.due_at.isoformat() if a.due_at else None,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in (db.query(RecordAssignment)
+                      .filter(RecordAssignment.assignee_user_id == uid,
+                              RecordAssignment.done == False)  # noqa: E712
+                      .order_by(RecordAssignment.created_at.desc()).limit(100).all())
+        ]
+
+        # @mentions of me that nobody has resolved. SQLite has no JSON
+        # contains, and the column is a JSON array of ids, so the filter is
+        # a LIKE on the quoted id — exact enough because ids are uuids and
+        # cannot be a substring of one another.
+        mentions = [
+            _comment_row_to_dict(c)
+            for c in (db.query(Comment)
+                      .filter(Comment.resolved == False,  # noqa: E712
+                              Comment.mentioned_user_ids_json.like(f'%"{uid}"%'))
+                      .order_by(Comment.created_at.desc()).limit(100).all())
+        ]
+
+        rfis = [
+            _rfi_row_to_dict(r)
+            for r in (db.query(RFI)
+                      .filter(RFI.to_user_id == uid, RFI.status != "answered")
+                      .order_by(RFI.created_at.desc()).limit(100).all())
+        ]
+
+        shared_ids = [r.case_id for r in db.query(CaseShare).filter(CaseShare.user_id == uid).all()]
+        cases = [
+            _case_row_to_dict(c)
+            for c in (db.query(Case)
+                      .filter((Case.owner_user_id == uid) | (Case.case_id.in_(shared_ids)))
+                      .order_by(Case.updated_at.desc()).limit(100).all())
+        ]
+
+    review = [c for c in cases if c.get("approval_stage") == "review"]
+    return {
+        "user_id": uid,
+        "assignments": assignments,
+        "mentions": mentions,
+        "rfis": rfis,
+        "cases": cases,
+        "counts": {
+            "assignments": len(assignments),
+            "mentions": len(mentions),
+            "rfis": len(rfis),
+            "cases": len(cases),
+            "awaiting_review": len(review),
+        },
+    }
+
 
 @app.get("/api/assignments")
 def api_assignments_get(record_ref: str):

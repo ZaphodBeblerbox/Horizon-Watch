@@ -15,6 +15,7 @@ import {
     renameSession, deleteSession as apiDeleteSession, ensureActiveSession,
 } from "../state/sessionStore.js"
 import { toast } from "../ui/toast.js"
+import { safeArray } from "../utils/safeArray.js"
 
 function sessionSummary(s) {
     const layerCount = (s.domains || []).length
@@ -33,7 +34,7 @@ export default function SessionControl({ mode = "watch", onSetMode = null }) {
     useEffect(() => subscribeActiveSession((s, v) => { setActive(s); setViews(v) }), [])
 
     function refreshList() {
-        listSessions().then(setSessions).catch(() => {})
+        listSessions().then((v) => setSessions(safeArray(v))).catch(() => {})
     }
 
     useEffect(() => { if (open) refreshList() }, [open, active])

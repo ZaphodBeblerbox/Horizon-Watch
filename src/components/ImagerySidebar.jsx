@@ -6,8 +6,14 @@ import { detectionPixels, detectionLabel, provenanceLine } from "./annotateScene
 import { detectionCorners } from "../globe/detectionShape.js"
 import { SENSOR_OPTIONS } from "./imagery/sceneComparison.jsx"
 import { usablePasses, isSar, bboxAreaKm2, cornerCount, fmtArea, confidenceBand, detectionDiamond } from "./imagery/taskingMath.js"
+import { fileSignal } from "../state/filing.js"
 
 const API = API_BASE
+
+// The pane's own width, exported because Situation has to shift the map
+// chrome left by exactly this much while the pane is open. It was a 312
+// literal in two files that then disagreed the moment one changed.
+export const IMAGERY_PANE_W = 380
 
 // §12.1 — the cadence select, in the hours the scheduler actually stores.
 const CADENCE_HOURS = { "daily": 24, "3-day": 72, "weekly": 168, "monthly": 720, "on demand": 0 }
@@ -44,6 +50,39 @@ const CADENCE_HOURS = { "daily": 24, "3-day": 72, "weekly": 168, "monthly": 720,
 // datestamp survives at the exact real bottom of the georeferenced image
 // itself regardless of camera pan/zoom/tilt, with no extra per-frame
 // position-sync code needed.
+
+/* v6 surface tokens. The panel used the pre-v6 class vocabulary
+   (.field, .seg, .scanhint, --line, --txt-3), which is a different grey
+   from everything floating over the map beside it — Layers and Inspector
+   are glass on --gline. These are the same values those use. */
+const EYE = {
+    fontFamily: "var(--mz-font-mono)", fontWeight: 500, fontSize: 10,
+    letterSpacing: ".12em", textTransform: "uppercase", color: "var(--txt4)",
+}
+const BTN = {
+    height: 26, padding: "0 10px", border: "1px solid var(--gline2)",
+    background: "transparent", color: "var(--txt)", font: "inherit",
+    fontSize: 11.5, cursor: "pointer", borderRadius: 0, whiteSpace: "nowrap",
+}
+const FIELD = {
+    width: "100%", height: 28, padding: "0 8px", border: "1px solid var(--gline2)",
+    background: "var(--glass2)", color: "var(--txt)", font: "inherit",
+    fontSize: 12.5, outline: "none", borderRadius: 0,
+}
+const SEG = { display: "flex", border: "1px solid var(--gline2)" }
+const segBtn = (on) => ({
+    flex: 1, height: 26, border: 0,
+    background: on ? "var(--accdim)" : "transparent",
+    color: on ? "var(--txt)" : "var(--txt3)",
+    font: "inherit", fontSize: 11.5, cursor: "pointer",
+})
+const Row = ({ label, hint, children }) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
+        <span style={EYE}>{label}</span>
+        {children}
+        {hint && <span style={{ fontSize: 11, color: "var(--txt4)", textWrap: "pretty" }}>{hint}</span>}
+    </label>
+)
 
 function compositeDatestamp(base64Png, label) {
     return new Promise((resolve, reject) => {
@@ -328,139 +367,223 @@ export default function ImagerySidebar({
         }
     }
 
+    /**
+     * File the frame — and what the detector found in it — into the case.
+     *
+     * THE PANEL COULD NOT SAVE ANYTHING. You could draw a box, pull a
+     * scene and run a detector on it, and then the only way to keep the
+     * result was a screenshot. Tasking that cannot be filed is a toy: the
+     * whole point of running a detector on a quay is to put the finding in
+     * front of someone later.
+     *
+     * It files the composited frame, so the image carries its own capture
+     * datestamp into the case rather than becoming an undated picture.
+     */
+    async function fileToCase() {
+        if (!scene) { toast("Load a scene first", { icon: "i-alert" }); return }
+        setBusy((bz) => ({ ...bz, saving: true }))
+        try {
+            const n = (detections || []).length
+            const out = await fileSignal({
+                id: `scene-${scene.capture_timestamp || Date.now()}`,
+                kind: "signal", source: "sentinel",
+                headline: `${name.trim() || "Drawn area"} — ${n} detection${n === 1 ? "" : "s"}, `
+                    + fmtCaptureLabel(scene.capture_timestamp),
+                severity: n > 0 ? "significant" : "routine",
+                lat: b ? (b.south + b.north) / 2 : null,
+                lon: b ? (b.west + b.east) / 2 : null,
+                when: scene.capture_timestamp || null,
+                imageUrl: `data:image/png;base64,${scene.image_b64_composited || scene.image_b64}`,
+                context: `${sensor.replace(/_/g, " ")} · ${fmtArea(areaKm2)}`,
+            })
+            toast(out.path ? `Filed to ${out.path.join(" / ")}` : "Saved for briefing", { icon: "i-check" })
+        } catch {
+            toast("Could not file it", { icon: "i-alert" })
+        } finally {
+            setBusy((bz) => ({ ...bz, saving: false }))
+        }
+    }
+
     const b = drawn?.bounds
 
     return (
+        /* v6 A4 — IT FLOATS, and it ends where the strip starts.
+           This pane was the one right-edge overlay still welded to all
+           three edges (top:0 bottom:0 right:0), so it ran the full height
+           of the map and the timeline sat on its last 100-174px — the
+           detections list and the scan button were underneath the strip
+           and unreachable. Layers and Inspector, in the same slot, had
+           already been floated. Now all three read the same
+           --pane-bottom, so the strip changing face moves all of them.
+
+           It is also wider than the 312px Inspector slot it inherited.
+           Inspector shows one record; this shows a two-scene comparison
+           with a scrubber and a detection table, and at 312px the
+           comparison was the thing being cut. */
         <div className="pane-glass" data-testid="glass-imagery-sidebar" style={{
-            position: "absolute", top: 0, bottom: 0, right: 0, zIndex: 6,
-            width: "var(--pane-r)", borderLeft: "1px solid var(--line)",
-            display: "flex", flexDirection: "column", overflow: "hidden",
+            position: "absolute", right: 12, top: 10,
+            bottom: "var(--pane-bottom)", zIndex: 26,
+            width: IMAGERY_PANE_W, maxWidth: "calc(100vw - 72px)",
+            border: "1px solid var(--gline)",
+            display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden",
         }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6, font: "600 11px var(--font)", color: "var(--txt)" }}>
-                    <svg className="icon sm" style={{ width: 13, height: 13 }}><use href="#i-sat" /></svg>
-                    Imagery detection
-                </span>
-                <button onClick={onClose} title="Close" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
-                    <svg className="icon sm"><use href="#i-collapse-r" /></svg>
-                </button>
+            <div style={{
+                display: "flex", alignItems: "center", gap: 8, minHeight: 36, flexShrink: 0,
+                padding: "0 8px 0 12px", borderBottom: "1px solid var(--gline)",
+            }}>
+                <svg width="13" height="13" style={{ color: "var(--txt3)" }} aria-hidden><use href="#g-sat" /></svg>
+                <b style={{ fontWeight: 600, fontSize: 12.5 }}>Task imagery</b>
+                <span style={{
+                    marginLeft: "auto", fontFamily: "var(--mz-font-mono)",
+                    fontSize: 10, color: "var(--txt4)",
+                }}>{drawn ? fmtArea(areaKm2) : "nothing drawn"}</span>
+                <button onClick={onClose} title="Close" aria-label="Close" style={{
+                    width: 24, height: 24, border: 0, background: "transparent",
+                    color: "var(--txt3)", font: "inherit", cursor: "pointer",
+                }}>✕</button>
             </div>
 
-            {/* §12 — one control, three tabs. */}
-            <div className="seg scantabs">
-                {["tasking", "detections", "areas"].map((t) => (
-                    <button key={t} type="button" aria-pressed={tab === t} onClick={() => setTab(t)}>{t}</button>
+            <nav style={{ display: "flex", flexShrink: 0, borderBottom: "1px solid var(--gline)" }}>
+                {[["Task", "tasking"], ["Found", "detections"], ["Standing", "areas"]].map(([k, t]) => (
+                    <button key={t} onClick={() => setTab(t)} style={{
+                        flex: 1, height: 30, border: 0,
+                        borderBottom: `2px solid ${tab === t ? "var(--acchi)" : "transparent"}`,
+                        background: "transparent",
+                        color: tab === t ? "var(--txt)" : "var(--txt3)",
+                        font: "inherit", fontSize: 12, cursor: "pointer",
+                    }}>{k}{t === "detections" && detections?.length ? ` ${detections.length}` : ""}</button>
                 ))}
-            </div>
+            </nav>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
               {tab === "tasking" && (<>
                 {/* §12.1 — GEOMETRY FIRST. The old flow made you draw and then
                     discover which controls the shape had committed you to. */}
-                <div className="field">
-                    <label>Geometry</label>
-                    <div className="seg">
-                        <button aria-pressed={drawMode === "rectangle"} onClick={() => armDraw("rectangle")}>square</button>
-                        <button aria-pressed={drawMode === "polygon"} onClick={() => armDraw("polygon")}>polygon</button>
+                <Row label="Geometry">
+                    <div style={SEG}>
+                        <button style={segBtn(drawMode === "rectangle")} onClick={() => armDraw("rectangle")}>square</button>
+                        <button style={segBtn(drawMode === "polygon")} onClick={() => armDraw("polygon")}>polygon</button>
                     </div>
-                </div>
+                </Row>
 
                 {!drawn ? (
-                    <div className="scanhint">
+                    <div style={{ fontSize: 12, color: "var(--txt3)", lineHeight: 1.5, textWrap: "pretty" }}>
                         Pick a shape, then drag or click it out on the map.
                         {" "}{drawMode === "rectangle" ? "Two opposite corners." : "Click vertices, double-click to close."}
                         {" "}Right-click cancels.
                     </div>
                 ) : (
                     <>
-                        <div className="scanmetric">
-                            <div><b>{fmtArea(areaKm2)}</b><span>km² covered</span></div>
-                            <div><b>{corners}</b><span>corners</span></div>
-                            <div><b>{passes == null ? "—" : passes}</b><span>archive tiles</span></div>
-                            {/* §12.1 — USABLE passes, not total. The cloud
-                                ceiling is what actually decides how much of
-                                the archive you get. */}
-                            <div><b>{passes == null ? "—" : usable}</b><span>usable passes</span></div>
+                        <div style={{
+                            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1,
+                            background: "var(--gline)", border: "1px solid var(--gline)",
+                        }}>
+                            {[[fmtArea(areaKm2), "km² covered"], [corners, "corners"],
+                              [passes == null ? "—" : passes, "archive tiles"],
+                              /* USABLE passes, not total — the cloud ceiling
+                                 is what decides how much of the archive you
+                                 actually get. */
+                              [passes == null ? "—" : usable, "usable passes"]].map(([v, k]) => (
+                                <div key={k} style={{ padding: "8px 10px", background: "var(--glass2)" }}>
+                                    <b style={{ fontFamily: "var(--mz-font-mono)", fontSize: 15, fontWeight: 500 }}>{v}</b>
+                                    <div style={{ fontSize: 11, color: "var(--txt3)" }}>{k}</div>
+                                </div>
+                            ))}
                         </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                            <button className="btn sm" onClick={() => armDraw(drawMode)}>redraw area</button>
-                            <button className="btn sm" onClick={() => { onDrawModeChange(drawMode); onSceneChange(null); onDetectionsChange([]); onDrawActiveChange(false) }}>clear</button>
+                        <div style={{ display: "flex", gap: 6 }}>
+                            <button style={BTN} onClick={() => armDraw(drawMode)}>redraw</button>
+                            <button style={BTN} onClick={() => { onDrawModeChange(drawMode); onSceneChange(null); onDetectionsChange([]); onDrawActiveChange(false) }}>clear</button>
                         </div>
                     </>
                 )}
 
-                <div className="field"><label>Sensor</label>
-                    <select className="input" value={sensor} onChange={(e) => setSensor(e.target.value)}>
+                <Row label="Sensor">
+                    <select style={FIELD} value={sensor} onChange={(e) => setSensor(e.target.value)}>
                         {SENSOR_OPTIONS.map((s) => (
                             <option key={s.value} value={s.value} disabled={!s.real} title={s.real ? "" : "No real scan/detection pipeline is deployed for this sensor yet"}>
                                 {s.label}{s.real ? "" : " (not yet implemented)"}
                             </option>
                         ))}
                     </select>
-                </div>
+                </Row>
 
-                {/* §12.1 — SHOWN AND DISABLED for SAR, never hidden. A hidden
-                    control reads as a missing feature; a disabled one that
-                    says why teaches the sensor. */}
-                <div className="field">
-                    <label>Max cloud cover ({maxCloud}%)</label>
+                {/* SHOWN AND DISABLED for SAR, never hidden. A hidden control
+                    reads as a missing feature; a disabled one that says why
+                    teaches the sensor. */}
+                <Row label={`Max cloud cover · ${maxCloud}%`}
+                     hint={sar ? "SAR sees through cloud. This does nothing for a radar pass." : null}>
                     <input type="range" min={0} max={100} step={5} value={maxCloud}
-                           disabled={sar}
+                           disabled={sar} style={{ width: "100%", accentColor: "var(--acchi)" }}
                            onChange={(e) => setMaxCloud(Number(e.target.value))} />
-                    {sar && (
-                        <span className="fieldnote">
-                            SAR sees through cloud. This control does nothing for a radar pass.
-                        </span>
-                    )}
-                </div>
+                </Row>
 
-                <div className="field"><label>Date range (days back)</label>
-                    <input className="input" type="number" min={1} max={365} value={daysBack} onChange={(e) => setDaysBack(Number(e.target.value))} />
-                </div>
+                <Row label="Date range · days back">
+                    <input type="number" min={1} max={365} value={daysBack} style={FIELD}
+                           onChange={(e) => setDaysBack(Number(e.target.value))} />
+                </Row>
 
                 {!sar && (
-                    <div className="field"><label>Exact date (optional)</label>
-                        <input className="input" type="date" value={exactDate} onChange={(e) => setExactDate(e.target.value)} />
-                    </div>
+                    <Row label="Exact date · optional">
+                        <input type="date" value={exactDate} style={FIELD}
+                               onChange={(e) => setExactDate(e.target.value)} />
+                    </Row>
                 )}
 
-                {/* §12.1 · detector */}
-                <div className="field">
-                    <label>Confidence floor ({confFloor}%)</label>
+                <Row label={`Confidence floor · ${confFloor}%`}>
                     <input type="range" min={40} max={95} step={5} value={confFloor}
+                           style={{ width: "100%", accentColor: "var(--acchi)" }}
                            onChange={(e) => setConfFloor(Number(e.target.value))} />
-                </div>
+                </Row>
 
-                {/* §12.1 · standing task */}
-                <div className="field">
-                    <label>Re-scan cadence</label>
-                    <select className="input" value={cadence} onChange={(e) => setCadence(e.target.value)}>
-                        {["daily", "3-day", "weekly", "monthly", "on demand"].map((c) => <option key={c} value={c}>{c}</option>)}
+                {/* The standing task: how often this gets looked at again. */}
+                <Row label="Re-scan cadence"
+                     hint="Saving without activating keeps the area on file without consuming tasking budget.">
+                    <select style={FIELD} value={cadence} onChange={(e) => setCadence(e.target.value)}>
+                        {["daily", "3-day", "weekly", "monthly", "on demand"].map((c) => (
+                            <option key={c} value={c}>{c}</option>
+                        ))}
                     </select>
-                </div>
-                <label className="chk">
-                    <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+                </Row>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer" }}>
+                    <input type="checkbox" checked={active} style={{ accentColor: "var(--acchi)" }}
+                           onChange={(e) => setActive(e.target.checked)} />
                     <span>Active — the scheduler runs this area</span>
                 </label>
-                <span className="fieldnote">
-                    Saving without activating keeps the area on file without consuming tasking budget.
-                </span>
 
                 {drawn && (
-                    <div style={{ font: "400 10.5px var(--mono)", color: "var(--txt-4)" }}>
+                    <div style={{
+                        fontFamily: "var(--mz-font-mono)", fontSize: 10.5, color: "var(--txt4)",
+                    }}>
                         {b.south.toFixed(3)}°–{b.north.toFixed(3)}°N, {b.west.toFixed(3)}°–{b.east.toFixed(3)}°E
                     </div>
                 )}
 
-                <div className="field"><label>Area name</label>
-                    <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Bandar Abbas approach" />
-                </div>
+                <Row label="Area name">
+                    <input value={name} style={FIELD} placeholder="e.g. Bandar Abbas approach"
+                           onChange={(e) => setName(e.target.value)} />
+                </Row>
 
+                {/* WHEN THE FRAME WAS TAKEN, NOT WHEN YOU FETCHED IT.
+                    A satellite frame is only meaningful with its capture
+                    time beside it: "latest" over a cloudy fortnight can be
+                    eleven days old, and a detection read as current when it
+                    is eleven days old is the expensive kind of wrong. */}
                 {scene && (
-                    <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>
-                        Loaded · {fmtCaptureLabel(scene.capture_timestamp)}
-                        {scene.cloud_cover != null ? ` · ${Math.round(scene.cloud_cover)}% cloud` : ""}
-                        {detections.length > 0 ? ` · ${detections.length} detection(s) on the globe` : ""}
+                    <div style={{
+                        display: "flex", flexDirection: "column", gap: 3, padding: "10px 12px",
+                        border: "1px solid var(--acchi)", background: "var(--accdim)",
+                    }}>
+                        <span style={EYE}>Frame loaded · captured</span>
+                        <b style={{ fontFamily: "var(--mz-font-mono)", fontSize: 14, fontWeight: 500 }}>
+                            {fmtCaptureLabel(scene.capture_timestamp)}
+                        </b>
+                        <span style={{ fontSize: 11, color: "var(--txt3)" }}>
+                            {[
+                                scene.cloud_cover != null ? `${Math.round(scene.cloud_cover)}% cloud` : null,
+                                (scene.sensor || sensor).replace(/_/g, " "),
+                                detections.length ? `${detections.length} on the globe` : null,
+                            ].filter(Boolean).join(" · ")}
+                        </span>
                     </div>
                 )}
               </>)}
@@ -515,15 +638,15 @@ export default function ImagerySidebar({
                     <svg className="icon sm"><use href="#i-export" /></svg>
                     {busy.exporting ? " rendering…" : " export annotated png"}
                 </button>
-                <input className="input" placeholder="Filter by type or id"
+                <input style={FIELD} placeholder="Filter by type or id"
                        value={detFilter} onChange={(e) => setDetFilter(e.target.value)} />
-                <div className="field">
-                    <label>Confidence floor ({confFloor}%)</label>
+                <Row label={`Confidence floor · ${confFloor}%`}>
                     <input type="range" min={40} max={95} step={5} value={confFloor}
+                           style={{ width: "100%", accentColor: "var(--acchi)" }}
                            onChange={(e) => setConfFloor(Number(e.target.value))} />
-                </div>
+                </Row>
                 {!visibleDetections.length ? (
-                    <div className="scanhint">
+                    <div style={{ fontSize: 12, color: "var(--txt3)", lineHeight: 1.5, textWrap: "pretty" }}>
                         {detections.length
                             ? "Nothing above this confidence floor."
                             : "No detections held. Run a pass from the tasking tab."}
@@ -565,27 +688,42 @@ export default function ImagerySidebar({
 
             {/* §12.1 footer — tasking only. Both refuse without geometry AND
                 SAY SO, rather than sitting inert. */}
+            {/* The order is the order you do them in: get the frame, look at
+                it, run the detector, keep the result, and only then decide
+                whether this is worth watching on a schedule. */}
             {tab === "tasking" && (
-                <div className="scanfoot">
-                    <button className="btn primary sm" disabled={busy.receiving}
-                            onClick={() => (drawn ? receiveImage() : toast("Draw an area first — a pass needs a footprint", { icon: "i-alert" }))}>
-                        {busy.receiving ? "receiving…" : "run pass"}
+                <div style={{
+                    display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, flexShrink: 0,
+                    padding: 10, borderTop: "1px solid var(--gline)",
+                }}>
+                    <button disabled={busy.receiving} style={{
+                        ...BTN, height: 30, gridColumn: "1 / 3", border: 0,
+                        background: "var(--acc)", color: "var(--mz-cream)", fontWeight: 600,
+                    }} onClick={() => (drawn ? receiveImage()
+                        : toast("Draw an area first — a pass needs a footprint", { icon: "i-alert" }))}>
+                        {busy.receiving ? "Pulling the latest frame…" : "Pull latest frame"}
                     </button>
-                    <button className="btn sm" disabled={busy.saving}
-                            onClick={() => (drawn ? saveArea() : toast("Draw an area first — there is nothing to save", { icon: "i-alert" }))}>
-                        {busy.saving ? "saving…" : "save area"}
+                    {/* DETECT WITHOUT LOADING FIRST. This only existed once a
+                        scene had been fetched, so the panel could load an
+                        image and nothing else — running the detector is the
+                        point, and having already fetched the pixels is an
+                        implementation detail. The endpoint fetches them
+                        itself when they are missing. */}
+                    <button disabled={busy.detecting} style={{ ...BTN, height: 28 }}
+                        onClick={() => (drawn || scene ? detectOnScene()
+                            : toast("Draw an area first — detection needs a footprint", { icon: "i-alert" }))}>
+                        {busy.detecting ? "Detecting…" : "Run detection"}
                     </button>
-                    {/* DETECT WITHOUT LOADING FIRST. This button only
-                        existed once a scene had been fetched, so the panel
-                        could load an image and nothing else — running a
-                        detection is the point, and having already fetched
-                        the pixels is an implementation detail. The endpoint
-                        now fetches them itself when they are missing. */}
-                    <button className="btn sm" disabled={busy.detecting}
-                            onClick={() => (drawn || scene
-                                ? detectOnScene()
-                                : toast("Draw an area first — detection needs a footprint", { icon: "i-alert" }))}>
-                        {busy.detecting ? "detecting…" : "run detection"}
+                    <button disabled={!scene || busy.saving} style={{
+                        ...BTN, height: 28,
+                        color: scene ? "var(--txt)" : "var(--txt4)",
+                    }} onClick={fileToCase}>
+                        {busy.saving ? "Filing…" : "File to case"}
+                    </button>
+                    <button disabled={busy.saving} style={{ ...BTN, height: 28, gridColumn: "1 / 3" }}
+                        onClick={() => (drawn ? saveArea()
+                            : toast("Draw an area first — there is nothing to watch", { icon: "i-alert" }))}>
+                        {busy.saving ? "Saving…" : `Watch this area · ${cadence}`}
                     </button>
                 </div>
             )}
