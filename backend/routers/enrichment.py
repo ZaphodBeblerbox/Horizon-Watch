@@ -209,6 +209,12 @@ def enrichment_status(request: Request):
 ACTORS = ("org", "faction", "person", "facility")
 
 
+def _enrich_name(e: dict) -> str:
+    """An entity's name in the canonical form identity is compared in."""
+    import enrich as _e
+    return _e.norm_name(e.get("name"))
+
+
 @router.get("/graph-links")
 def propose_graph_links(request: Request, limit: int = 60):
     """Actor-to-place links the current signals imply, for review.
@@ -229,6 +235,14 @@ def propose_graph_links(request: Request, limit: int = 60):
         rec = found.get(_key(text)) if text else None
         if not rec:
             continue
+        # A PLACE ANOTHER COPY OF THIS STORY CONTRADICTS IS NOT EVIDENCE.
+        # The surface pool marks a survivor whose geocode disagreed with a
+        # duplicate's; proposing a link from one of those produced
+        # "Palestinian ministry → Pakistan", which is a faithful reading of
+        # a wrongly-placed signal and still wrong.
+        if it.get("contested_locations"):
+            continue
+
         ents = rec.get("entities") or []
         resolved = rec.get("resolved") or []
         pairs = list(zip(ents, resolved + [None] * len(ents)))
@@ -239,6 +253,11 @@ def propose_graph_links(request: Request, limit: int = 60):
         for ae, ak in actors:
             for pe, pk in places:
                 if not ak or not pk:
+                    continue
+                # "Israel → Israel". A state is both an actor and a place,
+                # and an edge from a thing to itself adds nothing to a graph
+                # while looking like a finding.
+                if _enrich_name(ae) == _enrich_name(pe):
                     continue
                 key = (ak, pk)
                 p = proposals.setdefault(key, {

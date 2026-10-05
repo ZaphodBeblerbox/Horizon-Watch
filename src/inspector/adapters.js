@@ -27,6 +27,7 @@
 
 import { resolveSanctionsStatus } from "../globe/entityIcons.js"
 import { vesselShipType, acClassify } from "../globe/iconUtils.js"
+import { extentOf } from "../utils/extent.js"
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -285,8 +286,9 @@ function zoneBoundsText(data) {
     if (Array.isArray(data.coordinates) && data.coordinates.length) {
         const lons = data.coordinates.map((c) => c[0])
         const lats = data.coordinates.map((c) => c[1])
-        return `${Math.min(...lons).toFixed(2)}, ${Math.min(...lats).toFixed(2)} → `
-            + `${Math.max(...lons).toFixed(2)}, ${Math.max(...lats).toFixed(2)}`
+        const xs = extentOf(lons), ys = extentOf(lats)
+        return `${xs.min.toFixed(2)}, ${ys.min.toFixed(2)} → `
+            + `${xs.max.toFixed(2)}, ${ys.max.toFixed(2)}`
     }
     return null
 }
@@ -305,7 +307,8 @@ function zoneCentroid(data) {
     if (Array.isArray(data.coordinates) && data.coordinates.length) {
         const lons = data.coordinates.map((c) => c[0])
         const lats = data.coordinates.map((c) => c[1])
-        return { lat: (Math.min(...lats) + Math.max(...lats)) / 2, lon: (Math.min(...lons) + Math.max(...lons)) / 2 }
+        const ys = extentOf(lats), xs = extentOf(lons)
+        return { lat: (ys.min + ys.max) / 2, lon: (xs.min + xs.max) / 2 }
     }
     return pointOf(data)
 }

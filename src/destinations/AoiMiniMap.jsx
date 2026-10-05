@@ -36,6 +36,7 @@ import { esriSatelliteProvider } from "../globe/imageryProviders.js"
 import MapMeta from "../components/MapMeta.jsx"
 import AoiLockDimming from "../globe/AoiLockDimming.jsx"
 import { useUserLocation } from "../globe/useUserLocation.js"
+import { maxOf, minOf } from "../utils/extent.js"
 
 // Real "zoomed in" altitude for the no-real-data default view (vs.
 // zonesCenter()'s 15,000km world-ish fallback) — a genuine device location
@@ -57,8 +58,8 @@ function zonesCenter(zones) {
     const lons = valid.flatMap(z => [z.bbox.min_lon, z.bbox.max_lon])
     const lats = valid.flatMap(z => [z.bbox.min_lat, z.bbox.max_lat])
     return {
-        lon: (Math.min(...lons) + Math.max(...lons)) / 2,
-        lat: (Math.min(...lats) + Math.max(...lats)) / 2,
+        lon: (minOf(lons) + maxOf(lons)) / 2,
+        lat: (minOf(lats) + maxOf(lats)) / 2,
         height: 12_000_000,
     }
 }

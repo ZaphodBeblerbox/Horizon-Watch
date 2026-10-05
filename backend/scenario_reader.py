@@ -34,11 +34,25 @@ DRAFT_SYSTEM = (
     f'of {list(COA)}, "analogues": [<past conflicts named or clearly '
     'implied, at most 3>], "note": <what the text says that the fields do '
     'not carry>, "confidence": 0-1}\n\n'
-    "RULES. Use only the paragraph. Never infer an aggressor the text does "
-    "not name or clearly imply — leave it empty and say so in the note "
-    "instead. 'coa' is how force would be applied: pick the single closest, "
-    "and 'hybrid' when it is genuinely mixed. Analogues must be conflicts, "
-    "not places. Keep the note short."
+    "RULES.\n"
+    "- THE PARTY THAT ACTS IS THE AGGRESSOR, ALWAYS. In 'Iran closes "
+    "Hormuz with mines against tanker traffic', Iran is the aggressor — "
+    "never the target. Putting the acting party in 'target' inverts the "
+    "whole scenario.\n"
+    "- The target is who or what is acted UPON. Where that is not a "
+    "country — a strait, a shipping lane, a pipeline — name the country "
+    "whose territory or waters it lies in and put the specific objective "
+    "in 'target_place'.\n"
+    "- Never infer a party the text does not name or clearly imply. Leave "
+    "it empty and say so in the note; an empty field a person fills in is "
+    "better than a guess they have to notice.\n"
+    "- 'coa' is how force would be applied, and the five listed are the "
+    "ONLY values: the console's feasibility rules are written against them, "
+    "so a sixth is discarded and the field comes back empty. A maritime "
+    "action — mining, blockade, interdiction, fast-attack craft — is "
+    "'hybrid' unless it is a landing, which is 'amphibious'. Pick the "
+    "single closest.\n"
+    "- Analogues must be past conflicts, not places."
 )
 
 READ_SYSTEM = (

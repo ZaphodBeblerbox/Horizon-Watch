@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useCesium } from "resium"
+import { maxOf, minOf } from "../utils/extent.js"
 import {
     ScreenSpaceEventHandler,
     ScreenSpaceEventType,
@@ -214,10 +215,11 @@ export default function GlobeOverwatchDrawLayer({
             const lats = verts.map(v => v[0])
             const lons = verts.map(v => v[1])
             const bounds = {
-                north: Math.max(...lats),
-                south: Math.min(...lats),
-                east:  Math.max(...lons),
-                west:  Math.min(...lons),
+                // Spread-free: see utils/extent.js. A drawn shape is
+                // usually small, but a pasted or imported geometry is
+                // not, and this is the cheap way to never find out.
+                north: maxOf(lats), south: minOf(lats),
+                east:  maxOf(lons), west:  minOf(lons),
             }
 
             polyEntitiesRef.current.forEach(e => { try { viewer.entities.remove(e) } catch (_) {} })

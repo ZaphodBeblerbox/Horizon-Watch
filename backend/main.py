@@ -8887,7 +8887,82 @@ def _build_surface_pool() -> list:
         gated.append(item)
 
     gated.sort(key=lambda x: x["relevance_score"], reverse=True)
-    return gated[:50]
+
+    # ── ONE ROW PER STORY ────────────────────────────────────────────────
+    # Nothing deduped this, so the same wire story arrived several times
+    # with DIFFERENT geocodes and each copy took one of the fifty slots. In
+    # a live pool that was 9 rows of 50 wasted, and 7 of 41 distinct
+    # headlines carried contradictory locations — including a Georgia mass
+    # shooting placed in both Atlanta and Vienna, Austria, which is the
+    # classic Georgia-the-state / Georgia-the-country confusion, and a
+    # single London shooting placed in Hounslow, Ilford and Wembley at
+    # once. Every one of those drew a marker somewhere it did not happen.
+    #
+    # Deduped AFTER the sort, so the copy that survives is the
+    # highest-scoring one. The locations that lost are kept on the survivor
+    # as `contested_locations` rather than discarded: a place that another
+    # copy of the same story contradicts is not evidence of anything, and
+    # anything reading the location downstream — the map, the outlook, the
+    # graph proposals — deserves to know that before it draws a conclusion.
+    #
+    # Only headlines long enough to be distinctive are folded. "Explosion
+    # reported" from two countries is two stories; a forty-character
+    # sentence repeated verbatim is one.
+    def _loc_agrees_with_headline(item: dict) -> bool:
+        """Does the geocode name somewhere the headline also names?
+
+        Relevance score is the sort key but says nothing about geocoding
+        quality, so on its own it kept 'Clark County, Nevada' for a story
+        headlined 'downtown LAS VEGAS shooting' and would have kept Vienna
+        over Atlanta had the scores fallen the other way. A geocode whose
+        own words appear in the headline is the better of two guesses, and
+        this is the whole of the test.
+        """
+        head = " ".join(str(item.get("headline") or "").lower().split())
+        for part in str(item.get("location") or "").split(","):
+            part = part.strip().lower().rstrip("*")
+            # Three characters, so "US" or "UK" inside another word cannot
+            # carry a match on its own.
+            if len(part) >= 4 and part in head:
+                return True
+        return False
+
+    seen: dict = {}
+    deduped: list = []
+    for item in gated:
+        head = " ".join(str(item.get("headline") or "").lower().split())
+        if len(head) < 25:
+            deduped.append(item)
+            continue
+        prior = seen.get(head)
+        if prior is not None:
+            loc = (item.get("location") or "").strip()
+            prior_loc = (prior.get("location") or "").strip()
+            # A later copy whose geocode the headline corroborates replaces
+            # the earlier one's PLACE — not its position in the pool, which
+            # relevance earned.
+            if (loc and loc != prior_loc
+                    and _loc_agrees_with_headline(item)
+                    and not _loc_agrees_with_headline(prior)):
+                prior["location"] = loc
+                for k in ("lat", "lon"):
+                    if item.get(k) is not None:
+                        prior[k] = item[k]
+                loc, prior_loc = prior_loc, loc
+            if loc and loc != prior_loc:
+                contested = prior.setdefault("contested_locations", [])
+                if loc not in contested:
+                    contested.append(loc)
+            continue
+        seen[head] = item
+        deduped.append(item)
+
+    dropped = len(gated) - len(deduped)
+    contested = sum(1 for i in deduped if i.get("contested_locations"))
+    if dropped or contested:
+        print(f"[surface] deduped {dropped} repeated headline(s); "
+              f"{contested} survivor(s) have a contested geocode", flush=True)
+    return deduped[:50]
 
 
 # ── Auto-brief helpers ────────────────────────────────────────────────────────

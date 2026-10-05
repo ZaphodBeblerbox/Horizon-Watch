@@ -9,6 +9,7 @@ import FindingsPanel from "../components/FindingsPanel.jsx"
 import OntologyOrbat from "./OntologyOrbat.jsx"
 import OntologyEngine from "./OntologyEngine.jsx"
 import Loading from "../ui/Loading.jsx"
+import { extentOf } from "../utils/extent.js"
 
 // Ontology — page-by-page rebuild, Part A. A fixed four-tier diagram, never
 // a force simulation. Built on the real Forge ontology (forge_ontology.json,
@@ -363,8 +364,12 @@ export default function Ontology({ onOpenGenerate }) {
         const pos = positions
         const xs = nodes.map((n) => pos[n.id]?.x ?? 0)
         const ys = nodes.map((n) => pos[n.id]?.y ?? 0)
-        const minX = Math.min(...xs) - 40, maxX = Math.max(...xs) + PLATE_W + 40
-        const minY = Math.min(...ys) - 40, maxY = Math.max(...ys) + PLATE_H + 40
+        // The graph holds 1.2M links, so this list is bounded only by
+        // what the layout decided to draw — exactly the case where a
+        // spread throws instead of being slow.
+        const ex = extentOf(xs), ey = extentOf(ys)
+        const minX = ex.min - 40, maxX = ex.max + PLATE_W + 40
+        const minY = ey.min - 40, maxY = ey.max + PLATE_H + 40
         const rect = containerRef.current.getBoundingClientRect()
         const scale = Math.max(0.3, Math.min(1.2, Math.min(rect.width / (maxX - minX || 1), rect.height / (maxY - minY || 1))))
         applyFit(setTransform, { x: -minX * scale, y: -minY * scale, k: scale }, 260)

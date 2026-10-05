@@ -70,6 +70,19 @@ export default function ForecastBuilder({ onOpen }) {
     const [coa, setCoa] = useState(null)
     const [saved, setSaved] = useState([])
     const [busy, setBusy] = useState(false)
+    /* ── SAY IT, DON'T FILL IT IN ──────────────────────────────────────
+       The form below is the authoritative thing — it is what the model's
+       answer has to pass through, and every field is still editable after.
+       But nobody thinks in forms. "Iran closes Hormuz with mines and
+       fast-attack craft against tanker traffic, like the tanker war" is
+       how a scenario is actually described, and turning that sentence into
+       these fields is extraction, which a form cannot do.
+
+       It FILLS the form rather than bypassing it, so what the model
+       proposed is visible and correctable before anything is run. */
+    const [said, setSaid] = useState("")
+    const [reading, setReading] = useState(false)
+    const [readNote, setReadNote] = useState(null)
 
     const countries = useMemo(() => (world || [])
         .map((f) => f.properties?.n).filter(Boolean).sort(), [world])
@@ -154,12 +167,71 @@ export default function ForecastBuilder({ onOpen }) {
         }).then((r) => r.json()).then(loadSaved).finally(() => setBusy(false))
     }
 
+    const readIt = async () => {
+        if (!said.trim()) return
+        setReading(true); setReadNote(null)
+        try {
+            const r = await fetch(`${API_BASE}/api/forecast/scenarios/draft`, {
+                method: "POST", credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: said }),
+            })
+            const d = await r.json()
+            if (!d?.ok) { setReadNote(d?.why || "That did not read."); return }
+            const f = d.fields || {}
+            // Only what came back. A field the paragraph did not mention
+            // keeps whatever is already in the form rather than being
+            // cleared to a default nobody chose.
+            if (f.aggressor) setAggressor(f.aggressor)
+            if (f.target) setTarget(f.target)
+            if (f.target_place) setPlaceQ(f.target_place)
+            if (f.coa) setCoa(f.coa)
+            setReadNote(d.needs?.length
+                // Said plainly: a draft missing its target is one to finish,
+                // not one to run.
+                ? `Read it, but ${d.needs.join("; ")}. Fill those in below.`
+                : "Read it into the form below. Check it before you run it.")
+        } catch (e) { setReadNote(String(e.message || e)) }
+        finally { setReading(false) }
+    }
+
     const lab = { font: "600 10px var(--font)", letterSpacing: ".07em",
                   textTransform: "uppercase", color: "var(--txt-3)", marginBottom: 4 }
     const row = { marginBottom: 12 }
 
     return (
         <div style={{ padding: "0 14px 18px" }}>
+            <div style={{ ...row, paddingBottom: 12, borderBottom: "1px solid var(--gline)" }}>
+                <div style={lab}>Describe it</div>
+                <textarea
+                    className="input"
+                    value={said}
+                    onChange={(e) => setSaid(e.target.value)}
+                    onKeyDown={(e) => {
+                        // Enter reads it; shift-enter is a newline. A
+                        // paragraph box that submits on a bare Enter would
+                        // cut people off mid-sentence.
+                        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); readIt() }
+                    }}
+                    rows={3}
+                    placeholder={"Iran closes Hormuz with mines and fast-attack craft "
+                        + "against tanker traffic, like the tanker war"}
+                    style={{ width: "100%", resize: "vertical",
+                             font: "400 12.5px/1.6 var(--font)" }}
+                />
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                    <button className="btn sm primary" disabled={reading || !said.trim()}
+                            onClick={readIt}>
+                        {reading ? "reading…" : "read it into the form"}
+                    </button>
+                    {readNote && (
+                        <span style={{ font: "400 11px/1.4 var(--font)", color: "var(--txt-3)" }}>
+                            {readNote}
+                        </span>
+                    )}
+                </div>
+            </div>
+
             <div style={row}>
                 <div style={lab}>Aggressor</div>
                 <select className="input" value={aggressor} style={{ width: "100%" }}
