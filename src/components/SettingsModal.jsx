@@ -5,6 +5,7 @@ import { getSettings, subscribeSettings, updateSetting } from "../state/settings
 import { listSessions, listViews, deleteSession, deleteView, viewExtraLabels } from "../state/sessionStore.js"
 import { KEYBOARD_SHORTCUTS } from "../data/keyboardShortcuts.js"
 import PlacePicker from "../search/PlacePicker.jsx"
+import InterestsEditor from "./InterestsEditor.jsx"
 import { useFreshness } from "./Freshness.jsx"
 import { getManualLocation, setManualLocation } from "../state/themeStore.js"
 import ThemeControl from "./ThemeControl.jsx"
@@ -533,6 +534,7 @@ function SessionsSection() {
 
 const SECTIONS = [
     { key: "general", label: "General" },
+    { key: "interests", label: "Your interests" },
     { key: "mapLayers", label: "Map & layers" },
     { key: "alerts", label: "Alerts" },
     { key: "sessions", label: "Sessions & views" },
@@ -543,7 +545,11 @@ const SECTIONS = [
 ]
 
 export default function SettingsModal({ onClose, onOpenSources }) {
-    const [active, setActive] = useState("general")
+    const [active, setActive] = useState(() => {
+        const want = typeof window !== "undefined" ? window.__plxSettingsSection : null
+        if (typeof window !== "undefined") window.__plxSettingsSection = null
+        return want || "general"
+    })
     const [settings, setSettings] = useState(getSettings)
     useEffect(() => subscribeSettings(setSettings), [])
 
@@ -594,6 +600,7 @@ export default function SettingsModal({ onClose, onOpenSources }) {
                     <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-2) var(--space-4) var(--space-4)" }}>
                         {active === "general" && <GeneralSection settings={settings} />}
                         {active === "mapLayers" && <MapLayersSection settings={settings} />}
+                        {active === "interests" && <InterestsEditor />}
                         {active === "alerts" && <AlertsSection settings={settings} onOpenSources={onOpenSources ? () => { onOpenSources(); onClose() } : null} />}
                         {active === "sources" && <SourcesSection />}
                         {active === "briefing" && <BriefingSection settings={settings} />}

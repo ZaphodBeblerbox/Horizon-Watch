@@ -26,7 +26,10 @@ import { getCurrentUser, subscribeAuth } from "../state/authStore.js"
 import { greetingFor } from "../data/greetings.js"
 import Avatar from "../ui/Avatar.jsx"
 import { MODE_SURFACE, MODE_BODY } from "../plx6/modeWindow.js"
-import { criticalWhere, leading, leadSentence, placeOf, theaterLines } from "./homeLead.js"
+import { criticalWhere, forYouLead, leading, leadSentence, placeOf, theaterLines } from "./homeLead.js"
+import { countriesInView, partition, watched } from "../state/interests.js"
+import { places as loadPlaces } from "../voice/gazetteer.js"
+import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 import Minimap from "../components/Minimap.jsx"
 import { THEATER_SCOPE } from "../data/theaterScope.js"
 
@@ -95,7 +98,7 @@ const rowBtn = {
     font: "inherit", textAlign: "left", cursor: "pointer",
 }
 
-export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} }) {
+export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {}, theaters: userTheaters = [] }) {
     const [user, setUser] = useState(() => getCurrentUser())
     const [surface, setSurface] = useState([])
     const [boards, setBoards] = useState([])
@@ -152,6 +155,16 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
         + (user?.display_name?.split(" ")[1]?.[0] || "U").toUpperCase())
     const clock = new Date().toISOString().slice(11, 16) + "Z"
 
+    /* WHAT IS FOR THIS USER (state/interests.js): their theaters' countries
+       plus whatever they added in Settings. Decided here, at read time; the
+       shared surface ranking is untouched. */
+    const [countryPlaces, setCountryPlaces] = useState([])
+    useEffect(() => { loadPlaces().then((ps) => setCountryPlaces(ps.filter((p) => p.kind === "country"))).catch(() => {}) }, [])
+    const [interests, setInterests] = useState(() => getSettings()?.interests || null)
+    useEffect(() => subscribeSettings((st) => setInterests(st?.interests || null)), [])
+    const w = useMemo(() => watched(interests || {}, userTheaters, countryPlaces), [interests, userTheaters, countryPlaces])
+    const split = useMemo(() => partition(surface, w), [surface, w])
+
     /* Overnight — our own surface, newest first. Deliberately NOT sorted on
        relevance_score: that field is a lookup on severity_tier (main.py
        ~8635), so ranking by it would just restate the dot colour. */
@@ -163,11 +176,14 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
             if (!k || seen.has(k)) return false
             seen.add(k); return true
         })
+        // Yours first, then severity, then newest.
+        const mineIds = new Set(split.mine.map((m) => m.id ?? m.headline))
         return [...unique]
-            .sort((a, b) => (rank[a.severity_tier] ?? 9) - (rank[b.severity_tier] ?? 9)
+            .sort((a, b) => (mineIds.has(b.id ?? b.headline) - mineIds.has(a.id ?? a.headline))
+                || (rank[a.severity_tier] ?? 9) - (rank[b.severity_tier] ?? 9)
                 || String(b.published_at || "").localeCompare(String(a.published_at || "")))
             .slice(0, 4)
-    }, [surface])
+    }, [surface, split])
 
     /* Top scenario per board, with its own base rate kept alongside.
        A FORECAST WITHOUT ITS BASE RATE IS NOT A FORECAST. The model's
@@ -217,7 +233,8 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
 
     /* The lead names the signal that leads the list and where the rest
        are; homeLead.js says how, and keeps the all-critical guard. */
-    const lead = useMemo(() => leadSentence(surface), [surface])
+    const lead = useMemo(() => (split.hasInterests ? forYouLead(split.mine, split.elsewhere) : leadSentence(surface)),
+        [split, surface])
 
     /* The minimap in Suggested: the leading signal as the subject, every
        other located signal as context, at world span. Measured, because the
@@ -325,8 +342,15 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
        three hardcoded sentences, one claiming a Hormuz transit baseline
        nothing in the system can measure. */
     const LEVEL_DOT = { critical: "var(--red)", active: "var(--steel)", quiet: "var(--txt4)" }
-    const theaters = useMemo(() => theaterLines(surface, THEATER_SCOPE)
-        .map((t) => [t.name, t.level, LEVEL_DOT[t.level], t.line]), [surface])
+    // The user's own theaters, each scoped to the countries its view frames;
+    // the seeded scopes only until the real rows have loaded.
+    const theaters = useMemo(() => {
+        const scopes = userTheaters.length && countryPlaces.length
+            ? Object.fromEntries(userTheaters.map((t) => [t.id, { label: t.name, countries: countriesInView(t.view, countryPlaces) }])
+                .filter(([, v]) => v.countries.length))
+            : THEATER_SCOPE
+        return theaterLines(surface, scopes).map((t) => [t.name, t.level, LEVEL_DOT[t.level], t.line])
+    }, [surface, userTheaters, countryPlaces])
 
     const ontoTypes = useMemo(() => {
         const nodes = safeArray(onto?.nodes)
@@ -398,6 +422,16 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
                                 margin: 0, fontSize: 19, lineHeight: 1.45, color: "var(--txt)",
                                 textWrap: "pretty", maxWidth: "68ch",
                             }}>{lead}</p>
+                            {/* What the lead is relative to, and where to change it. */}
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--txt3)", marginTop: -6 }}>
+                                <span>{split.hasInterests
+                                    ? `Watching ${[...new Set([...userTheaters.map((t) => t.name), ...(interests?.regions || []), ...(interests?.countries || [])])].slice(0, 5).join(", ")}${(interests?.topics || []).length ? ` · topics: ${interests.topics.join(", ")}` : ""}`
+                                    : "Tell Parallax what you watch, and this leads with your areas instead of everything."}</span>
+                                <button onClick={() => { window.__plxSettingsSection = "interests"; window.dispatchEvent(new CustomEvent("akili:open-settings")) }}
+                                        style={{ border: 0, background: "none", padding: 0, color: "var(--acchi)", cursor: "pointer", font: "inherit" }}>
+                                    {split.hasInterests ? "Change" : "Choose what you watch →"}
+                                </button>
+                            </div>
 
                             <div style={{
                                 display: "grid",

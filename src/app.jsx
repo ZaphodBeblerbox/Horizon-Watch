@@ -686,6 +686,11 @@ export default function App() {
        stayed until the next reload. Anything done to those tabs — editing,
        favouriting, filing — acted on rows that do not exist. */
     useEffect(() => subscribeAuth(() => { if (getCurrentUser()) refreshTheaters() }), [refreshTheaters])
+    useEffect(() => {
+        const open = () => openOverlay("overlay:settings")
+        window.addEventListener("akili:open-settings", open)
+        return () => window.removeEventListener("akili:open-settings", open)
+    }, [])
 
     /* OPENING A SHARED LINK. #view=…&theater=… (state/shareLink.js) is read
        once, held until the real theater rows have loaded, then applied: the
@@ -2205,6 +2210,7 @@ export default function App() {
                 {tabs.some(t => t.type === "home") && (
                     <div style={modeLayer(activeTabType === "home")}>
                         <Home
+                            theaters={orderedTheaters}
                             onOpenSearch={() => openOverlay("overlay:palette")}
                             onOpenModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
                             onFocusSignal={(sig) => {

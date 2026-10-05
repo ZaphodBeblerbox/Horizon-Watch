@@ -114,3 +114,27 @@ export function criticalWhere(surface) {
     return `${crit.length} critical in ${count} ${count === 1 ? "country" : "countries"}: `
         + listOf([...top.map(([c, n]) => `${c} (${n})`), ...(rest > 0 ? [`${rest} more`] : [])]) + "."
 }
+
+/**
+ * The lead when we know what this user watches: what is happening in THEIR
+ * places first, with why it is theirs, and everything else as one short
+ * clause. A Congo boat collision is real news; for a Red Sea analyst it is
+ * "elsewhere", not the headline.
+ */
+export function forYouLead(mine = [], elsewhere = []) {
+    const parts = []
+    const top = leading(mine)[0]
+    if (top) {
+        const place = placeOf(top)
+        parts.push(`In your areas: ${headlineOf(top)}${place ? ` — ${place}` : ""}.`)
+        const crit = mine.filter((s) => s.severity_tier === "critical").length
+        parts.push(`${mine.length} signal${mine.length === 1 ? "" : "s"} where you watch${crit ? `, ${crit} critical` : ""}.`)
+    } else {
+        parts.push("Nothing new where you watch.")
+    }
+    const elseCrit = elsewhere.filter((s) => s.severity_tier === "critical").length
+    if (elsewhere.length) {
+        parts.push(`Elsewhere: ${elsewhere.length} signal${elsewhere.length === 1 ? "" : "s"}${elseCrit ? `, ${elseCrit} critical` : ""}.`)
+    }
+    return parts.join(" ")
+}

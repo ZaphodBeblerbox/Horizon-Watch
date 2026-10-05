@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { criticalWhere, leadSentence, placeOf, theaterLines } from "./homeLead.js"
+import { criticalWhere, forYouLead, leadSentence, placeOf, theaterLines } from "./homeLead.js"
 import { THEATER_SCOPE } from "../data/theaterScope.js"
 
 const sig = (headline, country, tier = "significant", at = "2026-10-05T08:00:00Z", location) => ({
@@ -61,5 +61,16 @@ describe("criticalWhere", () => {
             sig("d", "Kenya", "critical"), sig("e", "Sudan", "critical"), sig("f", "Sudan")]
         expect(criticalWhere(s)).toBe("5 critical in 4 countries: Israel (2), Kenya (1), Nigeria (1) and 1 more.")
         expect(criticalWhere([sig("x", "Sudan")])).toBe("No critical signals on the surface.")
+    })
+})
+
+
+describe("forYouLead", () => {
+    it("leads with the user's own areas and puts the rest in one clause", () => {
+        const mine = [sig("Fighting around Taiz", "Yemen", "critical", "2026-10-05T10:00:00Z", "Taiz, Yemen")]
+        const elsewhere = [sig("Boat collision on the Congo River", "Democratic Republic of the Congo", "critical"), sig("x", "Kenya")]
+        expect(forYouLead(mine, elsewhere)).toBe(
+            "In your areas: Fighting around Taiz — Taiz, Yemen. 1 signal where you watch, 1 critical. Elsewhere: 2 signals, 1 critical.")
+        expect(forYouLead([], elsewhere)).toMatch(/^Nothing new where you watch\./)
     })
 })
