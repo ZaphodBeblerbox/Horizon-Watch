@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react"
+import SectionLabel from "../../inspector/SectionLabel.jsx"
 import { getCurrentUser } from "../../state/authStore.js"
 import { registerInspectorExtension } from "../../inspector/extensionRegistry.js"
 import {
@@ -351,9 +352,7 @@ function CollabPanel({ recordRef }) {
     if (!recordRef) return null
     return (
         <div style={{ marginTop: "var(--space-3)", paddingTop: "var(--space-3)", borderTop: "1px solid var(--line)" }}>
-            <div style={{ font: "700 10px var(--font)", color: "var(--acc-hi)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
-                Collaboration
-            </div>
+            <SectionLabel>Collaboration</SectionLabel>
             <Presence recordRef={recordRef} />
             <Assignment recordRef={recordRef} />
             <Comments recordRef={recordRef} />

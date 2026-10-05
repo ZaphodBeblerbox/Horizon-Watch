@@ -5,13 +5,14 @@ import API_BASE from "../apiBase.js"
 import { entityMarkerSvg } from "../globe/entityIcons.js"
 import EntityLinksPanel from "./EntityLinksPanel.jsx"
 import { normalizeEntity } from "../inspector/adapters.js"
-import { Panel, Button, EmptyState } from "../ui/index.js"
+import { Panel, Button } from "../ui/index.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { buildOntologyRecord, traceRationale } from "../inspector/ontologyRecord.js"
 import { linkifyText } from "../lib/linkifyText.jsx"
-import Loading from "../ui/Loading.jsx"
 import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
+import SectionLabel from "../inspector/SectionLabel.jsx"
+import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -113,14 +114,33 @@ export function forecastHint(data) {
     return s.length >= 3 ? s : null
 }
 
-function SectionLabel({ children }) {
+/** One cited source: what it is, where it lives, and how to read it.
+ *  X and Telegram posts open beside the record (SourceViewer); anything
+ *  else cannot be framed and opens in a tab. */
+function SourceRow({ label, url }) {
+    const inPlace = !!embedFor(url)
+    const btn = {
+        height: 24, padding: "0 9px", font: "500 11.5px var(--font)", cursor: "pointer",
+        border: "1px solid var(--gline2, var(--line))", background: "transparent",
+        color: "var(--acc-hi, var(--acchi))", textDecoration: "none",
+        display: "inline-flex", alignItems: "center", whiteSpace: "nowrap",
+    }
     return (
         <div style={{
-            fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)",
-            color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em",
-            marginBottom: "var(--space-2)",
+            display: "flex", alignItems: "center", gap: 8, padding: "6px 0",
+            borderBottom: "1px solid var(--border-dim)",
         }}>
-            {children}
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)" }}>{label}</div>
+                <div style={{ font: "400 10.5px var(--mono)", color: "var(--txt-4, var(--text-dim))",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={url}>
+                    {hostOf(url)}
+                </div>
+            </div>
+            {inPlace && <button style={btn} onClick={() => openSource(url)}>Open here</button>}
+            <a style={{ ...btn, border: 0, padding: 0 }} href={url} target="_blank" rel="noopener noreferrer" title={url}>
+                {inPlace ? "↗" : "Open ↗"}
+            </a>
         </div>
     )
 }
@@ -171,9 +191,17 @@ function OntologyRecordBlock({ entityType, data }) {
         padding: "1px 5px", border: "1px solid var(--line)",
         color: ok ? "var(--txt-2)" : "var(--amber)", background: "var(--bg-2)",
     })
+    // FOLDED, NOT HIDDEN. Every record still carries its trace (§10.4), but
+    // a UUID and a type slug are not what someone opening a pin came for.
+    // The summary line says whether the trace is complete, so an
+    // untraceable record still announces itself without being opened.
     return (
-        <div style={{ marginBottom: "var(--space-4)", borderTop: "1px solid var(--line-soft)", paddingTop: "var(--space-3)" }}>
-            <SectionLabel>Ontology record</SectionLabel>
+        <details style={{ marginBottom: "var(--space-4)", borderTop: "1px solid var(--line-soft)", paddingTop: "var(--space-3)" }}>
+            <summary style={{ cursor: "pointer", listStyle: "revert" }}>
+                <SectionLabel style={{ display: "inline-flex", marginBottom: 0 }}
+                    meta={rec.complete ? "traced" : "incomplete trace"}>Record details</SectionLabel>
+            </summary>
+            <div style={{ marginTop: 8 }}>
             <AttributeRow label="Instance" value={rec.instance || "— none —"} />
             <AttributeRow label="Type" value={rec.type || "— untyped —"} />
             <div style={{ display: "flex", gap: 5, margin: "4px 0 6px", flexWrap: "wrap" }}>
@@ -205,7 +233,8 @@ function OntologyRecordBlock({ entityType, data }) {
             }}>
                 {traceRationale(rec)}
             </p>
-        </div>
+            </div>
+        </details>
     )
 }
 
@@ -410,7 +439,13 @@ export default function InspectorPanel({
             ? { ...(vesselOwner.registry || {}), ...data, ownership: vesselOwner }
             : data
     const normalized = normalizeEntity(entityType, enrichedData)
-    const { identity, attributes, provenance, actions, media, description } = normalized
+    const { identity, provenance, actions, media, description } = normalized
+    const [titleOpen, setTitleOpen] = useState(false)
+    useEffect(() => { setTitleOpen(false) }, [entityId])
+    // ~3 lines of the 17px headline in a ~260px column.
+    const titleLong = String(identity.title || "").length > 80
+    // Citations leave the attribute table for their own list (see SourceRow).
+    const { attributes, sources } = splitSources(normalized.attributes)
 
     useEffect(() => {
         if (!entityType || !entityId) { setLinks([]); setLinksError(false); return }
@@ -516,15 +551,27 @@ export default function InspectorPanel({
                     />
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                        fontSize: "var(--text-lg)", fontWeight: "var(--weight-bold)",
-                        color: "var(--text-primary)", lineHeight: 1.3,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}>
+                    {/* THE HEADLINE WRAPS. It was cut to one line, so a
+                        record's title could only ever be a short label —
+                        usually a date. Three lines hold what happened. */}
+                    {/* Clamped at three lines; a longer one opens on click,
+                        so the full text is never out of reach. */}
+                    <div
+                        onClick={() => setTitleOpen((o) => !o)}
+                        title={titleLong && !titleOpen ? "Show the full headline" : undefined}
+                        style={{
+                            fontSize: 17, fontWeight: 650, letterSpacing: "-0.01em",
+                            color: "var(--text-primary)", lineHeight: 1.3, wordBreak: "break-word",
+                            cursor: titleLong ? "pointer" : "default",
+                            ...(titleOpen ? {} : {
+                                display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical",
+                                overflow: "hidden",
+                            }),
+                        }}>
                         {identity.title}
                     </div>
                     {identity.subtitle && (
-                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", marginTop: 2 }}>
+                        <div style={{ font: "400 11px var(--font)", color: "var(--txt-3, var(--text-secondary))", marginTop: 4 }}>
                             {identity.subtitle}
                         </div>
                     )}
@@ -683,6 +730,13 @@ export default function InspectorPanel({
                     </div>
                 )}
 
+                {sources.length > 0 && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <SectionLabel meta={sources.length > 1 ? sources.length : null}>Sources</SectionLabel>
+                        {sources.map((src) => <SourceRow key={src.url + src.label} {...src} />)}
+                    </div>
+                )}
+
                 {/* WHAT IS IN THIS WATER RIGHT NOW. Only for the two types
                     whose whole subject is a piece of sea. Rendered after the
                     reference attributes because it is the live half and it
@@ -720,12 +774,12 @@ export default function InspectorPanel({
                     since this is forge_ontology.json-sourced, real, and
                     specific (a real ORBAT faction, a real nearby
                     chokepoint), not the SQL OntologyLink store's shape. */}
-                {entityType === "geoconfirmed" && (
+                {/* Shown only when there is something: an empty "linked"
+                    block per pin was most of what the panel said. */}
+                {entityType === "geoconfirmed" && !forgeConnectionsLoading && forgeConnections.length > 0 && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
-                        <SectionLabel>Real linked entities</SectionLabel>
-                        {forgeConnectionsLoading ? (
-                            <Loading size={18} inline label="Loading" />
-                        ) : forgeConnections.length > 0 ? (
+                        <SectionLabel meta={forgeConnections.length}>Linked</SectionLabel>
+                        {(
                             forgeConnections.map((c) => (
                                 <div key={c.id} style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)", padding: "3px 0" }}>
                                     <span style={{ color: "var(--text-dim)", textTransform: "uppercase", fontSize: "var(--text-xs)", marginRight: 6 }}>{c.type}</span>
@@ -735,27 +789,22 @@ export default function InspectorPanel({
                                     </span>
                                 </div>
                             ))
-                        ) : (
-                            <EmptyState description="No real specific links found for this pin." />
                         )}
                     </div>
                 )}
 
-                {/* Related links */}
-                <div style={{ marginBottom: "var(--space-4)" }}>
-                    <SectionLabel>Related entities</SectionLabel>
-                    {linksLoading ? (
-                        <Loading size={18} inline label="Loading" />
-                    ) : links.length > 0 ? (
-                        links.map((link) => (
+                {/* Related links — only when there are some. A failed load
+                    still says so: that is a fault, not an absence. */}
+                {!linksLoading && (links.length > 0 || linksError) && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <SectionLabel meta={links.length || null}>Related</SectionLabel>
+                        {links.length > 0 ? links.map((link) => (
                             <RelatedLinkRow key={link.link_id ?? `${link.entity_type}-${link.entity_id}-${link.source_id}`} link={link} onSelectRelated={onSelectRelated} />
-                        ))
-                    ) : (
-                        <EmptyState
-                            description={linksError ? "Couldn't load related entities." : "No related entities found."}
-                        />
-                    )}
-                </div>
+                        )) : (
+                            <div style={{ font: "400 11px var(--font)", color: "var(--amber)" }}>Couldn't load related records.</div>
+                        )}
+                    </div>
+                )}
 
                 {/* WHAT ELSE IS THIS ATTACHED TO. Reaching the graph used
                     to mean leaving for the Ontology page and searching by

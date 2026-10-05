@@ -82,6 +82,20 @@ describe("adaptVessel ownership", () => {
     })
 })
 
+describe("chokepoint", () => {
+    it("leads with what the strait is for and what the news says, not its plumbing", () => {
+        const r = normalizeEntity("chokepoint", {
+            name: "Danish Straits", system_id: "CHOKE-007", lat: 56, lon: 10.5, match_count: 0,
+            current_status: "normal", strategic_description: "Baltic Sea access.",
+            traffic: "3.33% of observed AIS positions...", traffic_verdict: "within normal range",
+        })
+        expect(r.identity.subtitle).toBe("Chokepoint · traffic within normal range")
+        expect(r.description).toBe("Baltic Sea access.")
+        expect(r.attributes.map((a) => a.label)).toEqual(["News (48h)", "Position"])
+        expect(findAttr(r.attributes, "News (48h)").value).toBe("No matching headlines")
+    })
+})
+
 describe("adaptAircraft", () => {
     it("maps a commercial aircraft with position/heading/speed/altitude and the real sub-type", () => {
         const ac = { flight: "UAL123", category: "A3", lat: 40.1, lon: -74.2, track: 270, gs: 420, alt_baro: 35000 }
@@ -277,6 +291,12 @@ describe("adaptGeneric — unknown entity types never crash and list raw fields 
         expect(result.identity.entityType).toBe("generic")
         expect(findAttr(result.attributes, "Threat Score").value).toBe("62")
         expect(findAttr(result.attributes, "Trend").value).toBe("escalating")
+    })
+
+    it("keeps identifiers and raw coordinates out of the attribute list", () => {
+        const r = adaptGeneric({ name: "X", system_id: "CHOKE-7", lat: 56, lon: 10.5, cable_id: "c1", depth_m: 40 }, "cable")
+        expect(r.attributes.map((a) => a.label)).toEqual(["Depth M", "Position"])
+        expect(r.identity.subtitle).toBe("Cable")
     })
 
     it("never fabricates a field — only lists what's actually present", () => {

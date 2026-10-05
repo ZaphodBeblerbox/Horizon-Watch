@@ -140,7 +140,25 @@ live system, not inferred.
    - **Notifications only while the system is in use** — live events as they
      happen, never a backlog ("what happened 5 hours ago") on return.
 
+### UI design direction (agreed 2026-10-05)
+Professional and sleek, modern, solid; the owner likes the big headlines.
+1. One set of rules: type scale, spacing, ONE heading style
+   (`src/inspector/SectionLabel.jsx`), ONE date format (`src/utils/formatTime.js`:
+   "5 Oct 2026" / "5 Oct 2026, 14:32Z"; `toLocaleString()` is still used ~38
+   times elsewhere).
+2. Shared pieces: panel header (headline = what happened; subtitle = kind ·
+   place · date), section heading, attribute row, source row, empty sections
+   hidden.
+3. ~~Inspector first~~ — done: wrapping headline, Sources list with in-app
+   viewer for X/Telegram (`SourceViewer.jsx`, `sourceEmbed.js`; news sites
+   refuse framing and open in a tab), IDs folded into "Record details".
+4. Next: carry the same pattern to the other side panels and the top bar.
+   Sidebar icons stay monochrome (red/amber mean severity here); give the
+   active module a clear accent instead.
+
 ### Seen but not fixed
+- Intermittent page error "the server did not respond within 30s" during
+  browser probes, independent of the screen being tested.
 - A Yemen signal headlined "fighting around Taiz" is geocoded to Lahj.
 - **Vessel reference photos are wrong.** The Wikimedia lookup matches any
   Commons file by ship name: "PACITA" shows a Philippine supermarket, "SAMPLE"

@@ -28,6 +28,7 @@
 import { resolveSanctionsStatus } from "../globe/entityIcons.js"
 import { vesselShipType, acClassify } from "../globe/iconUtils.js"
 import { extentOf } from "../utils/extent.js"
+import { fmtWhen } from "../utils/formatTime.js"
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -59,15 +60,11 @@ function fmtDeg(v) {
     return `${Math.round(Number(v))}°`
 }
 
-function fmtTimestamp(ts) {
-    if (!ts) return null
-    try {
-        const d = new Date(ts)
-        if (isNaN(d.getTime())) return String(ts)
-        return d.toLocaleString()
-    } catch {
-        return String(ts)
-    }
+// One date format for the whole panel (src/utils/formatTime.js). This was
+// toLocaleString(), which printed American dates and gave day-precision
+// records an invented midnight.
+function fmtTimestamp(ts, opts) {
+    return fmtWhen(ts, opts)
 }
 
 /** Real position field, wherever it lives on the payload — never fabricated. */
@@ -371,40 +368,46 @@ export function adaptZone(data = {}) {
 
 export function adaptGeoConfirmed(data = {}) {
     const point = pointOf(data)
-    // GeoConfirmed's real `name` field is its own short label (near-always a
-    // "DD MON YYYY" date string) — the real header-appropriate title. The
-    // real `description` field is full prose (sometimes several sentences)
-    // and was previously used AS the title, silently truncated by the
-    // header's single-line CSS with no way to read the rest — it's now a
-    // real, separate, untruncated body field instead (see `description`
-    // below, rendered by InspectorPanel as its own wrapping section).
-    const title = data.name || (data.description ? data.description.slice(0, 60) : null) || "GeoConfirmed Event"
+    // THE HEADLINE IS WHAT HAPPENED. `name` is GeoConfirmed's own label and
+    // is nearly always just the date ("05 OCT 2026"), which made the
+    // biggest line in the panel the least informative one. The record also
+    // carries `title` — the event, composed with its country — and that is
+    // the headline; the date moves to the subtitle with the place.
+    const title = (data.title || "").trim()
+        || (data.description ? data.description.slice(0, 140) : "")
+        || data.name || "GeoConfirmed placemark"
     const sources = (data.original_source || "").split("\n").map((s) => s.trim()).filter(Boolean)
     const geoloc = (data.geolocation_source || "").split("\n").map((s) => s.trim()).filter(Boolean)
+    // "8GRGC47C+67 Palanca, Moldova" -> "Palanca, Moldova"
+    const place = String(data.plus_code || "").replace(/^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{0,3}\s*/i, "").trim() || null
+    const when = data.date ? fmtTimestamp(data.date, { precision: data.date_precision === "day" ? "day" : undefined }) : null
+    const theatre = data.theatre_slug ? humanizeKey(data.theatre_slug) : null
 
     const attributes = compact([
-        attr("Theatre", data.theatre_slug),
-        attr("Date", data.date ? fmtTimestamp(data.date) : null),
         attr("Faction", data.faction),
-        attr("Location", data.plus_code || (point ? fmtCoord(point.lat, point.lon) : null)),
+        attr("Theatre", theatre),
+        attr("Location", place),
+        attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
         attr("ORBAT unit", data.orbat_unit_name),
         attr("Origin media", data.origin),
-        attr("Source", sources.join(", ") || null),
-        attr("Geolocation verification", geoloc.join(", ") || null),
+        attr("Original post", sources.join("\n") || null),
+        attr("Geolocation", geoloc.join("\n") || null),
     ])
+
+    // The description often IS the title (title is composed from it). Shown
+    // only when it says more, so the panel does not print the event twice.
+    const desc = (data.description || "").trim()
+    const descAddsSomething = desc && !title.replace(/\s+—\s+[^—]+$/, "").includes(desc.replace(/\.$/, ""))
 
     return {
         identity: {
             title,
-            subtitle: data.theatre_slug || null,
+            subtitle: ["GeoConfirmed", place, when].filter(Boolean).join(" · "),
             entityType: "geoconfirmed",
             subtype: null,
             sanctionsStatus: null,
         },
-        // Real, complete, untruncated free text — never squeezed into the
-        // single-line header title. Null (not rendered at all) when the
-        // real placemark genuinely has no description.
-        description: data.description || null,
+        description: descAddsSomething ? desc : null,
         attributes,
         provenance: { feed: "GeoConfirmed", ingestedAt: null },
         actions: {
@@ -506,23 +509,34 @@ export function adaptInfrastructure(data = {}) {
 //    sentinel_detection, assessment, threat_region, and anything else) ─────────
 
 const GENERIC_SKIP_KEYS = new Set(["name", "title", "headline", "entity_name"])
+// Keys that are plumbing, not facts about the thing: identifiers, raw
+// coordinates (shown once, formatted, as Position) and long prose (shown as
+// the description). Listed raw, a chokepoint read "System Id CHOKE-007 /
+// Lat 56 / Lon 10.5" above anything a reader wanted.
+const GENERIC_PLUMBING = /^(id|uuid|system_id|.+_id|lat|lon|lng|latitude|longitude|polygon_bounds|strategic_description|description|summary)$/i
+const DESCRIPTION_KEYS = ["description", "strategic_description", "summary"]
 
 export function adaptGeneric(data = {}, entityType) {
+    data = data || {}
     const title = data.name || data.title || data.headline || data.entity_name
         || data.region_name || data.zone_id || data.system_id || entityType || "Entity"
     const point = pointOf(data)
 
-    const attributes = compact(
-        Object.entries(data)
-            .filter(([k, v]) => !GENERIC_SKIP_KEYS.has(k) && v !== null && v !== undefined && v !== ""
+    const attributes = compact([
+        ...Object.entries(data)
+            .filter(([k, v]) => !GENERIC_SKIP_KEYS.has(k) && !GENERIC_PLUMBING.test(k)
+                && v !== null && v !== undefined && v !== ""
                 && typeof v !== "object" && typeof v !== "function")
-            .map(([k, v]) => attr(humanizeKey(k), String(v)))
-    )
+            .map(([k, v]) => attr(humanizeKey(k), String(v))),
+        attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
+    ])
+    const description = DESCRIPTION_KEYS.map((k) => data[k]).find((v) => typeof v === "string" && v.trim()) || null
 
     return {
+        description,
         identity: {
             title,
-            subtitle: entityType || null,
+            subtitle: entityType ? humanizeKey(entityType) : null,
             entityType: "generic",
             subtype: null,
             sanctionsStatus: null,
@@ -579,6 +593,34 @@ function adaptPort(data) {
         ].filter(([, v]) => v != null && v !== "").map(([k, v]) => ({ label: k, value: String(v) })),
         provenance: extractProvenance(data),
         actions: { canJumpToLocation: !!pointOf(data) },
+    }
+}
+
+// ── chokepoint ─────────────────────────────────────────────────────────────────
+//
+// Fell to adaptGeneric, which listed its system id, raw lat/lon, a keyword
+// match count and the traffic sentence the "Traffic vs normal" section below
+// already shows in full. What a reader wants first is what the strait is for
+// and whether the news says anything about it.
+function adaptChokepoint(data = {}) {
+    const point = pointOf(data)
+    const mentions = Number.isFinite(data.match_count) ? data.match_count : null
+    return {
+        identity: {
+            title: data.name || "Chokepoint",
+            subtitle: ["Chokepoint", data.traffic_verdict ? `traffic ${data.traffic_verdict}` : null]
+                .filter(Boolean).join(" · "),
+            entityType: "chokepoint", subtype: null, sanctionsStatus: null,
+        },
+        description: data.strategic_description || null,
+        attributes: compact([
+            attr("News (48h)", mentions == null ? null
+                : mentions ? `${mentions} matching headline${mentions === 1 ? "" : "s"} · ${data.current_status || "normal"}`
+                    : "No matching headlines"),
+            attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
+        ]),
+        provenance: extractProvenance(data),
+        actions: { canJumpToLocation: !!point },
     }
 }
 
@@ -1073,6 +1115,7 @@ const ADAPTERS = {
     facility_osm: adaptFacilityOsm,
     gps_interference: adaptGpsInterference,
     gfw_event: adaptGfwEvent,
+    chokepoint: adaptChokepoint,
 }
 
 /**

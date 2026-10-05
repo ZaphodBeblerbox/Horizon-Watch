@@ -190,6 +190,7 @@ import EmergingConflictsPanel from "./components/EmergingConflictsPanel.jsx"
 import NewsTicker from "./components/NewsTicker.jsx"
 import WorldClocksBar from "./components/WorldClocksBar.jsx"
 import { resolveTabAction } from "./lib/tabModel.js"
+import SourceViewer from "./components/SourceViewer.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -1765,6 +1766,8 @@ export default function App() {
             font:          "13px/1.45 var(--mz-font-body)",
             WebkitFontSmoothing: "antialiased",
         }}>
+            {/* Cited posts, read beside the record (sourceEmbed.js). */}
+            <SourceViewer />
         <IconSprite />
             <PlxIcons />
 

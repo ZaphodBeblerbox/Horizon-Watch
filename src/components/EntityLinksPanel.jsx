@@ -16,6 +16,7 @@
  * tell the two apart at a glance is being misled, so the dashed border
  * and the word "inferred" are not decoration.
  */
+import SectionLabel from "../inspector/SectionLabel.jsx"
 import { useEffect, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
@@ -114,29 +115,18 @@ export default function EntityLinksPanel({ entityType, data }) {
 
     const { loading, known, inferred, node } = state
 
-    // Rule 5: an empty pane explains itself. "Nothing here" and "this
-    // entity is not in the graph at all" are different answers and the
-    // reader has to be able to tell which one they got.
-    if (loading) {
-        return <Block><span style={muted}>Looking for connections…</span></Block>
-    }
-    if (!node) {
-        return <Block><span style={muted}>
-            This record is not in the connection graph, so nothing can be said
-            about what it links to.
-        </span></Block>
-    }
-    if (!known.length && !inferred.length) {
-        return <Block><span style={muted}>
-            In the graph, with no connections recorded or inferred yet.
-        </span></Block>
-    }
+    // NOTHING TO SHOW, NOTHING SHOWN. This rendered a paragraph for every
+    // record outside the graph — most of them — and one per empty node, so
+    // the inspector's lower half was a stack of explanations of absence.
+    // The distinction rule 5 protected still holds where it matters: the
+    // folded Record details says whether the record is traced.
+    if (loading || !node || (!known.length && !inferred.length)) return null
 
     return (
         <Block>
             {known.length > 0 && (
                 <>
-                    <div style={subLabel}>Recorded · {known.length}</div>
+                    <div style={subLabel}>Recorded <span style={{ fontWeight: 400 }}>· {known.length}</span></div>
                     {known.slice(0, 12).map((l) => (
                         <Row key={l.id}>
                             <div style={{ font: "400 12px var(--font)", color: "var(--txt-2)" }}>
@@ -182,16 +172,14 @@ export default function EntityLinksPanel({ entityType, data }) {
     )
 }
 
-const muted = { font: "400 11px var(--font)", color: "var(--txt-4)" }
-const subLabel = { font: "600 10px var(--font)", color: "var(--txt-3)",
-                   textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 2 }
+// A sub-heading inside the section: sentence case, smaller than the
+// SectionLabel it sits under, so the hierarchy reads at a glance.
+const subLabel = { font: "600 11px var(--font)", color: "var(--txt-2)", marginBottom: 2 }
 
 function Block({ children }) {
     return (
-        <div style={{ padding: "10px 0 2px" }}>
-            <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>
-                Connections
-            </div>
+        <div style={{ marginBottom: "var(--space-4)" }}>
+            <SectionLabel>Connections</SectionLabel>
             {children}
         </div>
     )
