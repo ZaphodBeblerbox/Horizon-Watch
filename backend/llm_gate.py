@@ -40,6 +40,9 @@ COUNCIL = "council"
 
 _DEFAULT_ALLOWED = frozenset({BRIEFING})
 
+# Said once per process — see get_client.
+_BUDGET_REPORTED = False
+
 # Everything that exists and is currently off, named so the audit is
 # readable rather than implicit in what is missing.
 KNOWN_PURPOSES = frozenset({
@@ -64,6 +67,54 @@ def is_enabled(purpose: str) -> bool:
     return purpose in allowed_purposes()
 
 
+# ── the month's ceiling ──────────────────────────────────────────────────
+#
+# There was none. The OpenAI path has had a hard monthly cap since it was
+# built, but this one was bounded only by which purposes were switched on —
+# so the way to keep Claude spend under control was to leave features
+# disabled, and turning any of them on meant turning the cap off. That is
+# why fusion narratives, foresight and the council were all off rather than
+# budgeted.
+#
+# A ceiling instead. Spend is read from the same per-call log the OpenAI cap
+# uses, so the figure is the one the usage screen shows rather than a
+# counter that can drift from it.
+BUDGET_USD = float(os.getenv("HW_LLM_BUDGET_USD", "10"))
+
+
+def month_key() -> str:
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m")
+
+
+def spent_this_month() -> float:
+    try:
+        import usage_tracker
+        return float(usage_tracker.anthropic_cost_for_month(month_key()))
+    except Exception:
+        # A budget that cannot be read must not become a budget of zero:
+        # that would disable every Claude feature the moment the usage log
+        # is unreadable, which is a storage problem, not a spend problem.
+        return 0.0
+
+
+def over_budget() -> bool:
+    return spent_this_month() >= BUDGET_USD
+
+
+def status() -> dict:
+    spent = spent_this_month()
+    return {
+        "configured": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "purposes": sorted(allowed_purposes()),
+        "month": month_key(),
+        "budget_usd": BUDGET_USD,
+        "spent_usd": round(spent, 4),
+        "remaining_usd": round(max(0.0, BUDGET_USD - spent), 4),
+        "over_budget": spent >= BUDGET_USD,
+    }
+
+
 def get_client(purpose: str, api_key: str | None = None):
     """The Anthropic client for this purpose, or None if the purpose is off.
 
@@ -76,6 +127,16 @@ def get_client(purpose: str, api_key: str | None = None):
         return None
     key = api_key or os.getenv("ANTHROPIC_API_KEY")
     if not key:
+        return None
+    if over_budget():
+        # Said once per process. A line per call would bury the log on the
+        # day the budget runs out, which is the day somebody reads it.
+        global _BUDGET_REPORTED
+        if not _BUDGET_REPORTED:
+            print(f"[llm_gate] the month's Claude budget of ${BUDGET_USD:.2f} is "
+                  f"spent — every purpose degrades to its non-model behaviour",
+                  flush=True)
+            _BUDGET_REPORTED = True
         return None
     try:
         import anthropic

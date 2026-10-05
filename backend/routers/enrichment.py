@@ -74,12 +74,23 @@ def signal_text(item: dict) -> str:
     return " — ".join(str(x) for x in (item.get("headline"), item.get("location")) if x)
 
 
-def enrich_items(items: list[dict], budget: int = 40) -> dict:
+_enriching = threading.Event()
+
+
+def enrich_items(items: list[dict], budget: int = 40, blocking: bool = True) -> dict:
     """Enrich a list of signal dicts, using the cache where it can.
 
     Returns {key: enrichment}. `budget` caps how many UNCACHED signals one
     call will pay for, so a pool that has entirely turned over cannot bill
     for hundreds in a single request.
+
+    `blocking=False` returns ONLY what is already cached and starts a
+    background pass for the rest. Every caller that serves an HTTP request
+    uses that: a model reading forty signals takes one to three minutes,
+    and a sync FastAPI endpoint holds a threadpool slot for its whole
+    duration — so two or three of these at once starved the pool and made
+    unrelated requests time out, which is how this presented ("the server
+    did not respond within 30s" on a backend that was perfectly healthy).
     """
     import enrich as _enrich
     data = _load()
@@ -96,6 +107,21 @@ def enrich_items(items: list[dict], budget: int = 40) -> dict:
             out[k] = hit
         elif len(todo) < budget:
             todo.append({"id": k, "text": text})
+
+    if not blocking:
+        if todo and not _enriching.is_set():
+            # Set BEFORE the thread starts. Setting it inside the thread
+            # leaves a window in which a second request also sees it clear
+            # and pays for the same batch twice.
+            _enriching.set()
+
+            def _fill():
+                try:
+                    enrich_items(items, budget=budget, blocking=True)
+                finally:
+                    _enriching.clear()
+            threading.Thread(target=_fill, daemon=True).start()
+        return _fold(out)
 
     fresh = 0
     for i in range(0, len(todo), _enrich.BATCH):
@@ -118,10 +144,17 @@ def enrich_items(items: list[dict], budget: int = 40) -> dict:
         with _lock:
             _save()
 
-    # Fold name-only mentions onto identifier-backed ones across the WHOLE
-    # set, not within a batch — the mention carrying the MMSI is usually in
-    # a different signal from the one carrying only the name. That is the
-    # entire point.
+    return _fold(out)
+
+
+def _fold(out: dict) -> dict:
+    """Fold name-only mentions onto identifier-backed ones.
+
+    Across the WHOLE set, not within a batch — the mention carrying the
+    MMSI is usually in a different signal from the one carrying only the
+    name, and that is the entire point.
+    """
+    import enrich as _enrich
     all_ents = [e for rec in out.values() for e in (rec.get("entities") or [])]
     folded = _enrich.link_mentions(all_ents)
     for rec in out.values():
@@ -141,7 +174,7 @@ def enrich_surface(request: Request, limit: int = 40):
     limit = max(1, min(120, limit))
     with _main._SURFACE_POOL_LOCK:
         pool = list(_main._SURFACE_POOL)[:limit]
-    found = enrich_items(pool)
+    found = enrich_items(pool, blocking=False)
 
     improved, entities = 0, {}
     items = []
@@ -169,6 +202,10 @@ def enrich_surface(request: Request, limit: int = 40):
         "headlines_improved": improved,
         "entities": sorted(entities.values(), key=lambda e: -e["mentions"]),
         "items": items,
+        # So the UI can say "still reading" rather than implying that a
+        # partially-enriched pool is all there is.
+        "enriched": sum(1 for i in items if i.get("entities") or i.get("headline_improved")),
+        "building": _enriching.is_set(),
     }
 
 
@@ -227,7 +264,7 @@ def propose_graph_links(request: Request, limit: int = 60):
     limit = max(1, min(120, limit))
     with _main._SURFACE_POOL_LOCK:
         pool = list(_main._SURFACE_POOL)[:limit]
-    found = enrich_items(pool)
+    found = enrich_items(pool, blocking=False)
 
     proposals: dict[tuple[str, str], dict] = {}
     for it in pool:
@@ -279,6 +316,7 @@ def propose_graph_links(request: Request, limit: int = 60):
     return {
         "count": len(pool),
         "proposed": out,
+        "building": _enriching.is_set(),
         # Said in the payload, not only in the UI: anything reading this
         # endpoint should know these are not facts yet.
         "note": ("Each link is a co-occurrence in one signal, not a verified "

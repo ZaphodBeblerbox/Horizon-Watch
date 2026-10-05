@@ -450,6 +450,29 @@ def rule_based_summary(
     return summary
 
 
+def anthropic_cost_for_month(month: str) -> float:
+    """What the Claude models have cost in a calendar month, "YYYY-MM".
+
+    The twin of openai_cost_for_month, and separate because the two budgets
+    are separate: one key can be exhausted while the other is untouched, and
+    a single combined figure would let whichever is cheaper mask the other
+    running out.
+    """
+    with _lock:
+        data = _load()
+        total = 0.0
+        for entry in data.get("call_log", []) or []:
+            model = (entry.get("model") or "").lower()
+            if not model.startswith("claude"):
+                continue
+            ts = entry.get("ts")
+            if not isinstance(ts, (int, float)):
+                continue
+            if datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m") == month:
+                total += float(entry.get("cost") or 0.0)
+        return total
+
+
 def openai_cost_for_month(month: str) -> float:
     """What the OpenAI models have cost in a calendar month, "YYYY-MM".
 
