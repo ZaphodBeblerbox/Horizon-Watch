@@ -1121,8 +1121,7 @@ export default function GlobeView({
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
-                <GlobeTelegramLayer enabled={telegramEnabled}
-                    {...(signalWindowHours != null ? { hours: Math.max(24, signalWindowHours) } : {})} />
+                <GlobeTelegramLayer enabled={telegramEnabled} hours={24} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
                 <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds}
                                       onStatus={onFacilityStatus} />
