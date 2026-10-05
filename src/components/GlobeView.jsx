@@ -24,6 +24,7 @@ import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobeDerivedAlertsLayer  from "../globe/GlobeDerivedAlertsLayer.jsx"
 import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
+import GlobeTelegramLayer        from "../globe/GlobeTelegramLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
 import GlobeWarMapLayer          from "../globe/GlobeWarMapLayer.jsx"
@@ -131,6 +132,7 @@ export default function GlobeView({
     // GDELT machine-coded news events — separate from geoConfirmedEnabled
     // on purpose, see GlobeGdeltLayer.jsx.
     gdeltEnabled = false,
+    telegramEnabled = false,
     gdeltTypes = null,
     frontlinesEnabled = false,
     warmapTheatres = [],
@@ -1119,6 +1121,8 @@ export default function GlobeView({
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
+                <GlobeTelegramLayer enabled={telegramEnabled}
+                    {...(signalWindowHours != null ? { hours: Math.max(24, signalWindowHours) } : {})} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
                 <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds}
                                       onStatus={onFacilityStatus} />

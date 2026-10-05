@@ -76,3 +76,6 @@ backend/data/enrichment_cache.json
 # user data and the second is regenerated from the source on demand.
 backend/data/chat_files/
 backend/data/pipelines_osm/
+backend/data/telegram/
+*.session
+*.session-journal

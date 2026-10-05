@@ -665,6 +665,34 @@ function adaptChokepoint(data = {}) {
     }
 }
 
+// ── telegram post ──────────────────────────────────────────────────────────────
+// backend/telegram_ingest.py: AI headline, the place the post names (pinned
+// only when precise and inside the right country), the channel, and the
+// original as a source that plays in the console.
+function adaptTelegram(data = {}) {
+    const point = pointOf(data)
+    return {
+        identity: {
+            title: data.headline || "Telegram post",
+            subtitle: ["Telegram", data.channel_title || data.channel, data.place, data.posted_at ? fmtTimestamp(data.posted_at, { precision: "minute" }) : null]
+                .filter(Boolean).join(" · "),
+            entityType: "telegram", subtype: null, sanctionsStatus: null,
+        },
+        description: data.text || null,
+        media: data.thumb_url ? { photoUrl: data.thumb_url, sourceLabel: data.media === "video" ? "Still from the video" : "From the post" } : null,
+        attributes: compact([
+            attr("Verification", data.verification),
+            attr("Event", data.event_type),
+            attr("Located at", data.geocoded_as ? `${data.geocoded_as} (${data.precision})` : null),
+            attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
+            attr("Views", data.views != null ? Number(data.views).toLocaleString() : null),
+            attr("Original post", data.url),
+        ]),
+        provenance: { feed: `Telegram · ${data.channel_title || data.channel}`, ingestedAt: null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
 // ── dispatch ───────────────────────────────────────────────────────────────────
 
 
@@ -1157,6 +1185,7 @@ const ADAPTERS = {
     gps_interference: adaptGpsInterference,
     gfw_event: adaptGfwEvent,
     chokepoint: adaptChokepoint,
+    telegram: adaptTelegram,
 }
 
 /**

@@ -129,7 +129,7 @@ _socket.setdefaulttimeout(20)
 
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request, Response, UploadFile, File, Form
-from fastapi.responses import Response as FastAPIResponse, JSONResponse, StreamingResponse
+from fastapi.responses import Response as FastAPIResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
 import feedparser
@@ -11703,6 +11703,47 @@ def get_aircraft_history(
     }
 
 
+@app.get("/api/telegram/posts")
+async def api_telegram_posts(hours: int = Query(72, ge=1, le=720)):
+    """Telegram posts that passed relevance and precise geolocation
+    (telegram_ingest.py). Unverified by nature; each says so."""
+    import telegram_ingest as _tg
+    loop = asyncio.get_event_loop()
+    return {"posts": await loop.run_in_executor(_executor, _tg.published, hours)}
+
+
+@app.get("/api/telegram/status")
+def api_telegram_status():
+    import telegram_ingest as _tg
+    return _tg.stats()
+
+
+@app.get("/api/telegram/media/{name}")
+def api_telegram_media(name: str):
+    import telegram_ingest as _tg
+    if not re.fullmatch(r"[A-Za-z0-9_]+_\d+\.jpg", name):
+        raise HTTPException(400, "bad name")
+    path = os.path.join(_tg.MEDIA_DIR, name)
+    if not os.path.exists(path):
+        raise HTTPException(404, "no such image")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+
+
+async def _telegram_loop():
+    """Collect and classify every 10 minutes, once someone has logged in.
+    Off the event loop: Telethon runs its own loop inside run_once."""
+    import telegram_ingest as _tg
+    await asyncio.sleep(90)
+    while True:
+        try:
+            if _tg.configured() and _tg.logged_in():
+                out = await asyncio.get_event_loop().run_in_executor(_executor, _tg.run_once)
+                print(f"[telegram] {out}", flush=True)
+        except Exception as e:
+            _loop_error("telegram", e)
+        await asyncio.sleep(600)
+
+
 @app.get("/api/vessels/{mmsi}/history")
 async def get_vessel_history(mmsi: str):
     """A ship's last 90 days from GFW: port calls, meetings at sea, loitering,
@@ -15272,6 +15313,7 @@ async def _outlook_refresh_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    asyncio.create_task(_telegram_loop())
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
     # The day's outlook — concrete, cited, resolvable forecasts for the Home

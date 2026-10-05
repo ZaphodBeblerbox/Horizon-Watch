@@ -407,6 +407,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // only what had been verified could not have it.
     const [geoConfirmedOn, setGeoConfirmedOn] = useState(true)
     const [gdeltOn, setGdeltOn] = useState(true)
+    const [telegramOn, setTelegramOn] = useState(true)
     // Which CAMEO codings to draw. Starts as every kind rather than a
     // curated subset: a reader who has not chosen yet should see the whole
     // feed, not a silently narrowed one.
@@ -1169,6 +1170,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                     on={gdeltOn} parentOn={groupsOn.news}
                                     onToggle={() => setGdeltOn((v) => !v)} />
                             )}
+                            {g.key === "news" && (
+                                <SubLayerRow
+                                    label="Telegram"
+                                    hint="Channels you joined · AI-screened for relevance · pinned only where the post names a precise place · unverified"
+                                    on={telegramOn} parentOn={groupsOn.news}
+                                    onToggle={() => setTelegramOn((v) => !v)} />
+                            )}
                             {g.key === "news" && gdeltOn && groupsOn.news && (
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3,
                                               padding: "2px 12px 6px 27px" }}>
@@ -1692,6 +1700,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         eventsEnabled={groupsOnV.news} precisionEventsEnabled={groupsOnV.news && geoConfirmedOn}
                         geoConfirmedEnabled={groupsOnV.news && geoConfirmedOn}
                         gdeltEnabled={groupsOnV.news && gdeltOn}
+                        telegramEnabled={groupsOnV.news && telegramOn}
                         gdeltTypes={gdeltTypes}
                         firesEnabled={groupsOnV.imagery && firesOn}
                         geoConfirmedTheatres={geoConfirmedTheatres}
