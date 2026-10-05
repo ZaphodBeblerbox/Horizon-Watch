@@ -36,6 +36,10 @@ export const KIND = {
     // it always carries the chain that produced it, and it is never
     // raised as an interrupt, because a hypothesis is not an alarm.
     discovery: { icon: "i-fusion", name: "Connection found" },
+    // A local, located, AI-screened Telegram post (telegram_ingest.py): only
+    // kinetic events with a precise place reach here, so each one is worth
+    // a card while it is fresh.
+    telegram: { icon: "i-feed", name: "Telegram · local report" },
 }
 
 /** Display severity vocabulary — the same four the diamond uses everywhere. */
@@ -102,7 +106,7 @@ export function interrupts(n, now = Date.now()) {
     const ts = Number(n?.ts)
     if (Number.isFinite(ts) && now - ts > MAX_INTERRUPT_AGE_MS) return false
     return n.sev === "critical"
-        || n.kind === "escalate" || n.kind === "assign" || n.kind === "rfi"
+        || n.kind === "escalate" || n.kind === "assign" || n.kind === "rfi" || n.kind === "telegram"
         || n.kind === "surge" || n.kind === "fusion"
 }
 

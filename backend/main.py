@@ -11712,6 +11712,19 @@ async def api_telegram_posts(hours: int = Query(72, ge=1, le=720)):
     return {"posts": await loop.run_in_executor(_executor, _tg.published, hours)}
 
 
+@app.get("/api/telegram/video/{chan}/{msg_id}")
+async def api_telegram_video(chan: str, msg_id: int):
+    """The post's video, downloaded once on first request and served from disk."""
+    import telegram_ingest as _tg
+    if not re.fullmatch(r"[A-Za-z0-9_]{3,64}", chan):
+        raise HTTPException(400, "bad channel")
+    loop = asyncio.get_event_loop()
+    path, why = await loop.run_in_executor(_executor, _tg.video_path, chan, msg_id)
+    if not path:
+        raise HTTPException(404, why or "no video")
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "max-age=86400"})
+
+
 @app.get("/api/telegram/status")
 def api_telegram_status():
     import telegram_ingest as _tg
@@ -11730,18 +11743,21 @@ def api_telegram_media(name: str):
 
 
 async def _telegram_loop():
-    """Collect and classify every 10 minutes, once someone has logged in.
+    """Collect and classify every minute, once someone has logged in.
     Off the event loop: Telethon runs its own loop inside run_once."""
     import telegram_ingest as _tg
-    await asyncio.sleep(90)
+    await asyncio.sleep(60)
     while True:
         try:
             if _tg.configured() and _tg.logged_in():
                 out = await asyncio.get_event_loop().run_in_executor(_executor, _tg.run_once)
-                print(f"[telegram] {out}", flush=True)
+                if out.get("collected") or out.get("published"):
+                    print(f"[telegram] {out}", flush=True)
         except Exception as e:
             _loop_error("telegram", e)
-        await asyncio.sleep(600)
+        # As live as Telegram's rate limits comfortably allow: one pass reads
+        # only the newest messages of each joined channel.
+        await asyncio.sleep(60)
 
 
 @app.get("/api/vessels/{mmsi}/history")

@@ -22,3 +22,14 @@ def test_a_precise_place_in_the_right_country_is_published(monkeypatch):
                         lambda q, expected_country_codes=None: [{"lat": 48.28, "lon": 37.18, "country_code": "ua", "display_name": "Pokrovsk"}])
     hit, why = ti.locate("Pokrovsk, Donetsk Oblast, Ukraine", "town", "ua")
     assert why is None and hit["lat"] == 48.28
+
+
+def test_a_precise_place_retries_without_its_region(monkeypatch):
+    import geocode_utils
+    calls = []
+    def fake(q, expected_country_codes=None):
+        calls.append(q)
+        return [{"lat": 12.7, "lon": 43.4, "country_code": "ye"}] if q == "Ras Al-Arah, Yemen" else []
+    monkeypatch.setattr(geocode_utils, "geocode_place", fake)
+    hit, why = ti.locate("Ras Al-Arah, Bab Al-Mandab, Yemen", "village", "ye")
+    assert why is None and calls == ["Ras Al-Arah, Bab Al-Mandab, Yemen", "Ras Al-Arah, Yemen"]

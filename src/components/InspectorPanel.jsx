@@ -119,8 +119,10 @@ export function forecastHint(data) {
 /** One cited source: what it is, where it lives, and how to read it.
  *  X and Telegram posts open beside the record (SourceViewer); anything
  *  else cannot be framed and opens in a tab. */
-function SourceRow({ label, url }) {
-    const inPlace = !!embedFor(url)
+function SourceRow({ label, url, embed = true }) {
+    // embed=false for a Telegram pin: its media already plays in the panel,
+    // and Telegram's own (light) embed is exactly what it replaces.
+    const inPlace = embed && !!embedFor(url)
     const btn = {
         height: 24, padding: "0 9px", font: "500 11.5px var(--font)", cursor: "pointer",
         border: "1px solid var(--gline2, var(--line))", background: "transparent",
@@ -497,6 +499,8 @@ export default function InspectorPanel({
             : data
     const normalized = normalizeEntity(entityType, enrichedData)
     const { identity, provenance, actions, media, description } = normalized
+    const [tgVideoFailed, setTgVideoFailed] = useState(false)
+    useEffect(() => { setTgVideoFailed(false) }, [entityId])
     const [titleOpen, setTitleOpen] = useState(false)
     useEffect(() => { setTitleOpen(false) }, [entityId])
     // ~3 lines of the 17px headline in a ~260px column.
@@ -745,7 +749,21 @@ export default function InspectorPanel({
                         </div>
                     </div>
                 )}
-                {media?.photoUrl && (
+                {/* A Telegram video plays here, from the console's own copy
+                    (Telegram's embed refuses large files: "Media is too big").
+                    Full panel width, at the video's own proportions, never
+                    taller than 60% of the window; the still shows until the
+                    video is ready, and stays if it cannot be fetched. */}
+                {entityType === "telegram" && data?.media === "video" && data?.channel && !tgVideoFailed && (
+                    <div style={{ marginBottom: "var(--space-4)", background: "#000", borderRadius: "var(--radius)", overflow: "hidden" }}>
+                        <video key={data.id} controls playsInline preload="metadata"
+                               poster={data.thumb_url || undefined}
+                               src={`${API_BASE}/api/telegram/video/${encodeURIComponent(data.channel)}/${String(data.id).split("-").pop()}`}
+                               onError={() => setTgVideoFailed(true)}
+                               style={{ display: "block", width: "100%", maxHeight: "60vh", objectFit: "contain" }} />
+                    </div>
+                )}
+                {media?.photoUrl && !(entityType === "telegram" && data?.media === "video" && !tgVideoFailed) && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
                         <PhotoFrame src={media.photoUrl} alt={identity.title} />
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
@@ -789,7 +807,7 @@ export default function InspectorPanel({
                 {sources.length > 0 && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
                         <SectionLabel meta={sources.length > 1 ? sources.length : null}>Sources</SectionLabel>
-                        {sources.map((src) => <SourceRow key={src.url + src.label} {...src} />)}
+                        {sources.map((src) => <SourceRow key={src.url + src.label} {...src} embed={entityType !== "telegram"} />)}
                     </div>
                 )}
 

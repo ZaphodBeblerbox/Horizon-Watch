@@ -1,0 +1,18 @@
+{
+  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator.",
+  "YemenWrath":          {"role": "official",   "party": "Houthi forces (Ansar Allah)", "lang": "ar"},
+  "AnsarAllahMCSaadah":  {"role": "official",   "party": "Houthi forces (Ansar Allah)", "lang": "ar"},
+  "RSFSudan":            {"role": "official",   "party": "Rapid Support Forces (RSF)",  "lang": "ar"},
+  "Sd_News_Network":     {"role": "local",      "party": null, "lang": "ar"},
+  "ynetalerts":          {"role": "local",      "party": null, "lang": "he"},
+  "AJENews_Official":    {"role": "outlet",     "party": null, "lang": "en"},
+  "ClashReport":         {"role": "aggregator", "party": null, "lang": "en"},
+  "AMK_Mapping":         {"role": "aggregator", "party": null, "lang": "en"},
+  "OSINTdefender":       {"role": "aggregator", "party": null, "lang": "en"},
+  "GeoPWatch":           {"role": "aggregator", "party": null, "lang": "en"},
+  "me_observer_TG":      {"role": "aggregator", "party": null, "lang": "en"},
+  "intelslava":          {"role": "partisan",   "party": "Russia-aligned", "lang": "en"},
+  "southfronteng":       {"role": "partisan",   "party": "Russia-aligned", "lang": "en"},
+  "rybar_eng":           {"role": "partisan",   "party": "Russia-aligned", "lang": "en"},
+  "militarysummary":     {"role": "partisan",   "party": "Russia-aligned", "lang": "en"}
+}

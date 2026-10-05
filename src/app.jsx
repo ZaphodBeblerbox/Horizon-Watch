@@ -1053,6 +1053,37 @@ export default function App() {
         }
     }, [notifFeed])
 
+    /* LIVE TELEGRAM. The backend reads the joined channels every minute;
+       each newly published post (kinetic, precisely located) raises a card
+       with its headline while it is fresh. The first load is history and
+       goes to the tray silently, like every other feed. */
+    const tgSeenRef = useRef(null)
+    useEffect(() => {
+        if (!profile) return undefined
+        let live = true
+        const load = () => fetch(`${API}/api/telegram/posts?hours=24`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                if (!live || !d) return
+                const first = tgSeenRef.current === null
+                if (first) tgSeenRef.current = new Set()
+                for (const p of d.posts || []) {
+                    if (tgSeenRef.current.has(p.id)) continue
+                    tgSeenRef.current.add(p.id)
+                    pushNotification({
+                        silent: first, id: p.id, kind: "telegram", sev: p.role === "official" ? "high" : "moderate",
+                        title: p.headline || "Telegram report",
+                        sub: [p.channel_title || p.channel, p.place, p.media !== "none" ? p.media : null].filter(Boolean).join(" · "),
+                        ref: { lat: p.lat, lon: p.lon },
+                        ts: Date.parse(p.posted_at) || Date.now(),
+                    })
+                }
+            }).catch(() => {})
+        load()
+        const t = setInterval(load, 60_000)
+        return () => { live = false; clearInterval(t) }
+    }, [profile])
+
     const handleMarkRead = useCallback((id) => {
         setReadIds(prev => {
             const next = new Set(prev)

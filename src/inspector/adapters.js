@@ -669,6 +669,8 @@ function adaptChokepoint(data = {}) {
 // backend/telegram_ingest.py: AI headline, the place the post names (pinned
 // only when precise and inside the right country), the channel, and the
 // original as a source that plays in the console.
+const LANG_NAME = { ar: "Arabic", he: "Hebrew", ru: "Russian", uk: "Ukrainian", fa: "Persian", fr: "French", tr: "Turkish" }
+
 function adaptTelegram(data = {}) {
     const point = pointOf(data)
     return {
@@ -678,10 +680,16 @@ function adaptTelegram(data = {}) {
                 .filter(Boolean).join(" · "),
             entityType: "telegram", subtype: null, sanctionsStatus: null,
         },
-        description: data.text || null,
-        media: data.thumb_url ? { photoUrl: data.thumb_url, sourceLabel: data.media === "video" ? "Still from the video" : "From the post" } : null,
+        // The English rendering leads; the original follows, labelled with
+        // its language, so a translation can always be checked.
+        description: [
+            data.summary_en || null,
+            data.text && data.lang && data.lang !== "en" ? `Original (${LANG_NAME[data.lang] || data.lang}):\n${data.text}` : (data.summary_en ? null : data.text),
+        ].filter(Boolean).join("\n\n") || null,
+        media: data.thumb_url ? { photoUrl: data.thumb_url, sourceLabel: data.media === "video" ? "Still from the video — play it under Sources" : "From the post" } : null,
         attributes: compact([
             attr("Verification", data.verification),
+            attr("Also reported by", (data.also_reported_by || []).join(", ") || null),
             attr("Event", data.event_type),
             attr("Located at", data.geocoded_as ? `${data.geocoded_as} (${data.precision})` : null),
             attr("Position", point ? fmtCoord(point.lat, point.lon) : null),

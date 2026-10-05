@@ -11,15 +11,14 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
-const SIZE = 16
+const SIZE = 18
 let _icon = null
 function icon() {
     if (_icon) return _icon
-    // Telegram's paper plane in a disc: recognisably "from a channel" and
-    // distinct from the GeoConfirmed and wire-report markers.
+    // A blue diamond: the console's marker shape for an event, in
+    // Telegram blue so it reads as "from a channel" at a glance.
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <circle cx="16" cy="16" r="14" fill="#229ED9" stroke="#0b1220" stroke-width="2"/>
-      <path d="M8 15.5l15-6c.7-.3 1.3.2 1.1.9l-2.6 12c-.2.8-.9 1-1.5.6l-4-3-2 1.9c-.2.2-.5.4-.9.4l.3-4.1 7.4-6.7c.3-.3-.1-.4-.5-.2l-9.1 5.8-3.9-1.2c-.8-.3-.8-.9.1-1.3z" fill="#fff"/></svg>`
+      <rect x="7" y="7" width="18" height="18" transform="rotate(45 16 16)" fill="#229ED9" stroke="#0b1220" stroke-width="2.5"/></svg>`
     _icon = `data:image/svg+xml;base64,${btoa(svg)}`
     return _icon
 }
