@@ -206,6 +206,19 @@ Still open, in order:
     event"** — a short readable headline; its red gradient runs top-down.
 21. Country risk "what drove this score" repeats the same headline 4×
     (dedupe drivers by headline).
+22. **Relevance is per user**: "Boat collision on the Congo River" is not
+    critical *for this user*. Interests + theaters decide relevance now; an
+    **asset registry** later ("X happened → why it matters for your asset →
+    watch for Y"). Ties to the Blocker below (per-user profile).
+23. **Insight must be actionable**: "likelihood of intensification up x%",
+    precise follow-on actions in this window ("counter-attack from the north
+    more likely as Saudi forces retake Bab el-Mandeb → watch for build-up"),
+    each with a one-click response (create a satellite watch zone, create a
+    localized theater).
+24. **Telegram ingestion** — owner asks whether to; GeoConfirmed already cites
+    Telegram channels heavily (decision pending).
+25. Search jump to a sea ("Black Sea") lands at 20 km — sea/ocean hits need
+    regional height.
 
 ### Seen but not fixed
 - Intermittent page error "the server did not respond within 30s" during

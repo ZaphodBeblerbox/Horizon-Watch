@@ -58,6 +58,8 @@ export function tintAlpha(severityRank, publishedAt, nowMs = Date.now()) {
 export function tintBackground(severityRank, publishedAt, nowMs = Date.now()) {
     const a = tintAlpha(severityRank, publishedAt, nowMs)
     if (a <= 0) return undefined
-    return `linear-gradient(90deg, rgba(255,69,58,${a.toFixed(3)}) 0%, `
+    // Top-down: the row's colour falls from its top edge, so the tint
+    // reads as a band over the headline rather than a bar under the dot.
+    return `linear-gradient(180deg, rgba(255,69,58,${a.toFixed(3)}) 0%, `
          + `rgba(255,69,58,${(a * 0.25).toFixed(3)}) 38%, transparent 72%)`
 }

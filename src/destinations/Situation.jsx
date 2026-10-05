@@ -395,7 +395,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // anything — the reader has to turn things OFF to find the picture,
     // which is backwards.
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(
-        LAYER_GROUPS.map((g) => [g.key, g.key === "news"])))
+        // News and alerts on: an alert or a fusion the map does not show is
+        // one nobody sees — the Alerts group was off unless switched on.
+        LAYER_GROUPS.map((g) => [g.key, g.key === "news" || g.key === "alerts"])))
     // Default OFF. Machine-coded pins are opt-in: the reader should choose
     // to accept them, not discover them mixed in with verified events.
     // CONFIRMED AND UNCONFIRMED ARE SEPARATE SWITCHES because they are
@@ -928,8 +930,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
             const d = e.detail || {}
             const L = d.layers || {}
             const set = (list) => Object.fromEntries((list || []).map((k) => [k, true]))
+            // ALERTS ARE NOT A THEATER'S TO SWITCH OFF. Alerts and fusions
+            // are what the system found, not scenery; no seeded theater named
+            // the group, so selecting any theater hid every alert and fusion
+            // on the map. They keep whatever state the user gave them.
             if (L.groups) setGroupsOn((prev) =>
-                Object.fromEntries(Object.keys(prev).map((k) => [k, L.groups.includes(k)])))
+                Object.fromEntries(Object.keys(prev).map((k) => [k, k === "alerts" ? prev[k] : L.groups.includes(k)])))
             if (L.infra) setInfraOn((prev) =>
                 Object.fromEntries(Object.keys(prev).map((k) => [k, L.infra.includes(k)])))
             if (L.tracks) setTracksOn((prev) =>

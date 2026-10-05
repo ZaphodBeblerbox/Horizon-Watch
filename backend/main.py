@@ -38,6 +38,18 @@ logger = logging.getLogger(__name__)
 import track_detail as _track_detail
 
 
+def _fusion_title_of(f) -> str:
+    """A stored fusion's title, rebuilt from its signals when it is the old
+    "<place> Intelligence Event" template (fusion_title.py)."""
+    try:
+        from fusion_title import headline, is_template
+        if is_template(f.title):
+            return headline(_json.loads(f.key_signals or "[]"), f.location_name or "") or f.title
+    except Exception:
+        pass
+    return f.title
+
+
 class CappedDict(OrderedDict):
     """OrderedDict with a maximum size. Evicts oldest entry when cap is reached."""
     def __init__(self, maxsize=10_000, *args, **kwargs):
@@ -9471,7 +9483,7 @@ async def _startup_snapshot_prefill() -> None:
                 with get_db() as _db:
                     rows = (_db.query(_FEp).filter(_FEp.status == "active")
                                .order_by(_FEp.created_at.desc()).limit(100).all())
-                return [{"fusion_id": f.fusion_id, "title": f.title, "subtitle": f.subtitle,
+                return [{"fusion_id": f.fusion_id, "title": _fusion_title_of(f), "subtitle": f.subtitle,
                          "narrative": f.narrative, "severity": f.severity,
                          "confidence": f.confidence, "lat": f.lat, "lon": f.lon,
                          "signal_count": f.signal_count, "domains": f.domains,
@@ -25692,7 +25704,7 @@ async def _forge_detection_cycle():
                                          .order_by(_FESnap.created_at.desc())
                                          .limit(100).all())
                     _write_snapshot_sync("fusions", [
-                        {"fusion_id": f.fusion_id, "title": f.title, "subtitle": f.subtitle,
+                        {"fusion_id": f.fusion_id, "title": _fusion_title_of(f), "subtitle": f.subtitle,
                          "narrative": f.narrative, "severity": f.severity,
                          "confidence": f.confidence, "lat": f.lat, "lon": f.lon,
                          "signal_count": f.signal_count, "domains": f.domains,
@@ -25907,7 +25919,7 @@ def api_fusions_list(
         for r in rows:
             result.append({
                 "fusion_id": r.fusion_id,
-                "title": r.title,
+                "title": _fusion_title_of(r),
                 "subtitle": r.subtitle,
                 "narrative": r.narrative,
                 "severity": r.severity,
@@ -25961,7 +25973,7 @@ def api_fusions_for_claude(limit: int = 20):
         for r in rows:
             result.append({
                 "fusion_id": r.fusion_id,
-                "title": r.title,
+                "title": _fusion_title_of(r),
                 "subtitle": r.subtitle,
                 "narrative": r.narrative,
                 "severity": r.severity,
@@ -29393,7 +29405,7 @@ def api_threat_matrix_explain(
             "alerts":    [{"alert_id": a.alert_id, "title": a.title,
                            "severity": a.severity, "source": a.source,
                            "lat": a.lat, "lon": a.lon} for a in db_alerts[:5]],
-            "fusions":   [{"fusion_id": f.fusion_id, "title": f.title,
+            "fusions":   [{"fusion_id": f.fusion_id, "title": _fusion_title_of(f),
                            "severity": f.severity, "confidence": f.confidence}
                           for f in fusions_in[:5]],
             "surges":    [{"surge_id": s.surge_id, "headline": s.headline,

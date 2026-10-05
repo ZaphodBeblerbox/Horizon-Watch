@@ -13,6 +13,7 @@ Module-level singleton: fusion_engine = FusionEngine()
 """
 
 import json
+from fusion_title import headline as _fusion_headline, is_template as _fusion_is_template
 import re
 import time
 import threading
@@ -700,8 +701,12 @@ class FusionEngine:
         is configured, the API call itself fails, or the model's narrative
         fails validation twice (see _generate_haiku_assessment)."""
         dom_str = " + ".join(sorted(domains))
+        # The signals say what happened and where; "<place> Intelligence
+        # Event" said neither (fusion_title.py).
+        from fusion_title import headline as _headline
+        title = _headline(signals, location_name) or f"{location_name} Intelligence Event"
         return (
-            f"{location_name} Intelligence Event",
+            title,
             f"{dom_str} convergence",
             f"Multi-domain intelligence signals detected at {location_name}. {len(signals)} signals across {len(domains)} domains indicate elevated activity requiring analyst review.",
             [f"{s.get('rule_name','Signal')}: {str(s.get('summary',''))[:80]}" for s in signals[:4]],
@@ -1322,7 +1327,10 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                     self.active_fusions[row.fusion_id] = {
                         "fusion_id":     row.fusion_id,
                         "geo_key":       row.geo_key,
-                        "title":         row.title,
+                        # Derived on read for rows stored with the old template
+                        # title, so the fix reaches existing fusions at once.
+                        "title":         (_fusion_headline(json.loads(row.key_signals or "[]"), row.location_name or "")
+                                          if _fusion_is_template(row.title) else None) or row.title,
                         "subtitle":      row.subtitle,
                         "narrative":     row.narrative,
                         "severity":      row.severity,
