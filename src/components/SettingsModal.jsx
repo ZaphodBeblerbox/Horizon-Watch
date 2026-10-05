@@ -4,10 +4,9 @@ import { getCurrentUser } from "../state/authStore.js"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
 import { listSessions, listViews, deleteSession, deleteView, viewExtraLabels } from "../state/sessionStore.js"
 import { KEYBOARD_SHORTCUTS } from "../data/keyboardShortcuts.js"
-import PushNotificationToggle from "./PushNotificationToggle.jsx"
+import PlacePicker from "../search/PlacePicker.jsx"
 import { useFreshness } from "./Freshness.jsx"
 import { getManualLocation, setManualLocation } from "../state/themeStore.js"
-import { approximateLocationFromClock } from "../globe/useUserLocation.js"
 import ThemeControl from "./ThemeControl.jsx"
 
 /**
@@ -119,58 +118,52 @@ function SectionTitle({ children }) {
  * number worth setting is the latitude.
  */
 function DayCycleLocation() {
+    // NAME THE PLACE. This asked for latitude and longitude; nobody has
+    // their own to hand. Pick your city (the search box's suggestions), or
+    // let the browser say where you are — the desktop build cannot, which
+    // is why the name is the first option, not the second.
     const [saved, setSaved] = useState(() => getManualLocation())
-    const fallback = approximateLocationFromClock()
-    const [lat, setLat] = useState(() => String(saved?.lat ?? fallback.lat))
-    const [lon, setLon] = useState(() => String(saved?.lon ?? Math.round(fallback.lon * 10) / 10))
     const [note, setNote] = useState(null)
-
-    const apply = () => {
-        const la = Number(lat), lo = Number(lon)
-        if (!Number.isFinite(la) || la < -90 || la > 90) { setNote("Latitude must be between -90 and 90."); return }
-        if (!Number.isFinite(lo) || lo < -180 || lo > 180) { setNote("Longitude must be between -180 and 180."); return }
-        setManualLocation({ lat: la, lon: lo })
-        setSaved({ lat: la, lon: lo })
-        setNote("Saved — the sky control is already using it.")
+    const set = (loc) => {
+        setManualLocation(loc)
+        setSaved({ ...loc })
+        setNote("Saved — the day/night cycle is using it now.")
+    }
+    const useDevice = () => {
+        if (!navigator.geolocation) { setNote("This app cannot read your device's location here — name your city instead."); return }
+        setNote("Asking your device…")
+        navigator.geolocation.getCurrentPosition(
+            (p) => set({ lat: +p.coords.latitude.toFixed(2), lon: +p.coords.longitude.toFixed(2), label: "your device's location" }),
+            () => setNote("Your device did not share a location — name your city instead."),
+            { timeout: 8000, maximumAge: 3_600_000 },
+        )
     }
     const clear = () => {
         setManualLocation(null)
         setSaved(null)
-        setLat(String(fallback.lat)); setLon(String(Math.round(fallback.lon * 10) / 10))
-        setNote("Cleared — back to your device's clock and, where it works, its location.")
-    }
-
-    const num = {
-        width: 74, background: "var(--bg-2)", border: "1px solid var(--line-strong)",
-        borderRadius: "var(--r)", color: "var(--txt)", font: "400 11.5px var(--mono)",
-        padding: "4px 6px",
+        setNote("Cleared — the cycle uses your clock's time zone again.")
     }
     const btn = {
         background: "none", border: "1px solid var(--line-strong)", borderRadius: "var(--r)",
-        color: "var(--txt-2)", font: "400 11px var(--font)", padding: "4px 8px", cursor: "pointer",
+        color: "var(--txt-2)", font: "400 11px var(--font)", padding: "4px 8px", cursor: "pointer", whiteSpace: "nowrap",
     }
-
     return (
         <div style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--line-soft)" }}>
-            <div style={{ font: "400 12.5px var(--font)", color: "var(--txt)" }}>Location for the day/night cycle</div>
+            <div style={{ font: "400 12.5px var(--font)", color: "var(--txt)" }}>Where you are, for the day/night cycle</div>
             <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginTop: 2, lineHeight: 1.5 }}>
                 {saved
-                    ? `Set to ${saved.lat}°, ${saved.lon}°.`
-                    : "Not set. Longitude comes from your clock and is accurate; latitude "
-                      + "is assumed to be 40°, which makes the day the wrong length away "
-                      + "from mid-northern latitudes."}
+                    ? `Set to ${saved.label || `${saved.lat}°, ${saved.lon}°`}.`
+                    : "Not set — the time of sunrise and sunset is estimated from your clock, and can be hours out far from mid-northern latitudes."}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                <label style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>Lat</label>
-                <input id="daycycle-lat" style={num} value={lat} onChange={(e) => setLat(e.target.value)} inputMode="decimal" />
-                <label style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>Lon</label>
-                <input id="daycycle-lon" style={num} value={lon} onChange={(e) => setLon(e.target.value)} inputMode="decimal" />
-                <button style={btn} onClick={apply}>Use this</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <PlacePicker label="Your city" placeholder="Your city — Berlin, Nairobi, Oslo…"
+                                 onPick={(p) => set({ lat: +Number(p.lat).toFixed(2), lon: +Number(p.lon).toFixed(2), label: p.label })} />
+                </div>
+                <button style={btn} onClick={useDevice}>Use my location</button>
                 {saved && <button style={btn} onClick={clear}>Clear</button>}
             </div>
-            {note && (
-                <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", marginTop: 6 }}>{note}</div>
-            )}
+            {note && <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", marginTop: 6 }}>{note}</div>}
         </div>
     )
 }
@@ -179,7 +172,9 @@ function GeneralSection({ settings }) {
     const user = getCurrentUser()
     const [timezone, setTimezone] = useState(user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
     const [tzSaving, setTzSaving] = useState(false)
-    const tzOptions = (typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [timezone])
+    // "UTC" is not in Intl's list, so an account set to UTC — the default —
+    // showed the list's first entry, Africa/Abidjan.
+    const tzOptions = ["UTC", ...(typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [timezone]).filter((z) => z !== "UTC")]
 
     const saveTimezone = useCallback((tz) => {
         setTimezone(tz)
@@ -195,7 +190,7 @@ function GeneralSection({ settings }) {
     return (
         <div>
             <SectionTitle>Appearance</SectionTitle>
-            <Row label="Theme" hint="Same real per-user value the top-bar control reads and writes. Auto fades with the real sun at your location.">
+            <Row label="Theme" hint="Auto follows daylight where you are.">
                 <ThemeControl inline />
             </Row>
             <DayCycleLocation />
@@ -206,16 +201,9 @@ function GeneralSection({ settings }) {
                     onChange={(v) => updateSetting("general.density", v)}
                 />
             </Row>
-            <Row label="Units" hint="Persisted now; not yet wired into distance/speed displays (no unit-convertible display exists in the app yet).">
-                <ChoiceGroup
-                    value={getAtPath(settings, "general.units") || "metric"}
-                    options={[{ value: "metric", label: "Metric" }, { value: "imperial", label: "Imperial" }]}
-                    onChange={(v) => updateSetting("general.units", v)}
-                />
-            </Row>
             <SectionTitle>Launch</SectionTitle>
             <Row label="Guided walkthrough"
-                 hint="The seven-step introduction to the app. Reopening it does not change anything you have set.">
+                 hint="The short introduction to the app. Reopening it does not change anything you have set.">
                 <button className="btn sm" onClick={() => updateSetting("tutorial", null)}>
                     {settings?.tutorial === "done" ? "show again" : "showing on next launch"}
                 </button>
@@ -286,8 +274,6 @@ function AlertsSection({ settings, onOpenSources }) {
             .then(r => { if (!r.ok) setRules(prev => prev.map(r2 => r2.id === rule.id ? { ...r2, enabled: rule.enabled } : r2)) })
             .catch(() => setRules(prev => prev.map(r2 => r2.id === rule.id ? { ...r2, enabled: rule.enabled } : r2)))
     }
-    const quietEnabled = getAtPath(settings, "alerts.quietHours.enabled") || false
-    const hourOptions = Array.from({ length: 24 }, (_, h) => ({ value: h, label: `${String(h).padStart(2, "0")}:00 UTC` }))
 
     return (
         <div>
@@ -308,35 +294,15 @@ function AlertsSection({ settings, onOpenSources }) {
                 <Select value={settings.alertInterval} onChange={(v) => updateSetting("alertInterval", Number(v))}
                     options={[10, 15, 30, 60].map(s => ({ value: s, label: `${s}s` }))} />
             </Row>
-            <SectionTitle>Push notifications</SectionTitle>
-            <PushNotificationToggle />
-            <SectionTitle>Quiet hours</SectionTitle>
-            <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginBottom: "var(--space-2)" }}>
-                New: this app had no quiet-hours concept before this round. Persisted for real; actually suppressing
-                delivery during these hours is real, disclosed follow-up work — not wired into alert delivery yet.
-            </div>
-            <Row label="Enable quiet hours">
-                <Toggle value={quietEnabled} onChange={(v) => updateSetting("alerts.quietHours.enabled", v)} />
-            </Row>
-            {quietEnabled && (
-                <>
-                    <Row label="From">
-                        <Select value={getAtPath(settings, "alerts.quietHours.startHour") ?? 22} onChange={(v) => updateSetting("alerts.quietHours.startHour", Number(v))} options={hourOptions} />
-                    </Row>
-                    <Row label="To">
-                        <Select value={getAtPath(settings, "alerts.quietHours.endHour") ?? 7} onChange={(v) => updateSetting("alerts.quietHours.endHour", Number(v))} options={hourOptions} />
-                    </Row>
-                </>
-            )}
             <SectionTitle>Detection rules</SectionTitle>
             <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginBottom: "var(--space-2)" }}>
-                Reuses the app's real rule system (Sources → Detection Rules) — enable/disable only here; full
-                create/edit stays in Sources so there's one real rule editor, not two.
+                Turn detection rules on or off. Create and edit them in Sources.
             </div>
             {rules === null && <Loading size={18} inline label="Loading" />}
             {rules?.length === 0 && <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>No rules configured yet.</div>}
-            {rules?.map(rule => (
-                <Row key={rule.id} label={rule.name} hint={rule.wired ? rule.severity : "not wired — has no live effect even if enabled"}>
+            {/* Only rules that do something: an unwired rule's switch changed nothing. */}
+            {rules?.filter((rule) => rule.wired).map(rule => (
+                <Row key={rule.id} label={rule.name} hint={rule.severity}>
                     <Toggle value={rule.enabled} onChange={() => toggleRule(rule)} />
                 </Row>
             ))}
@@ -429,11 +395,7 @@ function SourcesSection() {
 function BriefingSection({ settings }) {
     return (
         <div>
-            <SectionTitle>Schedule</SectionTitle>
-            <Row label="Daily briefing hour" hint="The real backend's own scheduled daily-briefing loop is currently disabled — this persists for real but has no live scheduler consuming it yet.">
-                <Select value={settings.briefingHourUTC} onChange={(v) => updateSetting("briefingHourUTC", Number(v))}
-                    options={Array.from({ length: 24 }, (_, h) => ({ value: h, label: `${String(h).padStart(2, "0")}:00 UTC` }))} />
-            </Row>
+            <SectionTitle>Refresh</SectionTitle>
             <Row label="Surface refresh interval">
                 <Select value={settings.refreshInterval} onChange={(v) => updateSetting("refreshInterval", Number(v))}
                     options={[5, 10, 15, 30].map(m => ({ value: m, label: `${m} min` }))} />
@@ -446,9 +408,6 @@ function BriefingSection({ settings }) {
                     style={{ background: "var(--bg-2)", border: "1px solid var(--line-strong)", borderRadius: "var(--r)", color: "var(--txt)", font: "400 11.5px var(--font)", padding: "4px 8px", width: 260 }}
                 />
             </Row>
-            <Row label="Show provenance/citations by default" hint="Persisted for real; not yet wired into report rendering, which always shows them today regardless of this value.">
-                <Toggle value={getAtPath(settings, "briefing.showProvenanceByDefault") ?? true} onChange={(v) => updateSetting("briefing.showProvenanceByDefault", v)} />
-            </Row>
         </div>
     )
 }
@@ -458,7 +417,7 @@ function KeyboardSection() {
     return (
         <div>
             <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginBottom: "var(--space-2)" }}>
-                This app's real current keybindings — audited directly from each handler, not invented.
+                Keyboard shortcuts.
             </div>
             {KEYBOARD_SHORTCUTS.map((s, i) => (
                 <div key={i} style={{ display: "flex", gap: "var(--space-3)", padding: "var(--space-2) 0", borderBottom: "1px solid var(--line-soft)", alignItems: "baseline" }}>

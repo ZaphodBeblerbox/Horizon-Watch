@@ -19,31 +19,31 @@ import { getSettings, subscribeSettings, updateSetting } from "../state/settings
 const STEPS = [
     {
         title: "Two modes, one job",
-        body: "Watch is what you monitor — the globe, imagery, briefings, replay. Workstation is where you build: cases, documents, the ontology, forecasts. ⌘⇧Space switches between them and returns you to wherever you last were in each.",
+        body: "Watch is what you monitor — the globe, imagery, briefings, replay. Workstation is where you build: cases, documents, the ontology, forecasts. Switch from the View menu (⇧⌘W), and each mode returns you to where you last were.",
+    },
+    {
+        title: "Search like a map",
+        body: "Type into the search box at the top: a country, a city, a street, a ship, a signal, or coordinates like 26.5, 56.4. Suggestions drop down as you type; Enter flies there. ⌘K jumps to the box from anywhere.",
+    },
+    {
+        title: "Theaters are the places you watch",
+        body: "Each tab is a theater — a place and the layers that matter there. + makes a new one: name the place, pick what to show. The ★ beside the title makes the selected theater a favourite; favourites stay first in the tabs.",
     },
     {
         title: "The map is the product",
-        body: "Situation opens on the globe. Layers is the left pane, the inspector is the right, and both collapse to a tab on the edge — the map is what you came to look at. The time strip along the bottom collapses too.",
+        body: "Map data is the left pane, the inspector the right; both fold away to the edge. Click anything to see what it is, where it came from, and its sources — X and Telegram posts open right beside it.",
     },
     {
         title: "Turn on what you actually use",
-        body: "Set the layers you want, then press “save default” in the Layers header. The app opens that way from then on, for your account. “reset” puts the built-in defaults back.",
+        body: "Set the layers you want, then press “save default” in the Map data header — or choose them in Settings › Map & layers. The app opens that way from then on, for your account.",
     },
     {
-        title: "Save anything worth writing about",
-        body: "Click something on the map and press “Save for briefing”. It keeps the item with its coordinates and any imagery, and it appears in the Editor’s Saved pane ready to drop into a page.",
+        title: "Save, share, write",
+        body: "“Save for briefing” keeps anything with its coordinates and imagery for the Editor. Share copies a link that opens your theater at your exact view for a colleague. Cases hold the work; nobody sees one unless you share it by name.",
     },
     {
-        title: "Cases hold the work",
-        body: "A case is a folder: documents, PDFs, satellite crops, saved signals, in folders and subfolders you make. Nobody else can see it unless you share it with them by name, from the Sharing tab.",
-    },
-    {
-        title: "The Editor writes the document",
-        body: "A real page with real fonts. Start blank, open one of yours, or open a briefing to edit its text. Everything you write saves into a case. Export PDF gives you the white page alone — never the app around it.",
-    },
-    {
-        title: "Notifications stay out of the way",
-        body: "Cards arrive one at a time, top-right, and everything is recorded in the tray whether a card appears or not. Do not disturb is in Settings when you need quiet.",
+        title: "Notifications are about now",
+        body: "A card appears only for something happening while you are here; older events go quietly into the tray as history. The bell counts what is unread. Do not disturb is in Settings when you need quiet.",
     },
 ]
 

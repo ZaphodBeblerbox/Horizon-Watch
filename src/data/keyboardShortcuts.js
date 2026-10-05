@@ -5,7 +5,7 @@
 // handler at the time of the audit; if a shortcut is added/changed, update
 // its row here too rather than letting this list go stale.
 export const KEYBOARD_SHORTCUTS = [
-    { keys: "⌘/Ctrl K", action: "Open command palette / focus search", context: "Global", file: "src/app.jsx, src/components/HeaderSearch.jsx" },
+    { keys: "⌘/Ctrl K", action: "Focus the search box", context: "Global", file: "src/app.jsx, src/components/HeaderSearch.jsx" },
     { keys: "/", action: "Focus header search", context: "Global (not while typing)", file: "src/components/HeaderSearch.jsx" },
     { keys: "1–9", action: "Open the Nth module tab", context: "Global (not while typing)", file: "src/app.jsx" },
     { keys: "Alt W", action: "Toggle Watch / Workstation mode", context: "Global (not in a text field)", file: "src/app.jsx" },

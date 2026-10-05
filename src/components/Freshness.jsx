@@ -80,11 +80,14 @@ export function freshnessState(updatedAt, now = Date.now(), online = true, cache
    top bar: green connected, orange disrupted, red not connected. A stale
    reading and a dead connection used to share one grey dot, which is how a
    disconnected console goes on looking merely old. */
+// `ink`, not `text`: the tone's colour was called text and was spread over
+// the state's sentence of the same name, so Settings > Health printed
+// "var(--amber)" where it should have said how old the data is.
 const TONE = {
-    fresh:   { dot: "var(--green, #3f9a58)", text: "var(--txt-3)", word: "Connected" },
-    stale:   { dot: "var(--amber)",          text: "var(--amber)",  word: "Disrupted" },
-    offline: { dot: "var(--sev-critical)",   text: "var(--sev-critical)", word: "Not connected" },
-    unknown: { dot: "var(--amber)",          text: "var(--amber)",  word: "Disrupted" },
+    fresh:   { dot: "var(--green, #3f9a58)", ink: "var(--txt-3)", word: "Connected" },
+    stale:   { dot: "var(--amber)",          ink: "var(--amber)",  word: "Disrupted" },
+    offline: { dot: "var(--sev-critical)",   ink: "var(--sev-critical)", word: "Not connected" },
+    unknown: { dot: "var(--amber)",          ink: "var(--amber)",  word: "Disrupted" },
 }
 
 /** The live connection reading, for anything that wants to render it itself. */
@@ -135,7 +138,7 @@ export default function Freshness({ updatedAt, dotOnly = true }) {
     return (
         <div title="Age of the newest data on screen"
              style={{ display: "flex", alignItems: "center", gap: 5,
-                      font: "400 10.5px var(--font)", color: s.text,
+                      font: "400 10.5px var(--font)", color: s.ink,
                       whiteSpace: "nowrap", padding: "0 8px" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%",
                            background: s.dot, flex: "none" }} />
