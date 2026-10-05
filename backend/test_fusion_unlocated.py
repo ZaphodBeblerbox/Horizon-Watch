@@ -98,3 +98,95 @@ def test_a_located_signal_restores_normally():
     e.on_signal(_signal(signal_id="L1", lat=10.0, lon=20.0))
     keys = [k for k in e.active_signals if k != fusion_engine.UNLOCATED_KEY]
     assert keys, "a located signal must still be correlated"
+
+
+# ── a name, or failing that, the position ───────────────────────────────
+#
+# A fusion exists because its signals shared a position: the engine's key
+# is a coordinate (GEO:33.2500,134.2500). Returning "Unknown Location"
+# discarded the one fact every signal in the bundle agreed on, and live
+# fusions read "Unknown Location Intelligence Event" while sitting on a
+# known point. AIS and GPS signals routinely carry lat/lon and no place
+# string, so this was the common case rather than the edge one.
+
+def _bare_engine():
+    return fusion_engine.FusionEngine.__new__(fusion_engine.FusionEngine)
+
+
+def test_a_named_signal_gives_its_name():
+    e = _bare_engine()
+    assert e._best_location_name(
+        [{"location_name": "Hodeidah", "lat": 14.8, "lon": 42.9}]) == "Hodeidah"
+
+
+def test_a_name_anywhere_in_the_bundle_beats_a_coordinate():
+    e = _bare_engine()
+    assert e._best_location_name(
+        [{"lat": 33.25, "lon": 134.25},
+         {"location_name": "Philippine Sea"}]) == "Philippine Sea"
+
+
+def test_coordinates_are_used_when_nothing_is_named():
+    e = _bare_engine()
+    assert e._best_location_name([{"lat": 33.25, "lon": 134.25}]) == "33.25°N 134.25°E"
+
+
+def test_the_southern_and_western_hemispheres_are_not_negative_degrees():
+    e = _bare_engine()
+    assert e._best_location_name([{"lat": -33.9, "lon": -18.4}]) == "33.90°S 18.40°W"
+
+
+def test_genuinely_unlocated_still_says_so():
+    # A coordinate it does not have must not be invented.
+    e = _bare_engine()
+    assert e._best_location_name([{"lat": None, "lon": None}]) == "Unknown Location"
+    assert e._best_location_name([{}]) == "Unknown Location"
+
+
+def test_an_unparseable_coordinate_is_skipped_not_crashed_on():
+    e = _bare_engine()
+    assert e._best_location_name(
+        [{"lat": "n/a", "lon": "n/a"}, {"lat": 10.0, "lon": 20.0}]) == "10.00°N 20.00°E"
+
+
+# ── never "Unknown Location" ────────────────────────────────────────────
+#
+# A fusion is a map object: an analyst finds it by looking at where it is.
+# One that cannot say where it is cannot be checked and cannot be acted on,
+# yet 226 of 811 stored fusions sat in the list saying "Unknown Location
+# Intelligence Event" — several of them keyed "CTY:mx", which names Mexico.
+
+def test_a_country_key_names_the_country():
+    e = _bare_engine()
+    assert e._best_location_name([{}], "CTY:mx") == "Mexico"
+    assert e._best_location_name([{}], "CTY:YE") == "Yemen"
+
+
+def test_a_grid_key_gives_the_point():
+    e = _bare_engine()
+    assert e._best_location_name([{}], "GEO:19.25,-99.25") == "19.25°N 99.25°W"
+
+
+def test_a_signal_name_still_beats_the_key():
+    e = _bare_engine()
+    assert e._best_location_name([{"location_name": "Hodeidah"}], "CTY:mx") == "Hodeidah"
+
+
+def test_a_signal_position_beats_a_country_key():
+    # A point is more use than a country, when both are known.
+    e = _bare_engine()
+    assert e._best_location_name([{"lat": 33.25, "lon": 134.25}], "CTY:mx") == "33.25°N 134.25°E"
+
+
+def test_the_markers_for_no_place_are_still_honest():
+    e = _bare_engine()
+    assert e._best_location_name([{}], "GEO:unlocated") == "Unknown Location"
+    assert e._best_location_name([{}], "GEO:unknown") == "Unknown Location"
+    assert e._best_location_name([{}], "") == "Unknown Location"
+
+
+def test_an_unknown_country_code_is_not_invented():
+    e = _bare_engine()
+    # "zz" is not a country. Returning the bare code is honest; inventing a
+    # name would not be.
+    assert e._best_location_name([{}], "CTY:zz") == "ZZ"

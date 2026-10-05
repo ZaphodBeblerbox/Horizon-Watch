@@ -58,14 +58,22 @@ FORECAST = "forecast"
 # base rates that named nothing.
 OUTLOOK = "outlook"
 
+# Writing up a fusion — the cluster of signals from different domains that
+# landed on the same place and time. It was a Claude purpose and was off, so
+# every fusion fell back to a template that read "Multi-domain intelligence
+# signals detected at Unknown Location ... requiring analyst review", which
+# names nothing. Claude is reserved for briefings and the decks built from
+# them, so this belongs here, under the one monthly cap.
+FUSION = "fusion"
+
 KNOWN_PURPOSES = frozenset({
-    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK,
+    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION,
     "constellation",      # filling gaps between entities in the graph
     "summarise",          # a one-line precis of a long wire report
     "translate",
 })
 
-_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK})
+_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION})
 
 DEFAULT_MODEL = "gpt-4o-mini"
 

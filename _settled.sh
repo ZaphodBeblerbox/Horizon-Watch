@@ -13,11 +13,15 @@ fast=0
 for i in {1..120}; do
   PID=$(pgrep -f "uvicorn main:app" | head -1)
   [[ -z "$PID" ]] && { sleep 3; continue }
-  t=$(curl -s -o /dev/null -w "%{time_total}" --max-time 8 http://localhost:8000/api/health/live 2>/dev/null)
+  # STATUS AND TIME, NOT TIME ALONE. A refused connection returns in
+  # ~0.0003s, which the time check alone read as "fast" — so the gate
+  # declared a backend that was not listening to be settled, and the probe
+  # behind it failed with connection errors that look like product bugs.
+  read -r code t <<< "$(curl -s -o /dev/null -w '%{http_code} %{time_total}' --max-time 8 http://localhost:8000/api/health/live 2>/dev/null)"
   cpu=$(top -l 1 -pid $PID -stats cpu 2>/dev/null | tail -1 | tr -d ' ')
-  if [[ -n "$t" ]] && (( ${t%.*}0 < 10 )) && [[ -n "$cpu" ]] && (( ${cpu%.*} < 40 )); then
+  if [[ "$code" == "200" ]] && [[ -n "$t" ]] && (( ${t%.*}0 < 10 )) && [[ -n "$cpu" ]] && (( ${cpu%.*} < 40 )); then
     fast=$((fast+1))
-    [[ $fast -ge 3 ]] && { echo "settled (health ${t}s, cpu ${cpu}%)"; exit 0 }
+    [[ $fast -ge 3 ]] && { echo "settled (health ${code} in ${t}s, cpu ${cpu}%)"; exit 0 }
   else
     fast=0
   fi

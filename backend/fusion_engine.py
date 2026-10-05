@@ -113,6 +113,40 @@ SIGNAL_LOG_INTERVAL_S = 30
 # Said once per process, not once per fusion — see the None check below.
 _NARRATIVE_OFF_REPORTED = False
 
+
+def _coord_name(lat, lon) -> str | None:
+    """A position as something a person reads, or None if there is none."""
+    if lat is None or lon is None:
+        return None
+    try:
+        lat, lon = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None
+    return (f"{abs(lat):.2f}\u00b0{'N' if lat >= 0 else 'S'} "
+            f"{abs(lon):.2f}\u00b0{'E' if lon >= 0 else 'W'}")
+
+
+def _name_from_geo_key(geo_key: str) -> str | None:
+    """The place a fusion's own key names.
+
+    "CTY:mx" is Mexico and "GEO:19.25,-99.25" is a point. Both were
+    discarded in favour of "Unknown Location", which is the one thing the
+    key never says.
+    """
+    key = str(geo_key or "")
+    if key.startswith("CTY:"):
+        code = key[4:].strip()
+        try:
+            from location_extract import country_name_from_code
+            return country_name_from_code(code) or (code.upper() if code else None)
+        except Exception:
+            return code.upper() or None
+    if key.startswith("GEO:") and "," in key:
+        lat, _, lon = key[4:].partition(",")
+        return _coord_name(lat.strip(), lon.strip())
+    return None
+
+
 class FusionEngine:
     def __init__(self):
         # geo_key → [signal, ...]
@@ -539,10 +573,36 @@ class FusionEngine:
             max_sev += 1
         return SEV_NAMES[max_sev]
 
-    def _best_location_name(self, signals: list) -> str:
+    def _best_location_name(self, signals: list, geo_key: str = "") -> str:
+        """A name for where this is, falling back to where it actually is.
+
+        NO NAME IS NOT NO PLACE. A fusion only exists because its signals
+        shared a position — the engine's own key is a coordinate, e.g.
+        GEO:33.2500,134.2500 — so returning "Unknown Location" discards the
+        one fact every signal in the bundle agrees on. AIS and GPS signals
+        routinely carry lat/lon and no place string, which is why live
+        fusions read "Unknown Location Intelligence Event" while sitting on
+        a known point in the Philippine Sea.
+
+        A coordinate is not as good as a name, and it is not pretending to
+        be one. It is the truth, and an analyst can act on it.
+        """
         for s in signals:
             if s.get("location_name"):
                 return s["location_name"]
+        for s in signals:
+            name = _coord_name(s.get("lat"), s.get("lon"))
+            if name:
+                return name
+
+        # THE KEY ITSELF NAMES THE PLACE. A country-clustered fusion is
+        # keyed "CTY:mx" and a grid one "GEO:19.25,-99.25" — both say where
+        # this is, and both were being thrown away in favour of the words
+        # "Unknown Location".
+        from_key = _name_from_geo_key(geo_key)
+        if from_key:
+            return from_key
+
         return "Unknown Location"
 
     def _signal_radius_km(self, signals: list) -> float:
@@ -711,6 +771,25 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
     "second if relevant"
   ]
 }}"""
+            # OPENAI WRITES THIS, NOT CLAUDE. Claude is reserved for
+            # briefings and the decks built from them; everything else runs
+            # on OpenAI under its own monthly cap. The validator below is
+            # unchanged and still rejects anything the signals do not
+            # support, so the writer swapped but the guard did not.
+            import fusion_narrative as _fn
+            written = _fn.write(signals, domains, severity, location_name,
+                                score=score, item_id=item_id)
+            if written is not None:
+                title, subtitle, narrative, key_signals, threat_indicators = written
+                ok, violations = self._validate_narrative(
+                    narrative, key_signals, threat_indicators, signals, domains,
+                    location_name, shared_entity_names)
+                if ok:
+                    return (title, subtitle, narrative, key_signals, threat_indicators)
+                print(f"[fusion] narrative validator caught unsupported claim(s) "
+                      f"{violations} — using the template instead", flush=True)
+                return self._template_narrative(signals, domains, location_name)
+
             client = llm_gate.get_client("fusion_narrative")
             if client is None:
                 # NOT AN ERROR, AND SAID ONCE. The purpose is switched off
@@ -722,9 +801,10 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
                 # feature that is merely off look like one that is broken.
                 global _NARRATIVE_OFF_REPORTED
                 if not _NARRATIVE_OFF_REPORTED:
-                    print("[fusion] the narrative model is not enabled "
-                          "(HW_LLM_PURPOSES has no 'fusion_narrative') — "
-                          "every fusion will use the deterministic template")
+                    print("[fusion] no narrative writer is available "
+                          "(OpenAI 'fusion' purpose off or over budget, and "
+                          "Claude is reserved for briefings) — every fusion "
+                          "will use the deterministic template")
                     _NARRATIVE_OFF_REPORTED = True
                 return self._template_narrative(signals, domains, location_name)
 
@@ -789,7 +869,22 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
         from database import get_db, FusionEvent
         severity   = self._composite_severity(signals, domains)
         lat, lon   = self._centroid(signals)
-        location_name = self._best_location_name(signals)
+        location_name = self._best_location_name(signals, geo_key)
+
+        # A FUSION WITHOUT A PLACE IS NOT PUBLISHED. It is a map object: an
+        # analyst finds it by looking at where it is. One that cannot say
+        # where it is cannot be checked, cannot be acted on, and sits in the
+        # list implying something happened somewhere. 226 of 811 stored
+        # fusions were in that state.
+        #
+        # Dropped rather than labelled, and said in the log, because the
+        # fix for an unlocatable cluster is upstream in whatever produced
+        # signals with no position.
+        if location_name == "Unknown Location":
+            print(f"[fusion] not creating a fusion for {geo_key or 'no key'}: "
+                  f"{len(signals)} signal(s) across {len(domains)} domain(s) and "
+                  f"no resolvable location", flush=True)
+            return
         region_id  = next((s.get("region_id") for s in signals if s.get("region_id")), None)
         country    = next((s.get("country") for s in signals if s.get("country")), None)
         fusion_id  = _new_fusion_id()
@@ -961,7 +1056,8 @@ Generate a structured intelligence assessment. Return ONLY valid JSON with no ma
         new_domains_joined = domains - old_domains
         severity    = self._composite_severity(signals, all_domains)
 
-        location_name = existing.get("location_name") or self._best_location_name(signals)
+        location_name = (existing.get("location_name")
+                         or self._best_location_name(signals, geo_key))
 
         try:
             with get_db() as _score_db:

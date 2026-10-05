@@ -216,5 +216,44 @@ def country_code_from_name(name: str) -> str | None:
     return _COUNTRY_ALIAS_TO_CODE.get((name or "").strip().lower())
 
 
+# The full ISO table, read once from the country outlines the globe already
+# draws. _COUNTRY_NAME_BY_CODE above is a hand-written regional subset of
+# nineteen entries — enough for the East Africa work it was added for, and
+# silently None for everything else, so "CTY:mx" resolved to nothing and a
+# fusion in Mexico was labelled "Unknown Location". One shipped file with
+# 191 countries beats a second hand-maintained list that will drift from it.
+_ISO_NAMES: dict[str, str] | None = None
+
+
+def _iso_names() -> dict[str, str]:
+    global _ISO_NAMES
+    if _ISO_NAMES is not None:
+        return _ISO_NAMES
+    out: dict[str, str] = {}
+    try:
+        import json as _json
+        import os as _os
+        path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                             "public", "data", "world-countries.json")
+        with open(path) as fh:
+            for feat in (_json.load(fh).get("features") or []):
+                p = feat.get("properties") or {}
+                name, a2, a3 = p.get("n"), p.get("a2"), p.get("a3")
+                if not name:
+                    continue
+                for code in (a2, a3):
+                    if code:
+                        out[str(code).strip().lower()] = name
+    except Exception:
+        pass        # the hand-written subset below still answers
+    _ISO_NAMES = out
+    return out
+
+
 def country_name_from_code(code: str) -> str | None:
-    return _COUNTRY_NAME_BY_CODE.get((code or "").strip().lower())
+    key = (code or "").strip().lower()
+    if not key:
+        return None
+    # The curated names win where they exist — they are the ones chosen for
+    # how this product refers to those countries.
+    return _COUNTRY_NAME_BY_CODE.get(key) or _iso_names().get(key)

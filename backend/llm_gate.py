@@ -1,6 +1,18 @@
 """
 llm_gate.py — the single place the Anthropic client is constructed.
 
+POLICY, SET BY THE OWNER OF THE CREDIT (2026-10-05): Claude writes
+BRIEFINGS and the decks built from them. Nothing else. Every other model
+job in this product — the spoken command, explaining a place, enriching a
+signal, the day's outlook, reading a scenario, and the fusion narrative —
+goes to OpenAI through openai_gate.py, under its own monthly cap.
+
+That is why fusion_narrative, foresight, chat and the rest are listed in
+KNOWN_PURPOSES and are not in _DEFAULT_ALLOWED: they are not waiting to be
+switched on here. The fusion write-up in particular now has an OpenAI
+implementation (openai_gate.FUSION), and turning the Claude one back on
+would duplicate it against the wrong budget.
+
 Every Claude call in this codebase used to build its own client inline
 (`anthropic.Anthropic()`), in nine different modules, so there was no way to
 answer "what does this system send to the model, and when" without reading
