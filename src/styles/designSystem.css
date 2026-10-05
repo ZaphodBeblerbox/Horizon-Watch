@@ -1392,3 +1392,11 @@ table.grid .dim { color: var(--txt-4); }
     color: #9a9a92;
 }
 .plx-docwriter:focus-within > p:only-child:empty::before { opacity: .55; }
+
+/* A placeholder must not read as a saved value. Unstyled, "Trifecta
+   Technologies" and "Berlin" sat in the account form in the same ink as
+   real entries, so an empty profile looked filled in. */
+[data-screen-label="Profile"] input::placeholder,
+[data-screen-label="Profile"] textarea::placeholder {
+    color: var(--txt4, var(--txt-4)); font-style: italic; opacity: 1;
+}

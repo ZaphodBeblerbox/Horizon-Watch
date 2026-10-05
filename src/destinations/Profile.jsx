@@ -316,13 +316,16 @@ export default function Profile({ onClose = null, section = null }) {
                 }}>✕</button>
             )}
 
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "24px 24px 96px" }}>
+            {/* 52px on the right: the close control is absolutely placed at
+                right:10, and full-width content would run under it. */}
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "24px 52px 96px 24px" }}>
                 <div style={{
                     display: "grid", gridTemplateColumns: "minmax(0,200px) minmax(0,1fr)",
-                    // The console is a table with six columns and needs the
-                    // window; the rest of this screen is a form and reads
-                    // badly past about a thousand pixels.
-                    gap: 32, maxWidth: sec === "admin" ? "none" : 1040,
+                    // Full width for every section. A 1040px cap left a
+                    // third of a 1680px window empty beside the form, which
+                    // reads as a layout fault, not as restraint. Long help
+                    // text keeps its own measure (maxWidth on the paragraph).
+                    gap: 32,
                 }}>
                     <nav style={{
                         display: "flex", flexDirection: "column", gap: 2,
@@ -515,11 +518,11 @@ export default function Profile({ onClose = null, section = null }) {
 
                                 <div style={GRID}>
                                     <Field label="Company">
-                                        <input value={pf.company} placeholder="Trifecta Technologies"
+                                        <input value={pf.company} placeholder="e.g. Trifecta Technologies"
                                             onChange={(e) => set("company", e.target.value)} style={INPUT} />
                                     </Field>
                                     <Field label="Location" hint="Where you sit, for the people reading your page.">
-                                        <input value={pf.location} placeholder="Berlin"
+                                        <input value={pf.location} placeholder="e.g. Berlin"
                                             onChange={(e) => set("location", e.target.value)} style={INPUT} />
                                     </Field>
                                 </div>
@@ -527,7 +530,7 @@ export default function Profile({ onClose = null, section = null }) {
                                 <Field label="About"
                                     hint="What you work on and what you are the person to ask about. This is the part a colleague opening your page is actually after.">
                                     <textarea value={pf.bio} rows={5} maxLength={1200}
-                                        placeholder="Maritime and imagery analyst. Red Sea and Hormuz. Ask me about AIS gaps and SAR tasking."
+                                        placeholder="e.g. Maritime and imagery analyst. Red Sea and Hormuz. Ask me about AIS gaps and SAR tasking."
                                         onChange={(e) => set("bio", e.target.value)}
                                         style={{ ...INPUT, height: "auto", padding: "8px 10px", lineHeight: 1.6, resize: "vertical" }} />
                                 </Field>
