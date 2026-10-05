@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
 import { getForgeAlerts, acknowledgeAlert, escalateAlert } from "../mobileApi.js"
+import { fmtWhen } from "../../utils/formatTime.js"
 
 const SEV_RANK = { critical: 4, high: 3, moderate: 2, medium: 2, low: 1 }
 // Real .dia severity modifier classes (designSystem.css) — "medium" is the
@@ -124,7 +125,7 @@ export default function AlertsTab({ onOpenNoteWithReference, onShowOnMap }) {
                             {sheetAlert.message && <p style={{ fontSize: 14.5, lineHeight: 1.55, color: "var(--txt-2)", margin: "0 0 6px" }}>{sheetAlert.message}</p>}
                             <dl className="kv">
                                 <dt>Location</dt><dd>{sheetAlert.lat != null ? `${sheetAlert.lat.toFixed(2)}°, ${(sheetAlert.lon ?? sheetAlert.lng)?.toFixed(2)}°` : "—"}</dd>
-                                <dt>Received</dt><dd>{sheetAlert.timestamp ? new Date(sheetAlert.timestamp).toLocaleString() : "—"}</dd>
+                                <dt>Received</dt><dd>{sheetAlert.timestamp ? fmtWhen(sheetAlert.timestamp, { precision: "minute" }) : "—"}</dd>
                                 <dt>Source</dt><dd>{sheetAlert.source || "—"}{sheetAlert.correlation_domains ? ` (${sheetAlert.correlation_domains}, multi-source)` : " (single-source)"}</dd>
                                 <dt>Confidence</dt><dd>{sheetAlert.confidence != null ? `${Math.round(sheetAlert.confidence * (sheetAlert.confidence <= 1 ? 100 : 1))}%` : "—"}</dd>
                                 <dt>Corroboration</dt><dd>{(sheetAlert.correlated_alert_ids || []).length} real linked alert(s)</dd>

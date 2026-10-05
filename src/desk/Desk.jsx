@@ -30,6 +30,7 @@ import PersonCard, { Face } from "../chat/PersonCard.jsx"
 import { toast } from "../ui/toast.js"
 import Loading from "../ui/Loading.jsx"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
+import { fmtWhen } from "../utils/formatTime.js"
 
 const EYE = {
     font: "500 10px var(--mono)", letterSpacing: ".14em",
@@ -58,7 +59,7 @@ function when(iso) {
     if (s < 3600) return `${Math.round(s / 60)}m`
     if (s < 86400) return `${Math.round(s / 3600)}h`
     if (s < 604800) return `${Math.round(s / 86400)}d`
-    return d.toLocaleDateString(undefined, { day: "2-digit", month: "short" })
+    return fmtWhen(d, { precision: "day" })
 }
 
 function Chip({ on, children, onClick, tint, count }) {

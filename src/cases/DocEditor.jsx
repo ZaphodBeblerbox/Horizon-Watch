@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import PageFrame from "../print/PageFrame.jsx"
 import { PrintSurface, exportPdf } from "../print/printSurface.jsx"
+import { fmtWhen } from "../utils/formatTime.js"
 
 const FONTS = [
     ["Times New Roman", "'Times New Roman', Times, serif"],
@@ -322,7 +323,7 @@ export default function DocEditor({ name, initialHtml = "", onSave, readOnly = f
 
                     <div style={{ flex: 1 }} />
                     <span style={{ font: "400 10px var(--font)", color: "var(--txt-3)", marginRight: 6 }}>
-                        {saving ? "Saving…" : dirty ? "Unsaved" : savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : ""}
+                        {saving ? "Saving…" : dirty ? "Unsaved" : savedAt ? `Saved ${fmtWhen(savedAt, { precision: "minute" }).split(", ")[1]}` : ""}
                     </span>
                     <button type="button" className="btn" style={BTN}
                             onMouseDown={(e) => { e.preventDefault(); save(false) }}>Save</button>

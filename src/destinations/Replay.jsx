@@ -16,6 +16,7 @@ import { replayOnMap } from "../services/replayOnMap.js"
 import Minimap from "../components/Minimap.jsx"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import Loading from "../ui/Loading.jsx"
+import { fmtWhen } from "../utils/formatTime.js"
 
 const API = API_BASE
 const WINDOW_HOURS = 168 // real bounded window — 7 days, matching Analytics' own shortest real "range" option
@@ -235,7 +236,7 @@ export default function Replay({ isVisible = true }) {
                 {t0 != null ? (
                     <div style={{ padding: "3px 10px", font: "400 10px var(--font)", color: "var(--txt-4)",
                                   borderBottom: "1px solid var(--line-soft)" }}>
-                        {`${new Date(t0).toLocaleString()} → ${new Date(t1).toLocaleString()}`}
+                        {`${fmtWhen(new Date(t0), { precision: "minute" })} → ${fmtWhen(new Date(t1), { precision: "minute" })}`}
                         {` · ${rows.length.toLocaleString()} of ${allRows.length.toLocaleString()} signals`}
                         {mutedDomains.size ? ` · ${[...mutedDomains].join(", ")} hidden` : ""}
                     </div>

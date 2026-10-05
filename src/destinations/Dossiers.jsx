@@ -7,6 +7,7 @@ import { toast } from "../ui/toast.js"
 import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import Loading from "../ui/Loading.jsx"
+import { fmtWhen } from "../utils/formatTime.js"
 
 // Dossiers — page-by-page rebuild, §8.4. Genuinely new module (no prior
 // implementation existed — only a PlaceholderModule). Layout 238px/1fr/292px,
@@ -189,7 +190,7 @@ function HistoryTab({ profile }) {
                                 <svg className="icon sm"><use href="#i-clock" /></svg>
                             </button>
                         )}
-                        <span className="time">{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
+                        <span className="time">{s.created_at ? fmtWhen(s.created_at, { precision: "day" }) : ""}</span>
                     </div>
                 ))}
             </div>
@@ -424,7 +425,7 @@ export default function Dossiers({ onOpenGenerate }) {
                                         <svg className="icon sm"><use href="#i-clock" /></svg>
                                     </button>
                                 )}
-                                <span className="time">{s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}</span>
+                                <span className="time">{s.created_at ? fmtWhen(s.created_at, { precision: "day" }) : ""}</span>
                             </div>
                         ))}
                     </div>

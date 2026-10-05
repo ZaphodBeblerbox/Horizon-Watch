@@ -9,6 +9,7 @@ import {
 } from "../../lib/collabApi.js"
 import API_BASE from "../../apiBase.js"
 import { safeArray } from "../../utils/safeArray.js"
+import { fmtWhen } from "../../utils/formatTime.js"
 
 /**
  * CollabPanel — Workstation round, Part 8. The one real implementation of
@@ -133,7 +134,7 @@ function Assignment({ recordRef }) {
                         </div>
                         {assignment.due_at && (
                             <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)" }}>
-                                Due {new Date(assignment.due_at).toLocaleDateString()}
+                                Due {fmtWhen(assignment.due_at, { precision: "day" })}
                             </div>
                         )}
                     </div>

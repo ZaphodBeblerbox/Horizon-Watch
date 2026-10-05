@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import API_BASE from "../../apiBase.js"
 import { drawGraphNode, graphNodeIcon } from "../../globe/entityIcons.js"
+import { fmtWhen } from "../../utils/formatTime.js"
 
 // ── Canonical type normalization (DB mixed-case → canonical lowercase) ────────
 const _TYPE_MAP = {
@@ -719,7 +720,7 @@ function AlertRow({ alert }) {
                     {alert.title || alert.alert_type || "Alert"}
                 </div>
                 <div style={{ fontSize: 9, color: "#475569", marginTop: 1 }}>
-                    {alert.source || ""}{alert.created_at ? " · " + new Date(alert.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                    {alert.source || ""}{alert.created_at ? " · " + fmtWhen(alert.created_at, { precision: "minute" }) : ""}
                 </div>
             </div>
         </div>

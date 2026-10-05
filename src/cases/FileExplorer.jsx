@@ -22,6 +22,7 @@ import {
 import { toast } from "../ui/toast.js"
 import Loading from "../ui/Loading.jsx"
 import { safeArray } from "../utils/safeArray.js"
+import { fmtWhen } from "../utils/formatTime.js"
 
 /* ── what a node looks like ──────────────────────────────────────────── */
 
@@ -115,9 +116,10 @@ function fmtBytes(b) {
    which is how a file saved a minute ago gets stamped an hour out. */
 function fmtDate(iso) {
     if (!iso) return ""
-    const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`)
-    if (Number.isNaN(+d)) return ""
-    return `${d.toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" })} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
+    // fmtWhen reads a naive timestamp as UTC, which is the fix this
+    // function used to make by hand.
+    const out = fmtWhen(iso, { precision: "minute" })
+    return out && out !== String(iso) ? out : ""
 }
 
 /* ── tree maths ──────────────────────────────────────────────────────── */

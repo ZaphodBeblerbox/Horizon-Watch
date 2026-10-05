@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
+import { fmtWhen } from "../utils/formatTime.js"
 
 // ── Named exports preserved for app.jsx imports ───────────────────────────────
 export function IconOverwatch({ size = 18, color = "currentColor" }) {
@@ -611,7 +612,7 @@ export default function OverwatchSidebar({
                                     </div>
                                     {zone.next_scan_at && (
                                         <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginTop: 1 }}>
-                                            Next: {new Date(zone.next_scan_at).toLocaleDateString()}
+                                            Next: {fmtWhen(zone.next_scan_at, { precision: "day" })}
                                         </div>
                                     )}
                                 </div>

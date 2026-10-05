@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { linkifyText } from "../lib/linkifyText.jsx"
+import { fmtWhen } from "../utils/formatTime.js"
 
 const API = API_BASE
 
@@ -48,11 +49,7 @@ function colorValue(c) {
 
 function timeStamp(iso) {
     if (!iso) return ""
-    try {
-        return new Date(iso).toLocaleString()
-    } catch {
-        return iso
-    }
+    return fmtWhen(iso) || iso
 }
 
 function InfoRow({ label, value }) {
