@@ -113,7 +113,7 @@ live system, not inferred.
    AIS coverage at all** — needs a second source (GFW?), not code.
 3. ~~Home header~~ — done `729951c`; theater cards were hardcoded and are now
    counted from signals per theater country.
-4. **Minimap in Home.**
+4. ~~Minimap in Home~~ — done `eda6de0`, in the Suggested card (shared 2D `Minimap`).
 5. **Vessel chain.** MMSI first 3 digits = flag state (free, 100%). Operator
    is harder: `ftm_things` has only 1,370 MMSIs, `sanctioned_entities.owner_chain`
    is **empty across all 458k rows**. Vessel-name prefixes (MSC, Maersk,
@@ -140,8 +140,6 @@ live system, not inferred.
 
 ### Seen but not fixed
 - A Yemen signal headlined "fighting around Taiz" is geocoded to Lahj.
-- Home's "Suggested" card claims "the critical signals are clustered, not
-  scattered" — likely fixed text like the old theater cards; unverified.
 - Home theater cards read `THEATER_SCOPE` (the three seeded theaters), so a
   user-created theater does not appear there yet.
 
