@@ -199,6 +199,13 @@ Still open, in order:
     airport, one port (by name, MMSI, callsign, ICAO/IATA…).
 18. **Filters for vessels and aircraft**: cargo, military, commercial,
     sanctioned, country/flag, airline, etc.
+19. **Relevance filter (cheap OpenAI)**: drop signals with no intelligence
+    value ("pedestrian struck in Ohio") from the surface; in the country
+    inspector show only relevant GDELT drivers and news articles.
+20. **Home "Newest critical" must never be "coordinates + intelligence
+    event"** — a short readable headline; its red gradient runs top-down.
+21. Country risk "what drove this score" repeats the same headline 4×
+    (dedupe drivers by headline).
 
 ### Seen but not fixed
 - Intermittent page error "the server did not respond within 30s" during

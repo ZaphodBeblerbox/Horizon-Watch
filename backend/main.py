@@ -11691,6 +11691,15 @@ def get_aircraft_history(
     }
 
 
+@app.get("/api/vessels/{mmsi}/history")
+async def get_vessel_history(mmsi: str):
+    """A ship's last 90 days from GFW: port calls, meetings at sea, loitering,
+    dark periods, past names and flags, and warnings (vessel_history.py)."""
+    import vessel_history as _vh
+    loop = asyncio.get_event_loop()
+    return {"mmsi": mmsi, **(await loop.run_in_executor(_executor, _vh.pattern_of_life, mmsi))}
+
+
 @app.get("/api/vessels/{mmsi}/owner")
 async def get_vessel_owner(mmsi: str):
     """The registered owner of a ship, from GFW's registry (vessel_owner.py).

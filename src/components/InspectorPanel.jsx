@@ -12,6 +12,7 @@ import { linkifyText } from "../lib/linkifyText.jsx"
 import Loading from "../ui/Loading.jsx"
 import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
+import VesselHistorySection from "./VesselHistorySection.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 
@@ -771,6 +772,9 @@ export default function InspectorPanel({
                         </div>
                     </div>
                 )}
+
+                {/* Where it has been — warnings lead, so they sit above the facts. */}
+                {entityType === "vessel" && data?.mmsi && <VesselHistorySection mmsi={String(data.mmsi)} />}
 
                 {/* Key attributes */}
                 {attributes.length > 0 && (
