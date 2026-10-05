@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { getCurrentUser } from "../state/authStore.js"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
-import { LAYER_GROUPS } from "./layerRailConfig.js"
 import { listSessions, listViews, deleteSession, deleteView, viewExtraLabels } from "../state/sessionStore.js"
 import { KEYBOARD_SHORTCUTS } from "../data/keyboardShortcuts.js"
 import PushNotificationToggle from "./PushNotificationToggle.jsx"
@@ -215,9 +214,6 @@ function GeneralSection({ settings }) {
                 />
             </Row>
             <SectionTitle>Launch</SectionTitle>
-            <div style={{ padding: "4px 0 2px" }}>
-                <StartupLayersEditor />
-            </div>
             <Row label="Guided walkthrough"
                  hint="The seven-step introduction to the app. Reopening it does not change anything you have set.">
                 <button className="btn sm" onClick={() => updateSetting("tutorial", null)}>
@@ -235,17 +231,8 @@ function GeneralSection({ settings }) {
 
 // ── Map & layers ─────────────────────────────────────────────────────────
 function MapLayersSection({ settings }) {
-    const defaultLayers = getAtPath(settings, "mapLayers.defaultLayers") || []
-    const toggleLayer = (key) => {
-        const next = defaultLayers.includes(key) ? defaultLayers.filter(k => k !== key) : [...defaultLayers, key]
-        updateSetting("mapLayers.defaultLayers", next)
-    }
     return (
         <div>
-            <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginBottom: "var(--space-3)" }}>
-                These persist for real immediately. Applying them automatically when a map screen mounts is real,
-                honestly-scoped follow-up work — not yet wired.
-            </div>
             <SectionTitle>Globe</SectionTitle>
             <Row label="Projection">
                 <ChoiceGroup
@@ -257,17 +244,20 @@ function MapLayersSection({ settings }) {
             <Row label="Clustering" hint="Group dense tracks above the per-domain cap.">
                 <Toggle value={getAtPath(settings, "mapLayers.clustering") ?? true} onChange={(v) => updateSetting("mapLayers.clustering", v)} />
             </Row>
+            {/* ONE DEFAULT. This section listed its own layer toggles under
+                "mapLayers.defaultLayers", a setting nothing read — while the
+                real launch layers (the ones the Layers pane's "save default"
+                writes and the map applies at start) were tucked under
+                General. The real editor lives here now; theaters still carry
+                their own layers, applied when one is selected. */}
             <SectionTitle>Default layers</SectionTitle>
-            {LAYER_GROUPS.map(group => (
-                <div key={group.key} style={{ marginBottom: "var(--space-2)" }}>
-                    <div style={{ font: "600 10.5px var(--font)", color: "var(--txt-3)", margin: "var(--space-2) 0 2px" }}>{group.label}</div>
-                    {group.layers.map(def => (
-                        <Row key={def.key} label={def.label}>
-                            <Toggle value={defaultLayers.includes(def.key)} onChange={() => toggleLayer(def.key)} />
-                        </Row>
-                    ))}
-                </div>
-            ))}
+            <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginBottom: "var(--space-2)" }}>
+                What the map opens with. Also settable from the map: Layers → "save default".
+                Each theater can switch its own set on when you select it (edit the theater).
+            </div>
+            <div style={{ padding: "4px 0 2px" }}>
+                <StartupLayersEditor />
+            </div>
         </div>
     )
 }

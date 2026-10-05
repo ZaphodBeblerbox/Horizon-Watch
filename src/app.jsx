@@ -2112,6 +2112,10 @@ export default function App() {
                             if (document.fullscreenElement) document.exitFullscreen()
                             else document.documentElement.requestFullscreen?.().catch(() => {})
                         }, "F"],
+                        // Settings had no entry of its own: it was reachable as
+                        // "Keyboard shortcuts" or "Setup and interests" under
+                        // Support, and by the rail's ? icon.
+                        ["Settings…", () => openOverlay("overlay:settings")],
                     ],
                     support: [
                         // Superadmins only, and only when the session says
