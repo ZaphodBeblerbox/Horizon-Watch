@@ -29,7 +29,6 @@ export default function PlxMenuBar({
     onStar = () => {},
     curIcon = "#g-globe",
     curTitle = "Red Sea watch",
-    onTitle = () => {},
     // Who else is signed in right now (useOnlineUsers). This defaulted to
     // three invented colleagues; empty means nobody else is on.
     presence = [],
@@ -77,7 +76,7 @@ export default function PlxMenuBar({
             <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                     <button
-                        onClick={onStar} title="Favourite"
+                        onClick={onStar} title={starred ? "Favourite — stays first in the tabs. Click to unpin." : "Make this theater a favourite: it stays first in the tabs"}
                         style={{
                             border: 0, background: OFF, padding: "0 2px", fontSize: 14,
                             cursor: "pointer",
@@ -85,18 +84,14 @@ export default function PlxMenuBar({
                         }}
                     >{starred ? "★" : "☆"}</button>
                     <PlxIcon href={curIcon} size={14} style={{ flex: "none", color: "var(--txt3)" }} />
-                    <button
-                        onClick={onTitle}
-                        style={{
-                            display: "flex", alignItems: "center", gap: 6, minWidth: 0,
-                            overflow: "hidden", border: 0, background: OFF,
-                            color: "var(--txt)", font: "inherit", fontWeight: 600,
-                            textOverflow: "ellipsis", cursor: "pointer",
-                        }}
-                    >
-                        {curTitle}
-                        <span style={{ color: "var(--txt4)", fontWeight: 400 }}>▾</span>
-                    </button>
+                    {/* The selected theater, named. This was a ▾ button that
+                        opened the search palette — a switcher that led
+                        somewhere else. Theaters are switched in the tab
+                        strip; the star here makes this one a favourite. */}
+                    <span style={{
+                        minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+                        color: "var(--txt)", fontWeight: 600,
+                    }}>{curTitle}</span>
                 </div>
             </div>
 

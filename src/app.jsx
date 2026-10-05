@@ -677,6 +677,12 @@ export default function App() {
         } catch { /* signed out, or offline — the fallback strip stands */ }
     }, [])
     useEffect(() => { refreshTheaters() }, [refreshTheaters])
+    /* AND AGAIN WHEN SOMEONE SIGNS IN. The load above runs at mount, which
+       on a fresh visit is before sign-in: it fails quietly and the
+       placeholder strip ("redsea", "hormuz", "taiwan" — not real rows)
+       stayed until the next reload. Anything done to those tabs — editing,
+       favouriting, filing — acted on rows that do not exist. */
+    useEffect(() => subscribeAuth(() => { if (getCurrentUser()) refreshTheaters() }), [refreshTheaters])
 
     /* A case shared in a chat opens the case workspace. The tab has to be
        opened HERE — Cases only hears the event once it is mounted, and
@@ -720,7 +726,25 @@ export default function App() {
        persisted chrome store the Layers and Inspector panes read. It used
        to set a local flag nothing consumed. */
     const [plxDrawer, togglePlxDrawer] = useChrome("timeline")
-    const [plxStar, setPlxStar] = useState(false)
+    /* FAVOURITE THEATERS. The star was a local flag that meant nothing.
+       It now marks the selected theater a favourite, and favourites lead
+       the tab strip. Kept in this browser (a per-person convenience); a
+       store that fails just means no favourites, never a broken strip. */
+    const [favTheaters, setFavTheaters] = useState(() => {
+        try { return new Set(JSON.parse(localStorage.getItem("plx:fav-theaters") || "[]")) } catch { return new Set() }
+    })
+    const toggleFavTheater = useCallback((id) => {
+        setFavTheaters((prev) => {
+            const next = new Set(prev)
+            if (next.has(id)) next.delete(id); else next.add(id)
+            try { localStorage.setItem("plx:fav-theaters", JSON.stringify([...next])) } catch { /* private mode */ }
+            return next
+        })
+    }, [])
+    const orderedTheaters = useMemo(() => [
+        ...theaters.filter((t) => favTheaters.has(t.id)),
+        ...theaters.filter((t) => !favTheaters.has(t.id)),
+    ], [theaters, favTheaters])
     const [plxMenuPos, setPlxMenuPos] = useState({ l: 60, t: 74 })
     const [plxToast, setPlxToast] = useState(null)
     const [plxAlertsOpen, setPlxAlertsOpen] = useState(false)
@@ -1843,7 +1867,8 @@ export default function App() {
                 <>
                     <PlxTabBar
                         narrow={plxNarrow}
-                        tabs={theaters}
+                        tabs={orderedTheaters}
+                        favourites={favTheaters}
                         activeTab={theaterId}
                         onTab={(id) => {
                             setTheaterId(id)
@@ -1906,10 +1931,9 @@ export default function App() {
                             setPlxMenu(plxMenu === v ? null : v)
                         }}
                         savedAt={plxClock}
-                        starred={plxStar}
-                        onStar={() => setPlxStar((v) => !v)}
+                        starred={favTheaters.has(theaterId)}
+                        onStar={() => toggleFavTheater(theaterId)}
                         curTitle={(theaters.find((t) => t.id === theaterId) || {}).name || "Workspace"}
-                        onTitle={() => openOverlay("overlay:palette")}
                         onShare={() => openOverlay("overlay:tray")}
                         clock={plxClock}
                         presence={onlineUsers.map((u) => [u.name || u.email, u.initials || "?", u.color || "var(--mz-navy-400)"])}

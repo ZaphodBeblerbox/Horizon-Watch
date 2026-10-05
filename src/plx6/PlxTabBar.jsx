@@ -27,6 +27,7 @@ const SEV = { critical: "var(--red)", elevated: "var(--amber)", steady: "var(--s
 export default function PlxTabBar({
     narrow = false,
     tabs = [],
+    favourites = null,
     activeTab = null,
     onTab = () => {},
     onCloseTab = () => {},
@@ -151,6 +152,9 @@ export default function PlxTabBar({
                                 textOverflow: "ellipsis", whiteSpace: "nowrap",
                                 fontWeight: on ? 600 : 400,
                             }}>{t.name}</span>
+                            {favourites?.has?.(t.id) && (
+                                <span title="Favourite — pinned first" style={{ color: "var(--acchi)", fontSize: 11 }}>★</span>
+                            )}
                             <span style={{
                                 fontFamily: "var(--mz-font-mono)", fontSize: 10,
                                 color: "var(--txt4)",
