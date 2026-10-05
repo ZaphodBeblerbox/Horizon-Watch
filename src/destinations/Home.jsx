@@ -26,6 +26,8 @@ import { getCurrentUser, subscribeAuth } from "../state/authStore.js"
 import { greetingFor } from "../data/greetings.js"
 import Avatar from "../ui/Avatar.jsx"
 import { MODE_SURFACE, MODE_BODY } from "../plx6/modeWindow.js"
+import { leadSentence, theaterLines } from "./homeLead.js"
+import { THEATER_SCOPE } from "../data/theaterScope.js"
 
 /* A null resolution overwrites a default; .catch never fires on one. */
 const safeArray = (v) => (Array.isArray(v) ? v : [])
@@ -212,17 +214,9 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
         [onto ? String((onto.nodes || []).length) : "—", "Entities linked", "var(--txt)"],
     ]
 
-    /* EVERY ITEM COMING BACK CRITICAL IS A DEFECT, NOT A CRISIS, and the
-       brief should not launder it into alarm. When the surface has no
-       spread at all, say that instead of counting. */
-    const allOneTier = surface.length > 3 && critical === surface.length
-    const lead = !surface.length
-        ? "Nothing has come in yet on this watch."
-        : allOneTier
-            ? `${surface.length} signals on the surface — all of them tagged critical, `
-              + `which is a tagging fault rather than ${surface.length} emergencies. `
-              + `Severity is not yet discriminating, so read the list, not the colour.`
-            : `${surface.length} signals on the surface, ${critical} of them critical.`
+    /* The lead names the signal that leads the list and where the rest
+       are; homeLead.js says how, and keeps the all-critical guard. */
+    const lead = useMemo(() => leadSentence(surface), [surface])
 
     const columns = [
         {
@@ -307,11 +301,12 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
         ["work", 2, "—", "assigned to you"],
     ]
 
-    const theaters = [
-        ["Red Sea watch", "critical", "var(--red)", "Signals concentrated around Bab-el-Mandeb."],
-        ["Hormuz transit", "elevated", "var(--amber)", "Transit volume below the 7-day baseline."],
-        ["Taiwan Strait", "steady", "var(--steel)", "No change since your last briefing."],
-    ]
+    /* Counted from the surface, per theater's own countries. These were
+       three hardcoded sentences, one claiming a Hormuz transit baseline
+       nothing in the system can measure. */
+    const LEVEL_DOT = { critical: "var(--red)", active: "var(--steel)", quiet: "var(--txt4)" }
+    const theaters = useMemo(() => theaterLines(surface, THEATER_SCOPE)
+        .map((t) => [t.name, t.level, LEVEL_DOT[t.level], t.line]), [surface])
 
     const ontoTypes = useMemo(() => {
         const nodes = safeArray(onto?.nodes)
