@@ -193,6 +193,12 @@ Still open, in order:
     airports, global infrastructure data, submarine cables — clicking one
     should say what it is, who runs it, what depends on it, and what is
     happening near it.
+16. **Trade & energy flows** need explanation, graphs, illustrative images and
+    context — and every flow must be verified as correctly geolocated.
+17. **Search/select exactly one object**: one vessel, one aircraft, one
+    airport, one port (by name, MMSI, callsign, ICAO/IATA…).
+18. **Filters for vessels and aircraft**: cargo, military, commercial,
+    sanctioned, country/flag, airline, etc.
 
 ### Seen but not fixed
 - Intermittent page error "the server did not respond within 30s" during
