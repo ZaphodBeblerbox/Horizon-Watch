@@ -149,21 +149,40 @@ export function setDnd(v) {
  * notification surface read as broken. The backlog is a record; only
  * what arrives while you are watching is an interruption.
  */
+/* NOW, NOT A BACKLOG (owner's rule, 2026-10-05). A notification is about
+   something happening while you are using the console. An event older than
+   FRESH_MS — the history loaded at sign-in, or a late-ingested event from
+   hours ago — goes into the tray as already read: it is the record, not
+   news, and it neither counts on the bell nor takes the screen. Nothing
+   pops up while the tab is hidden either; it waits, counted, in the tray,
+   instead of a stack of cards greeting you on return. */
+export const FRESH_MS = 30 * 60 * 1000
+
+function isFresh(ts, now = Date.now()) {
+    return Number.isFinite(ts) && ts >= now - FRESH_MS
+}
+
+function onScreen() {
+    try { return typeof document === "undefined" || document.visibilityState !== "hidden" } catch { return true }
+}
+
 export function pushNotification(n) {
+    const ts = Number.isFinite(n.ts) ? n.ts : Date.now()
+    const fresh = isFresh(ts)
     const item = {
         id: n.id || `N-${Math.random().toString(36).slice(2, 9)}`,
-        ts: n.ts || Date.now(),
+        ts,
         kind: KIND[n.kind] ? n.kind : "signal",
         sev: SEV_ORDER.includes(n.sev) ? n.sev : "moderate",
         title: n.title || "",
         sub: n.sub || "",
         ref: n.ref || null,
-        read: false,
+        read: !fresh,
     }
     if (state.items.some((x) => x.id === item.id)) return false   // never double-raise
     state.items = [item, ...state.items].slice(0, 500)
 
-    const raised = !n.silent && interrupts(item)
+    const raised = !n.silent && fresh && onScreen() && interrupts(item)
     if (raised) state.cards = [...state.cards, item]
     notify()
 

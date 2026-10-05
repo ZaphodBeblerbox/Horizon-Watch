@@ -121,3 +121,21 @@ describe("silent pushes", () => {
         expect(interrupts({ kind: "confirm", sev: "high" })).toBe(false)
     })
 })
+
+describe("now, not a backlog", () => {
+    it("files an event older than 30 minutes as read history: no card, no bell", async () => {
+        const m = await import("./notificationStore.js")
+        m.__resetNotifications()
+        const old = Date.now() - 5 * 60 * 60 * 1000
+        expect(m.pushNotification({ id: "old-1", kind: "escalate", sev: "critical", title: "x", ts: old })).toBe(false)
+        expect(m.unreadCount()).toBe(0)
+        expect(m.getNotifications().items.find((i) => i.id === "old-1").read).toBe(true)
+    })
+
+    it("still raises something happening now", async () => {
+        const m = await import("./notificationStore.js")
+        m.__resetNotifications()
+        expect(m.pushNotification({ id: "now-1", kind: "escalate", sev: "critical", title: "x", ts: Date.now() })).toBe(true)
+        expect(m.unreadCount()).toBe(1)
+    })
+})
