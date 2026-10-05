@@ -114,7 +114,9 @@ live system, not inferred.
 3. ~~Home header~~ — done `729951c`; theater cards were hardcoded and are now
    counted from signals per theater country.
 4. ~~Minimap in Home~~ — done `eda6de0`, in the Suggested card (shared 2D `Minimap`).
-5. **Vessel chain.** MMSI first 3 digits = flag state (free, 100%). Operator
+5. ~~Vessel chain~~ — done: flag (MID table fixed, 98%+ of live vessels) →
+   **registered owner** from GFW's registry on click (`vessel_owner.py`), ~20%
+   of this small-craft-heavy feed. Original notes: MMSI first 3 digits = flag state (free, 100%). Operator
    is harder: `ftm_things` has only 1,370 MMSIs, `sanctioned_entities.owner_chain`
    is **empty across all 458k rows**. Vessel-name prefixes (MSC, Maersk,
    CMA CGM) resolve only 2.1% of this feed.
@@ -140,6 +142,10 @@ live system, not inferred.
 
 ### Seen but not fixed
 - A Yemen signal headlined "fighting around Taiz" is geocoded to Lahj.
+- **Vessel reference photos are wrong.** The Wikimedia lookup matches any
+  Commons file by ship name: "PACITA" shows a Philippine supermarket, "SAMPLE"
+  a soil sample in a cup. Match on the IMO number (Commons has "IMO 9275103"
+  categories) or show nothing.
 - Home theater cards read `THEATER_SCOPE` (the three seeded theaters), so a
   user-created theater does not appear there yet.
 

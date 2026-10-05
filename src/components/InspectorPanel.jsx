@@ -328,6 +328,24 @@ export default function InspectorPanel({
     }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
 
     /**
+     * Registered owner (GFW vessel registry, GET /api/vessels/{mmsi}/owner)
+     * — the hop the flag hides. Fetched on open, reset on every change so
+     * one ship's owner never bleeds into the next.
+     */
+    const [vesselOwner, setVesselOwner] = useState(null)
+    useEffect(() => {
+        setVesselOwner(null)
+        const mmsi = entityType === "vessel" ? String(data?.mmsi || "") : ""
+        if (!mmsi) return
+        let cancelled = false
+        fetch(`${API_BASE}/api/vessels/${encodeURIComponent(mmsi)}/owner`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => { if (!cancelled && d) setVesselOwner(d) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    /**
      * Port and airport photographs.
      *
      * A picture of a terminal answers "what am I looking at" faster than any
@@ -386,7 +404,11 @@ export default function InspectorPanel({
     // aircraftInfo fills gaps only — spread first so any real field the raw
     // ADS-B `data` already carries (e.g. a live-feed registration) always
     // wins over the hexdb.io fallback lookup for the same key.
-    const enrichedData = (entityType === "aircraft" && aircraftInfo) ? { ...aircraftInfo, ...data } : data
+    const enrichedData = (entityType === "aircraft" && aircraftInfo) ? { ...aircraftInfo, ...data }
+        // The registry's IMO/callsign fill gaps only; the live record wins.
+        : (entityType === "vessel" && vesselOwner)
+            ? { ...(vesselOwner.registry || {}), ...data, ownership: vesselOwner }
+            : data
     const normalized = normalizeEntity(entityType, enrichedData)
     const { identity, attributes, provenance, actions, media, description } = normalized
 

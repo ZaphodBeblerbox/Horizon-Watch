@@ -250,13 +250,39 @@ def _iso_names() -> dict[str, str]:
     return out
 
 
+# CODES THE SHIPPED FILE CANNOT ANSWER. world-countries.json is Natural
+# Earth, which files France, Norway and Kosovo under "-99" rather than their
+# ISO codes, and is too coarse to hold the small states that run the
+# largest ship registries — Malta, Singapore, the Marshall Islands. So
+# "NOR" and "MLT" resolved to nothing everywhere a code is turned into a
+# name. A fallback only: a name the file does carry is never replaced.
+_CODE_GAPS = {
+    "France": ("fr", "fra"), "Norway": ("no", "nor"), "Kosovo": ("xk", "xkx"),
+    "Malta": ("mt", "mlt"), "Singapore": ("sg", "sgp"), "Monaco": ("mc", "mco"),
+    "Marshall Islands": ("mh", "mhl"), "Cayman Islands": ("ky", "cym"),
+    "Bermuda": ("bm", "bmu"), "Gibraltar": ("gi", "gib"), "Bahrain": ("bh", "bhr"),
+    "Mauritius": ("mu", "mus"), "Seychelles": ("sc", "syc"), "Maldives": ("mv", "mdv"),
+    "Saint Kitts and Nevis": ("kn", "kna"), "Saint Vincent and the Grenadines": ("vc", "vct"),
+    "Antigua and Barbuda": ("ag", "atg"), "Barbados": ("bb", "brb"), "Tuvalu": ("tv", "tuv"),
+    "Kiribati": ("ki", "kir"), "Palau": ("pw", "plw"), "Cook Islands": ("ck", "cok"),
+    "Niue": ("nu", "niu"), "Tonga": ("to", "ton"), "Samoa": ("ws", "wsm"),
+    "Comoros": ("km", "com"), "São Tomé and Príncipe": ("st", "stp"), "Cabo Verde": ("cv", "cpv"),
+    "British Virgin Islands": ("vg", "vgb"), "Saint Lucia": ("lc", "lca"), "Grenada": ("gd", "grd"),
+    "Dominica": ("dm", "dma"), "Faroe Islands": ("fo", "fro"), "Andorra": ("ad", "and"),
+    "Liechtenstein": ("li", "lie"), "San Marino": ("sm", "smr"), "Vatican City": ("va", "vat"),
+    "Macau": ("mo", "mac"), "Micronesia": ("fm", "fsm"), "Nauru": ("nr", "nru"),
+}
+_CODE_GAP_NAMES = {c: n for n, codes in _CODE_GAPS.items() for c in codes}
+
+
 def country_name_from_code(code: str) -> str | None:
     key = (code or "").strip().lower()
     if not key:
         return None
     # The curated names win where they exist — they are the ones chosen for
     # how this product refers to those countries.
-    return _COUNTRY_NAME_BY_CODE.get(key) or _iso_names().get(key)
+    return (_COUNTRY_NAME_BY_CODE.get(key) or _iso_names().get(key)
+            or _CODE_GAP_NAMES.get(key))
 
 
 # ── the country at the end of the location string ───────────────────────

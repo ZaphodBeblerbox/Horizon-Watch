@@ -64,6 +64,24 @@ describe("adaptVessel — real sanctions corroboration status feeds the status r
     })
 })
 
+describe("adaptVessel ownership", () => {
+    it("walks flag -> registered owner -> owner country with the period and source", () => {
+        const r = adaptVessel({ mmsi: "636020667", name: "PACITA", flag: "Liberia", ownership: {
+            owner: { name: "PACITA HARREN PARTNER", country: "Germany", since: "2021-03-26", until: "2024-05-09", source: "IMO" },
+        } })
+        expect(findAttr(r.attributes, "Flag").value).toBe("Liberia")
+        expect(findAttr(r.attributes, "Registered owner").value).toBe("PACITA HARREN PARTNER")
+        expect(findAttr(r.attributes, "Owner country").value).toBe("Germany")
+        expect(findAttr(r.attributes, "Ownership on record").value).toBe("2021-03-26 → 2024-05-09 · IMO")
+    })
+
+    it("states the reason when there is no owner on record", () => {
+        const r = adaptVessel({ mmsi: "244860381", ownership: { owner: null, reason: "Known only from its own AIS broadcasts; no registry record." } })
+        expect(findAttr(r.attributes, "Registered owner").value).toMatch(/own AIS/)
+        expect(r.attributes.find(a => a.label === "Owner country")).toBeUndefined()
+    })
+})
+
 describe("adaptAircraft", () => {
     it("maps a commercial aircraft with position/heading/speed/altitude and the real sub-type", () => {
         const ac = { flight: "UAL123", category: "A3", lat: 40.1, lon: -74.2, track: 270, gs: 420, alt_baro: 35000 }

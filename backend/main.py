@@ -11681,6 +11681,19 @@ def get_aircraft_history(
     }
 
 
+@app.get("/api/vessels/{mmsi}/owner")
+async def get_vessel_owner(mmsi: str):
+    """The registered owner of a ship, from GFW's registry (vessel_owner.py).
+
+    {owner: {name, country, since, until, source, kind} | null,
+     registry: {shipname, imo, callsign} | null, reason: str | null}.
+    Looked up when a vessel is opened, cached a day; never in bulk.
+    """
+    import vessel_owner as _vo
+    loop = asyncio.get_event_loop()
+    return {"mmsi": mmsi, **(await loop.run_in_executor(_executor, _vo.lookup, mmsi))}
+
+
 @app.get("/api/vessels/{mmsi}/identity")
 def get_vessel_identity(mmsi: str):
     """MMSI → flag/country identity (lightweight, no DB query)."""

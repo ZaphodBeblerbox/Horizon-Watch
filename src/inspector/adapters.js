@@ -106,6 +106,18 @@ function humanizeKey(key) {
  * shape `{status: "confirmed"|"possible", hit, mmsi, vessel_name}`. Fed
  * straight into entityIcons.js's status ring (real color, no frame shape).
  */
+function ownershipAttrs(own) {
+    if (!own) return []
+    const o = own.owner
+    if (!o) return own.reason ? [attr("Registered owner", own.reason)] : []
+    const period = [o.since, o.until].filter(Boolean).join(" → ")
+    return [
+        attr("Registered owner", o.name),
+        attr("Owner country", o.country),
+        attr("Ownership on record", [period, o.source].filter(Boolean).join(" · ") || null),
+    ]
+}
+
 export function adaptVessel(data = {}) {
     const subtype = vesselShipType(data)
     const sanctions = data.sanctions || data.sanctions_check || null
@@ -131,6 +143,10 @@ export function adaptVessel(data = {}) {
         attr("Status", data.nav_status),
         attr("Dimensions", data.length ? `${data.length}m × ${data.beam || "?"}m` : null),
         attr("Sanctions", sanctions?.status ? `${sanctions.status} match${sanctions.vessel_name ? ` — ${sanctions.vessel_name}` : ""}` : null),
+        // Flag -> registered owner -> owner's country (backend/vessel_owner.py).
+        // A registered owner, not an operator; and when there is none, the
+        // reason, because "no registry record" is a finding, not a blank.
+        ...ownershipAttrs(data.ownership),
     ])
 
     return {

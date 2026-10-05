@@ -7,7 +7,7 @@ MID_TABLE = {
     "201": {"country": "Albania",                  "iso2": "AL", "flag": "🇦🇱"},
     "202": {"country": "Andorra",                  "iso2": "AD", "flag": "🇦🇩"},
     "203": {"country": "Austria",                  "iso2": "AT", "flag": "🇦🇹"},
-    "204": {"country": "Portugal (Azores)",        "iso2": "PT", "flag": "🇵🇹"},
+    "204": {"country": "Portugal",                 "iso2": "PT", "flag": "🇵🇹"},
     "205": {"country": "Belgium",                  "iso2": "BE", "flag": "🇧🇪"},
     "206": {"country": "Belarus",                  "iso2": "BY", "flag": "🇧🇾"},
     "207": {"country": "Bulgaria",                 "iso2": "BG", "flag": "🇧🇬"},
@@ -53,7 +53,7 @@ MID_TABLE = {
     "252": {"country": "Liechtenstein",            "iso2": "LI", "flag": "🇱🇮"},
     "253": {"country": "Luxembourg",               "iso2": "LU", "flag": "🇱🇺"},
     "254": {"country": "Monaco",                   "iso2": "MC", "flag": "🇲🇨"},
-    "255": {"country": "Portugal (Madeira)",       "iso2": "PT", "flag": "🇵🇹"},
+    "255": {"country": "Portugal",                 "iso2": "PT", "flag": "🇵🇹"},
     "256": {"country": "Malta",                    "iso2": "MT", "flag": "🇲🇹"},
     "257": {"country": "Norway",                   "iso2": "NO", "flag": "🇳🇴"},
     "258": {"country": "Norway",                   "iso2": "NO", "flag": "🇳🇴"},
@@ -77,7 +77,7 @@ MID_TABLE = {
     "278": {"country": "Slovenia",                 "iso2": "SI", "flag": "🇸🇮"},
     "279": {"country": "Serbia",                   "iso2": "RS", "flag": "🇷🇸"},
     "301": {"country": "Anguilla",                 "iso2": "AI", "flag": "🇦🇮"},
-    "303": {"country": "USA (Alaska)",             "iso2": "US", "flag": "🇺🇸"},
+    "303": {"country": "United States of America", "iso2": "US", "flag": "🇺🇸"},
     "304": {"country": "Antigua and Barbuda",      "iso2": "AG", "flag": "🇦🇬"},
     "305": {"country": "Antigua and Barbuda",      "iso2": "AG", "flag": "🇦🇬"},
     "306": {"country": "Netherlands Antilles",     "iso2": "AN", "flag": "🇳🇱"},
@@ -99,7 +99,7 @@ MID_TABLE = {
     "332": {"country": "Guatemala",                "iso2": "GT", "flag": "🇬🇹"},
     "334": {"country": "Honduras",                 "iso2": "HN", "flag": "🇭🇳"},
     "336": {"country": "Haiti",                    "iso2": "HT", "flag": "🇭🇹"},
-    "338": {"country": "USA",                      "iso2": "US", "flag": "🇺🇸"},
+    "338": {"country": "United States of America", "iso2": "US", "flag": "🇺🇸"},
     "339": {"country": "Jamaica",                  "iso2": "JM", "flag": "🇯🇲"},
     "341": {"country": "Saint Kitts and Nevis",    "iso2": "KN", "flag": "🇰🇳"},
     "343": {"country": "Saint Lucia",              "iso2": "LC", "flag": "🇱🇨"},
@@ -119,18 +119,18 @@ MID_TABLE = {
     "361": {"country": "Saint Pierre and Miquelon","iso2": "PM", "flag": "🇵🇲"},
     "362": {"country": "Trinidad and Tobago",      "iso2": "TT", "flag": "🇹🇹"},
     "364": {"country": "Turks and Caicos Islands", "iso2": "TC", "flag": "🇹🇨"},
-    "366": {"country": "USA",                      "iso2": "US", "flag": "🇺🇸"},
-    "367": {"country": "USA",                      "iso2": "US", "flag": "🇺🇸"},
-    "368": {"country": "USA",                      "iso2": "US", "flag": "🇺🇸"},
-    "369": {"country": "USA",                      "iso2": "US", "flag": "🇺🇸"},
+    "366": {"country": "United States of America", "iso2": "US", "flag": "🇺🇸"},
+    "367": {"country": "United States of America", "iso2": "US", "flag": "🇺🇸"},
+    "368": {"country": "United States of America", "iso2": "US", "flag": "🇺🇸"},
+    "369": {"country": "United States of America", "iso2": "US", "flag": "🇺🇸"},
     "370": {"country": "Panama",                   "iso2": "PA", "flag": "🇵🇦"},
     "371": {"country": "Panama",                   "iso2": "PA", "flag": "🇵🇦"},
     "372": {"country": "Panama",                   "iso2": "PA", "flag": "🇵🇦"},
     "373": {"country": "Panama",                   "iso2": "PA", "flag": "🇵🇦"},
     "374": {"country": "Panama",                   "iso2": "PA", "flag": "🇵🇦"},
-    "375": {"country": "Saint Vincent",            "iso2": "VC", "flag": "🇻🇨"},
-    "376": {"country": "Saint Vincent",            "iso2": "VC", "flag": "🇻🇨"},
-    "377": {"country": "Saint Vincent",            "iso2": "VC", "flag": "🇻🇨"},
+    "375": {"country": "Saint Vincent and the Grenadines", "iso2": "VC", "flag": "🇻🇨"},
+    "376": {"country": "Saint Vincent and the Grenadines", "iso2": "VC", "flag": "🇻🇨"},
+    "377": {"country": "Saint Vincent and the Grenadines", "iso2": "VC", "flag": "🇻🇨"},
     "378": {"country": "British Virgin Islands",   "iso2": "VG", "flag": "🇻🇬"},
     "379": {"country": "US Virgin Islands",        "iso2": "VI", "flag": "🇻🇮"},
     "401": {"country": "Afghanistan",              "iso2": "AF", "flag": "🇦🇫"},
@@ -167,7 +167,7 @@ MID_TABLE = {
     "463": {"country": "Pakistan",                 "iso2": "PK", "flag": "🇵🇰"},
     "466": {"country": "Qatar",                    "iso2": "QA", "flag": "🇶🇦"},
     "468": {"country": "Syria",                    "iso2": "SY", "flag": "🇸🇾"},
-    "470": {"country": "UAE",                      "iso2": "AE", "flag": "🇦🇪"},
+    "470": {"country": "United Arab Emirates",     "iso2": "AE", "flag": "🇦🇪"},
     "472": {"country": "Uzbekistan",               "iso2": "UZ", "flag": "🇺🇿"},
     "473": {"country": "Vietnam",                  "iso2": "VN", "flag": "🇻🇳"},
     "477": {"country": "Hong Kong",                "iso2": "HK", "flag": "🇭🇰"},
@@ -273,12 +273,58 @@ MID_TABLE = {
     "677": {"country": "Tanzania",                 "iso2": "TZ", "flag": "🇹🇿"},
     "678": {"country": "Zambia",                   "iso2": "ZM", "flag": "🇿🇲"},
     "679": {"country": "Zimbabwe",                 "iso2": "ZW", "flag": "🇿🇼"},
+    # Added 2026-10-05: absent before, so 31 of 1,743 live vessels had no
+    # flag. Malta's 229 alone, and all of South America.
+    "229": {"country": "Malta", "iso2": "MT", "flag": "🇲🇹"},
+    "270": {"country": "Czech Republic", "iso2": "CZ", "flag": "🇨🇿"},
+    "471": {"country": "United Arab Emirates", "iso2": "AE", "flag": "🇦🇪"},
+    "577": {"country": "Vanuatu", "iso2": "VU", "flag": "🇻🇺"},
+    "701": {"country": "Argentina", "iso2": "AR", "flag": "🇦🇷"},
+    "710": {"country": "Brazil", "iso2": "BR", "flag": "🇧🇷"},
+    "720": {"country": "Bolivia", "iso2": "BO", "flag": "🇧🇴"},
+    "725": {"country": "Chile", "iso2": "CL", "flag": "🇨🇱"},
+    "730": {"country": "Colombia", "iso2": "CO", "flag": "🇨🇴"},
+    "735": {"country": "Ecuador", "iso2": "EC", "flag": "🇪🇨"},
+    "740": {"country": "Falkland Islands", "iso2": "FK", "flag": "🇫🇰"},
+    "745": {"country": "French Guiana", "iso2": "GF", "flag": "🇬🇫"},
+    "750": {"country": "Guyana", "iso2": "GY", "flag": "🇬🇾"},
+    "755": {"country": "Paraguay", "iso2": "PY", "flag": "🇵🇾"},
+    "760": {"country": "Peru", "iso2": "PE", "flag": "🇵🇪"},
+    "765": {"country": "Suriname", "iso2": "SR", "flag": "🇸🇷"},
+    "770": {"country": "Uruguay", "iso2": "UY", "flag": "🇺🇾"},
+    "775": {"country": "Venezuela", "iso2": "VE", "flag": "🇻🇪"},
 }
+
+
+def mid_of(mmsi) -> str:
+    """The MID inside an MMSI, by where ITU-R M.585 puts it, or "".
+
+    The first three digits are the MID only for a ship: nine digits,
+    leading 2-7. A coast station is 00+MID, a group 0+MID, a SAR aircraft
+    111+MID, a craft associated with a parent ship 98+MID, an aid to
+    navigation 99+MID. 970/972/974 (SART, MOB, EPIRB) carry no MID at
+    all. Reading the first three digits of those gives a confident flag
+    that is not theirs.
+    """
+    d = str(mmsi or "").strip()
+    if len(d) != 9 or not d.isdigit():
+        return ""
+    if d[0] in "234567":
+        return d[:3]
+    if d.startswith("111"):
+        return d[3:6]
+    if d.startswith(("98", "99")):
+        return d[2:5]
+    if d.startswith("00"):
+        return d[2:5]
+    if d.startswith("0"):
+        return d[1:4]
+    return ""
 
 
 def lookup_mmsi(mmsi: str) -> dict:
     """Get country/flag info from MMSI number (first 3 digits = MID)."""
-    mid = str(mmsi)[:3] if mmsi else ""
+    mid = mid_of(mmsi)
     info = MID_TABLE.get(mid, {"country": "Unknown", "iso2": "XX", "flag": "🏳"})
     return {
         "mmsi":         mmsi,
