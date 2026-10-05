@@ -283,7 +283,12 @@ export default function Minimap({
                     — the first question it exists to answer — goes unanswered. */}
                 {plan.countries && land.countries.filter((c) => c.r >= plan.minCountryArea).map((c) => {
                     const q = project(c.c[0], c.c[1])
-                    if (q[0] < 8 || q[0] > W - 8 || q[1] < 10 || q[1] > height - 10) return null
+                    // Half the label's width, not just its centre: at world
+                    // span "UNITED STATES OF AMERICA" centred 60px from the
+                    // edge was drawn as "ITED STATES OF AMERICA". ~6.1px per
+                    // character is .mm-country's 8.5px uppercase with tracking.
+                    const half = String(c.n).length * 3.05 + 4
+                    if (q[0] < half || q[0] > W - half || q[1] < 10 || q[1] > height - 10) return null
                     return (
                         <text key={c.a2 || c.n} className="mm-country" x={q[0]} y={q[1]} textAnchor="middle">
                             {c.n}

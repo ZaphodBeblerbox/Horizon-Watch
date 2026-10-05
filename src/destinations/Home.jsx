@@ -26,7 +26,8 @@ import { getCurrentUser, subscribeAuth } from "../state/authStore.js"
 import { greetingFor } from "../data/greetings.js"
 import Avatar from "../ui/Avatar.jsx"
 import { MODE_SURFACE, MODE_BODY } from "../plx6/modeWindow.js"
-import { leadSentence, theaterLines } from "./homeLead.js"
+import { criticalWhere, leading, leadSentence, placeOf, theaterLines } from "./homeLead.js"
+import Minimap from "../components/Minimap.jsx"
 import { THEATER_SCOPE } from "../data/theaterScope.js"
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -217,6 +218,25 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
     /* The lead names the signal that leads the list and where the rest
        are; homeLead.js says how, and keeps the all-critical guard. */
     const lead = useMemo(() => leadSentence(surface), [surface])
+
+    /* The minimap in Suggested: the leading signal as the subject, every
+       other located signal as context, at world span. Measured, because the
+       shared Minimap stretches to its box unless it is told the width. */
+    const mapBox = useRef(null)
+    const [mapW, setMapW] = useState(340)
+    useEffect(() => {
+        const el = mapBox.current
+        if (!el || typeof ResizeObserver === "undefined") return undefined
+        const ro = new ResizeObserver(([e]) => setMapW(Math.round(e.contentRect.width) || 340))
+        ro.observe(el)
+        return () => ro.disconnect()
+    }, [])
+    const located = useMemo(() => surface.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon)), [surface])
+    const subject = useMemo(() => leading(located)[0] || null, [located])
+    const mapContext = useMemo(() => located.filter((s) => s !== subject).map((s, i) => ({
+        id: s.id ?? i, lat: s.lat, lon: s.lon, severity: s.severity_tier,
+        ts: Date.parse(s.published_at || "") || undefined, title: s.headline || s.title,
+    })), [located, subject])
 
     const columns = [
         {
@@ -474,9 +494,23 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {} 
                                 }}>{critical} critical</span>
                             </div>
                             <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--txt2)", textWrap: "pretty" }}>
-                                The critical signals are clustered, not scattered. The map is the
-                                only view that shows them in the same place at the same time.
+                                {criticalWhere(surface)}
                             </p>
+                            <div ref={mapBox} role="button" tabIndex={0} title="Open the map"
+                                onClick={() => onOpenModule("map")}
+                                onKeyDown={(e) => { if (e.key === "Enter") onOpenModule("map") }}
+                                style={{ cursor: "pointer", minWidth: 0 }}>
+                                <Minimap
+                                    focus={subject ? { lat: subject.lat, lon: subject.lon } : null}
+                                    context={mapContext}
+                                    span={170}
+                                    width={mapW}
+                                    height={230}
+                                    label={subject ? String(placeOf(subject) || "").split(",")[0].slice(0, 22) : ""}
+                                    title="Today's signals"
+                                    subtitle={`${located.length} located`}
+                                />
+                            </div>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "auto" }}>
                                 <button onClick={() => onOpenModule("map")} style={{
                                     height: 32, padding: "0 14px", border: 0, background: "var(--acc)",

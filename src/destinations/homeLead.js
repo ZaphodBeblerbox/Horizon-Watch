@@ -102,3 +102,15 @@ export function theaterLines(surface, scopes) {
         }
     })
 }
+
+/** Where the critical signals are — the sentence the Suggested card used to
+ *  replace with "clustered, not scattered", a claim nothing ever checked. */
+export function criticalWhere(surface) {
+    const crit = (surface || []).filter((s) => s.severity_tier === "critical")
+    if (!crit.length) return "No critical signals on the surface."
+    const { count, top } = topCountries(crit, 3)
+    if (!count) return `${crit.length} critical, none with a resolved place.`
+    const rest = count - top.length
+    return `${crit.length} critical in ${count} ${count === 1 ? "country" : "countries"}: `
+        + listOf([...top.map(([c, n]) => `${c} (${n})`), ...(rest > 0 ? [`${rest} more`] : [])]) + "."
+}

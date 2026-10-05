@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { leadSentence, placeOf, theaterLines } from "./homeLead.js"
+import { criticalWhere, leadSentence, placeOf, theaterLines } from "./homeLead.js"
 import { THEATER_SCOPE } from "../data/theaterScope.js"
 
 const sig = (headline, country, tier = "significant", at = "2026-10-05T08:00:00Z", location) => ({
@@ -52,5 +52,14 @@ describe("theaterLines", () => {
         expect(hormuz.level).toBe("quiet")
         expect(hormuz.line).toContain("Iran, Iraq and Oman")
         expect(hormuz.line).not.toMatch(/baseline|transit volume/i)
+    })
+})
+
+describe("criticalWhere", () => {
+    it("names the countries the critical signals are in, not a shape claim", () => {
+        const s = [sig("a", "Israel", "critical"), sig("b", "Israel", "critical"), sig("c", "Nigeria", "critical"),
+            sig("d", "Kenya", "critical"), sig("e", "Sudan", "critical"), sig("f", "Sudan")]
+        expect(criticalWhere(s)).toBe("5 critical in 4 countries: Israel (2), Kenya (1), Nigeria (1) and 1 more.")
+        expect(criticalWhere([sig("x", "Sudan")])).toBe("No critical signals on the surface.")
     })
 })
