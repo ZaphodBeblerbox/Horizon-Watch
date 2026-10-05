@@ -1771,6 +1771,62 @@ export default function App() {
         }}>
             {/* Cited posts, read beside the record (sourceEmbed.js). */}
             <SourceViewer />
+            {/* RESTORED OVERLAYS. ff2c9e8 deleted this block with the rest of
+                an unrelated edit, so search (the palette), Share (the tray),
+                settings, screen capture, the first-login tutorial, toasts and
+                live notifications all still had openers and nothing on
+                screen: the clicks set state that no element read. */}
+            <ScreenCapture
+                open={captureOpen}
+                onClose={() => setCaptureOpen(false)}
+                onCaptured={(dataUrl) => {
+                    const mod = TAB_TYPE_TO_MODULE[activeTabType] || "screen"
+                    const ok = saveCapture(dataUrl, { label: `Capture · ${mod}`, of: mod })
+                    toast(ok === false ? "Already saved" : "Saved — it is in the Editor's Saved pane",
+                          { icon: "i-check" })
+                }}
+            />
+            <Tutorial />
+            <UpdateBanner />
+            <ToastHost />
+            <NotificationStack
+                onOpen={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
+                    openTab("situation")
+                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
+                } }}
+                onAcknowledge={(n) => markNotificationRead(n.id)}
+            />
+            <NotificationTray
+                open={trayOpen}
+                onClose={() => closeOverlay("overlay:tray")}
+                onOpenItem={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
+                    openTab("situation")
+                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
+                } }}
+            />
+            <CommandPalette
+                open={paletteOpen}
+                onClose={() => closeOverlay("overlay:palette")}
+                signals={notifItems}
+                onOpenModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
+                onOpenEntity={(r) => {
+                    openTab("situation")
+                    if (r.lat != null && r.lon != null) setSearchTarget({ lat: r.lat, lon: r.lon, zoom: 7, key: Date.now() })
+                }}
+                onOpenSignal={(s) => {
+                    openTab("situation")
+                    if (s.lat != null && s.lon != null) {
+                        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: s.lat, lon: s.lon, altitude: 250000 } }))
+                    }
+                }}
+                onOpenReport={() => openTab("briefings")}
+            />
+            {settingsOpen && (
+                <SettingsModal
+                    onClose={() => closeOverlay("overlay:settings")}
+                    onOpenSources={() => openTab("sources")}
+                />
+            )}
         <IconSprite />
             <PlxIcons />
 
