@@ -91,6 +91,23 @@ describe("adaptAircraft", () => {
         expect(result.attributes.find(a => /confidence/i.test(a.label))).toBeUndefined()
     })
 
+    it("walks callsign -> airline -> country -> hub when the backend resolved the operator", () => {
+        const ac = {
+            flight: "UAE231", airline: "Emirates",
+            operator: { designator: "UAE", name: "Emirates", country: "United Arab Emirates", hub: "Dubai" },
+        }
+        const result = adaptAircraft(ac)
+        expect(findAttr(result.attributes, "Airline").value).toBe("Emirates")
+        expect(findAttr(result.attributes, "Airline country").value).toBe("United Arab Emirates")
+        expect(findAttr(result.attributes, "Airline hub").value).toBe("Dubai")
+    })
+
+    it("shows no airline country or hub for a registration callsign the backend could not attribute", () => {
+        const result = adaptAircraft({ flight: "N12345" })
+        expect(result.attributes.find(a => a.label === "Airline country")).toBeUndefined()
+        expect(result.attributes.find(a => a.label === "Airline hub")).toBeUndefined()
+    })
+
     it("omits the Airline attribute entirely when no real lookup result exists, rather than a placeholder", () => {
         const result = adaptAircraft({ flight: "UAL123" })
         expect(result.attributes.find(a => a.label === "Airline")).toBeUndefined()

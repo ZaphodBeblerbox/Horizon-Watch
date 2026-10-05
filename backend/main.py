@@ -4886,6 +4886,22 @@ def api_gfw_events(
         return {"available": False, "error": str(e)[:200], "events": []}
 
 
+def _with_operator(rec: dict, callsign) -> dict:
+    """The airline flying this callsign, added on the way out.
+
+    Derived on read and never stored in the ADS-B caches, so a change to
+    airlines.py reaches every aircraft at once. Adds nothing when the
+    operator cannot be said: hexdb's airframe lookup in the inspector then
+    fills the gap, and a wrong airline is never invented.
+    """
+    from airlines import operator_for_callsign
+    op = operator_for_callsign(callsign or "")
+    if op:
+        rec["operator"] = op
+        rec["airline"] = op["name"]
+    return rec
+
+
 @app.get("/adsb")
 @_response_cache(expire=30)
 def get_adsb(
@@ -4943,7 +4959,7 @@ def get_adsb(
                 "type":        ac.get("type") or "",
             })
         total = len(out)
-        out = _thin_for_viewport(out, limit)
+        out = [_with_operator(a, a["flight"]) for a in _thin_for_viewport(out, limit)]
         print(f"[adsb] viewport → {len(out)} of {total} aircraft")
         newest_s = None if newest == float("inf") else int(newest)
         return {"aircraft": out, "scope": "viewport" if west is not None else "global",
@@ -4957,7 +4973,7 @@ def get_adsb(
     key = f"{round(lat, 2)},{round(lon, 2)},{dist}"
     cached = _adsb_cache.get(key)
     if cached and (time.time() - cached["ts"]) < 30:
-        return {"aircraft": cached["data"]}
+        return {"aircraft": [_with_operator(dict(a), a["flight"]) for a in cached["data"]]}
 
     url = f"https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{dist}"
     try:
@@ -5007,7 +5023,7 @@ def get_adsb(
         # loop. Both were silent, so aircraft history could stop recording
         # from either direction with nothing said.
         _loop_error("adsb-history/viewport", _e)
-    return {"aircraft": aircraft}
+    return {"aircraft": [_with_operator(dict(a), a["flight"]) for a in aircraft]}
 
 
 # ── Aviation enrichment: route + photo ────────────────────────────────────────
@@ -11655,10 +11671,11 @@ def get_aircraft_history(
     return {
         "count": len(results),
         "positions": [
-            {"icao24": r.icao24, "callsign": r.callsign, "lat": r.lat, "lon": r.lon,
-             "altitude": r.altitude, "speed": r.speed, "heading": r.heading,
-             "type": r.aircraft_type, "military": r.is_military,
-             "timestamp": r.timestamp.isoformat()}
+            _with_operator(
+                {"icao24": r.icao24, "callsign": r.callsign, "lat": r.lat, "lon": r.lon,
+                 "altitude": r.altitude, "speed": r.speed, "heading": r.heading,
+                 "type": r.aircraft_type, "military": r.is_military,
+                 "timestamp": r.timestamp.isoformat()}, r.callsign)
             for r in results
         ],
     }
@@ -11687,7 +11704,7 @@ def api_adsb_aircraft_get(icao_hex: str):
     ac = _GLOBAL_ADSB_CACHE.get(icao_hex.upper()) or _GLOBAL_ADSB_CACHE.get(icao_hex)
     if not ac:
         raise HTTPException(status_code=404, detail=f"Aircraft {icao_hex} not currently in the live ADS-B cache")
-    return ac
+    return _with_operator(dict(ac), ac.get("flight"))
 
 
 # Rolling 20-position track buffer per military ICAO hex (populated by ADSB processing)
@@ -11822,9 +11839,10 @@ def get_historical_snapshot(
     return {
         "timestamp": target.isoformat(),
         "aircraft": [
-            {"icao24": ac.icao24, "callsign": ac.callsign, "lat": ac.lat, "lon": ac.lon,
-             "altitude": ac.altitude, "speed": ac.speed, "heading": ac.heading,
-             "military": ac.is_military}
+            _with_operator(
+                {"icao24": ac.icao24, "callsign": ac.callsign, "lat": ac.lat, "lon": ac.lon,
+                 "altitude": ac.altitude, "speed": ac.speed, "heading": ac.heading,
+                 "military": ac.is_military}, ac.callsign)
             for ac in aircraft_map.values()
         ],
         "vessels": [

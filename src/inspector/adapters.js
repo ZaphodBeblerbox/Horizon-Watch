@@ -164,6 +164,11 @@ export function adaptAircraft(data = {}) {
     const attributes = compact([
         attr("Registration", registration),
         attr("Airline", data.airline || null),
+        // The chain from the callsign (backend/airlines.py): this flight ->
+        // its airline -> that airline's country and home base. Only present
+        // when the designator is one whose attribution is certain.
+        attr("Airline country", data.operator?.country || null),
+        attr("Airline hub", data.operator?.hub || null),
         attr("Callsign", callsign),
         attr("ICAO24", icao),
         attr("Type", data.aircraft_type || data.type_designator || null),
