@@ -12,7 +12,16 @@
  * containing just the original string), so this is safe to apply
  * unconditionally to any attribute-style value, not only known citation
  * fields — never invents a link where the field isn't a real URL.
+ *
+ * THE LINK READS "Source ↗", NOT THE URL. A GeoConfirmed record's citation
+ * is a full x.com status URL, and printing it made the inspector a column
+ * of ninety-character strings that wrapped mid-token. The address is still
+ * one hover away (title) and the host is shown beside the arrow, so where
+ * it goes is never hidden. Several links in one value are numbered.
  */
+const hostOf = (url) => {
+    try { return new URL(url).hostname.replace(/^www\./, "") } catch { return "" }
+}
 const URL_RE = /https?:\/\/[^\s,]+/g
 
 export function linkifyText(value) {
@@ -22,12 +31,16 @@ export function linkifyText(value) {
     const parts = []
     let lastIndex = 0
     let match
+    const total = (str.match(new RegExp(URL_RE)) || []).length
+    let n = 0
     while ((match = re.exec(str)) !== null) {
         if (match.index > lastIndex) parts.push(str.slice(lastIndex, match.index))
         const url = match[0]
         parts.push(
-            <a key={match.index} href={url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--acc-hi)", wordBreak: "break-all" }}>
-                {url}
+            <a key={match.index} href={url} target="_blank" rel="noopener noreferrer" title={url}
+                style={{ color: "var(--acc-hi)", whiteSpace: "nowrap", textDecoration: "none" }}>
+                {total > 1 ? `Source ${++n}` : "Source"} ↗
+                {hostOf(url) ? <span style={{ color: "var(--txt-4, var(--txt4))", marginLeft: 4, fontSize: "0.9em" }}>{hostOf(url)}</span> : null}
             </a>
         )
         lastIndex = match.index + url.length
