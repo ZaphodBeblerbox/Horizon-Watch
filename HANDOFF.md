@@ -189,6 +189,10 @@ Still open, in order:
     dark periods, past names/flags) and derived warnings at the top of the
     panel. **ROT ±127 must read "turning, rate unknown"** (shows "port 127").
 14. Review the restored settings modal and tutorial content.
+15. **Infrastructure needs context and information** (owner, 2026-10-05):
+    airports, global infrastructure data, submarine cables — clicking one
+    should say what it is, who runs it, what depends on it, and what is
+    happening near it.
 
 ### Seen but not fixed
 - Intermittent page error "the server did not respond within 30s" during
