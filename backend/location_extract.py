@@ -257,3 +257,106 @@ def country_name_from_code(code: str) -> str | None:
     # The curated names win where they exist — they are the ones chosen for
     # how this product refers to those countries.
     return _COUNTRY_NAME_BY_CODE.get(key) or _iso_names().get(key)
+
+
+# ── the country at the end of the location string ───────────────────────
+#
+# Surface signals arrive with locations like "Subukia, Rift Valley, Kenya"
+# and "Ferozepur, Punjab, Pakistan". The country is the last part, every
+# time, and NOTHING PARSED IT: a live pool measured 0 of 50 signals with a
+# location_country set, so every count, filter and join that works by
+# country was reading an empty column while the answer sat in the next one.
+#
+# Deterministic — a tail match against the shipped ISO names, their two-
+# and three-letter codes, and the aliases below. An unrecognised tail
+# returns None rather than a near miss: a signal filed under the wrong
+# country is worse than one filed under none.
+
+_COUNTRY_ALIASES = {
+    "united states": "United States of America",
+    "usa": "United States of America",
+    "u.s.": "United States of America",
+    "u.s.a.": "United States of America",
+    "america": "United States of America",
+    "uk": "United Kingdom",
+    "britain": "United Kingdom",
+    "great britain": "United Kingdom",
+    "england": "United Kingdom",
+    "scotland": "United Kingdom",
+    "wales": "United Kingdom",
+    "northern ireland": "United Kingdom",
+    "russian federation": "Russia",
+    "republic of korea": "South Korea",
+    "democratic peoples republic of korea": "North Korea",
+    "syrian arab republic": "Syria",
+    "islamic republic of iran": "Iran",
+    "burma": "Myanmar",
+    "cote divoire": "Ivory Coast",
+    "czech republic": "Czechia",
+    "holland": "Netherlands",
+    "the netherlands": "Netherlands",
+    "tanzania": "United Republic of Tanzania",
+    "drc": "Democratic Republic of the Congo",
+    "dr congo": "Democratic Republic of the Congo",
+    "congo kinshasa": "Democratic Republic of the Congo",
+    "uae": "United Arab Emirates",
+    "turkiye": "Turkey",
+    "west bank": "Palestine",
+    "gaza strip": "Palestine",
+    "viet nam": "Vietnam",
+    "lao peoples democratic republic": "Laos",
+    "bolivia plurinational state of": "Bolivia",
+    "venezuela bolivarian republic of": "Venezuela",
+    "republic of moldova": "Moldova",
+    "cabo verde": "Cape Verde",
+    "swaziland": "Eswatini",
+    "macedonia": "North Macedonia",
+}
+
+
+def _clean_place_part(part):
+    """One comma-separated part, reduced to something comparable.
+
+    Strips the "(general)" this geocoder appends — "Israel (general)" and
+    "Nigeria (general)" are real values in the live feed — folds accents so
+    "Turkiye" and a mojibake "T?rkiye" land together, and drops the
+    punctuation that separates an alias from its spelled-out form.
+    """
+    import re as _re
+    import unicodedata as _ud
+    t = _ud.normalize("NFKD", str(part or "")).encode("ascii", "ignore").decode()
+    t = _re.sub(r"\((?:general|country|region|province|state)\)", " ", t, flags=_re.I)
+    t = _re.sub(r"[^a-zA-Z ]+", " ", t)
+    return " ".join(t.lower().split())
+
+
+def country_from_location(location):
+    """The country named at the end of a location string, or None.
+
+    Tries the last comma-separated part, then the one before it, because a
+    few sources append a region after the country. Matching is exact
+    against the known names, codes and aliases — never fuzzy.
+    """
+    loc = str(location or "").strip()
+    if not loc:
+        return None
+    parts = [p for p in (x.strip() for x in loc.split(",")) if p]
+    if not parts:
+        return None
+
+    names = _iso_names()
+    for part in reversed(parts[-2:]):
+        key = _clean_place_part(part)
+        if not key:
+            continue
+        if key in _COUNTRY_ALIASES:
+            return _COUNTRY_ALIASES[key]
+        hit = _COUNTRY_NAME_BY_CODE.get(key) or names.get(key)
+        if hit:
+            return hit
+        # The shipped table is keyed by code as well as by name, so a tail
+        # that is already a code ("US", "DEU") resolves here.
+        for cand in names.values():
+            if _clean_place_part(cand) == key:
+                return cand
+    return None

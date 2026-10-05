@@ -8772,6 +8772,15 @@ def _surface_relevance(tier: str, published_at) -> int:
     return int(round(base * max(0.34, decay)))
 
 
+def _country_from_location(location):
+    """The country a location string names, or None. See location_extract."""
+    try:
+        from location_extract import country_from_location
+        return country_from_location(location)
+    except Exception:
+        return None
+
+
 def _build_surface_pool() -> list:
     """
     Build ranked surface pool (top 50 items) from real GeoConfirmed
@@ -8969,6 +8978,17 @@ def _build_surface_pool() -> list:
         # Background prefetch for SURFACE/AUTO_ENRICH
         if item.get("lat") is not None and item.get("lon") is not None:
             _queue_infra_prefetch(item)
+
+        # THE COUNTRY IS IN THE LOCATION STRING. "Subukia, Rift Valley,
+        # Kenya" names it at the end, every time, and nothing read it: a
+        # live pool had 0 of 50 items with a location_country while every
+        # one of them carried the country in the next column along. Every
+        # count, filter and join that works by country was reading an empty
+        # field.
+        if not (item.get("location_country") or "").strip():
+            resolved = _country_from_location(item.get("location"))
+            if resolved:
+                item["location_country"] = resolved
 
         gated.append(item)
 
