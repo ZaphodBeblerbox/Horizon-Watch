@@ -19840,6 +19840,36 @@ async def api_chokepoint_status(chokepoint_id: str):
     }
 
 
+_CHOKEPOINT_FLOW_CACHE: dict = {"ts": 0.0, "data": {}}
+
+
+def _chokepoint_flows_cached() -> dict:
+    """chokepoint_flow.chokepoint_flows, recomputed at most every 10 minutes.
+
+    activity_daily changes once a day, and only completed days are read, so
+    ten minutes is generous. A failure keeps the last good answer and says
+    so in the log rather than blanking the field.
+    """
+    if time.time() - _CHOKEPOINT_FLOW_CACHE["ts"] < 600:
+        return _CHOKEPOINT_FLOW_CACHE["data"]
+    try:
+        from chokepoint_flow import chokepoint_flows
+        _CHOKEPOINT_FLOW_CACHE["data"] = chokepoint_flows(_CHOKEPOINT_DEFS)
+    except Exception as e:
+        _loop_error("chokepoint-flow", e)
+    _CHOKEPOINT_FLOW_CACHE["ts"] = time.time()
+    return _CHOKEPOINT_FLOW_CACHE["data"]
+
+
+@app.get("/api/chokepoints/flow")
+async def api_chokepoint_flow():
+    """AIS traffic through each chokepoint against its own trailing baseline,
+    with the daily series — or, per chokepoint, why it cannot be measured."""
+    loop = asyncio.get_event_loop()
+    flows = await loop.run_in_executor(_executor, _chokepoint_flows_cached)
+    return {"chokepoints": list(flows.values())}
+
+
 @app.get("/api/infrastructure/chokepoints")
 async def api_infrastructure_chokepoints():
     """Return 12 global strategic chokepoints with computed current status and any auto-briefs."""
@@ -19848,6 +19878,7 @@ async def api_infrastructure_chokepoints():
         _executor,
         lambda: [_compute_chokepoint_status(cp) for cp in _CHOKEPOINT_DEFS]
     )
+    flows = await loop.run_in_executor(_executor, _chokepoint_flows_cached)
     # Fire background auto-brief generation for newly elevated chokepoints
     asyncio.create_task(_run_auto_chokepoint_briefs(results))
 
@@ -19870,6 +19901,11 @@ async def api_infrastructure_chokepoints():
             if name in _cpimg_cache:
                 img_url, img_caption = _cpimg_cache[name]
                 cp = {**cp, "image_url": img_url, "image_caption": img_caption}
+            flow = flows.get(name)
+            if flow:
+                # The panel already titles itself with the name.
+                cp = {**cp, "traffic": flow["summary"].removeprefix(f"{name}: "),
+                      "traffic_verdict": flow["verdict"]}
             enriched.append(cp)
     return {"chokepoints": enriched}
 

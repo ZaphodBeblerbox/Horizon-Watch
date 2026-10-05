@@ -47,6 +47,9 @@ export default function GlobeChokepointsLayer({ enabled }) {
                 </div>
                 <b>{c.name}</b>
                 {c.strategic_description ? <p className="tipp">{c.strategic_description}</p> : null}
+                {/* AIS traffic against its own baseline, or why it cannot be
+                    measured here (backend/chokepoint_flow.py). */}
+                {c.traffic ? <p className="tipp"><b>Traffic</b> {c.traffic}</p> : null}
                 {Number.isFinite(c.match_count) && (
                     <div className="tipm">
                         <div><b>{c.match_count}</b><span>recent mentions</span></div>

@@ -11,6 +11,7 @@ import { buildOntologyRecord, traceRationale } from "../inspector/ontologyRecord
 import { linkifyText } from "../lib/linkifyText.jsx"
 import Loading from "../ui/Loading.jsx"
 import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
+import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -673,6 +674,13 @@ export default function InspectorPanel({
                             id={data?.system_id || data?.chokepoint_id || data?.id
                                 || data?.name || entityId}
                             bounds={entityType === "eez" ? (data?.bounds || null) : null} />
+                    </div>
+                )}
+
+                {entityType === "chokepoint" && data?.name && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <SectionLabel>Traffic vs normal</SectionLabel>
+                        <ChokepointFlowSection name={data.name} />
                     </div>
                 )}
 
