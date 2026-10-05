@@ -193,6 +193,8 @@ import { resolveTabAction } from "./lib/tabModel.js"
 import SourceViewer from "./components/SourceViewer.jsx"
 import useOnlineUsers from "./state/useOnlineUsers.js"
 import SearchBar from "./search/SearchBar.jsx"
+import { decodeView, shareUrl } from "./state/shareLink.js"
+import { getCameraState as getShareCamera } from "./globe/cameraState.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -684,6 +686,31 @@ export default function App() {
        stayed until the next reload. Anything done to those tabs — editing,
        favouriting, filing — acted on rows that do not exist. */
     useEffect(() => subscribeAuth(() => { if (getCurrentUser()) refreshTheaters() }), [refreshTheaters])
+
+    /* OPENING A SHARED LINK. #view=…&theater=… (state/shareLink.js) is read
+       once, held until the real theater rows have loaded, then applied: the
+       theater is selected and the camera set. The camera is set twice,
+       because the globe may still be mounting the first time; set-camera is
+       an instant jump, so repeating it is harmless. The hash is then cleared
+       so a reload does not snap back to the shared view. */
+    const sharedLink = useRef(typeof window !== "undefined" ? decodeView(window.location.hash) : { view: null, theater: null })
+    useEffect(() => {
+        const link = sharedLink.current
+        if (!link || (!link.view && !link.theater)) return
+        if (link.theater && !theaters.some((t) => t.id === link.theater)) return
+        sharedLink.current = null
+        if (link.theater) {
+            const t = theaters.find((x) => x.id === link.theater)
+            setTheaterId(t.id)
+            window.dispatchEvent(new CustomEvent("akili:theater-select", { detail: { id: t.id, name: t.name, view: link.view ? null : t.view, layers: t.layers } }))
+        }
+        if (link.view) {
+            openTabRef.current?.("situation")
+            const go = () => window.dispatchEvent(new CustomEvent("akili:set-camera", { detail: link.view }))
+            setTimeout(go, 1500); setTimeout(go, 4500)
+        }
+        try { window.history.replaceState(null, "", window.location.pathname + window.location.search) } catch { /* ignore */ }
+    }, [theaters])
 
     /* A case shared in a chat opens the case workspace. The tab has to be
        opened HERE — Cases only hears the event once it is mounted, and
@@ -1965,7 +1992,15 @@ export default function App() {
                         starred={favTheaters.has(theaterId)}
                         onStar={() => toggleFavTheater(theaterId)}
                         curTitle={(theaters.find((t) => t.id === theaterId) || {}).name || "Workspace"}
-                        onShare={() => openOverlay("overlay:tray")}
+                        // SHARE SHARES. It opened the notification tray. It now
+                        // copies a link that opens this theater at this view.
+                        onShare={() => {
+                            const url = shareUrl(getShareCamera(), theaterId)
+                            const name = (theaters.find((t) => t.id === theaterId) || {}).name || "this view"
+                            const done = () => toast(`Link copied — opens ${name} at this view`, { icon: "i-check" })
+                            if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(done, () => window.prompt("Copy this link", url))
+                            else window.prompt("Copy this link", url)
+                        }}
                         clock={plxClock}
                         presence={onlineUsers.map((u) => [u.name || u.email, u.initials || "?", u.color || "var(--mz-navy-400)"])}
                         busy={false}

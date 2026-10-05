@@ -29,7 +29,10 @@ export function altitudeForHit(hit) {
     if (cat === "highway" || cat === "building" || cat === "amenity" || cat === "shop") return 3_000
     if (cat === "place" || cat === "railway" || cat === "aeroway") return 40_000
     if (cat === "natural" || cat === "waterway") return 350_000
-    if (cat === "boundary") return osm === "relation" ? 900_000 : 120_000
+    // Countries come from the local list with their own size; a boundary the
+    // geocoder returns is far more often a town or district ("Khor Fakkan"
+    // is a boundary relation) than a country.
+    if (cat === "boundary") return osm === "relation" ? 150_000 : 60_000
     return 60_000
 }
 

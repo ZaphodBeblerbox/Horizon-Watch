@@ -32,9 +32,9 @@ describe("buildSuggestions", () => {
         expect(g.find((x) => x.group === "On the map").items[0].label).toBe("Berlin Brandenburg")
     })
 
-    it("frames a street close and a country wide", () => {
+    it("frames a street close and a geocoded town at town height", () => {
         expect(altitudeForHit({ category: "highway" })).toBe(3_000)
-        expect(altitudeForHit({ category: "boundary", osm_type: "relation" })).toBe(900_000)
+        expect(altitudeForHit({ category: "boundary", osm_type: "relation" })).toBe(150_000)
     })
 
     it("suggests theaters and modules before anything is typed", () => {
