@@ -75,6 +75,25 @@ SYSTEM = (
 # ── resolution: deterministic, and the model never touches it ───────────
 
 _PUNCT = re.compile(r"[^a-z0-9 ]+")
+# A ROLE IS NOT AN ENTITY. The model extracted "Pastor" as an organisation
+# and the graph proposed "Pastor → Nigeria", which is a relationship between
+# a job title and a country. These are the bare common nouns that describe
+# WHO SOMEBODY IS rather than naming anyone: as a whole name they carry no
+# identity, and two signals mentioning a pastor are not about the same
+# pastor. Qualified names pass untouched — "Pastor Mike Jones", "Nigeria
+# Police Force", "Israeli Army" all name something.
+_ROLE_ONLY = frozenset({
+    "pastor", "priest", "imam", "rabbi", "bishop", "cleric", "monk",
+    "president", "prime minister", "minister", "ministry", "governor",
+    "mayor", "senator", "spokesman", "spokeswoman", "spokesperson",
+    "official", "officials", "authorities", "government", "police",
+    "army", "military", "navy", "air force", "soldier", "soldiers",
+    "driver", "witness", "witnesses", "resident", "residents",
+    "protester", "protesters", "gunman", "gunmen", "attacker",
+    "attackers", "suspect", "suspects", "victim", "victims",
+    "man", "woman", "men", "women", "child", "children", "people",
+})
+
 _SLASHED = re.compile(r"\bm\s*[./]\s*([vt])\b")
 _FILLER = re.compile(r"\b(mv|ms|mt|the|tanker|vessel|ship|cargo|bulk|carrier)\b")
 
@@ -115,6 +134,11 @@ def resolution_key(e: dict) -> str | None:
         return f"aircraft:icao:{icao}"
     name = norm_name(e.get("name"))
     if not name:
+        return None
+    # A bare role word has no identity to key on. Returning None keeps it
+    # out of every downstream use at one choke point rather than being
+    # filtered separately by each.
+    if name in _ROLE_ONLY:
         return None
     return f"{kind or 'thing'}:name:{name}"
 

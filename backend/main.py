@@ -955,6 +955,34 @@ _sanctions_executor = ThreadPoolExecutor(max_workers=2,
 # Its own pool again, for the same reason sanctions got one: this work
 # is on a timer nobody is waiting for, so it must not compete with
 # requests somebody is.
+# ── INFRASTRUCTURE PREFETCH, BOUNDED ────────────────────────────────────
+#
+# This used to be `threading.Thread(...).start()` once per surface item, on
+# every pool rebuild. Each thread makes Overpass calls with a 40s timeout
+# and three retries, and Overpass is a public endpoint that rate-limits and
+# refuses connections under load — so on a bad morning the process held 400
+# threads, all of them waiting on a socket that was never going to answer.
+#
+# At that point the GIL thrashing starved anyio's own threadpool, and since
+# /api/health/live is a sync `def` it needs a slot from that pool too: the
+# healthcheck timed out on a process that was otherwise fine. That is the
+# "everything stops at once" failure, and its cause was never an endpoint.
+#
+# Four workers. The prefetch is a nicety — it warms a cache so clicking a
+# marker is instant — and nothing waits on it, so queueing is free and
+# unbounded parallelism buys nothing but threads.
+_prefetch_executor = ThreadPoolExecutor(max_workers=4,
+                                        thread_name_prefix="infra-prefetch")
+
+
+def _queue_infra_prefetch(item: dict) -> None:
+    """Warm the infrastructure cache for one item, when there is room."""
+    try:
+        _prefetch_executor.submit(_prefetch_event_infra, item)
+    except RuntimeError:
+        pass        # interpreter shutting down; a warm cache is not worth a crash
+
+
 _maintenance_executor = ThreadPoolExecutor(max_workers=1,
                                            thread_name_prefix="maintenance")
 
@@ -6144,7 +6172,7 @@ def _push_real_time_alert(alert: dict) -> None:
 
     # Background prefetch + auto-enrich
     if alert.get("lat") is not None and alert.get("lon") is not None:
-        threading.Thread(target=_prefetch_event_infra, args=(alert,), daemon=True).start()
+        _queue_infra_prefetch(alert)
     if alert.get("auto_enrichment_gate") == "AUTO_ENRICH":
         threading.Thread(target=_maybe_auto_enrich_batch, args=([alert],), daemon=True).start()
 
@@ -6507,6 +6535,53 @@ _OVERPASS_URLS = [
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
 
+# ── WHEN OVERPASS IS DOWN, STOP ASKING ──────────────────────────────────
+#
+# Overpass is a volunteer-run public endpoint. When it rate-limits or goes
+# down it does so for everyone at once and for minutes at a time, and this
+# app's response was to keep trying: three retries across three mirrors at
+# 40s each is up to six minutes of waiting, per caller, all of it certain
+# to fail. The logs filled with
+#
+#     [overpass] error attempt 1: <urlopen error timed out>
+#     [overpass] error attempt 2: [Errno 61] Connection refused
+#
+# while every caller sat on a socket.
+#
+# After this many consecutive failures the helper returns empty immediately
+# for a cooling-off period, which it reports once. Every caller already
+# handles an empty result — the map simply draws no infrastructure layer —
+# so failing fast is strictly better than failing slowly.
+_OVERPASS_FAIL_THRESHOLD = 6
+_OVERPASS_COOLOFF_S = 300
+_overpass_fails = 0
+_overpass_cold_until = 0.0
+_overpass_lock = threading.Lock()
+
+
+def _overpass_is_cold() -> bool:
+    with _overpass_lock:
+        return time.time() < _overpass_cold_until
+
+
+def _overpass_note_failure() -> None:
+    global _overpass_fails, _overpass_cold_until
+    with _overpass_lock:
+        _overpass_fails += 1
+        if _overpass_fails >= _OVERPASS_FAIL_THRESHOLD and time.time() >= _overpass_cold_until:
+            _overpass_cold_until = time.time() + _OVERPASS_COOLOFF_S
+            print(f"[overpass] {_overpass_fails} consecutive failures — "
+                  f"not asking again for {_OVERPASS_COOLOFF_S // 60} minutes; "
+                  f"infrastructure layers will be empty until then", flush=True)
+
+
+def _overpass_note_success() -> None:
+    global _overpass_fails, _overpass_cold_until
+    with _overpass_lock:
+        if _overpass_fails:
+            _overpass_fails = 0
+            _overpass_cold_until = 0.0
+
 
 def _fetch_overpass(query: str, retries: int = 3, timeout: int = 40) -> dict:
     """Fetch from Overpass API with retry (429/504) and URL rotation for redundancy.
@@ -6517,6 +6592,12 @@ def _fetch_overpass(query: str, retries: int = 3, timeout: int = 40) -> dict:
     old fixed 40s it timed out on every mirror and returned an empty list —
     which looked exactly like "there are no pipelines in Europe".
     """
+    # Fail fast while the endpoint is known to be down — see the breaker
+    # above. Six minutes of certain-to-fail waiting per caller is what
+    # filled the process with blocked threads.
+    if _overpass_is_cold():
+        return {"elements": []}
+
     data_bytes = urllib.parse.urlencode({"data": query}).encode()
     for attempt in range(retries):
         url = _OVERPASS_URLS[attempt % len(_OVERPASS_URLS)]
@@ -6526,7 +6607,9 @@ def _fetch_overpass(query: str, retries: int = 3, timeout: int = 40) -> dict:
                 headers={"User-Agent": "Akili/1.0", "Content-Type": "application/x-www-form-urlencoded"},
             )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return _json.loads(resp.read())
+                out = _json.loads(resp.read())
+            _overpass_note_success()
+            return out
         except urllib.error.HTTPError as ex:
             if ex.code in (429, 504) and attempt < retries - 1:
                 wait = 5 * (attempt + 1)
@@ -6534,13 +6617,16 @@ def _fetch_overpass(query: str, retries: int = 3, timeout: int = 40) -> dict:
                 time.sleep(wait)
             else:
                 print(f"[overpass] HTTP {ex.code} — giving up after {attempt+1} attempt(s)")
+                _overpass_note_failure()
                 return {"elements": []}
         except Exception as ex:
             print(f"[overpass] error attempt {attempt+1} ({url}): {ex}")
             if attempt < retries - 1:
                 time.sleep(3)
             else:
+                _overpass_note_failure()
                 return {"elements": []}
+    _overpass_note_failure()
     return {"elements": []}
 
 
@@ -8882,7 +8968,7 @@ def _build_surface_pool() -> list:
 
         # Background prefetch for SURFACE/AUTO_ENRICH
         if item.get("lat") is not None and item.get("lon") is not None:
-            threading.Thread(target=_prefetch_event_infra, args=(item,), daemon=True).start()
+            _queue_infra_prefetch(item)
 
         gated.append(item)
 

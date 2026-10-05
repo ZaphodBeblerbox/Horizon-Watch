@@ -103,3 +103,38 @@ def test_a_rewrite_may_reorder_the_numbers_it_was_given():
     # Same figures, different sentence. Not an addition.
     assert not _adds_numbers("17 killed, 4 injured in Kenya crash",
                              "Kenya: 4 injured and 17 killed in a road crash")
+
+
+# ── a role is not an entity ─────────────────────────────────────────────
+#
+# The model extracted "Pastor" as an organisation and the graph proposed
+# "Pastor → Nigeria": a relationship between a job title and a country. A
+# bare common noun describing who somebody IS has no identity to key on,
+# and two signals mentioning a pastor are not about the same pastor.
+
+def test_a_bare_role_word_has_no_identity():
+    for role in ("Pastor", "Police", "the Minister", "officials",
+                 "gunmen", "residents", "President", "army"):
+        assert resolution_key({"kind": "org", "name": role}) is None, role
+
+
+def test_a_qualified_name_containing_a_role_is_kept():
+    # The guard must not be a word ban — these all name something.
+    assert resolution_key({"kind": "org", "name": "Nigeria Police Force"}) \
+        == "org:name:nigeria police force"
+    assert resolution_key({"kind": "person", "name": "Pastor Mike Jones"}) \
+        == "person:name:pastor mike jones"
+    assert resolution_key({"kind": "org", "name": "Ministry of Defence"}) \
+        == "org:name:ministry of defence"
+
+
+def test_a_real_organisation_is_unaffected():
+    for org in ("Hamas", "Catholic Church", "WFP", "IDF"):
+        assert resolution_key({"kind": "org", "name": org}) is not None, org
+
+
+def test_a_role_word_is_not_folded_onto_an_identifier_either():
+    # It has no key at all, so it cannot participate in resolution.
+    mentions = [{"kind": "org", "name": "Police", "mmsi": None},
+                {"kind": "vessel", "name": "Irina", "mmsi": "636019825"}]
+    assert link_mentions(mentions) == {}
