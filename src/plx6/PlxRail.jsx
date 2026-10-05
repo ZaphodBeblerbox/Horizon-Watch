@@ -53,7 +53,13 @@ function RailButton({ label, icon, active, badge, onClick }) {
                 position: "relative", display: "flex", alignItems: "center",
                 justifyContent: "center", width: 36, height: 34, flex: "none",
                 border: 0, background: active ? ON : OFF,
-                color: active ? "var(--txt)" : "var(--txt3)",
+                // WHERE YOU ARE, AT A GLANCE. Active was a faint grey fill
+                // that read as hover. Now: the accent on the icon and a 2px
+                // bar on the inner edge — one hue for every module, because
+                // red and amber already mean severity in this console and a
+                // coloured icon per module would read as an alert.
+                color: active ? "var(--acchi)" : "var(--txt3)",
+                boxShadow: active ? "inset 2px 0 0 var(--acchi)" : "none",
                 cursor: "pointer", borderRadius: 0,
             }}
             onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = "var(--hov)"; e.currentTarget.style.color = "var(--txt)" } }}
