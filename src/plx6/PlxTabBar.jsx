@@ -35,6 +35,7 @@ export default function PlxTabBar({
     onEditTab = null,
     onHome = () => {},
     onSearch = () => {},
+    searchSlot = null,
     onFiles = () => {},
     chatOpen = false,
     onChat = () => {},
@@ -92,26 +93,8 @@ export default function PlxTabBar({
                 <span style={{ display: "flex", width: 94, height: 13 }}><PlxWordmark /></span>
             </button>
 
-            <button
-                data-tour="search" onClick={onSearch}
-                style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    width: narrow ? 32 : 240, height: 28, flex: "none",
-                    padding: "0 5px 0 10px", border: "1px solid var(--gline)",
-                    background: "var(--glass2)", color: "var(--txt3)",
-                    font: "inherit", cursor: "pointer", borderRadius: 0,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--gline2)" }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--gline)" }}
-            >
-                <PlxIcon href="#g-search" size={13} style={{ flex: "none" }} />
-                <span style={{ display: wide, flex: 1, textAlign: "left" }}>Search…</span>
-                <kbd style={{
-                    display: wide, fontFamily: "var(--mz-font-mono)", fontSize: 10,
-                    color: "var(--txt3)", border: "1px solid var(--gline2)",
-                    padding: "1px 5px", borderRadius: 0,
-                }}>Ctrl Space</kbd>
-            </button>
+            {/* The search box itself, not a button that opens one. */}
+            {searchSlot}
 
             {/* The "All files" button that sat here is gone: it wore a
                 layers-like glyph and opened the command palette — the same

@@ -192,6 +192,7 @@ import WorldClocksBar from "./components/WorldClocksBar.jsx"
 import { resolveTabAction } from "./lib/tabModel.js"
 import SourceViewer from "./components/SourceViewer.jsx"
 import useOnlineUsers from "./state/useOnlineUsers.js"
+import SearchBar from "./search/SearchBar.jsx"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -1828,8 +1829,10 @@ export default function App() {
                     window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
                 } }}
             />
+            {/* The centred palette is replaced by the tab bar's SearchBar,
+                which listens for overlay:palette and focuses itself. */}
             <CommandPalette
-                open={paletteOpen}
+                open={false}
                 onClose={() => closeOverlay("overlay:palette")}
                 signals={notifItems}
                 onOpenModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
@@ -1906,6 +1909,34 @@ export default function App() {
                         onAddTab={() => setEditingTheater("new")}
                         onHome={() => openTab("home")}
                         onSearch={() => openOverlay("overlay:palette")}
+                        searchSlot={
+                            <SearchBar
+                                narrow={plxNarrow}
+                                theaters={orderedTheaters}
+                                signals={notifItems}
+                                onPlace={(p) => {
+                                    openTab("situation")
+                                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: p.lat, lon: p.lon, altitude: p.altitude } }))
+                                }}
+                                onEntity={(r) => {
+                                    openTab("situation")
+                                    if (r.lat != null && r.lon != null) setSearchTarget({ lat: r.lat, lon: r.lon, zoom: 7, key: Date.now() })
+                                }}
+                                onSignal={(sg) => {
+                                    openTab("situation")
+                                    if (sg.lat != null && sg.lon != null) {
+                                        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: sg.lat, lon: sg.lon, altitude: 250000 } }))
+                                    }
+                                }}
+                                onTheater={(id) => {
+                                    const t = theaters.find((x) => x.id === id)
+                                    if (!t) return
+                                    setTheaterId(id)
+                                    window.dispatchEvent(new CustomEvent("akili:theater-select", { detail: { id, name: t.name, view: t.view, layers: t.layers } }))
+                                }}
+                                onModule={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
+                            />
+                        }
                         onFiles={() => openOverlay("overlay:palette")}
                         /* THE CHAT BUTTON OPENS THE CHAT. It opened the
                            notification tray, which is where alerts go — a
