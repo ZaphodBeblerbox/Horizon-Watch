@@ -25,6 +25,7 @@ import API_BASE from "../apiBase.js"
 import Loading from "../ui/Loading.jsx"
 import { splitByTheater, boardCountry } from "../data/theaterScope.js"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
+import RiskRanking from "./RiskRanking.jsx"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 const ON = "var(--accdim)"
@@ -228,12 +229,17 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
             const fastest = [...movers].sort((a, b) => Math.abs(b.delta || 0) - Math.abs(a.delta || 0)).slice(0, 4)
             return (
                 <>
+                    {/* The ranking is the risk index, by country (RiskRanking.jsx).
+                        What follows is feed ATTENTION by region — kept, and
+                        labelled as what it is. */}
+                    <RiskRanking onOpenModule={onOpenModule} />
+                    <div style={{ ...EYEBROW, margin: "4px 0 10px" }}>Feed attention by region — volume, not risk</div>
                     <div style={{
                         display: "grid", gridTemplateColumns: "minmax(0,1.2fr) minmax(0,1fr)",
                         gap: 14, marginBottom: 14,
                     }}>
                         <div style={{ ...CARD, padding: "18px 18px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-                            <span style={EYEBROW}>Busiest region right now</span>
+                            <span style={EYEBROW}>Busiest feed region right now</span>
                             <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
                                 <h3 style={{
                                     margin: 0, fontWeight: 600, fontSize: 30, lineHeight: 1.05, letterSpacing: "-.01em",
