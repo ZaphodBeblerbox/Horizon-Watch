@@ -156,37 +156,51 @@ Professional and sleek, modern, solid; the owner likes the big headlines.
    Sidebar icons stay monochrome (red/amber mean severity here); give the
    active module a clear accent instead.
 
-### Owner's list, 2026-10-05 afternoon (in working order)
-1. **Theater title in the menu bar:** remove the quick-switch dropdown (it
-   opens search). Show the selected theater; the star makes it a favourite,
-   and favourite theater tabs stay first in the tab strip.
-2. **Search:** results drop down UNDER the search box as you type, with
-   suggestions; also find places — countries, cities, streets (geocoding).
-3. **Share** opens the notification tray; it must share.
-4. **Notifications:** marking read does not lower the bell count (bell 50,
-   tray "unread 81").
-5. **Settings page** (the modal is back since 4289dc0 — check it is reachable
-   and complete), **intro tutorial** (back since 4289dc0 — review content).
-6. **Theater creation** asks for lat/lon: pick on the map or search a place.
-7. **Window layout:** annotation bar and map controls sit too close to open
-   panels; panels must adapt — merge or close — so everything stays visible.
-8. **Default layers** cannot be set.
-9. **Imagery page** needs a real redesign.
+### Owner's list, 2026-10-05 afternoon — status at end of session
+Done (all verified in the browser, committed locally, NOT pushed):
+1. ~~Theater title / favourites~~ — `b883b0d`. Also fixed: theaters loaded
+   before sign-in, leaving placeholder tabs until a reload.
+2. ~~Search~~ — `c3320af`, `c5a8411`. Typeahead under the box; countries
+   and cities instant, streets/addresses via /api/search, coordinates, Enter
+   flies there. One search: all old palette openers focus it.
+3. ~~Share~~ — `bf03c95`. Copies a link with theater + camera.
+4. ~~Notification count~~ — `4259f12`; ~~"now, not a backlog"~~ — `de9f98f`
+   (events older than 30 min go to the tray as read; no pop-ups while hidden).
+5. ~~Settings / tutorial missing~~ — `4289dc0`: ff2c9e8 had deleted eight
+   overlays from the render (palette, tray, settings, capture, tutorial,
+   update banner, toasts, live cards). Content of settings/tutorial NOT yet
+   reviewed.
+6. ~~Theater creation asks lat/lon~~ — `c5a8411`: name a place instead.
+7. ~~Window layout~~ (part) — `01fa957`, `c667bd8`: real pane-edge insets,
+   source viewer makes room, Layers closes when the map would be < 480px,
+   notification cards stay off the inspector. Other panes (Overwatch, the
+   GeoConfirmed strip) not yet checked against the same rule.
+- Photo placeholder with pulsing Parallax X — `2d6bd9b`.
+- Vessel/aircraft feed detail (draught, ETA, status; squawk, climb, target
+  altitude, GPS) — `a139417`.
+
+Still open, in order:
+8. **Default layers** cannot be set (per user, and per theater exists).
+9. **Imagery page** redesign.
 10. **Risk ranking only shows the Baltic.**
-11. **Insight / Forecast** functionality to be enhanced.
-12. **Map data enrichment + OpenAI enrichment everywhere it is cheap** — the
-    system should feel alive and dynamic.
-13. Vessel/aircraft step 2–3 (GFW pattern of life, derived warnings) and
-    ROT 127 meaning "turning, rate unknown".
+11. **Insight / Forecast** functionality.
+12. **Map data enrichment + cheap OpenAI enrichment everywhere** — feel alive.
+13. Vessel/aircraft steps 2–3: GFW pattern of life (last ports, encounters,
+    dark periods, past names/flags) and derived warnings at the top of the
+    panel. **ROT ±127 must read "turning, rate unknown"** (shows "port 127").
+14. Review the restored settings modal and tutorial content.
 
 ### Seen but not fixed
 - Intermittent page error "the server did not respond within 30s" during
   browser probes, independent of the screen being tested.
 - A Yemen signal headlined "fighting around Taiz" is geocoded to Lahj.
-- **Vessel reference photos are wrong.** The Wikimedia lookup matches any
-  Commons file by ship name: "PACITA" shows a Philippine supermarket, "SAMPLE"
-  a soil sample in a cup. Match on the IMO number (Commons has "IMO 9275103"
-  categories) or show nothing.
+- Vessel photos fixed (`a139417`, IMO required), but **facility photos can be
+  logos**: Dubai International shows the DXB wordmark. `_usable_image` in
+  `services/wikimedia_image_service.py` does not catch it.
+- A military aircraft (MAE4329) showed type "PC-21" from hexdb with a photo of
+  a different airframe — route/type lookup and photo lookup disagree.
+- `src/lib/ref.test.js` calls the live backend and fails whenever it is busy
+  (e.g. right after a restart or under probe load) — not a code fault.
 - Home theater cards read `THEATER_SCOPE` (the three seeded theaters), so a
   user-created theater does not appear there yet.
 
@@ -201,10 +215,15 @@ ships quickly). Recommendation: the second first.
 
 ## Testing
 
-- Frontend: `npx vitest run` — 1472 passing.
+- Frontend: `npx vitest run` — 1521 passing (2026-10-05 evening).
 - Backend: `python3 -m pytest test_*.py` — the new ones are
   `test_airlines.py`, `test_country_from_location.py`, `test_outlook.py`,
   `test_enrich_resolution.py`, `test_surface_dedupe.py`,
   `test_fusion_unlocated.py`, `test_overpass_breaker.py`, `test_llm_budget.py`,
-  `test_scenario_reader.py`, `test_situation_place.py`.
+  `test_scenario_reader.py`, `test_situation_place.py`, and since:
+  `test_chokepoint_flow.py`, `test_mmsi_lookup.py`, `test_vessel_owner.py`,
+  `test_track_detail.py`. 4 `test_sync_cursor.py` tests fail on HEAD and
+  before this session's work.
+- Local probe logins (local DB only): `localshot@test.local` and
+  `localshot2@test.local`, password `localshot-pw`.
 - Probe scripts `_*.mjs` and `_settled.sh` are gitignored and throwaway.
