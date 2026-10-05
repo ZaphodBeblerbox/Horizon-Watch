@@ -206,7 +206,7 @@ def _candidates(name: str, kind: str) -> list[str]:
     return [n]
 
 
-def _commons_photo(query: str) -> dict | None:
+def _commons_photo(query: str, must_contain: str | None = None) -> dict | None:
     """A real photograph from Wikimedia Commons.
 
     Needed because a facility's own Wikipedia page very often carries the
@@ -231,6 +231,12 @@ def _commons_photo(query: str) -> dict | None:
         title = page.get("title") or ""
         if _NOT_A_PHOTOGRAPH.search(urllib.parse.unquote(title)):
             continue
+        if must_contain:
+            meta = info.get("extmetadata") or {}
+            text = " ".join([title] + [str((meta.get(k) or {}).get("value") or "")
+                                       for k in ("ImageDescription", "ObjectName", "Categories")])
+            if must_contain not in text:
+                continue
         return {
             "available": True,
             "image_url": info.get("url"), "thumbnail_url": info.get("thumburl"),
@@ -251,7 +257,8 @@ def _hit(s: dict) -> dict:
     }
 
 
-def get_image(name: str, kind: str = "port", *, allow_search: bool = True) -> dict:
+def get_image(name: str, kind: str = "port", *, allow_search: bool = True,
+              imo: str | None = None) -> dict:
     """A reference photograph for a real named place or ship.
 
     `kind` is port | airport | vessel — it only shapes the title guesses.
@@ -259,7 +266,8 @@ def get_image(name: str, kind: str = "port", *, allow_search: bool = True) -> di
     "no photograph found" is a true and useful answer; a stock picture of
     some other port is not.
     """
-    key = f"{kind}:{(name or '').strip().lower()}"
+    imo = re.sub(r"\D", "", str(imo or "")) or None
+    key = f"{kind}:{(name or '').strip().lower()}:{imo or ''}"
     if not (name or "").strip():
         return _empty("no name given")
 
@@ -308,9 +316,19 @@ def get_image(name: str, kind: str = "port", *, allow_search: bool = True) -> di
             break
 
     if not result["available"] and allow_search:
-        hint = {"port": f"Port of {name}", "airport": f"{name} Airport",
-                "vessel": name}.get(kind, name)
-        found = _commons_photo(hint)
+        if kind == "vessel":
+            # A SHIP'S NAME DOES NOT IDENTIFY A SHIP. Searching Commons for
+            # the bare name returned whatever shared it: "PACITA" a Philippine
+            # supermarket, "SAMPLE" a soil sample in a cup, "DELTA-D" a NASA
+            # rocket model — each shown in the inspector as the vessel. Only
+            # the IMO number names one hull, and Commons files ships under it
+            # ("IMO 9275103"), so a vessel photo must carry it or there is none.
+            found = _commons_photo(f'"IMO {imo}"', must_contain=imo) if imo else None
+            if not found and not imo:
+                result = _empty("no IMO number to identify the ship by")
+        else:
+            hint = {"port": f"Port of {name}", "airport": f"{name} Airport"}.get(kind, name)
+            found = _commons_photo(hint)
         if found:
             result = found
 

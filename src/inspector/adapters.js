@@ -137,8 +137,17 @@ export function adaptVessel(data = {}) {
         attr("Course", fmtDeg(hdg)),
         attr("Speed", fmtUnit(sog, "kn")),
         attr("Destination", data.destination),
+        attr("ETA", data.eta ? `${fmtTimestamp(data.eta, { precision: "minute" })}${data.eta_stale ? " · not updated" : ""}` : null),
         attr("Status", data.nav_status),
-        attr("Dimensions", data.length ? `${data.length}m × ${data.beam || "?"}m` : null),
+        // How deep the hull sits. Against its usual value it says loaded or
+        // in ballast — the cargo question, answered from the ship's own report.
+        attr("Draught", isFiniteNum(data.draught) ? `${Number(data.draught).toFixed(1)} m` : null),
+        attr("Dimensions", data.length ? `${data.length} m × ${data.beam || "?"} m` : null),
+        // Only when it differs from heading by more than 10°: then the hull
+        // is being set sideways by current or wind, which is the news.
+        attr("Course over ground", isFiniteNum(data.cog) && isFiniteNum(hdg)
+            && Math.abs(((Number(data.cog) - Number(hdg) + 540) % 360) - 180) > 10 ? fmtDeg(data.cog) : null),
+        attr("Rate of turn", isFiniteNum(data.rot) && data.rot !== 0 ? `${data.rot > 0 ? "starboard" : "port"} ${Math.abs(data.rot)}` : null),
         attr("Sanctions", sanctions?.status ? `${sanctions.status} match${sanctions.vessel_name ? ` — ${sanctions.vessel_name}` : ""}` : null),
         // Flag -> registered owner -> owner's country (backend/vessel_owner.py).
         // A registered owner, not an operator; and when there is none, the
@@ -167,12 +176,34 @@ export function adaptVessel(data = {}) {
 export function adaptAircraft(data = {}) {
     const acClass = acClassify(data)
 
-    const registration = data.registration || data.tail_number || null
+    const registration = data.registration || data.r || data.tail_number || null
     const callsign = (data.flight || data.callsign || "").trim() || null
     const icao = data.icao ?? data.icao24 ?? null
     const alt = data.alt_baro ?? data.altitude ?? data.baro_altitude
     const gs = data.gs ?? data.velocity ?? data.ground_speed
     const point = pointOf(data)
+
+    const vr = Number(data.vertical_rate)
+    const sel = Number(data.selected_altitude)
+    const vertical = isFiniteNum(data.vertical_rate)
+        ? (Math.abs(vr) < 200 ? "Level" : `${vr > 0 ? "Climbing" : "Descending"} ${Math.abs(vr).toLocaleString()} ft/min`)
+            + (isFiniteNum(data.selected_altitude) ? ` → ${sel.toLocaleString()} ft selected` : "")
+        : (isFiniteNum(data.selected_altitude) ? `${sel.toLocaleString()} ft selected` : null)
+    const speeds = [
+        isFiniteNum(data.ias) ? `IAS ${data.ias} kt` : null,
+        isFiniteNum(data.tas) ? `TAS ${data.tas} kt` : null,
+        isFiniteNum(data.mach) ? `M${Number(data.mach).toFixed(2)}` : null,
+    ].filter(Boolean).join(" · ") || null
+    const weather = [
+        isFiniteNum(data.wind_dir) && isFiniteNum(data.wind_speed) ? `wind ${String(Math.round(data.wind_dir)).padStart(3, "0")}° ${data.wind_speed} kt` : null,
+        isFiniteNum(data.outside_temp) ? `${data.outside_temp} °C` : null,
+    ].filter(Boolean).join(" · ") || null
+    // Same thresholds as backend/gps_interference.py: NIC < 7 or NACp < 8
+    // is a receiver that cannot vouch for its own fix.
+    const gps = (isFiniteNum(data.nic) || isFiniteNum(data.nac_p))
+        ? ((isFiniteNum(data.nic) && data.nic < 7) || (isFiniteNum(data.nac_p) && data.nac_p < 8)
+            ? `Degraded (NIC ${data.nic ?? "?"}, NACp ${data.nac_p ?? "?"})` : "Good")
+        : null
 
     const attributes = compact([
         attr("Registration", registration),
@@ -184,7 +215,7 @@ export function adaptAircraft(data = {}) {
         attr("Airline hub", data.operator?.hub || null),
         attr("Callsign", callsign),
         attr("ICAO24", icao),
-        attr("Type", data.aircraft_type || data.type_designator || null),
+        attr("Type", data.type_description || data.aircraft_type || data.type_designator || data.type || null),
         attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
         attr("Heading", fmtDeg(data.track ?? data.heading)),
         attr("Speed", fmtUnit(gs, "kts", 0)),
@@ -194,7 +225,17 @@ export function adaptAircraft(data = {}) {
         // entirely, hiding a fact we actually knew for 16% of traffic.
         attr("Altitude", isFiniteNum(alt) ? `${Number(alt).toLocaleString()} ft`
             : (String(alt).trim().toLowerCase() === "ground" ? "On ground" : null)),
-        attr("Squawk", data.squawk),
+        attr("Vertical", vertical),
+        attr("Airspeed", speeds),
+        attr("Squawk", data.squawk ? `${data.squawk}${data.squawk_meaning ? ` — ${data.squawk_meaning}` : ""}` : null),
+        attr("Emergency", data.emergency && data.emergency !== "none" ? data.emergency : null),
+        attr("GPS fix", gps),
+        attr("Position from", data.position_source
+            ? `${data.position_source}${isFiniteNum(data.seen_pos) ? ` · ${Math.round(data.seen_pos)} s ago` : ""}` : null),
+        attr("Privacy", data.privacy),
+        attr("Conditions", weather),
+        attr("Operator (registry)", data.owner_operator),
+        attr("Built", data.year_built),
         attr("Origin", data.origin_country),
     ])
 

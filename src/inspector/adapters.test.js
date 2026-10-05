@@ -82,6 +82,41 @@ describe("adaptVessel ownership", () => {
     })
 })
 
+describe("feed detail rows", () => {
+    it("shows a vessel's draught, ETA, status and size", () => {
+        const r = adaptVessel({ mmsi: "1", name: "X", draught: 11.2, eta: "2026-10-09T06:30:00Z",
+            nav_status: "at anchor", length: 180, beam: 28, cog: 240.4, true_heading: 205, heading: 205 })
+        expect(findAttr(r.attributes, "Draught").value).toBe("11.2 m")
+        expect(findAttr(r.attributes, "ETA").value).toBe("9 Oct 2026, 06:30Z")
+        expect(findAttr(r.attributes, "Status").value).toBe("at anchor")
+        expect(findAttr(r.attributes, "Dimensions").value).toBe("180 m × 28 m")
+        expect(findAttr(r.attributes, "Course over ground").value).toBe("240°")
+        const same = adaptVessel({ mmsi: "1", heading: 20, cog: 19, eta: "2026-05-10T10:00:00Z", eta_stale: true })
+        expect(same.attributes.find((a) => a.label === "Course over ground")).toBeUndefined()
+        expect(findAttr(same.attributes, "ETA").value).toBe("10 May 2026, 10:00Z · not updated")
+    })
+
+    it("reads an aircraft's climb, target altitude, squawk meaning and GPS integrity", () => {
+        const r = adaptAircraft({ flight: "RYR3AF", registration: "EI-DCK", vertical_rate: -1472,
+            selected_altitude: 22016, ias: 301, tas: 464, mach: 0.776, squawk: "7700",
+            squawk_meaning: "emergency", nic: 5, nac_p: 8, position_source: "ADS-B", seen_pos: 2.4,
+            privacy: "LADD (blocked from public display)" })
+        expect(findAttr(r.attributes, "Vertical").value).toBe("Descending 1,472 ft/min → 22,016 ft selected")
+        expect(findAttr(r.attributes, "Airspeed").value).toBe("IAS 301 kt · TAS 464 kt · M0.78")
+        expect(findAttr(r.attributes, "Squawk").value).toBe("7700 — emergency")
+        expect(findAttr(r.attributes, "GPS fix").value).toBe("Degraded (NIC 5, NACp 8)")
+        expect(findAttr(r.attributes, "Position from").value).toBe("ADS-B · 2 s ago")
+        expect(findAttr(r.attributes, "Privacy").value).toMatch(/^LADD/)
+    })
+
+    it("shows level flight and a good fix plainly, and nothing it was not sent", () => {
+        const r = adaptAircraft({ flight: "BAW15", vertical_rate: 64, nic: 8, nac_p: 10 })
+        expect(findAttr(r.attributes, "Vertical").value).toBe("Level")
+        expect(findAttr(r.attributes, "GPS fix").value).toBe("Good")
+        expect(r.attributes.find((a) => a.label === "Privacy")).toBeUndefined()
+    })
+})
+
 describe("chokepoint", () => {
     it("leads with what the strait is for and what the news says, not its plumbing", () => {
         const r = normalizeEntity("chokepoint", {
@@ -359,7 +394,10 @@ describe("the entity id is not the ICAO24", () => {
     })
 
     it("looks up vessels and facilities by name, which is what Wikimedia keys on", () => {
-        expect(src).toMatch(/kind=vessel&name=/)
+        // Vessels send the IMO with the name: a name alone matched a
+        // supermarket for "PACITA" (vessel photos need the hull's number).
+        expect(src).toMatch(/kind: "vessel", name: shipName/)
+        expect(src).toMatch(/imo: vesselImo/)
         expect(src).toMatch(/kind=\$\{entityType\}&name=/)
     })
 

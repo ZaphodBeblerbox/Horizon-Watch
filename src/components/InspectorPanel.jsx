@@ -326,9 +326,13 @@ export default function InspectorPanel({
         Promise.all([
             fetch(`${API_BASE}/api/aviation/route/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
             fetch(`${API_BASE}/api/aviation/photo/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-        ]).then(([route, photo]) => {
+            // The live record with everything the feed sent (squawk,
+            // climb, selected altitude, airspeeds, integrity, flags) —
+            // kept out of the map payload, fetched here on open.
+            fetch(`${API_BASE}/api/adsb/aircraft/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+        ]).then(([route, photo, live]) => {
             if (cancelled) return
-            const merged = { ...route, ...photo }
+            const merged = { ...route, ...photo, ...live }
             const hasReal = Object.values(merged).some(v => v != null)
             setAircraftInfo(hasReal ? merged : null)
         })
@@ -342,19 +346,7 @@ export default function InspectorPanel({
      * there had been. Wikimedia covers named vessels; a ship with no name in
      * the AIS record cannot be looked up by anything, and says so.
      */
-    const [vesselPhoto, setVesselPhoto] = useState(null)
-    useEffect(() => {
-        setVesselPhoto(null)
-        if (entityType !== "vessel") return
-        const shipName = data?.name || data?.shipname || data?.vessel_name
-        if (!shipName) return
-        let cancelled = false
-        fetch(`${API_BASE}/api/reference-image?kind=vessel&name=${encodeURIComponent(shipName)}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(d => { if (!cancelled && d?.available) setVesselPhoto(d) })
-            .catch(() => {})
-        return () => { cancelled = true }
-    }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
+    // (The fetch itself sits below the registry lookup, which supplies the IMO.)
 
     /**
      * Registered owner (GFW vessel registry, GET /api/vessels/{mmsi}/owner)
@@ -373,6 +365,26 @@ export default function InspectorPanel({
             .catch(() => {})
         return () => { cancelled = true }
     }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // THE IMO GOES WITH THE NAME. Without it the photo service matched on
+    // the name alone and showed whatever shared it — a supermarket for
+    // "PACITA", a rocket model for "DELTA-D". It is taken from the AIS
+    // record or, once loaded, the registry, and the effect re-runs then.
+    const [vesselPhoto, setVesselPhoto] = useState(null)
+    const vesselImo = entityType === "vessel" ? (data?.imo || vesselOwner?.registry?.imo || "") : ""
+    useEffect(() => {
+        setVesselPhoto(null)
+        if (entityType !== "vessel") return
+        const shipName = data?.name || data?.shipname || data?.vessel_name
+        if (!shipName) return
+        let cancelled = false
+        const q = new URLSearchParams({ kind: "vessel", name: shipName, ...(vesselImo ? { imo: vesselImo } : {}) })
+        fetch(`${API_BASE}/api/reference-image?${q}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (!cancelled && d?.available) setVesselPhoto(d) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [entityType, entityId, vesselImo]) // eslint-disable-line react-hooks/exhaustive-deps
 
     /**
      * Port and airport photographs.

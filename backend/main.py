@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 # ── Memory management ─────────────────────────────────────────────────────────
 
+import track_detail as _track_detail
+
+
 class CappedDict(OrderedDict):
     """OrderedDict with a maximum size. Evicts oldest entry when cap is reached."""
     def __init__(self, maxsize=10_000, *args, **kwargs):
@@ -4989,6 +4992,7 @@ def get_adsb(
     print(f"[adsb] raw keys={list(raw.keys())} total={raw.get('total','?')} sample_fields={list(sample.keys())[:12]}")
 
     aircraft = []
+    details: dict = {}
     for ac in raw.get("ac", []):
         lat_ac = ac.get("lat")
         lon_ac = ac.get("lon")
@@ -5008,13 +5012,14 @@ def get_adsb(
             "interesting": bool(db_flags & 2),
             "type":        ac.get("t") or "",
         })
+        details[(ac.get("hex") or "").upper()] = _track_detail.adsb_detail(ac)
 
     print(f"[adsb] lat={lat:.2f} lon={lon:.2f} dist={dist}nm → {len(aircraft)} aircraft")
     now_ts = time.time()
     _adsb_cache[key] = {"ts": now_ts, "data": aircraft}
     # Populate global cache from viewport results too
     for ac in aircraft:
-        _GLOBAL_ADSB_CACHE[ac["icao"]] = {**ac, "hex": ac["icao"], "last_seen": now_ts}
+        _GLOBAL_ADSB_CACHE[ac["icao"]] = {**ac, **details.get(ac["icao"], {}), "hex": ac["icao"], "last_seen": now_ts}
     # Record to history (throttled — only new records, once per aircraft per minute)
     try:
         _record_adsb_history(aircraft)
@@ -5352,7 +5357,7 @@ async def api_frontlines(force: bool = False, at: str | None = None):
 
 
 @app.get("/api/reference-image")
-async def reference_image(name: str, kind: str = "port"):
+async def reference_image(name: str, kind: str = "port", imo: Optional[str] = None):
     """A reference photograph of a real named place or ship, from Wikimedia.
 
     Serves ports, airports and named vessels. Returns available=false with a
@@ -5379,7 +5384,7 @@ async def reference_image(name: str, kind: str = "port"):
                 break
 
     loop = asyncio.get_event_loop()
-    out = await loop.run_in_executor(_executor, _wiki_image, name, kind)
+    out = await loop.run_in_executor(_executor, lambda: _wiki_image(name, kind, imo=imo))
     if resolved_from:
         # Say which code was expanded, so a wrong expansion is visible
         # rather than silently attributed to the image lookup.
@@ -11086,6 +11091,9 @@ async def _ais_websocket_loop():
                                     _sog = pr.get("Sog")
                                     vessel["speed"] = round(float(_sog), 1) if _sog is not None else None
                                     vessel["last_update"] = now
+                                    # Status, course, rate of turn: sent with
+                                    # every report and dropped (track_detail.py).
+                                    vessel.update(_track_detail.ais_position(pr))
                                     if "ship_type_code" in vessel:
                                         vessel["ship_type"] = _ais_ship_type(vessel["ship_type_code"])
                             elif mtype == "ShipStaticData":
@@ -11096,6 +11104,8 @@ async def _ais_websocket_loop():
                                 vessel["ship_type"]      = _ais_ship_type(sd.get("Type") or 0)
                                 vessel["callsign"]       = (sd.get("CallSign") or "").strip()
                                 vessel["last_update"]    = now
+                                # IMO, dimensions, draught, ETA (track_detail.py).
+                                vessel.update(_track_detail.ais_static(sd, datetime.now(timezone.utc)))
                             vessel["mmsi"] = mmsi
                             _AIS_VESSELS[mmsi] = vessel
                             # Record to history (throttled)
@@ -12650,6 +12660,9 @@ async def _global_adsb_cache_loop():
                         "interesting":bool(db_flags & 2),
                         "type":       ac.get("t") or "",
                         "last_seen":  now_ts,
+                        # Kept in the cache, served by /api/adsb/aircraft/{hex}
+                        # only: the map payload stays nine fields wide.
+                        **_track_detail.adsb_detail(ac),
                     }
                 # Record to history
                 mapped = [{"icao": (ac.get("hex") or "").upper(), "flight": (ac.get("flight") or "").strip(),
