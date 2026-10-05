@@ -105,27 +105,14 @@ live system, not inferred.
 - Fusion narrative moved from Claude to OpenAI (`backend/fusion_narrative.py`),
   keeping the engine's existing `_validate_narrative` guard.
 
-## Done but NOT committed
-
-`backend/airlines.py` + `test_airlines.py` (6 tests passing). ICAO airline
-designator → operator, country, hub. **`UAE231` → Emirates → UAE → Dubai.**
-146 airlines; **39.1% of all aircraft-days resolve, 66.7% of those carrying a
-designator.** Registrations (N12345, D-ABCD) correctly return `None` — an
-aircraft wrongly attributed is worse than one unattributed.
-
-Not yet wired into the API. The serialisers are `main.py:11658` and
-`main.py:11825` (`{"icao24": ..., "callsign": ...}`); add the operator there.
-
 ## The agreed work list, in order
 
-1. **Finish the aircraft chain** — wire `airlines.py` into the aircraft
-   serialisers so clicking a plane gives operator → country → hub.
-2. **Chokepoint throughput vs baseline.** `activity_daily` is already the
-   time series; a baseline is its own trailing mean. This is the trade/energy
-   flow graph that was asked for and needs no new data.
-3. **Home header.** "50 signals on the surface, 7 of them critical" is
-   generic. Countries are now on every signal — say where things are and what
-   the most significant one is.
+1. ~~Aircraft chain~~ — done `15ffc8a`. Live: 58.4% of aircraft resolve.
+2. ~~Chokepoint throughput vs baseline~~ — done `dbd949e`. Share of observed
+   AIS, not raw count (raw tracks uptime). **Hormuz and Bab el-Mandeb have no
+   AIS coverage at all** — needs a second source (GFW?), not code.
+3. ~~Home header~~ — done `729951c`; theater cards were hardcoded and are now
+   counted from signals per theater country.
 4. **Minimap in Home.**
 5. **Vessel chain.** MMSI first 3 digits = flag state (free, 100%). Operator
    is harder: `ftm_things` has only 1,370 MMSIs, `sanctioned_entities.owner_chain`
@@ -140,6 +127,23 @@ Not yet wired into the API. The serialisers are `main.py:11658` and
    settings (time, defaults, **bring shortcuts back** — they exist in
    `app.jsx`'s keydown handler but are undiscoverable), default layers at
    login and per theater.
+8. **Added by the owner 2026-10-05:**
+   - **Search bar** — needs work (scope to be defined with the owner).
+   - **Top-bar Layers button** — remove it.
+   - **The "LM KA RT" avatars** in the top bar must show which users are
+     actually online right now, not a fixed set.
+   - **Auto night/day theme** has to actually work.
+   - **Theater creation** (also in 7).
+   - **First-login tour** (also in 7).
+   - **Notifications only while the system is in use** — live events as they
+     happen, never a backlog ("what happened 5 hours ago") on return.
+
+### Seen but not fixed
+- A Yemen signal headlined "fighting around Taiz" is geocoded to Lahj.
+- Home's "Suggested" card claims "the critical signals are clustered, not
+  scattered" — likely fixed text like the old theater cards; unverified.
+- Home theater cards read `THEATER_SCOPE` (the three seeded theaters), so a
+  user-created theater does not appear there yet.
 
 ### Blocker for (7)
 
