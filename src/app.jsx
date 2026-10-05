@@ -1108,7 +1108,7 @@ export default function App() {
 
     // Live unread count comes from the notification store, which is the one
     // record of what actually arrived.
-    const [notifUnreadCount, setNotifUnreadCount] = useState(0)
+    const [notifUnreadCount, setNotifUnreadCount] = useState(() => notifUnread())
     useEffect(() => subscribeNotifications(() => setNotifUnreadCount(notifUnread())), [])
     const markNotificationRead = useCallback((id) => {
         import("./state/notificationStore.js").then((m) => m.markRead(id))
@@ -1976,9 +1976,16 @@ export default function App() {
                         themeMode={plxThemeMode}
                         hour={plxHour}
                         onCycleTheme={(next) => { setThemeMode(next); setPlxThemeMode(next) }}
-                        alertsOpen={plxAlertsOpen}
-                        onAlerts={() => setPlxAlertsOpen((v) => !v)}
-                        alertCount={unreadCount}
+                        alertsOpen={trayOpen}
+                        /* THE BELL OPENS THE NOTIFICATIONS AND COUNTS THEM.
+                           It opened PlxAlerts with alerts={[]} — always empty —
+                           while its badge counted map signals not marked read
+                           in a separate local list. The tray (once behind
+                           Share) is the real notification log, so the bell
+                           opens it and shows its unread count: marking read
+                           there now lowers the number here. */
+                        onAlerts={() => (trayOpen ? closeOverlay("overlay:tray") : openOverlay("overlay:tray"))}
+                        alertCount={notifUnreadCount}
                     />
                     <PlxMenuBar
                         narrow={plxNarrow}
