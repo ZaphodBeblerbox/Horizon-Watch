@@ -1040,6 +1040,29 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // Inspector's whenever it's the active right-side overlay.
     const activeRightOverlayWidth = imageryPanelOpen ? IMAGERY_PANE_W : inspectorOverlayWidth
 
+    /* ROOM FOR A SOURCE. SourceViewer announces itself (akili:source-viewer).
+       Beside the inspector it takes ~470px of map, so the map chrome moves
+       clear of it; and when what is left would be under ~480px, the Layers
+       pane closes for as long as the source is open and comes back after —
+       panes give way rather than stack over the map. */
+    const [sourceDock, setSourceDock] = useState({ open: false, docked: false, width: 0 })
+    useEffect(() => {
+        const on = (e) => setSourceDock(e.detail || { open: false })
+        window.addEventListener("akili:source-viewer", on)
+        return () => window.removeEventListener("akili:source-viewer", on)
+    }, [])
+    const sourceW = sourceDock.open && sourceDock.docked ? sourceDock.width + 10 : 0
+    const closedLeftForSource = useRef(false)
+    useEffect(() => {
+        if (sourceDock.open && sourceDock.docked && !leftMin) {
+            const free = window.innerWidth - 48 - 270 - (activeRightOverlayWidth + 12) - sourceW
+            if (free < 480) { closedLeftForSource.current = true; setLeftMin(true) }
+        } else if (!sourceDock.open && closedLeftForSource.current) {
+            closedLeftForSource.current = false
+            setLeftMin(false)
+        }
+    }, [sourceDock.open, sourceDock.docked]) // eslint-disable-line react-hooks/exhaustive-deps
+
     return (
         <div data-testid="view-root-situation" style={{ display: "flex", position: "relative", height: "100%", minHeight: 0, background: "var(--bg-0)" }}>
             {/* Left — Layers (real frosted glass per build spec v2 §4.6 —
@@ -1625,8 +1648,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     // these the annobar lands on top of the Layers pane and the
                     // scale bar disappears underneath it. Same real widths the
                     // GlobeView insets below already use.
-                    "--map-inset-l": leftMin ? "0px" : "250px",
-                    "--map-inset-r": `${activeRightOverlayWidth || 0}px`,
+                    // THE PANE'S OUTER EDGE, NOT ITS WIDTH. The panes sit 10/12px
+                    // in from the canvas edge, so insetting by the width alone
+                    // put the annobar and the scale readout flush against the
+                    // Layers pane (0px apart). The source viewer, when open,
+                    // is part of the right-hand stack too.
+                    "--map-inset-l": leftMin ? "0px" : "calc(var(--pane-l, 250px) + 10px)",
+                    "--map-inset-r": `${(activeRightOverlayWidth ? activeRightOverlayWidth + 12 : 0) + sourceW}px`,
                 }}>
                     {/* A BASEMAP THAT FAILS SAYS SO. Cesium retries a tile,
                         gives up, and reports it nowhere visible — so a dead

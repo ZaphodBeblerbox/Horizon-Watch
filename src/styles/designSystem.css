@@ -410,8 +410,11 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) .toast-stac
    mattered. */
 #notifstack {
     position: fixed;
-    right: calc(var(--pane-r) + 12px);          /* the map channel */
-    bottom: calc(var(--status) + var(--strip-h) + 12px);   /* clears the strip */
+    /* Fallbacks on every variable: one undefined var() invalidates the whole
+       calc, and the card then fell to the TOP of the window — over the
+       inspector's headline and the Share button. */
+    right: calc(var(--pane-r, 312px) + 24px);          /* the map channel */
+    bottom: calc(var(--status, 0px) + var(--strip-h, 0px) + 24px);   /* clears the strip */
     z-index: 88; display: flex; flex-direction: column; gap: 8px;
     align-items: flex-end; pointer-events: none;   /* .ncard re-enables */
     transition: right .24s var(--ease), bottom .2s var(--ease);
@@ -438,6 +441,15 @@ html:not(:has(#timestrip)) #notifstack {
     top: calc(var(--top, 44px) + 12px);
     bottom: auto;
     flex-direction: column;
+}
+/* WITH THE INSPECTOR OPEN, NEVER ON IT. "No time strip" was read as "off
+   the map", so with the strip closed a card went top-right — onto the
+   inspector's headline and the Share button. While the inspector is open the
+   card sits bottom-right, in the map channel just left of it. */
+html:has([data-testid="glass-inspector-pane"]) #notifstack {
+    top: auto;
+    bottom: calc(var(--status, 0px) + var(--strip-h, 0px) + 24px);
+    right: calc(var(--pane-r, 312px) + 24px);
 }
 
 /* One card at a time, arriving and leaving under its own power rather than

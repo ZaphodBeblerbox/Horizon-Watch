@@ -42,13 +42,30 @@ export default function SourceViewer() {
     }, [])
 
     const embed = url ? embedFor(url, { dark: theme === "dark" }) : null
+
+    /* WHERE IT GOES. Beside the inspector when the window has room for the
+       map, the inspector and the source; on a narrow window it takes the
+       inspector's own column instead, so the map is never covered. The
+       choice is announced so the map chrome and the Layers pane can make
+       way (Situation.jsx). */
+    const [vw, setVw] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1600))
+    useEffect(() => {
+        const r = () => setVw(window.innerWidth)
+        window.addEventListener("resize", r)
+        return () => window.removeEventListener("resize", r)
+    }, [])
+    const docked = vw >= 1150
+    const width = docked ? Math.min(460, vw - 48 - 334 - 480) : 312
+    useEffect(() => {
+        window.dispatchEvent(new CustomEvent("akili:source-viewer", { detail: { open: !!embed, docked, width: Math.max(320, width) } }))
+    }, [!!embed, docked, width]) // eslint-disable-line react-hooks/exhaustive-deps
+
     if (!embed) return null
 
     return (
         <aside role="dialog" aria-label={`Source: ${embed.label}`} style={{
-            position: "fixed", top: 96, bottom: 40, zIndex: 70,
-            // Beside the inspector (≈310px docked at the right), not on it.
-            right: 330, width: "min(460px, calc(100vw - 420px))",
+            position: "fixed", top: 94, bottom: 22, zIndex: 70,
+            right: docked ? 12 + 312 + 10 : 12, width: docked ? Math.max(320, width) : 312,
             display: "flex", flexDirection: "column",
             background: "var(--bg-1, var(--canvas))", border: "1px solid var(--gline2, var(--line))",
             boxShadow: "var(--gshadow)",
