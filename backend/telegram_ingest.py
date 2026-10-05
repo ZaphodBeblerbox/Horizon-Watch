@@ -44,9 +44,10 @@ BATCH = 15
 PRECISE = {"site", "street", "village", "town", "district", "city"}
 # What the map is for (owner, 2026-10-05): fighting, strikes, movements,
 # damage — "a new school opened in Koulouba" is not news here, even with a
-# precise place. Unrest is kept: a riot is a security event.
+# precise place — nor is civil unrest or police news ("officers arrested
+# in Eilat"): the map wants the front line.
 KINETIC = {"strike", "attack", "clash", "movement", "seizure", "explosion", "interception",
-           "infrastructure_damage", "unrest", "maritime", "aviation"}
+           "infrastructure_damage", "maritime", "aviation"}
 
 
 def _db_path() -> str:
@@ -282,19 +283,32 @@ def classify(limit: int = 120) -> dict:
     rows = con.execute("SELECT channel, channel_title, text, msg_id, role, party, media FROM telegram_posts WHERE classified=0"
                        " ORDER BY posted_at DESC LIMIT ?", (limit,)).fetchall()
     done = kept = 0
-    for i in range(0, len(rows), BATCH):
-        chunk = rows[i:i + BATCH]
+    # The model calls run four at a time (11 s each, one after another made
+    # a backlog crawl); place lookups and writes stay serial — the geocoder
+    # allows one request a second.
+    from concurrent.futures import ThreadPoolExecutor
+    chunks = [rows[i:i + BATCH] for i in range(0, len(rows), BATCH)]
+
+    def run(chunk):
         try:
-            res = _model_pass(chunk)
+            return _model_pass(chunk)
         except Exception as e:
             print(f"[telegram] model pass failed: {type(e).__name__}: {e}", flush=True)
-            break
+            return None
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        answers = list(pool.map(run, chunks))
+    for chunk, res in zip(chunks, answers):
         if res is None:
-            break
+            continue
         for r, x in zip(chunk, res):
             x = x or {}
             rel = bool(x.get("relevant"))
             role = r[4] or "aggregator"
+            # An official channel relaying someone else's news ("Moscow mayor
+            # reports drones neutralised" on a Houthi channel) is not that
+            # party's communiqué: screen it as a reposting channel.
+            if role == "official" and not x.get("claim"):
+                role = "outlet"
             # Aggregators repost everything; what makes one of their posts
             # worth a pin is footage of the thing. Without a photo or video
             # it is a sentence someone else wrote first.
