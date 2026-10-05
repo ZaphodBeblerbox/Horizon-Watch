@@ -105,6 +105,12 @@ export default function PlxRail({
     // surface with three tabs, not two destinations (A3).
     const isActive = (k) => mode === k || (k === "briefings" && mode === "dossier")
 
+    // WHAT IS LIT IS WHAT IS ON SCREEN. Map data and Selection are panes
+    // of the map; their open flags persist when you leave it, so on
+    // Overwatch the rail lit Selection — a pane that was not showing.
+    // Overwatch is a screen, so it is lit by the mode, like a module.
+    const toolActive = (k) => k === "imagery" ? mode === "imagery" : (mode === "map" && left === k)
+
     const tools = [
         ["layers",    "Map data · L", "#g-layers", ""],
         ["imagery",   "Overwatch",    "#g-sat",    ""],
@@ -133,7 +139,7 @@ export default function PlxRail({
 
             {tools.map(([k, label, icon, badge]) => (
                 <RailButton key={k} label={label} icon={icon} badge={badge}
-                            active={left === k} onClick={() => onLeft(k)} />
+                            active={toolActive(k)} onClick={() => onLeft(k)} />
             ))}
             <RailButton label="Timeline · T" icon="#g-chart"
                         active={drawer} onClick={onDrawer} />
