@@ -156,6 +156,29 @@ Professional and sleek, modern, solid; the owner likes the big headlines.
    Sidebar icons stay monochrome (red/amber mean severity here); give the
    active module a clear accent instead.
 
+### Owner's list, 2026-10-05 afternoon (in working order)
+1. **Theater title in the menu bar:** remove the quick-switch dropdown (it
+   opens search). Show the selected theater; the star makes it a favourite,
+   and favourite theater tabs stay first in the tab strip.
+2. **Search:** results drop down UNDER the search box as you type, with
+   suggestions; also find places — countries, cities, streets (geocoding).
+3. **Share** opens the notification tray; it must share.
+4. **Notifications:** marking read does not lower the bell count (bell 50,
+   tray "unread 81").
+5. **Settings page** (the modal is back since 4289dc0 — check it is reachable
+   and complete), **intro tutorial** (back since 4289dc0 — review content).
+6. **Theater creation** asks for lat/lon: pick on the map or search a place.
+7. **Window layout:** annotation bar and map controls sit too close to open
+   panels; panels must adapt — merge or close — so everything stays visible.
+8. **Default layers** cannot be set.
+9. **Imagery page** needs a real redesign.
+10. **Risk ranking only shows the Baltic.**
+11. **Insight / Forecast** functionality to be enhanced.
+12. **Map data enrichment + OpenAI enrichment everywhere it is cheap** — the
+    system should feel alive and dynamic.
+13. Vessel/aircraft step 2–3 (GFW pattern of life, derived warnings) and
+    ROT 127 meaning "turning, rate unknown".
+
 ### Seen but not fixed
 - Intermittent page error "the server did not respond within 30s" during
   browser probes, independent of the screen being tested.
