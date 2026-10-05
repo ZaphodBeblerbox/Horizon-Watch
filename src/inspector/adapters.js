@@ -147,7 +147,11 @@ export function adaptVessel(data = {}) {
         // is being set sideways by current or wind, which is the news.
         attr("Course over ground", isFiniteNum(data.cog) && isFiniteNum(hdg)
             && Math.abs(((Number(data.cog) - Number(hdg) + 540) % 360) - 180) > 10 ? fmtDeg(data.cog) : null),
-        attr("Rate of turn", isFiniteNum(data.rot) && data.rot !== 0 ? `${data.rot > 0 ? "starboard" : "port"} ${Math.abs(data.rot)}` : null),
+        // AIS rate of turn: ±127 means "turning, rate unknown"; otherwise the
+        // raw value encodes 4.733·√(°/min).
+        attr("Rate of turn", !isFiniteNum(data.rot) || data.rot === 0 ? null
+            : Math.abs(data.rot) >= 127 ? `turning to ${data.rot > 0 ? "starboard" : "port"}, rate unknown`
+            : `${data.rot > 0 ? "starboard" : "port"} ${Math.round((Math.abs(data.rot) / 4.733) ** 2)}°/min`),
         attr("Sanctions", sanctions?.status ? `${sanctions.status} match${sanctions.vessel_name ? ` — ${sanctions.vessel_name}` : ""}` : null),
         // Flag -> registered owner -> owner's country (backend/vessel_owner.py).
         // A registered owner, not an operator; and when there is none, the

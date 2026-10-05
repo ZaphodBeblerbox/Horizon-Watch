@@ -667,7 +667,14 @@ export default function InspectorPanel({
                                         {countryDetail.window_days}d
                                     </span>
                                 </div>
-                                {countryDetail.drivers.map((d, i) => (
+                                {/* One row per story: GDELT codes one article as
+                                    several events, so the same headline came
+                                    four times. Grouped, with the count kept. */}
+                                {Object.values(countryDetail.drivers.reduce((acc, d) => {
+                                    const k = (d.title || d.event_type || "").trim().toLowerCase()
+                                    if (acc[k]) acc[k].n += 1; else acc[k] = { ...d, n: 1 }
+                                    return acc
+                                }, {})).map((d, i) => (
                                     <div key={i} style={{ padding: "5px 0",
                                                           borderBottom: "1px solid var(--line-soft)" }}>
                                         <div style={{ font: "400 11px var(--font)", color: "var(--text-primary)" }}>
@@ -677,7 +684,7 @@ export default function InspectorPanel({
                                             ) : (d.title || d.event_type)}
                                         </div>
                                         <div style={{ font: "400 10px var(--mono)", color: "var(--text-dim)" }}>
-                                            {d.date} · {d.event_type}
+                                            {d.date} · {d.event_type}{d.n > 1 ? ` · ×${d.n}` : ""}
                                             {d.goldstein != null ? ` · Goldstein ${d.goldstein}` : ""}
                                             {d.location ? ` · ${d.location}` : ""}
                                             {/* Whether a journalist wrote this line or this

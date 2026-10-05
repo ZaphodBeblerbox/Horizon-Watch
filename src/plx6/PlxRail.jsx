@@ -22,6 +22,17 @@ import Avatar from "../ui/Avatar.jsx"
 const ON = "var(--accdim)"
 const OFF = "transparent"
 
+/* A HUE PER MODULE (owner's call, 2026-10-05), so each place in the app is
+   recognisable before its glyph is read. Mid-tone and muted so they read on
+   the dark and the light bar alike, and never red or amber: those mean
+   critical and elevated everywhere else on this screen. */
+export const RAIL_HUE = {
+    home: "#5B8DEF", map: "#2BB3A3", graph: "#9B7BE6", inbox: "#3FA7D6",
+    desk: "#C08AD8", briefings: "#7F9CC4", analytics: "#4CAF7A", fusion: "#D16BA5",
+    work: "#8FA3BF", layers: "#2BB3A3", imagery: "#7C9CE8", selection: "#9AA9BC",
+    timeline: "#4CAF7A", files: "#8FA3BF",
+}
+
 /** The effective rail list — Part C marks `railModes` ▶ EFFECTIVE as the
  *  moreVals version: nine modes, Home first. */
 export const RAIL_MODES = [
@@ -44,7 +55,8 @@ export const RAIL_MODES = [
     ["work",      "My work",                                   "#g-work"],
 ]
 
-function RailButton({ label, icon, active, badge, onClick }) {
+function RailButton({ label, icon, active, badge, onClick, hue = null }) {
+    const ink = hue || "var(--acchi)"
     return (
         <button
             title={label} aria-label={label} aria-pressed={!!active}
@@ -52,18 +64,20 @@ function RailButton({ label, icon, active, badge, onClick }) {
             style={{
                 position: "relative", display: "flex", alignItems: "center",
                 justifyContent: "center", width: 36, height: 34, flex: "none",
-                border: 0, background: active ? ON : OFF,
+                border: 0, background: active ? (hue ? `color-mix(in srgb, ${hue} 18%, transparent)` : ON) : OFF,
                 // WHERE YOU ARE, AT A GLANCE. Active was a faint grey fill
                 // that read as hover. Now: the accent on the icon and a 2px
                 // bar on the inner edge — one hue for every module, because
                 // red and amber already mean severity in this console and a
                 // coloured icon per module would read as an alert.
-                color: active ? "var(--acchi)" : "var(--txt3)",
-                boxShadow: active ? "inset 2px 0 0 var(--acchi)" : "none",
+                // Coloured always; brighter and barred when active.
+                color: active ? ink : (hue || "var(--txt3)"),
+                opacity: active || !hue ? 1 : 0.78,
+                boxShadow: active ? `inset 2px 0 0 ${ink}` : "none",
                 cursor: "pointer", borderRadius: 0,
             }}
-            onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = "var(--hov)"; e.currentTarget.style.color = "var(--txt)" } }}
-            onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = OFF; e.currentTarget.style.color = "var(--txt3)" } }}
+            onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = "var(--hov)"; e.currentTarget.style.opacity = "1" } }}
+            onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = OFF; e.currentTarget.style.opacity = hue ? "0.78" : "1" } }}
         >
             <PlxIcon href={icon} size={17} />
             {badge ? (
@@ -131,24 +145,24 @@ export default function PlxRail({
             }}
         >
             {RAIL_MODES.map(([k, label, icon]) => (
-                <RailButton key={k} label={label} icon={icon}
+                <RailButton key={k} label={label} icon={icon} hue={RAIL_HUE[k]}
                             active={isActive(k)} onClick={() => onMode(k)} />
             ))}
 
             <Rule />
 
             {tools.map(([k, label, icon, badge]) => (
-                <RailButton key={k} label={label} icon={icon} badge={badge}
+                <RailButton key={k} label={label} icon={icon} badge={badge} hue={RAIL_HUE[k]}
                             active={toolActive(k)} onClick={() => onLeft(k)} />
             ))}
-            <RailButton label="Timeline · T" icon="#g-chart"
+            <RailButton label="Timeline · T" icon="#g-chart" hue={RAIL_HUE.timeline}
                         active={drawer} onClick={onDrawer} />
 
             <Rule />
 
             {/* Lit by the MODE, not by a tool-pane flag: the case files are
                 a destination, so "am I looking at them" is the honest test. */}
-            <RailButton label="Case files" icon="#g-folder"
+            <RailButton label="Case files" icon="#g-folder" hue={RAIL_HUE.files}
                         active={mode === "work" || left === "files"}
                         onClick={() => onLeft("files")} />
             <RailButton label="New" icon="#g-plus"

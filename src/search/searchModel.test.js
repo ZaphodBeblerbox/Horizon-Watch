@@ -94,3 +94,10 @@ describe("the closer match leads", () => {
         expect(g[0].items[0].label).toBe("Bab el-Mandeb")
     })
 })
+
+describe("seas", () => {
+    it("frames a sea from far enough to see it", () => {
+        expect(altitudeForHit({ category: "natural", name: "Black Sea" })).toBe(1_800_000)
+        expect(altitudeForHit({ category: "place", type: "sea", name: "x" })).toBe(1_800_000)
+    })
+})

@@ -26,6 +26,10 @@ export function matchRank(name, q) {
 export function altitudeForHit(hit) {
     const cat = String(hit?.category || "").toLowerCase()
     const osm = String(hit?.osm_type || "").toLowerCase()
+    // A sea or gulf is hundreds of kilometres across, whatever category the
+    // geocoder files it under (the Black Sea comes back as a "place").
+    const t = String(hit?.type || "").toLowerCase()
+    if (t === "sea" || t === "ocean" || /\b(sea|ocean|gulf)\b/i.test(hit?.name || "")) return 1_800_000
     if (cat === "highway" || cat === "building" || cat === "amenity" || cat === "shop") return 3_000
     if (cat === "place" || cat === "railway" || cat === "aeroway") return 40_000
     if (cat === "natural" || cat === "waterway") return 350_000
