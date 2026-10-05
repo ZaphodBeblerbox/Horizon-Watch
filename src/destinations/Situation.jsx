@@ -1753,6 +1753,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             label: contextOn.labels,
                         }}
                         disabledToggles={{ imagery: !imageryEnabled }}
+                        basemap={asCanvas ? null : { value: basemap, onChange: setBasemap }}
                         onToggle={(k) => {
                             if (k === "imagery") {
                                 if (!imageryEnabled) return

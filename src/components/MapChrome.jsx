@@ -50,7 +50,7 @@ function navBtn(id, icon, title, onClick) {
 //
 // A named list, with the current one marked and each one saying what it is
 // FOR, costs one click and makes the feature findable.
-const BASEMAPS = [
+export const BASEMAPS = [
     { key: "dark",      label: "Dark",      icon: "i-layers", hint: "Coastlines and borders only — the default for reading signals." },
     { key: "satellite", label: "Satellite", icon: "i-sat",    hint: "Esri World Imagery. What the ground actually looks like." },
     { key: "terrain",   label: "Terrain",   icon: "i-target", hint: "3D elevation. For relief, passes and high ground." },

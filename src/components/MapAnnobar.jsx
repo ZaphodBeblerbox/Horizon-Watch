@@ -30,7 +30,15 @@
  * so it is gone until a real per-country choropleth exists to put there.
  * They are rendered from separate lists rather than one list with a flag,
  * because a single list invites the next edit to make a toggle exclusive.
+ *
+ * A third kind, the BASEMAP switch, is one-of-three and acts on the map
+ * rather than on a tool. It is a labelled segment, not three more glyphs:
+ * two of the three basemap icons are borrowed from other controls, and an
+ * unlabelled basemap button is exactly what got reported as "no option to
+ * change map". It drives the same state as MapChrome's picker, from the
+ * same BASEMAPS list, so the two can never disagree.
  */
+import { BASEMAPS } from "./MapChrome.jsx"
 
 const TOOLS = [
     { key: "select",  icon: "i-cursor",  title: "Select" },
@@ -67,6 +75,7 @@ export default function MapAnnobar({
     toggles = {},
     onToggle,
     disabledToggles = {},
+    basemap = null,
 }) {
     return (
         <div className="annobar" role="toolbar" aria-orientation="vertical" aria-label="Map tools">
@@ -92,6 +101,26 @@ export default function MapAnnobar({
                     onClick={() => onToggle && onToggle(t.key)}
                 />
             ))}
+            {basemap && (
+                <>
+                    <i className="annosep" aria-hidden="true" />
+                    <div className="annoseg" role="radiogroup" aria-label="Map type">
+                        {BASEMAPS.map((b) => (
+                            <button
+                                key={b.key}
+                                id={`bm-${b.key}`}
+                                className={`tool seg${basemap.value === b.key ? " on" : ""}`}
+                                role="radio"
+                                aria-checked={basemap.value === b.key}
+                                title={b.hint}
+                                onClick={() => basemap.onChange && basemap.onChange(b.key)}
+                            >
+                                {b.label}
+                            </button>
+                        ))}
+                    </div>
+                </>
+            )}
             {/* Hidden stubs — see the header note. Present only so draw code
                 that dispatches on these tool ids keeps resolving; never shown. */}
             <button className="tool hidden" data-tool="scanbox" aria-hidden="true" tabIndex={-1} />

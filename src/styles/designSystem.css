@@ -576,6 +576,12 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack
 .mapbtn:disabled, .tool:disabled { opacity: .4; cursor: not-allowed; }
 .mapbtn svg, .tool svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .tool.hidden { display: none; }
+/* The basemap switch in the annobar: labelled segments, one of three on. */
+.annobar .annoseg { display: flex; gap: 2px; }
+.annobar .tool.seg {
+    width: auto; padding: 0 9px;
+    font: 600 11px/1 var(--mz-font-body, var(--font)); white-space: nowrap;
+}
 
 /* §10.2 — nav cluster, top-right. Horizontal, so the zoom readout can sit
    between the + and − where it belongs rather than below both. */
