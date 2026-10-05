@@ -30,11 +30,9 @@ export default function PlxMenuBar({
     curIcon = "#g-globe",
     curTitle = "Red Sea watch",
     onTitle = () => {},
-    presence = [
-        ["L. Moreau · editing", "LM", "var(--mz-klein)"],
-        ["K. Adeyemi", "KA", "var(--mz-sapphire)"],
-        ["R. Takahashi", "RT", "var(--mz-navy-400)"],
-    ],
+    // Who else is signed in right now (useOnlineUsers). This defaulted to
+    // three invented colleagues; empty means nobody else is on.
+    presence = [],
     onShare = () => {},
     classification = "INTERNAL // RISK",
     clock = "",
@@ -103,8 +101,8 @@ export default function PlxMenuBar({
             </div>
 
             <div style={{ display: wideFlex, alignItems: "center", paddingLeft: 6, marginRight: 6 }}>
-                {presence.map(([name, i, bg]) => (
-                    <span key={name} title={name} style={{
+                {presence.slice(0, 4).map(([name, i, bg]) => (
+                    <span key={name} title={`${name} · online now`} style={{
                         width: 22, height: 22, marginLeft: -5, display: "flex",
                         alignItems: "center", justifyContent: "center", borderRadius: 0,
                         background: bg, color: "var(--mz-cream)",
@@ -112,6 +110,12 @@ export default function PlxMenuBar({
                         fontSize: 9, fontWeight: 600,
                     }}>{i}</span>
                 ))}
+                {presence.length > 4 && (
+                    <span title={presence.slice(4).map(([n]) => n).join(", ")}
+                          style={{ marginLeft: 4, font: "500 10px var(--mz-font-mono)", color: "var(--txt3)" }}>
+                        +{presence.length - 4}
+                    </span>
+                )}
             </div>
 
             <button
@@ -123,7 +127,7 @@ export default function PlxMenuBar({
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = "var(--hov)" }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = OFF }}
-            >Share · 3</button>
+            >Share</button>
 
             <span style={{
                 display: wide, fontFamily: "var(--mz-font-mono)", fontSize: 10,

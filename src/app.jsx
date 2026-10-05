@@ -191,6 +191,7 @@ import NewsTicker from "./components/NewsTicker.jsx"
 import WorldClocksBar from "./components/WorldClocksBar.jsx"
 import { resolveTabAction } from "./lib/tabModel.js"
 import SourceViewer from "./components/SourceViewer.jsx"
+import useOnlineUsers from "./state/useOnlineUsers.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -724,6 +725,8 @@ export default function App() {
     const [plxToast, setPlxToast] = useState(null)
     const [plxAlertsOpen, setPlxAlertsOpen] = useState(false)
     const plxOpenedAt = useRef(new Date().toISOString().slice(11, 16) + "Z")
+    // The menu bar's avatars: colleagues actually signed in now.
+    const onlineUsers = useOnlineUsers(getCurrentUser()?.id)
 
     useEffect(() => {
         // A6.4 — one toast at a time, cleared 2.6 s after the text changes.
@@ -1853,6 +1856,7 @@ export default function App() {
                         onTitle={() => openOverlay("overlay:palette")}
                         onShare={() => openOverlay("overlay:tray")}
                         clock={plxClock}
+                        presence={onlineUsers.map((u) => [u.name || u.email, u.initials || "?", u.color || "var(--mz-navy-400)"])}
                         busy={false}
                         onRefresh={() => window.location.reload()}
                     />

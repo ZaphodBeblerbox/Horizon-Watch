@@ -112,17 +112,10 @@ export default function PlxTabBar({
                 }}>Ctrl Space</kbd>
             </button>
 
-            <button
-                onClick={onFiles} title="All files"
-                style={{
-                    width: 30, height: 30, flex: "none", display: "flex",
-                    alignItems: "center", justifyContent: "center", border: 0,
-                    background: OFF, color: "var(--txt3)", cursor: "pointer", borderRadius: 0,
-                }}
-                {...hoverable(OFF)}
-            >
-                <PlxIcon href="#g-tabs" size={16} />
-            </button>
+            {/* The "All files" button that sat here is gone: it wore a
+                layers-like glyph and opened the command palette — the same
+                thing as the search box beside it. Case files are on the
+                rail's folder icon. */}
 
             <nav style={{
                 display: "flex", alignItems: "stretch", height: 40,
