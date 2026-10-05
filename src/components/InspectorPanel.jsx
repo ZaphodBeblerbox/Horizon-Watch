@@ -9,6 +9,7 @@ import { Panel, Button } from "../ui/index.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { buildOntologyRecord, traceRationale } from "../inspector/ontologyRecord.js"
 import { linkifyText } from "../lib/linkifyText.jsx"
+import Loading from "../ui/Loading.jsx"
 import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
@@ -238,6 +239,38 @@ function OntologyRecordBlock({ entityType, data }) {
     )
 }
 
+/** A photograph that holds its place while it loads.
+ *  The frame is drawn at its final size with the Parallax mark pulsing in it,
+ *  so the panel does not jump when the picture arrives; a picture that fails
+ *  removes the frame rather than leaving a broken image. `pending` draws the
+ *  frame alone, for while the lookup itself is still running. */
+function PhotoFrame({ src = null, alt = "", pending = false }) {
+    const [loaded, setLoaded] = useState(false)
+    const [failed, setFailed] = useState(false)
+    useEffect(() => { setLoaded(false); setFailed(false) }, [src])
+    if (failed) return null
+    const waiting = pending || !loaded
+    return (
+        <div style={{
+            position: "relative", width: "100%", borderRadius: "var(--radius)", overflow: "hidden",
+            ...(waiting ? { aspectRatio: "16 / 10", background: "var(--bg-2, var(--glass2))", border: "1px solid var(--gline)" } : {}),
+        }}>
+            {waiting && (
+                <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+                    <Loading size={34} label="Loading photograph" inline labelHidden />
+                </div>
+            )}
+            {src && (
+                // NOT loading="lazy": a lazy image that is display:none is
+                // never fetched, so the frame waited forever for it.
+                <img src={src} alt={alt}
+                     onLoad={() => setLoaded(true)} onError={() => setFailed(true)}
+                     style={{ width: "100%", display: loaded ? "block" : "none" }} />
+            )}
+        </div>
+    )
+}
+
 // Entity kinds a reference photograph exists for. A chokepoint is a
 // strait or canal and Wikipedia has a picture of every one of them; it
 // was simply never asked.
@@ -313,8 +346,10 @@ export default function InspectorPanel({
     // stale aircraft's enrichment never bleeds into the next one; left null
     // (never a fake/placeholder value) when nothing real comes back.
     const [aircraftInfo, setAircraftInfo] = useState(null)
+    const [aircraftPending, setAircraftPending] = useState(false)
     useEffect(() => {
         setAircraftInfo(null)
+        setAircraftPending(false)
         if (entityType !== "aircraft" || !entityId) return
         // THE ENTITY ID IS NOT THE ICAO24. GlobeADSBLayer registers each
         // aircraft as `adsb-<icao24>` to namespace it in the entity store, so
@@ -323,6 +358,7 @@ export default function InspectorPanel({
         // exact-airframe photo quietly stopped appearing.
         const icao24 = String(entityId).replace(/^adsb-/i, "")
         let cancelled = false
+        setAircraftPending(true)
         Promise.all([
             fetch(`${API_BASE}/api/aviation/route/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
             fetch(`${API_BASE}/api/aviation/photo/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
@@ -332,6 +368,7 @@ export default function InspectorPanel({
             fetch(`${API_BASE}/api/adsb/aircraft/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
         ]).then(([route, photo, live]) => {
             if (cancelled) return
+            setAircraftPending(false)
             const merged = { ...route, ...photo, ...live }
             const hasReal = Object.values(merged).some(v => v != null)
             setAircraftInfo(hasReal ? merged : null)
@@ -371,6 +408,7 @@ export default function InspectorPanel({
     // "PACITA", a rocket model for "DELTA-D". It is taken from the AIS
     // record or, once loaded, the registry, and the effect re-runs then.
     const [vesselPhoto, setVesselPhoto] = useState(null)
+    const [vesselPending, setVesselPending] = useState(false)
     const vesselImo = entityType === "vessel" ? (data?.imo || vesselOwner?.registry?.imo || "") : ""
     useEffect(() => {
         setVesselPhoto(null)
@@ -379,10 +417,12 @@ export default function InspectorPanel({
         if (!shipName) return
         let cancelled = false
         const q = new URLSearchParams({ kind: "vessel", name: shipName, ...(vesselImo ? { imo: vesselImo } : {}) })
+        setVesselPending(true)
         fetch(`${API_BASE}/api/reference-image?${q}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (!cancelled && d?.available) setVesselPhoto(d) })
             .catch(() => {})
+            .finally(() => { if (!cancelled) setVesselPending(false) })
         return () => { cancelled = true }
     }, [entityType, entityId, vesselImo]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -397,8 +437,10 @@ export default function InspectorPanel({
      * real photograph of that named facility from Wikimedia, or nothing.
      */
     const [facilityPhoto, setFacilityPhoto] = useState(null)
+    const [facilityPending, setFacilityPending] = useState(false)
     useEffect(() => {
         setFacilityPhoto(null)
+        setFacilityPending(false)
         if (!FACILITY_PHOTO_TYPES.has(entityType)) return
         // THE FIELD NAMES ARE NOT THE ONES THIS WAS ASKING FOR. An airport
         // record carries airport_name / icao_code / iata_code, and none of
@@ -411,10 +453,12 @@ export default function InspectorPanel({
             || data?.iata || data?.icao
         if (!facility) return
         let cancelled = false
+        setFacilityPending(true)
         fetch(`${API_BASE}/api/reference-image?kind=${entityType}&name=${encodeURIComponent(facility)}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (!cancelled && d?.available) setFacilityPhoto(d) })
             .catch(() => {})
+            .finally(() => { if (!cancelled) setFacilityPending(false) })
         return () => { cancelled = true }
     }, [entityType, entityId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -672,11 +716,13 @@ export default function InspectorPanel({
                     ship name, which is the vessel CLASS or that ship on
                     another day — so it is labelled as a reference image and
                     never presented as current imagery of this contact. */}
+                {!media?.photoUrl && !facilityPhoto && !vesselPhoto
+                    && (facilityPending || vesselPending || aircraftPending) && (
+                    <div style={{ marginBottom: "var(--space-4)" }}><PhotoFrame pending /></div>
+                )}
                 {!media?.photoUrl && facilityPhoto?.thumbnail_url && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
-                        <img src={facilityPhoto.thumbnail_url} alt={facilityPhoto.title || identity.title}
-                             loading="lazy"
-                             style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }} />
+                        <PhotoFrame src={facilityPhoto.thumbnail_url} alt={facilityPhoto.title || identity.title} />
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
                             Reference image · {facilityPhoto.title}
                             {facilityPhoto.page_url && (
@@ -688,9 +734,7 @@ export default function InspectorPanel({
                 )}
                 {!media?.photoUrl && !facilityPhoto && vesselPhoto?.thumbnail_url && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
-                        <img src={vesselPhoto.thumbnail_url} alt={vesselPhoto.title || identity.title}
-                             loading="lazy"
-                             style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }} />
+                        <PhotoFrame src={vesselPhoto.thumbnail_url} alt={vesselPhoto.title || identity.title} />
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
                             Reference image · {vesselPhoto.title}
                             {vesselPhoto.page_url && (
@@ -702,11 +746,7 @@ export default function InspectorPanel({
                 )}
                 {media?.photoUrl && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
-                        <img
-                            src={media.photoUrl}
-                            alt={identity.title}
-                            style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }}
-                        />
+                        <PhotoFrame src={media.photoUrl} alt={identity.title} />
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>
                             {[media.photographer && `Photo: ${media.photographer}`].filter(Boolean).join(" · ")}
                             {media.linkUrl ? (
