@@ -82,3 +82,15 @@ describe("ordering and duplicates", () => {
         expect(k).toHaveLength(1)
     })
 })
+
+describe("the closer match leads", () => {
+    it("puts Bab el-Mandeb (chokepoint, prefix) before Al-Bab (town, word)", () => {
+        const remote = [
+            { type: "location", name: "Al-Bab", lat: 36.37, lon: 37.51, category: "boundary", osm_type: "relation" },
+            { type: "chokepoint", name: "Bab el-Mandeb", lat: 12.6, lon: 43.3, system_id: "CHOKE-003" },
+        ]
+        const g = buildSuggestions("bab el", { remote })
+        expect(g[0].group).toBe("On the map")
+        expect(g[0].items[0].label).toBe("Bab el-Mandeb")
+    })
+})

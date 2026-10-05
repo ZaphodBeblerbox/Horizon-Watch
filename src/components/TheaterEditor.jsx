@@ -11,6 +11,63 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { LAYER_GROUPS } from "./layerRailConfig.js"
+import API_BASE from "../apiBase.js"
+import { places as loadPlaces } from "../voice/gazetteer.js"
+import { buildSuggestions } from "../search/searchModel.js"
+
+/* WHERE IT LOOKS IS A PLACE YOU NAME. The editor asked for latitude,
+   longitude and height in metres — numbers nobody has to hand. Type the
+   place instead; the same suggestions as the search box (local countries
+   and cities instantly, the geocoder for the rest) and the camera height
+   that suits it. The numbers stay available, folded, for whoever has one. */
+function PlacePicker({ onPick }) {
+    const [q, setQ] = useState("")
+    const [places, setPlaces] = useState([])
+    const [remote, setRemote] = useState([])
+    useEffect(() => { loadPlaces().then(setPlaces).catch(() => {}) }, [])
+    useEffect(() => {
+        const t = q.trim()
+        if (t.length < 2) { setRemote([]); return undefined }
+        let live = true
+        const timer = setTimeout(() => {
+            fetch(`${API_BASE}/api/search?q=${encodeURIComponent(t)}&limit=8`, { credentials: "include" })
+                .then((r) => (r.ok ? r.json() : [])).then((d) => { if (live) setRemote(Array.isArray(d) ? d : []) })
+                .catch(() => {})
+        }, 160)
+        return () => { live = false; clearTimeout(timer) }
+    }, [q])
+    const items = useMemo(() => {
+        // Same order the search box uses: the closer match leads.
+        const g = buildSuggestions(q, { places, remote })
+        return g.filter((x) => x.group === "Places" || x.group === "On the map")
+            .flatMap((x) => x.group === "Places" ? x.items
+                : x.items.map((i) => ({ ...i, lat: i.raw?.lat, lon: i.raw?.lon, altitude: 600_000 })))
+            .filter((i) => Number.isFinite(i.lat) && Number.isFinite(i.lon)).slice(0, 7)
+    }, [q, places, remote])
+    return (
+        <div style={{ position: "relative" }}>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Type a place — Bab el-Mandeb, Red Sea, Taiwan…"
+                   onKeyDown={(e) => { if (e.key === "Enter" && items[0]) { e.preventDefault(); onPick(items[0]); setQ("") } }}
+                   style={INPUT} aria-label="Find the place this theater watches" />
+            {q.trim().length >= 2 && items.length > 0 && (
+                <div style={{ position: "absolute", top: 32, left: 0, right: 0, zIndex: 5, background: "var(--bg-1, var(--canvas))",
+                              border: "1px solid var(--gline2)", boxShadow: "var(--gshadow)" }}>
+                    {items.map((it) => (
+                        <div key={it.id} onMouseDown={(e) => { e.preventDefault(); onPick(it); setQ("") }}
+                             style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "6px 10px", cursor: "pointer" }}
+                             onMouseEnter={(e) => { e.currentTarget.style.background = "var(--accdim)" }}
+                             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent" }}>
+                            <span style={{ fontSize: 13, color: "var(--txt)" }}>{it.label}</span>
+                            <span style={{ fontSize: 11.5, color: "var(--txt-4, var(--txt4))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.sub}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+
+const fmtHeight = (h) => (Number(h) >= 1000 ? `${Math.round(Number(h) / 1000).toLocaleString()} km up` : `${Math.round(Number(h))} m up`)
 
 const SEVERITIES = [
     ["critical", "Critical"],
@@ -74,6 +131,8 @@ export default function TheaterEditor({ theater = null, readView = null, onSave,
     const [name, setName] = useState(theater?.name || "")
     const [sev, setSev] = useState(theater?.sev || "steady")
     const [view, setView] = useState(theater?.view?.lat != null ? theater.view : null)
+    const [placeName, setPlaceName] = useState(null)
+    const [showCoords, setShowCoords] = useState(false)
     const [layers, setLayers] = useState(() => ({
         groups: theater?.layers?.groups || ["news"],
         infra: theater?.layers?.infra || [],
@@ -156,13 +215,32 @@ export default function TheaterEditor({ theater = null, readView = null, onSave,
                             <span style={EYE}>Where it looks</span>
                             <div style={{ flex: 1 }} />
                             {readView && (
-                                <button style={{ ...BTN, height: 22 }} onClick={() => setView(readView())}>
+                                <button style={{ ...BTN, height: 22 }} onClick={() => { setView(readView()); setPlaceName("the current map view") }}>
                                     Use the current map view
                                 </button>
                             )}
                         </div>
-                        {view ? (
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                        <PlacePicker onPick={(p) => {
+                            setView({ lat: +Number(p.lat).toFixed(4), lon: +Number(p.lon).toFixed(4), height: Math.round(p.altitude || 600_000) })
+                            setPlaceName(p.label)
+                            if (!name.trim()) setName(p.label)
+                            // Show it, so the choice is visibly right before saving.
+                            window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: p.lat, lon: p.lon, altitude: p.altitude || 600_000 } }))
+                        }} />
+                        <div style={{ marginTop: 7, font: "400 12px/1.6 var(--font)", color: "var(--txt-3)" }}>
+                            {view ? (
+                                <>
+                                    Looks at <b style={{ color: "var(--txt)", fontWeight: 600 }}>{placeName || "the view you set"}</b>
+                                    {" "}· {fmtHeight(view.height)}{" "}
+                                    <button type="button" onClick={() => setShowCoords((v) => !v)}
+                                            style={{ border: 0, background: "none", color: "var(--acc-hi, var(--acchi))", cursor: "pointer", font: "inherit", padding: 0 }}>
+                                        {showCoords ? "hide coordinates" : "coordinates"}
+                                    </button>
+                                </>
+                            ) : "Not set — selecting this theater will leave the map where it is."}
+                        </div>
+                        {view && showCoords && (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 6 }}>
                                 {[["lat", "Latitude"], ["lon", "Longitude"], ["height", "Height (m)"]].map(([k, l]) => (
                                     <label key={k} style={{ display: "block" }}>
                                         <span style={{ font: "400 10.5px var(--font)", color: "var(--txt-3)" }}>{l}</span>
@@ -178,11 +256,6 @@ export default function TheaterEditor({ theater = null, readView = null, onSave,
                                     </label>
                                 ))}
                             </div>
-                        ) : (
-                            <p style={{ margin: 0, font: "400 12px/1.6 var(--font)", color: "var(--txt-3)" }}>
-                                No view set — selecting this theater will leave the map where it is.
-                                Fly somewhere and press the button above.
-                            </p>
                         )}
                     </div>
 

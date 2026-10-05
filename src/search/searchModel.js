@@ -95,6 +95,9 @@ export function buildSuggestions(query, { places = [], remote = [], theaters = [
 
     // Things on the map the backend knows by name: chokepoints, ports, airports, cables, zones.
     const feats = remote.filter((h) => h.type !== "location" && h.type !== "rule" && Number.isFinite(h.lat) && Number.isFinite(h.lon))
+        .map((h, i) => ({ h, i, r: matchRank(h.name, q) }))
+        .sort((a, b) => (a.r < 0 ? 9 : a.r) - (b.r < 0 ? 9 : b.r) || a.i - b.i)
+        .map((x) => x.h)
         .slice(0, 4)
         .map((h) => {
             // A GeoConfirmed placemark's `name` is its date ("30 MAR 2026");
@@ -108,6 +111,15 @@ export function buildSuggestions(query, { places = [], remote = [], theaters = [
             }
         })
     if (feats.length) groups.push({ group: "On the map", items: feats })
+    // THE CLOSER MATCH LEADS, whichever list it is in. "Bab el" is Bab
+    // el-Mandeb (a chokepoint, prefix match), not Al-Bab (a town that merely
+    // contains the word) — and Enter takes whatever is first.
+    const best = (g) => Math.min(...g.items.map((i) => { const r = matchRank(i.label, q); return r < 0 ? 9 : r }))
+    const pi = groups.findIndex((g) => g.group === "Places"), fi = groups.findIndex((g) => g.group === "On the map")
+    if (pi >= 0 && fi >= 0 && best(groups[fi]) < best(groups[pi])) {
+        const [f] = groups.splice(fi, 1)
+        groups.splice(pi, 0, f)
+    }
 
     const th = theaters.filter((t) => matchRank(t.name, q) >= 0).slice(0, 3)
         .map((t) => ({ kind: "theater", id: t.id, label: t.name, sub: "Theater", raw: t }))
