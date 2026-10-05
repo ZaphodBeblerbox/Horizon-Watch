@@ -153,12 +153,27 @@ def _fold(out: dict) -> dict:
     Across the WHOLE set, not within a batch — the mention carrying the
     MMSI is usually in a different signal from the one carrying only the
     name, and that is the entire point.
+
+    KEYS ARE RECOMPUTED FROM THE ENTITIES, not read from the cache. They
+    are derived values, and the rules that derive them change: adding the
+    role-word stoplist stopped "Pastor" from being an entity, but every
+    signal already in the cache kept its stale `org:name:pastor` key and
+    went on proposing "Pastor → Nigeria". Deriving on read makes a change
+    to resolution apply to everything at once instead of only to whatever
+    happens to be enriched next.
     """
     import enrich as _enrich
     all_ents = [e for rec in out.values() for e in (rec.get("entities") or [])]
     folded = _enrich.link_mentions(all_ents)
     for rec in out.values():
-        rec["resolved"] = [folded.get(k, k) for k in (rec.get("keys") or [])]
+        ents = rec.get("entities") or []
+        # Entities whose key is now None are dropped from the record, so a
+        # caller zipping entities against resolved keys stays aligned.
+        keyed = [(e, _enrich.resolution_key(e)) for e in ents]
+        keyed = [(e, k) for e, k in keyed if k]
+        rec["entities"] = [e for e, _ in keyed]
+        rec["keys"] = [k for _, k in keyed]
+        rec["resolved"] = [folded.get(k, k) for k in rec["keys"]]
     return out
 
 
