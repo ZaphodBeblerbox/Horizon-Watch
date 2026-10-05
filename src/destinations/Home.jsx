@@ -31,6 +31,7 @@ import { countriesInView, partition, watched } from "../state/interests.js"
 import { places as loadPlaces } from "../voice/gazetteer.js"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 import Minimap from "../components/Minimap.jsx"
+import TelegramMedia from "../components/TelegramMedia.jsx"
 import { THEATER_SCOPE } from "../data/theaterScope.js"
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -164,6 +165,18 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     useEffect(() => subscribeSettings((st) => setInterests(st?.interests || null)), [])
     const w = useMemo(() => watched(interests || {}, userTheaters, countryPlaces), [interests, userTheaters, countryPlaces])
     const split = useMemo(() => partition(surface, w), [surface, w])
+
+    /* FROM THE GROUND. The one Telegram video worth playing at launch: a
+       first-hand or official report with footage from the last 12 hours,
+       in the user's areas if there is one, critical first, then newest. */
+    const groundVideo = useMemo(() => {
+        const cutoff = Date.now() - 12 * 3600 * 1000
+        const mineIds = new Set(split.mine.map((m) => m.id))
+        const rank = (x) => (mineIds.has(x.id) ? 0 : 2) + (x.severity_tier === "critical" ? 0 : 1)
+        return surface
+            .filter((x) => x.source_type === "telegram" && x.media === "video" && Date.parse(x.published_at) >= cutoff)
+            .sort((a, b) => rank(a) - rank(b) || String(b.published_at).localeCompare(String(a.published_at)))[0] || null
+    }, [surface, split])
 
     /* Overnight — our own surface, newest first. Deliberately NOT sorted on
        relevance_score: that field is a lookup on severity_tier (main.py
@@ -389,6 +402,34 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                             }}>⌘K</span>
                         </button>
                     </header>
+
+                    {groundVideo && (
+                        <div data-screen-label="From the ground" style={{
+                            display: "grid", gridTemplateColumns: "minmax(0,1.25fr) minmax(0,1fr)", gap: 20,
+                            padding: 16, border: "1px solid var(--gline)", background: "var(--glass2)", alignItems: "center",
+                        }}>
+                            <TelegramMedia post={groundVideo} maxHeight="380px" radius="0" />
+                            <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+                                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase",
+                                               color: groundVideo.severity_tier === "critical" ? "var(--red)" : "var(--txt3)" }}>
+                                    From the ground · {String(groundVideo.published_at).slice(11, 16)}Z · <bdi>{groundVideo.source}</bdi>
+                                </span>
+                                <h3 style={{ margin: 0, fontSize: 24, lineHeight: 1.2, fontWeight: 600, textWrap: "pretty" }}>{groundVideo.headline}</h3>
+                                <span style={{ fontSize: 13, color: "var(--txt2)", textWrap: "pretty" }}>{groundVideo.context}</span>
+                                <span style={{ fontSize: 12, color: "var(--txt3)" }}>
+                                    {[groundVideo.place, groundVideo.verification].filter(Boolean).join(" · ")}
+                                </span>
+                                <div>
+                                    <button onClick={() => {
+                                        onOpenModule("map")
+                                        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: groundVideo.lat, lon: groundVideo.lon, altitude: 60000 } }))
+                                        window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "telegram", entityId: groundVideo.id, data: groundVideo } }))
+                                    }} style={{ height: 30, padding: "0 12px", border: 0, background: "var(--acc)", color: "var(--mz-cream)",
+                                                font: "inherit", fontWeight: 600, cursor: "pointer" }}>Show on the map</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* ── Daily brief + Suggested ───────────────────────── */}
                     <div style={{

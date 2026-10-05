@@ -1923,7 +1923,19 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             ) : newestCritical.map((r) => (
                                 <div key={r.id} className="evrow"
                                      style={{ background: tintBackground(r.severityRank, r.publishedAt, nowMs) }}
-                                     onClick={() => { setInspectorPopup(null); setSelected(r) }}>
+                                     onClick={() => {
+                                         // A Telegram post opens its own panel: headline, then
+                                         // the video or photo, then the translation.
+                                         if (r.raw?.source_type === "telegram") {
+                                             const d = r.raw
+                                             window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
+                                                 entityType: "telegram", entityId: d.id,
+                                                 data: { ...d, thumb_url: d.thumb_url && !d.thumb_url.startsWith("http") ? `${API_BASE}${d.thumb_url}` : d.thumb_url },
+                                             } }))
+                                             return
+                                         }
+                                         setInspectorPopup(null); setSelected(r)
+                                     }}>
                                     <span className={`dia ${SEV_CLASS_BY_RANK[r.severityRank] || "moderate"}`} />
                                     <div>
                                         <div className="title">{r.title}</div>

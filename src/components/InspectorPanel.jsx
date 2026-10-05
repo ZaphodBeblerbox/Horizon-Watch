@@ -13,6 +13,7 @@ import Loading from "../ui/Loading.jsx"
 import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 import VesselHistorySection from "./VesselHistorySection.jsx"
+import TelegramMedia from "./TelegramMedia.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 
@@ -499,8 +500,6 @@ export default function InspectorPanel({
             : data
     const normalized = normalizeEntity(entityType, enrichedData)
     const { identity, provenance, actions, media, description } = normalized
-    const [tgVideoFailed, setTgVideoFailed] = useState(false)
-    useEffect(() => { setTgVideoFailed(false) }, [entityId])
     const [titleOpen, setTitleOpen] = useState(false)
     useEffect(() => { setTitleOpen(false) }, [entityId])
     // ~3 lines of the 17px headline in a ~260px column.
@@ -756,21 +755,12 @@ export default function InspectorPanel({
                         </div>
                     </div>
                 )}
-                {/* A Telegram video plays here, from the console's own copy
-                    (Telegram's embed refuses large files: "Media is too big").
-                    Full panel width, at the video's own proportions, never
-                    taller than 60% of the window; the still shows until the
-                    video is ready, and stays if it cannot be fetched. */}
-                {entityType === "telegram" && data?.media === "video" && data?.channel && !tgVideoFailed && (
-                    <div style={{ marginBottom: "var(--space-4)", background: "#000", borderRadius: "var(--radius)", overflow: "hidden" }}>
-                        <video key={data.id} controls playsInline preload="metadata"
-                               poster={data.thumb_url || undefined}
-                               src={`${API_BASE}/api/telegram/video/${encodeURIComponent(data.channel)}/${String(data.id).split("-").pop()}`}
-                               onError={() => setTgVideoFailed(true)}
-                               style={{ display: "block", width: "100%", maxHeight: "60vh", objectFit: "contain" }} />
-                    </div>
+                {/* A Telegram post's picture or video, in our own frame:
+                    autoplaying, paused by a click (TelegramMedia.jsx). */}
+                {entityType === "telegram" && (data?.thumb_url || data?.media === "video") && (
+                    <div style={{ marginBottom: "var(--space-4)" }}><TelegramMedia post={data} /></div>
                 )}
-                {media?.photoUrl && !(entityType === "telegram" && data?.media === "video" && !tgVideoFailed) && (
+                {media?.photoUrl && entityType !== "telegram" && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
                         <PhotoFrame src={media.photoUrl} alt={identity.title} />
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>

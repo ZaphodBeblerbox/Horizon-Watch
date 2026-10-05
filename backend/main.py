@@ -16141,6 +16141,15 @@ def get_surface_pool(response: FastAPIResponse):
     total_ms = (time.perf_counter() - started) * 1000
     payload_bytes = len(_json.dumps(enriched, ensure_ascii=False).encode("utf-8"))
     print(f"[surface/api] count={len(enriched)} attach_ms={attach_ms:.1f} total_ms={total_ms:.1f} payload={payload_bytes}B")
+    # TELEGRAM IS A SIGNAL LIKE ANY OTHER. Published posts (kinetic, precisely
+    # located — telegram_ingest.py) join the surface for 24 h, derived on read
+    # so the pool's own ranking and cache are untouched.
+    try:
+        import telegram_ingest as _tg
+        if _tg.logged_in():
+            enriched = enriched + _tg.as_surface_items(24)
+    except Exception as e:
+        _loop_error("surface-telegram", e)
     return {
         "items": enriched,
         "updated_at": updated,

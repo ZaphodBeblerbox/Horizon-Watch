@@ -22,6 +22,7 @@ import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { buildWatchQueueRows } from "./dashboardLogic.js"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import Minimap from "../components/Minimap.jsx"
+import TelegramMedia from "../components/TelegramMedia.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import {
@@ -365,6 +366,11 @@ export default function Inbox() {
                                 fontWeight: 600, lineHeight: 1.04, letterSpacing: "-.015em",
                                 textWrap: "pretty", maxWidth: 1100,
                             }}>{selected.title}</h2>
+
+                            {/* A Telegram report leads with its footage. */}
+                            {selected.row?.raw?.source_type === "telegram" && (selected.row.raw.thumb_url || selected.row.raw.media === "video") && (
+                                <div style={{ marginBottom: 18, maxWidth: 900 }}><TelegramMedia post={selected.row.raw} maxHeight="56vh" /></div>
+                            )}
 
                             {/* The locator, before the body — "where in the
                                 world is this, and what is near it" is the

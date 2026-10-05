@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS telegram_posts (
     unpublished_reason TEXT,
     PRIMARY KEY (channel, msg_id)
 )"""
-EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": "TEXT", "claim": "INTEGER"}
+EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": "TEXT", "claim": "INTEGER",
+                 "first_hand": "INTEGER"}
 
 # What each channel is (telegram_channels.json). Unlisted = aggregator.
 CHANNELS_FILE = os.path.join(HERE, "telegram_channels.json")
@@ -325,17 +326,71 @@ def classify(limit: int = 120) -> dict:
                 hit, why = locate(x.get("place"), x.get("precision"), x.get("country_code"))
             con.execute(
                 "UPDATE telegram_posts SET classified=1, relevant=?, headline=?, event_type=?, place=?, precision=?,"
-                " country_code=?, lat=?, lon=?, geocoded_as=?, unpublished_reason=?, lang=?, summary_en=?, claim=?"
-                " WHERE channel=? AND msg_id=?",
+                " country_code=?, lat=?, lon=?, geocoded_as=?, unpublished_reason=?, lang=?, summary_en=?, claim=?,"
+                " first_hand=? WHERE channel=? AND msg_id=?",
                 (int(rel), (x.get("headline") or "")[:200], x.get("event_type"), x.get("place"), x.get("precision"),
                  (x.get("country_code") or "").lower(), hit and hit["lat"], hit and hit["lon"],
                  hit and hit.get("display_name"), why, x.get("lang"), (x.get("summary_en") or "")[:800],
-                 int(bool(x.get("claim"))), r[0], r[3]))
+                 int(bool(x.get("claim"))), int(bool(x.get("first_hand"))), r[0], r[3]))
             done += 1
             kept += int(hit is not None)
         con.commit()
     con.close()
     return {"classified": done, "published": kept}
+
+
+HARD = {"strike", "attack", "explosion", "clash", "interception"}
+
+
+def severity_of(r) -> str:
+    """Critical: violence with video that is first-hand or a party's own
+    claim — the footage the owner wants to see first. Everything else that
+    reached the map is significant."""
+    if (r["event_type"] in HARD and r["media"] == "video"
+            and (r["first_hand"] or (r["role"] == "official" and r["claim"]))):
+        return "critical"
+    return "significant"
+
+
+def as_surface_items(hours: int = 24) -> list[dict]:
+    """Published posts in the shape of a surface-pool item, so Home, Inbox,
+    Newest critical and briefings treat them as signals like any other."""
+    try:
+        from location_extract import country_name_from_code
+    except Exception:
+        country_name_from_code = lambda c: None  # noqa: E731
+    out = []
+    for p in published(hours):
+        out.append({
+            **p,
+            "id": p["id"], "type": "telegram", "source_type": "telegram",
+            "source": p["channel_title"] or p["channel"],
+            "headline": p["headline"], "context": p.get("summary_en") or "",
+            "location": p["place"], "location_country": country_name_from_code(p["country_code"] or "") or None,
+            "published_at": p["posted_at"], "confidence": 0.6 if p["role"] == "official" else 0.5,
+        })
+    return out
+
+
+def prefetch_videos(limit: int = 15) -> int:
+    """Download the videos of newly published posts so they play at once
+    when opened, instead of after a fetch from Telegram on first click."""
+    con = _con()
+    rows = con.execute("SELECT channel, msg_id FROM telegram_posts WHERE lat IS NOT NULL AND media='video'"
+                       " ORDER BY posted_at DESC LIMIT 40").fetchall()
+    con.close()
+    got = 0
+    for chan, mid in rows:
+        if chan.startswith("c/") or os.path.exists(os.path.join(MEDIA_DIR, f"{chan}_{mid}.mp4")):
+            continue
+        try:
+            path, _ = video_path(chan, mid)
+            got += int(bool(path))
+        except Exception as e:
+            print(f"[telegram] video prefetch {chan}/{mid} failed: {type(e).__name__}: {e}", flush=True)
+        if got >= limit:
+            break
+    return got
 
 
 def published(hours: int = 72) -> list[dict]:
@@ -370,6 +425,8 @@ def published(hours: int = 72) -> list[dict]:
             "also_reported_by": [],
             "views": r["views"], "lang": r["lang"], "summary_en": r["summary_en"],
             "role": r["role"], "party": r["party"], "claim": bool(r["claim"]),
+            "first_hand": bool(r["first_hand"]), "msg_id": r["msg_id"],
+            "severity_tier": severity_of(r),
             "verification": (f"{r['party']} — " if r["party"] and r["role"] == "official" else "")
                             + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
         })
@@ -405,7 +462,9 @@ def run_once(hours: int = 6) -> dict:
         return {"skipped": "not configured or not logged in"}
     with _SESSION_LOCK:
         new = asyncio.run(_collect(hours))
-    return {"collected": new, **classify()}
+    out = {"collected": new, **classify()}
+    out["videos"] = prefetch_videos()
+    return out
 
 
 async def _download_video(chan: str, msg_id: int, path: str) -> str | None:

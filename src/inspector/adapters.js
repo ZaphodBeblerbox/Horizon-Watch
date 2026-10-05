@@ -695,7 +695,9 @@ function adaptTelegram(data = {}) {
             attr("Verification", data.verification),
             attr("Also reported by", (data.also_reported_by || []).join(", ") || null),
             attr("Event", data.event_type),
-            attr("Located at", data.geocoded_as ? `${data.geocoded_as} (${data.precision})` : null),
+            // The model's English place name: the geocoder's address comes
+            // back in the local script ("الرياض، منطقة الرياض").
+            attr("Located at", data.place ? `${data.place} (${data.precision})` : null),
             attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
             attr("Views", data.views != null ? Number(data.views).toLocaleString() : null),
             attr("Original post", data.url),
