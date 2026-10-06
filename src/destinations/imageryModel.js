@@ -17,6 +17,7 @@ const SINGULAR = {
     port_infrastructure: ["port structure", "port structures"], aircraft: ["aircraft", "aircraft"],
     vehicle: ["vehicle", "vehicles"], bridge: ["bridge", "bridges"], airfield: ["airfield", "airfields"],
     helicopter: ["helicopter", "helicopters"], large_vehicle: ["large vehicle", "large vehicles"],
+    smoke_plume: ["smoke plume", "smoke plumes"], active_fire: ["active fire", "active fires"],
 }
 export function noun(label, n) {
     const [one, many] = SINGULAR[label] || [String(label || "object").replace(/_/g, " "), `${String(label || "object").replace(/_/g, " ")}s`]

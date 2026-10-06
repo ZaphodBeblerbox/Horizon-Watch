@@ -217,8 +217,9 @@ G. Asset registry; per-user profile (Blocker below). Telegram roles for newly jo
    (Middle_East_Spectator, InfosAes, liil050, sh_almoqawamma).
 H. GDELT judge (gpt-4o-mini) still admits a few protests/crime as "violent unrest".
 I. **Enhance the generated briefings** (owner, 2026-10-06).
-J. Imagery signals are built (imagery_signals.py, by area kind); still missing: smoke-plume detection,
-   and the map-layer separation in B. Multi-image super-resolution (L1BSR-style) not tried yet — the
+K. **Check the Wispr integration** (owner, 2026-10-06).
+J. Imagery signals are built (imagery_signals.py, by area kind); smoke plumes and active fires are in
+   (smoke.py, found the Khurais plume 5 Oct); still missing: the map-layer separation in B. Multi-image super-resolution (L1BSR-style) not tried yet — the
    temporal stack (mean of six clear passes, fixed objects only) is what is in.
 
 ### Detection models (not in git — `backend/models/` is ignored)

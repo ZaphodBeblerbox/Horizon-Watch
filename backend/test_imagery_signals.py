@@ -29,3 +29,11 @@ def test_new_heat_only_at_energy_sites():
 def test_too_little_history_raises_nothing_from_counts():
     assert s.evaluate(kind="oil_terminal", place="K", counts={"vessel": 30}, history={"vessel": [5]},
                       new_by_type={}, gone_by_type={}) == []
+
+
+def test_one_fire_one_signal():
+    plumes = [{"description": "Black smoke plume, 6 km", "area_km2": 12, "source_lat": 25.25, "source_lon": 48.09, "fire_px": 60},
+              {"description": "Black smoke plume, 0.6 km", "area_km2": 0.1, "source_lat": 25.251, "source_lon": 48.10, "fire_px": 120}]
+    out = s.evaluate(kind="energy_site", place="Khurais", counts={}, history={}, new_by_type={}, gone_by_type={},
+                     new_heat=5, new_plumes=plumes)
+    assert len(out) == 1 and out[0]["severity"] == "critical" and "active fire" in out[0]["reason"]

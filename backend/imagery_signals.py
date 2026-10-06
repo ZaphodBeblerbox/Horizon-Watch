@@ -17,7 +17,8 @@ confirmed objects only (both detection models agree — obb_detect.ENSEMBLE):
   energy_site      new heat (a fire detection with none in the 48 h before)
   commercial_port  only an extreme swing: outside mean ± 3 sd AND ±50%
   other            vessels or aircraft outside mean ± 3 sd
-  every kind       a confirmed storage tank or structure gone — possible damage
+  every kind       a confirmed storage tank or structure gone — possible damage;
+                   a new smoke plume (smoke.py), critical at energy sites and oil terminals
 
 Pure functions; sentinel_scanner.py feeds them and writes the alerts.
 """
@@ -49,7 +50,8 @@ def normal_range(history: list[int]) -> tuple[float, float] | None:
 
 
 def evaluate(*, kind: str, place: str, counts: dict, history: dict, new_by_type: dict,
-             gone_by_type: dict, new_heat: int = 0, when: str | None = None) -> list[dict]:
+             gone_by_type: dict, new_heat: int = 0, when: str | None = None,
+             new_plumes: list | None = None) -> list[dict]:
     """The signals one pass raises. counts: kind -> confirmed count now;
     history: kind -> [counts at earlier passes]; new/gone_by_type from the
     change detection (confirmed objects only)."""
@@ -58,6 +60,23 @@ def evaluate(*, kind: str, place: str, counts: dict, history: dict, new_by_type:
 
     def sig(title, severity, reason, focus=None):
         out.append({"title": f"{place}: {title}", "severity": severity, "reason": reason, "focus": focus})
+
+    # Every kind: a new smoke plume (smoke.py) — critical where energy burns.
+    # One event, one signal: plumes from sources within 1.5 km are the same
+    # fire, and the fire under a plume belongs to that plume's signal.
+    kept = []
+    for p in sorted(new_plumes or [], key=lambda x: -(x.get("area_km2") or 0)):
+        if any(abs(p["source_lat"] - k["source_lat"]) * 111 < 1.5 and abs(p["source_lon"] - k["source_lon"]) * 111 < 1.5
+               for k in kept):
+            continue
+        kept.append(p)
+    for p in kept:
+        fire = " with active fire at its source" if p.get("fire_px") else ""
+        sig(p.get("description") or "smoke plume", "critical" if kind in ("energy_site", "oil_terminal") else "high",
+            f"A plume not there on the previous pass{fire}: a strike, an accident or a large fire. "
+            f"Source {p.get('source_lat')}, {p.get('source_lon')}.", "smoke_plume")
+    if any(p.get("fire_px") for p in kept):
+        new_heat = 0
 
     # Every kind: something fixed is gone.
     for k in FIXED:

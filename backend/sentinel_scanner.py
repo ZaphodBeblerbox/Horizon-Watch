@@ -129,6 +129,53 @@ def _decode_and_encode(image_bytes: bytes):
     return img, base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+async def _smoke_pass(zone_dict, scene_dt, west, south, east, north) -> list:
+    """Smoke plumes and active fires on this pass, as detections."""
+    import numpy as np
+    import s2_bands
+    import smoke
+    if scene_dt is None:
+        return []
+    day = scene_dt.date().isoformat()
+    w, h = s2_bands.size_at(west, south, east, north, 20)
+    # Downloads wait on the network, not the CPU: plain threads, not the
+    # imagery pool (which admits three jobs and refuses the rest).
+    past = [p["date"] for p in await asyncio.to_thread(s2_bands.passes, west, south, east, north, 60, 20, day)
+            if p["date"] != day][:5]
+    if len(past) < 3:
+        return []                     # no baseline to see a change against
+    now = await asyncio.to_thread(s2_bands.fetch, west, south, east, north, day, w, h)
+    hist = await asyncio.gather(*[asyncio.to_thread(s2_bands.fetch, west, south, east, north, d, w, h) for d in past])
+    base = np.median(np.stack(hist), axis=0)
+    bounds = {"west": west, "south": south, "east": east, "north": north}
+    found, fires = await _off_loop(smoke.plumes, now, base, bounds)
+    out = []
+    for p in found:
+        out.append({
+            "instrument": "OPTICAL", "object_type": "smoke_plume", "confidence": 0.9,
+            "centroid_lat": p["source_lat"], "centroid_lon": p["source_lon"],
+            "geo_geometry": json.dumps(p["geometry"]), "area_m2": p["area_km2"] * 1e6,
+            "severity": "high", "alert_tier": "silent",
+            "attributes": json.dumps({"tier": "confirmed", "models": ["smoke.py (S2 reflectance change)"],
+                                      "description": smoke.describe(p), **{k: v for k, v in p.items() if k != "geometry"},
+                                      "baseline_passes": past}),
+        })
+    for f in fires:
+        if f["px"] < 2:
+            continue
+        d = 0.0004
+        ring = [[f["lon"] - d, f["lat"] - d], [f["lon"] + d, f["lat"] - d], [f["lon"] + d, f["lat"] + d],
+                [f["lon"] - d, f["lat"] + d], [f["lon"] - d, f["lat"] - d]]
+        out.append({
+            "instrument": "OPTICAL", "object_type": "active_fire", "confidence": 0.9,
+            "centroid_lat": f["lat"], "centroid_lon": f["lon"],
+            "geo_geometry": json.dumps({"type": "Polygon", "coordinates": [ring]}), "area_m2": f["area_m2"],
+            "severity": "high", "alert_tier": "silent",
+            "attributes": json.dumps({"tier": "confirmed", "models": ["smoke.py"], "fire_area_m2": f["area_m2"]}),
+        })
+    return out
+
+
 def _imagery_signals(zone_dict: dict, scan_id: str, result: dict, change: dict | None) -> list:
     """The signals this pass raises, by the area's kind (imagery_signals.py)."""
     import imagery_signals
@@ -156,9 +203,12 @@ def _imagery_signals(zone_dict: dict, scan_id: str, result: dict, change: dict |
                           SentinelScan.instrument == inst, SentinelScan.scan_id != scan_id)
                   .order_by(SentinelScan.image_timestamp_utc.desc()).limit(40).all())
         seen = set()
+        prev_scan_id = None
         for r in rows:
             if not r.image_timestamp_utc or (when and abs((r.image_timestamp_utc - when).total_seconds()) < 900):
                 continue
+            if prev_scan_id is None:
+                prev_scan_id = r.scan_id
             key = r.image_timestamp_utc.strftime("%Y-%m-%d")
             if key in seen:
                 continue
@@ -189,8 +239,27 @@ def _imagery_signals(zone_dict: dict, scan_id: str, result: dict, change: dict |
         except Exception as _fe:
             print(f"[sentinel-scanner] heat check skipped: {_fe}")
 
+    # Smoke and fire on this pass that the previous pass did not have near
+    # the same place — a site that keeps burning is not new each time.
+    plumes_now = [d for d in (result.get("detections") or []) if d.get("object_type") == "smoke_plume"]
+    fires_now = [d for d in (result.get("detections") or []) if d.get("object_type") == "active_fire"]
+    prev_smoke, prev_fire = [], []
+    with get_db() as db:
+        from database import SentinelDetection
+        if prev_scan_id is not None:
+            for d in db.query(SentinelDetection).filter(SentinelDetection.scan_id == prev_scan_id,
+                                                        SentinelDetection.object_type.in_(("smoke_plume", "active_fire"))).all():
+                (prev_smoke if d.object_type == "smoke_plume" else prev_fire).append((d.centroid_lat, d.centroid_lon))
+
+    def near(pt, pts, km):
+        return any(abs(pt[0] - a) * 111 < km and abs(pt[1] - o) * 111 < km for a, o in pts)
+
+    new_plumes = [json.loads(d["attributes"]) for d in plumes_now
+                  if not near((d["centroid_lat"], d["centroid_lon"]), prev_smoke, 3)]
+    new_heat += sum(1 for d in fires_now if not near((d["centroid_lat"], d["centroid_lon"]), prev_fire, 1))
+
     first = not change or change.get("baseline")
-    out = imagery_signals.evaluate(
+    out = imagery_signals.evaluate(new_plumes=new_plumes,
         kind=kind, place=zone_dict.get("name") or zone_dict.get("system_id"),
         counts=counts, history=history,
         new_by_type={} if first else (change.get("new_by_type") or {}),
@@ -720,6 +789,18 @@ class SentinelScanner:
         elif "vessel_cluster_detection" in run_tasks:
             # Clustering has nothing to group without ship_detection having run first.
             skipped_tasks.append("vessel_cluster_detection (requires ship_detection to also be enabled)")
+
+        # SMOKE AND FIRE (smoke.py): this pass against the area's own clear
+        # passes, in reflectance at 20 m. Found the Khurais plume, 10 km
+        # streaming south-west from the fire, three hours before VIIRS.
+        try:
+            sm = await _smoke_pass(zone_dict, scene_dt, min_lon, min_lat, max_lon, max_lat)
+            all_detections.extend(sm)
+            if sm:
+                print(f"[sentinel-scanner] smoke/fire: {len(sm)} detection(s) — "
+                      + "; ".join(json.loads(d['attributes']).get('description', d['object_type']) for d in sm[:3]))
+        except Exception as _se:
+            print(f"[sentinel-scanner] smoke pass skipped: {type(_se).__name__}: {_se}")
 
         # WHAT CANNOT BE THERE IS NOT THERE: a vessel on land, a storage
         # tank on open water. Judged on WorldCover's land/water map.
