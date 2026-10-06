@@ -11950,6 +11950,24 @@ async def api_telegram_video(chan: str, msg_id: int):
     return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "max-age=1800"})
 
 
+_INSIGHT_CHANGES_CACHE: dict = {}
+
+
+@app.get("/api/insight/changes")
+async def api_insight_changes(range: str = "7d"):
+    """What changed: this window against the one before it, per country and
+    kind of evidence, adjusted for what we were collecting (insight_changes.py)."""
+    import insight_changes as _ic
+    if range not in _ic.RANGES:
+        raise HTTPException(400, "range is 24h, 7d or 30d")
+    hit = _INSIGHT_CHANGES_CACHE.get(range)
+    if hit and time.time() - hit[0] < 300:
+        return hit[1]
+    out = await asyncio.get_event_loop().run_in_executor(_executor, _ic.changes, range)
+    _INSIGHT_CHANGES_CACHE[range] = (time.time(), out)
+    return out
+
+
 @app.get("/api/telegram/status")
 def api_telegram_status():
     import telegram_ingest as _tg

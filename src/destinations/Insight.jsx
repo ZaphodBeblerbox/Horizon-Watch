@@ -27,6 +27,7 @@ import { splitByTheater, boardCountry } from "../data/theaterScope.js"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import RiskRanking from "./RiskRanking.jsx"
 import WhatsNext from "../insight/WhatsNext.jsx"
+import WhatChanged from "../insight/WhatChanged.jsx"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 const ON = "var(--accdim)"
@@ -134,6 +135,8 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
            overview at all. A cold overview takes seconds to compute and
            can exceed the client's timeout, so this is a state the screen
            will reach in normal use, not an exotic failure. */
+        // What changed has its own endpoint and its own loading state.
+        if (tab === "changes") return <WhatChanged />
         if (tab !== "forecast") {
             if (err) {
                 return (
@@ -163,65 +166,10 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
         }
 
         if (tab === "changes") {
-            const rows = top.slice(0, 14)
-            return (
-                <>
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
-                        <h3 style={{
-                            margin: 0, fontWeight: 600, fontSize: 28, lineHeight: 1.05,
-                            letterSpacing: "-.01em", textWrap: "balance",
-                        }}>
-                            {rows.length} {rows.length === 1 ? "signal" : "signals"} worth a second look, last {since}
-                        </h3>
-                        <div style={{ flex: 1 }} />
-                        <Seg options={[["24 h", "24h"], ["7 d", "7d"], ["30 d", "30d"]]} value={since} onChange={setSince} />
-                    </div>
-                    <div style={CARD}>
-                        {rows.map((r) => (
-                            <div key={r.id} style={{
-                                display: "grid",
-                                gridTemplateColumns: "46px minmax(0,1fr) auto auto",
-                                gap: "3px 14px", alignItems: "center", padding: "12px 14px",
-                                borderBottom: "1px solid var(--gline)",
-                            }}>
-                                {/* created_at, not occurred_at — the latter
-                                    is not on this payload, so the column was
-                                    a row of em dashes. Date AND time, because
-                                    over a 30-day window a bare clock reading
-                                    says nothing about which day it was. */}
-                                <span style={{
-                                    fontFamily: "var(--mz-font-mono)", fontSize: 10,
-                                    color: "var(--txt4)", lineHeight: 1.3,
-                                }}>
-                                    {r.created_at
-                                        ? <>{r.created_at.slice(5, 10)}<br />{r.created_at.slice(11, 16)}</>
-                                        : "—"}
-                                </span>
-                                <span style={{ textWrap: "pretty" }}>{r.title}</span>
-                                <span style={{
-                                    fontFamily: "var(--mz-font-mono)", fontSize: 10, padding: "2px 7px",
-                                    borderRadius: 0, background: "var(--hov)", whiteSpace: "nowrap",
-                                    color: r.severity === "critical" ? "var(--red)"
-                                        : r.severity === "high" ? "var(--amber)" : "var(--txt3)",
-                                }}>{r.severity}</span>
-                                <button onClick={() => onFocusSignal(r)} style={{
-                                    border: 0, background: "transparent", color: "var(--acchi)",
-                                    font: "inherit", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap",
-                                }}>map →</button>
-                                <span />
-                                <span style={{ fontSize: 11, color: "var(--txt3)" }}>
-                                    {[r.region, r.domain].filter(Boolean).join(" · ")}
-                                </span>
-                            </div>
-                        ))}
-                        {rows.length === 0 && (
-                            <div style={{ padding: "16px 14px", color: "var(--txt3)" }}>
-                                No recorded change in this scope for the selected window.
-                            </div>
-                        )}
-                    </div>
-                </>
-            )
+            // What changed, by name and number, against the window before
+            // (insight/WhatChanged.jsx) — the list of top signals this was
+            // did not answer the question.
+            return <WhatChanged />
         }
 
         if (tab === "risk") {
