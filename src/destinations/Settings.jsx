@@ -8,7 +8,7 @@
  * the right. The account itself — name, picture, password — stays on the
  * account page, linked from the top of the nav.
  *
- * The sections are SettingsModal.jsx's, every control backed by real
+ * The sections are in components/settingsSections.jsx, every control backed by real
  * per-user state and applied the moment it changes; no Save button.
  * Voice and AI is new: the model behind spoken commands and the cheap
  * readers, what it has cost this month against the cap.
@@ -21,7 +21,7 @@ import InterestsEditor from "../components/InterestsEditor.jsx"
 import {
     GeneralSection, MapLayersSection, AlertsSection, SourcesSection, BriefingSection,
     KeyboardSection, AboutSection, SessionsSection, Row, SectionTitle, Toggle,
-} from "../components/SettingsModal.jsx"
+} from "../components/settingsSections.jsx"
 
 const CARD = {
     display: "flex", flexDirection: "column", padding: "8px 22px 22px",
@@ -128,10 +128,14 @@ export default function Settings({ section = null, onClose = null, onAccount = n
                         <span style={{ fontFamily: "var(--mz-font-body)", fontWeight: 600, fontSize: 24, marginBottom: 14 }}>Settings</span>
                         {onAccount && (
                             <button onClick={onAccount} style={{
-                                display: "flex", alignItems: "center", height: 34, padding: "0 12px", marginBottom: 8,
-                                border: "1px solid var(--gline)", borderRadius: 0, background: "transparent",
-                                color: "var(--txt2)", font: "inherit", fontSize: 13.5, textAlign: "left", cursor: "pointer",
-                            }}>Your account — profile, password →</button>
+                                display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2,
+                                padding: "9px 12px", marginBottom: 10,
+                                border: "1px solid var(--gline)", borderRadius: 4, background: "transparent",
+                                color: "var(--txt)", font: "inherit", textAlign: "left", cursor: "pointer",
+                            }}>
+                                <span style={{ fontSize: 14 }}>Your account →</span>
+                                <span style={{ fontSize: 12, color: "var(--txt3)" }}>Profile, picture, password</span>
+                            </button>
                         )}
                         {NAV.map(([label, k]) => (
                             <button key={k} onClick={() => setSec(k)} style={{

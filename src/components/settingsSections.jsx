@@ -11,7 +11,11 @@ import { getManualLocation, setManualLocation } from "../state/themeStore.js"
 import ThemeControl from "./ThemeControl.jsx"
 
 /**
- * SettingsModal — real Settings round: 7 real sections, every control
+ * settingsSections.jsx — the sections of the Settings page
+ * (destinations/Settings.jsx), and the small controls they share. Was the
+ * Settings dialog; the dialog is gone, the page shows these.
+ *
+ * Originally: real Settings round: 7 real sections, every control
  * backed by real per-user, server-persisted state (settingsStore.js /
  * themeStore.js), applied the instant it changes. No Save button anywhere
  * in this surface by design — there is no "unsaved changes" state to lose
@@ -528,88 +532,6 @@ export function SessionsSection() {
                     ))}
                 </div>
             ))}
-        </div>
-    )
-}
-
-const SECTIONS = [
-    { key: "general", label: "General" },
-    { key: "interests", label: "Your interests" },
-    { key: "mapLayers", label: "Map & layers" },
-    { key: "alerts", label: "Alerts" },
-    { key: "sessions", label: "Sessions & views" },
-    { key: "sources", label: "Health" },
-    { key: "briefing", label: "Briefing" },
-    { key: "keyboard", label: "Shortcuts" },
-    { key: "about", label: "About" },
-]
-
-export default function SettingsModal({ onClose, onOpenSources }) {
-    const [active, setActive] = useState(() => {
-        const want = typeof window !== "undefined" ? window.__plxSettingsSection : null
-        if (typeof window !== "undefined") window.__plxSettingsSection = null
-        return want || "general"
-    })
-    const [settings, setSettings] = useState(getSettings)
-    useEffect(() => subscribeSettings(setSettings), [])
-
-    useEffect(() => {
-        const onKey = (e) => { if (e.key === "Escape") onClose() }
-        window.addEventListener("keydown", onKey)
-        return () => window.removeEventListener("keydown", onKey)
-    }, [onClose])
-
-    return (
-        <div
-            onClick={onClose}
-            style={{ position: "fixed", inset: 0, zIndex: 5000, background: "var(--scrim-bg)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-        >
-            <div
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                    width: "min(760px, 100%)", height: "min(600px, 90vh)", background: "var(--bg-1)",
-                    border: "1px solid var(--line)", borderRadius: "var(--r)", boxShadow: "var(--shadow)",
-                    display: "flex", overflow: "hidden", fontFamily: "var(--font)",
-                }}
-            >
-                <div style={{ width: 170, flexShrink: 0, background: "var(--glass2)", borderRight: "1px solid var(--line)", padding: "var(--space-3) 0", overflowY: "auto" }}>
-                    <div style={{ font: "700 11px var(--font)", color: "var(--txt)", padding: "0 var(--space-3) var(--space-3)" }}>Settings</div>
-                    {SECTIONS.map(s => (
-                        <button
-                            key={s.key}
-                            onClick={() => setActive(s.key)}
-                            style={{
-                                display: "block", width: "100%", textAlign: "left", padding: "7px var(--space-3)",
-                                background: active === s.key ? "var(--bg-0)" : "transparent",
-                                borderLeft: active === s.key ? "2px solid var(--acchi)" : "2px solid transparent",
-                                border: "none", borderLeftWidth: 2, color: active === s.key ? "var(--txt)" : "var(--txt3)",
-                                cursor: "pointer", font: "400 12px var(--font)",
-                            }}
-                        >
-                            {s.label}
-                        </button>
-                    ))}
-                </div>
-                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-3) var(--space-4)", borderBottom: "1px solid var(--line)" }}>
-                        <span style={{ font: "600 12.5px var(--font)", color: "var(--txt)" }}>{SECTIONS.find(s => s.key === active)?.label}</span>
-                        <button onClick={onClose} aria-label="Close settings" style={{ background: "none", border: "none", color: "var(--txt3)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 4 }}>
-                            ×
-                        </button>
-                    </div>
-                    <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-2) var(--space-4) var(--space-4)" }}>
-                        {active === "general" && <GeneralSection settings={settings} />}
-                        {active === "mapLayers" && <MapLayersSection settings={settings} />}
-                        {active === "interests" && <InterestsEditor />}
-                        {active === "alerts" && <AlertsSection settings={settings} onOpenSources={onOpenSources ? () => { onOpenSources(); onClose() } : null} />}
-                        {active === "sources" && <SourcesSection />}
-                        {active === "briefing" && <BriefingSection settings={settings} />}
-                        {active === "keyboard" && <KeyboardSection />}
-                        {active === "sessions" && <SessionsSection />}
-                        {active === "about" && <AboutSection />}
-                    </div>
-                </div>
-            </div>
         </div>
     )
 }
