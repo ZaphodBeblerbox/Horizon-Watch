@@ -11703,6 +11703,84 @@ def get_aircraft_history(
     }
 
 
+_CABLE_DETAIL: dict = {}
+_CABLE_DETAIL_FILE = os.path.join(DATA_DIR, "cable_details.json")
+
+
+@app.get("/api/infrastructure/cables/{cable_id}")
+def api_cable_detail(cable_id: str):
+    """One submarine cable from TeleGeography's Submarine Cable Map: owners,
+    length, ready-for-service year, landing points and countries, suppliers,
+    project URL. Cached on disk for a day — it changes on a scale of months."""
+    if not re.fullmatch(r"[a-z0-9-]{2,80}", cable_id or ""):
+        raise HTTPException(400, "bad cable id")
+    global _CABLE_DETAIL
+    if not _CABLE_DETAIL and os.path.exists(_CABLE_DETAIL_FILE):
+        try:
+            with open(_CABLE_DETAIL_FILE) as fh:
+                _CABLE_DETAIL = _json.load(fh)
+        except Exception:
+            _CABLE_DETAIL = {}
+    hit = _CABLE_DETAIL.get(cable_id)
+    if hit and time.time() - hit.get("_at", 0) < 86400:
+        return hit
+    try:
+        req = urllib.request.Request(f"https://www.submarinecablemap.com/api/v3/cable/{cable_id}.json",
+                                     headers={"User-Agent": "HorizonWatch/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            d = _json.loads(r.read())
+    except Exception as e:
+        if hit:
+            return hit
+        raise HTTPException(502, f"cable record unavailable: {type(e).__name__}")
+    lps = d.get("landing_points") or []
+    out = {
+        "id": cable_id, "name": d.get("name"), "length": d.get("length"),
+        "owners": [o.strip() for o in str(d.get("owners") or "").split(",") if o.strip()],
+        "suppliers": d.get("suppliers"), "rfs_year": d.get("rfs_year"), "is_planned": bool(d.get("is_planned")),
+        "url": d.get("url"), "notes": d.get("notes"),
+        "landing_points": [{"name": lp.get("name"), "country": lp.get("country")} for lp in lps],
+        "countries": sorted({lp.get("country") for lp in lps if lp.get("country")}),
+        "source": "TeleGeography Submarine Cable Map", "_at": time.time(),
+    }
+    _CABLE_DETAIL[cable_id] = out
+    try:
+        with open(_CABLE_DETAIL_FILE, "w") as fh:
+            _json.dump(_CABLE_DETAIL, fh)
+    except Exception:
+        pass
+    return out
+
+
+@app.get("/api/infrastructure/around")
+def api_infrastructure_around(lat: float, lon: float, kind: str = "airport"):
+    """What is happening at a facility now: aircraft within 40 km, vessels
+    within 25 km, and relevant signals within 75 km in the last 24 hours."""
+    import math as _m
+    def km(a_lat, a_lon):
+        p1, p2 = _m.radians(lat), _m.radians(a_lat)
+        h = _m.sin((p2 - p1) / 2) ** 2 + _m.cos(p1) * _m.cos(p2) * _m.sin(_m.radians(a_lon - lon) / 2) ** 2
+        return 12742 * _m.asin(_m.sqrt(h))
+    now = time.time()
+    air = [a for a in list(_GLOBAL_ADSB_CACHE.values())
+           if a.get("lat") is not None and now - float(a.get("last_seen") or 0) < 300 and km(a["lat"], a["lon"]) <= 40]
+    with _AIS_LOCK:
+        ships = [v for v in _AIS_VESSELS.values() if v.get("lat") is not None and km(v["lat"], v["lon"]) <= 25]
+    with _SURFACE_POOL_LOCK:
+        pool = list(_SURFACE_POOL)
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    sigs = [s for s in pool if s.get("lat") is not None and str(s.get("published_at") or "") >= cutoff
+            and km(s["lat"], s["lon"]) <= 75]
+    return {
+        "aircraft_now": len(air), "military_aircraft_now": sum(1 for a in air if a.get("military")),
+        "airlines_now": sorted({a.get("airline") for a in air if a.get("airline")})[:8],
+        "vessels_now": len(ships),
+        "signals_24h": [{"headline": s.get("headline"), "severity": s.get("severity_tier"),
+                         "published_at": s.get("published_at"), "km": round(km(s["lat"], s["lon"]))} for s in sigs][:8],
+        "radius_km": {"aircraft": 40, "vessels": 25, "signals": 75},
+    }
+
+
 @app.get("/api/insight/escalation")
 async def api_insight_escalation(limit: int = Query(12, ge=1, le=60)):
     """Countries whose share of the world's violent events rose against their

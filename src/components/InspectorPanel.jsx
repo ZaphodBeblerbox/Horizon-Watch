@@ -15,6 +15,7 @@ import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 import VesselHistorySection from "./VesselHistorySection.jsx"
 import TelegramMedia from "./TelegramMedia.jsx"
 import TradeRouteSection from "./TradeRouteSection.jsx"
+import { AroundSection, CableSection } from "./InfrastructureContext.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 
@@ -829,6 +830,13 @@ export default function InspectorPanel({
                                 || data?.name || entityId}
                             bounds={entityType === "eez" ? (data?.bounds || null) : null} />
                     </div>
+                )}
+
+                {entityType === "cable" && data?.id && <CableSection id={String(data.id)} />}
+                {(entityType === "airport" || entityType === "port") && (
+                    <AroundSection kind={entityType}
+                                   lat={Number(data?.lat ?? data?.latitude ?? data?.latitude_deg)}
+                                   lon={Number(data?.lon ?? data?.longitude ?? data?.longitude_deg)} />
                 )}
 
                 {entityType === "trade_route" && data?.route_id && (
