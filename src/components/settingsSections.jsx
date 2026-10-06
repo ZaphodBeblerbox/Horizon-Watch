@@ -208,9 +208,11 @@ export function GeneralSection({ settings }) {
             </Row>
             <SectionTitle>Launch</SectionTitle>
             <Row label="Guided walkthrough"
-                 hint="The short introduction to the app. Reopening it does not change anything you have set.">
-                <button className="btn sm" onClick={() => updateSetting("tutorial", null)}>
-                    {settings?.tutorial === "done" ? "show again" : "showing on next launch"}
+                 hint="Opens each part of the console and shows you the controls that matter. Changes nothing you have set.">
+                <button onClick={() => { updateSetting("tutorial", null); window.dispatchEvent(new CustomEvent("akili:start-tour")) }}
+                    style={{ height: 28, padding: "0 12px", border: "1px solid var(--acchi)", background: "var(--accdim)",
+                             color: "var(--txt)", font: "inherit", fontSize: 12.5, cursor: "pointer", borderRadius: 0 }}>
+                    Start the walkthrough
                 </button>
             </Row>
 

@@ -2115,14 +2115,16 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                     <span className={`dia ${SEV_CLASS_BY_RANK[r.severityRank] || "moderate"}`} />
                                     <div>
                                         <div className="title">{r.title}</div>
-                                        <div className="meta"><span>{r.aoi || "Unknown location"}</span></div>
+                                        <div className="meta">
+                                            {r.aoi && <span>{r.aoi}</span>}
+                                            <span className="time">{whenLabel(r.publishedAt, nowMs) || timeAgoLabel(r.publishedAt, nowMs)}</span>
+                                        </div>
                                     </div>
                                     {r.lat != null && r.lon != null && (
                                         <button className="btn ghost sm" title="Replay on map" onClick={(e) => { e.stopPropagation(); replayOnMap({ lat: r.lat, lon: r.lon, publishedAt: r.publishedAt, title: r.title }) }} style={{ padding: 2 }}>
                                             <svg className="icon sm"><use href="#i-clock" /></svg>
                                         </button>
                                     )}
-                                    <span className="time">{whenLabel(r.publishedAt, nowMs) || timeAgoLabel(r.publishedAt, nowMs)}</span>
                                 </div>
                             ))}
                         </div>

@@ -13,6 +13,7 @@
  * horizontally and --strip-h vertically.
  */
 
+import Dots from "../ui/Dots.jsx"
 import { useEffect, useState } from "react"
 import { subscribeNotifications, getNotifications, dismissCard, useDnd, KIND } from "../state/notificationStore.js"
 
@@ -75,7 +76,7 @@ function Card({ n, onOpen, onAcknowledge, onBasket }) {
                     >×</button>
                 </div>
                 <b>{n.title}</b>
-                {n.sub && <span className="s">{n.sub}</span>}
+                {n.sub && <span className="s"><Dots text={n.sub} /></span>}
                 <div className="nc-acts">
                     {n.actions?.includes("investigate") && n.ref && (
                         <button className="btn sm primary" onClick={() => { investigate(n); dismissCard(n.id) }}>Investigate</button>

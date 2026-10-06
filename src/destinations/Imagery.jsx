@@ -483,7 +483,7 @@ export default function Imagery() {
                                     {sar.data.dates.map((d) => <option key={d} value={d}>{fmtDay(d)} {d.slice(0, 4)}</option>)}
                                 </select>
                             )}
-                            <div style={{ display: "flex", border: "1px solid var(--gline2)" }}>
+                            <div data-tour="imagery-compare" style={{ display: "flex", border: "1px solid var(--gline2)" }}>
                                 {MODES.map(([k, v]) => (
                                     <button key={v} onClick={() => setMode(v)} style={{
                                         height: 26, padding: "0 10px", border: 0, background: mode === v ? ON : "transparent",

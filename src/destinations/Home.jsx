@@ -20,6 +20,7 @@
  * instead of drawing ticks it cannot justify. Theaters and assets are the
  * spec's first-run defaults until those models land.
  */
+import Dots from "../ui/Dots.jsx"
 import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { getCurrentUser, subscribeAuth } from "../state/authStore.js"
@@ -551,7 +552,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                                                             : mark}
                                                     </span>
                                                     <span style={{ fontSize: 14, lineHeight: 1.35, textWrap: "pretty" }}>{it.t}</span>
-                                                    <span style={{ fontSize: 12, color: "var(--txt3)" }}>{it.sub}</span>
+                                                    <span style={{ fontSize: 12, color: "var(--txt3)" }}><Dots text={it.sub} /></span>
                                                 </button>
                                             )
                                         })}

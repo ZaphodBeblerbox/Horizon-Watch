@@ -25,6 +25,7 @@
  * bar, to its right for the rail — so the same component serves both
  * without knowing which it is.
  */
+import Dots from "../ui/Dots.jsx"
 import { useEffect, useRef } from "react"
 import PlxIcon from "./PlxIcon.jsx"
 
@@ -63,7 +64,7 @@ export function PlxNotifications({ notes = [], onAct = () => {}, onDismiss = () 
                     <span style={{
                         gridColumn: "2 / 4", fontSize: 12, lineHeight: 1.45,
                         color: "var(--txt2)", textWrap: "pretty",
-                    }}>{n.sub}</span>
+                    }}><Dots text={n.sub} /></span>
                     <div style={{ gridColumn: "2 / 4", display: "flex", gap: 6, marginTop: 6 }}>
                         <button onClick={() => onAct(n)} style={{
                             height: 26, padding: "0 10px", border: 0, background: "var(--acc)",
@@ -138,7 +139,7 @@ export function PlxAlerts({ open, alerts = [], since = "", onClose = () => {}, o
                             }}>
                                 <b style={{ fontWeight: 600 }}>{a.title}</b>
                                 <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>{a.t}</span>
-                                <span style={{ fontSize: 11, color: "var(--txt3)" }}>{a.sub}</span>
+                                <span style={{ fontSize: 11, color: "var(--txt3)" }}><Dots text={a.sub} /></span>
                                 <span style={{
                                     fontFamily: "var(--mz-font-mono)", fontSize: 10,
                                     letterSpacing: ".06em", color: a.c || "var(--txt3)",
@@ -198,7 +199,7 @@ export function PlxMenu({ open, pos = { l: 60, t: 60 }, head = null, items = [],
                         borderBottom: "1px solid var(--gline)",
                     }}>
                         <b style={{ fontWeight: 600 }}>{head.name}</b>
-                        <div style={{ fontSize: 11, color: "var(--txt3)" }}>{head.sub}</div>
+                        <div style={{ fontSize: 11, color: "var(--txt3)" }}><Dots text={head.sub} /></div>
                     </div>
                 )}
                 {items.map(([label, go, kbd], i) => (

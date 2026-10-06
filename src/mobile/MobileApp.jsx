@@ -3,6 +3,7 @@ import "../styles/mobileShell.css"
 import AlertsTab from "./tabs/AlertsTab.jsx"
 import BriefTab from "./tabs/BriefTab.jsx"
 import NoteTab from "./tabs/NoteTab.jsx"
+import FootageTab from "./tabs/FootageTab.jsx"
 
 // MapTab now renders the real Cesium globe (src/components/GlobeView.jsx) —
 // still lazy so its real weight (Cesium, terrain, live tracks) only loads
@@ -13,6 +14,7 @@ const MapTab = lazy(() => import("./tabs/MapTab.jsx"))
 
 const TABS = [
     { id: "alerts", label: "Alerts", icon: "◆" },
+    { id: "footage", label: "Footage", icon: "▶" },
     { id: "brief",  label: "Brief",  icon: "▤" },
     { id: "map",    label: "Map",    icon: "⬡" },
     { id: "note",   label: "Note",   icon: "◈" },
@@ -64,6 +66,7 @@ export default function MobileApp({ initialBriefingReportId }) {
                 globe's canvas rendered at zero height the first time). */}
             <div className="m-map-content" style={{ minHeight: 0, overflow: "hidden" }}>
                 <TabPanel active={tab === "alerts"}><AlertsTab onOpenNoteWithReference={openNoteWithReference} onShowOnMap={showOnMap} /></TabPanel>
+                <TabPanel active={tab === "footage"}><FootageTab onShowOnMap={showOnMap} /></TabPanel>
                 <TabPanel active={tab === "brief"}><BriefTab onOpenNoteWithReference={openNoteWithReference} initialReportId={initialBriefingReportId} /></TabPanel>
                 <TabPanel active={tab === "map"}>
                     <MapErrorBoundary>

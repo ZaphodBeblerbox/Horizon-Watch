@@ -1,134 +1,189 @@
 /**
- * Tutorial.jsx — the walkthrough a new analyst gets on first launch.
+ * Tutorial.jsx — the guided walkthrough: it takes you there and shows you.
  *
- * WHY IT IS NOT A PRODUCT TOUR THAT POINTS AT BUTTONS. A tour anchored to
- * DOM elements breaks the first time a panel is renamed or moved, and it
- * breaks silently: the highlight lands on nothing and the step reads as a
- * caption for whatever is underneath. This describes what the app is FOR,
- * module by module, and names where each thing lives. That survives a
- * layout change, which this app has had several of.
+ * Each step opens what it is about (a screen, a pane, the notification
+ * tray), waits for it to appear, darkens everything else and rings the
+ * control in question, with the explanation beside it. Back and Next move
+ * through it; Escape leaves it.
  *
- * It shows until it is finished or skipped, and the setting is tri-state:
- * "never opened it" and "turned it off" are different, and only the second
- * should mean the app never mentions its own features again.
+ * WHY THIS DOES NOT BREAK SILENTLY. The old walkthrough was text-only
+ * because a tour anchored to buttons breaks when the layout moves: the ring
+ * lands on nothing. Here every target is a stable hook (data-tour, a
+ * data-testid, a rail button's title), the step waits up to two seconds for
+ * it, and if it is not there the step is shown as a centred card instead of
+ * pointing at the wrong thing. tutorialSteps.test.js checks that every hook
+ * the steps name still exists in the source.
+ *
+ * Shown on first launch, and again from Settings → General → "Guided
+ * walkthrough" (or the akili:start-tour event) — at once, not next launch.
+ * The setting is tri-state: null = not seen, "done" = finished or skipped.
  */
-
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
+import { STEPS } from "./tutorialSteps.js"
 
-const STEPS = [
-    {
-        title: "Two modes, one job",
-        body: "Watch is what you monitor — the globe, imagery, briefings, replay. Workstation is where you build: cases, documents, the ontology, forecasts. Switch from the View menu (⇧⌘W), and each mode returns you to where you last were.",
-    },
-    {
-        title: "Search like a map",
-        body: "Type into the search box at the top: a country, a city, a street, a ship, a signal, or coordinates like 26.5, 56.4. Suggestions drop down as you type; Enter flies there. ⌘K jumps to the box from anywhere.",
-    },
-    {
-        title: "Theaters are the places you watch",
-        body: "Each tab is a theater — a place and the layers that matter there. + makes a new one: name the place, pick what to show. The ★ beside the title makes the selected theater a favourite; favourites stay first in the tabs.",
-    },
-    {
-        title: "The map is the product",
-        body: "Map data is the left pane, the inspector the right; both fold away to the edge. Click anything to see what it is, where it came from, and its sources — X and Telegram posts open right beside it.",
-    },
-    {
-        title: "Turn on what you actually use",
-        body: "Set the layers you want, then press “save default” in the Map data header — or choose them in Settings › Map & layers. The app opens that way from then on, for your account.",
-    },
-    {
-        title: "Save, share, write",
-        body: "“Save for briefing” keeps anything with its coordinates and imagery for the Editor. Share copies a link that opens your theater at your exact view for a colleague. Cases hold the work; nobody sees one unless you share it by name.",
-    },
-    {
-        title: "Notifications are about now",
-        body: "A card appears only for something happening while you are here; older events go quietly into the tray as history. The bell counts what is unread. Do not disturb is in Settings when you need quiet.",
-    },
-]
+const PAD = 8
+const GAP = 14
+const CARD_W = 360
+
+function rectOf(sel) {
+    if (!sel) return null
+    for (const el of document.querySelectorAll(sel)) {
+        const r = el.getBoundingClientRect()
+        const cs = getComputedStyle(el)
+        if (r.width > 4 && r.height > 4 && cs.visibility !== "hidden" && cs.display !== "none" && +cs.opacity > 0.2
+            && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) {
+            return { x: r.left, y: r.top, w: r.width, h: r.height }
+        }
+    }
+    return null
+}
+
+/** Where the card goes: beside the ring on the side with the most room, kept on screen. */
+export function placeCard(ring, vw, vh, cardW = CARD_W, cardH = 220) {
+    if (!ring) return { left: (vw - cardW) / 2, top: Math.max(16, (vh - cardH) / 2) }
+    const room = {
+        right: vw - (ring.x + ring.w), left: ring.x, below: vh - (ring.y + ring.h), above: ring.y,
+    }
+    let left, top
+    if (room.right >= cardW + GAP + 16) { left = ring.x + ring.w + GAP; top = ring.y }
+    else if (room.left >= cardW + GAP + 16) { left = ring.x - cardW - GAP; top = ring.y }
+    else if (room.below >= cardH + GAP + 16) { left = ring.x; top = ring.y + ring.h + GAP }
+    else if (room.above >= cardH + GAP + 16) { left = ring.x; top = ring.y - cardH - GAP }
+    else { left = vw - cardW - 24; top = vh - cardH - 24 }          // a big target: the corner
+    return { left: Math.max(16, Math.min(vw - cardW - 16, left)), top: Math.max(16, Math.min(vh - cardH - 16, top)) }
+}
 
 export default function Tutorial() {
     const [open, setOpen] = useState(() => getSettings()?.tutorial == null)
     const [i, setI] = useState(0)
+    const [ring, setRing] = useState(null)
+    const [found, setFound] = useState(true)
+    const [vp, setVp] = useState({ w: innerWidth, h: innerHeight })
+    const cardRef = useRef(null)
+    const [cardH, setCardH] = useState(220)
 
-    // Settings arrive from the server after first paint, so a single read
-    // on mount would usually see the default and show this to someone who
-    // dismissed it months ago.
+    // Settings arrive after first paint; "show again" in Settings sets it
+    // back to null, which starts the walkthrough there and then.
+    // Only a CHANGE to null restarts it: the store re-broadcasts the same
+    // settings now and then, and "still not seen" must not jump back to step 1.
+    const lastSeen = useRef(getSettings()?.tutorial ?? null)
     useEffect(() => subscribeSettings((s) => {
-        if (s?.tutorial === "done") setOpen(false)
+        const v = s?.tutorial ?? null
+        if (v === lastSeen.current) return
+        lastSeen.current = v
+        if (v === "done") setOpen(false)
+        else if (v == null) { setI(0); setOpen(true) }
     }), [])
-
     useEffect(() => {
-        if (!open) return
-        const onKey = (e) => {
-            if (e.key === "Escape") finish()
-            else if (e.key === "ArrowRight") setI((n) => Math.min(n + 1, STEPS.length - 1))
-            else if (e.key === "ArrowLeft") setI((n) => Math.max(n - 1, 0))
-        }
-        window.addEventListener("keydown", onKey)
-        return () => window.removeEventListener("keydown", onKey)
-    }, [open])
+        const h = () => { setI(0); setOpen(true) }
+        window.addEventListener("akili:start-tour", h)
+        return () => window.removeEventListener("akili:start-tour", h)
+    }, [])
 
-    function finish() {
+    const finish = useCallback(() => {
         setOpen(false)
         updateSetting("tutorial", "done")
-    }
+        STEPS[i]?.leave?.()
+    }, [i])
+
+    // Open what the step is about, then find its target (it may take a
+    // moment to mount or slide in) and keep the ring on it while it moves.
+    useEffect(() => {
+        if (!open) return undefined
+        const step = STEPS[i]
+        try { step.go?.() } catch { /* a step that cannot open still explains */ }
+        let alive = true
+        const t0 = Date.now()
+        setRing(null); setFound(true)
+        const tick = () => {
+            if (!alive) return
+            const r = rectOf(step.target)
+            if (r) { setRing(r); setFound(true) }
+            else if (Date.now() - t0 > 2000) setFound(false)
+        }
+        tick()
+        const iv = setInterval(tick, 200)
+        return () => { alive = false; clearInterval(iv); try { step.leave?.() } catch { /* nothing to undo */ } }
+    }, [open, i])
+
+    useEffect(() => {
+        const h = () => setVp({ w: innerWidth, h: innerHeight })
+        window.addEventListener("resize", h)
+        return () => window.removeEventListener("resize", h)
+    }, [])
+    useLayoutEffect(() => { if (cardRef.current) setCardH(cardRef.current.offsetHeight) })
+
+    useEffect(() => {
+        if (!open) return undefined
+        const onKey = (e) => {
+            if (e.key === "Escape") { e.stopPropagation(); finish() }
+            else if (e.key === "ArrowRight" || e.key === "Enter") setI((n) => Math.min(n + 1, STEPS.length - 1))
+            else if (e.key === "ArrowLeft") setI((n) => Math.max(n - 1, 0))
+        }
+        window.addEventListener("keydown", onKey, true)
+        return () => window.removeEventListener("keydown", onKey, true)
+    }, [open, finish])
 
     if (!open) return null
     const step = STEPS[i]
     const last = i === STEPS.length - 1
+    const r = step.target && found && ring
+        ? { x: ring.x - PAD, y: ring.y - PAD, w: ring.w + PAD * 2, h: ring.h + PAD * 2 } : null
+    const pos = placeCard(r, vp.w, vp.h, CARD_W, cardH)
+    const waiting = step.target && found && !ring
 
     return (
-        <div style={{
-            position: "fixed", inset: 0, zIndex: 150, display: "flex",
-            alignItems: "center", justifyContent: "center",
-            background: "rgba(8,10,13,.62)", backdropFilter: "blur(2px)",
-        }}>
-            <div style={{
-                width: 480, maxWidth: "calc(100vw - 32px)", background: "var(--bg-2, #1e212c)",
-                border: "1px solid var(--line)", borderRadius: 4, padding: "22px 24px 18px",
+        <div role="dialog" aria-label="Guided walkthrough" style={{ position: "fixed", inset: 0, zIndex: 6000, pointerEvents: "auto" }}>
+            {/* The dimming, with a hole where the target is. */}
+            <svg width={vp.w} height={vp.h} style={{ position: "absolute", inset: 0 }}>
+                <defs>
+                    <mask id="tour-hole">
+                        <rect width={vp.w} height={vp.h} fill="white" />
+                        {r && <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={6} fill="black" style={{ transition: "all 260ms ease" }} />}
+                    </mask>
+                </defs>
+                <rect width={vp.w} height={vp.h} fill="rgba(6,8,12,.66)" mask="url(#tour-hole)" />
+                {r && <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={6} fill="none" stroke="var(--acchi, #7aa7ff)" strokeWidth={2}
+                    style={{ transition: "all 260ms ease", filter: "drop-shadow(0 0 10px rgba(122,167,255,.55))" }} />}
+            </svg>
+
+            <div ref={cardRef} style={{
+                position: "absolute", left: pos.left, top: pos.top, width: CARD_W, maxWidth: "calc(100vw - 32px)",
+                background: "var(--bar, #161a22)", border: "1px solid var(--gline2, #333)", boxShadow: "var(--gshadow)",
+                padding: "16px 18px 14px", color: "var(--txt)", transition: "left 260ms ease, top 260ms ease",
+                backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
             }}>
-                <div style={{
-                    font: "400 10px var(--font)", color: "var(--txt-4)", letterSpacing: ".1em",
-                    textTransform: "uppercase", marginBottom: 10,
-                }}>
-                    Getting started · {i + 1} of {STEPS.length}
+                <div style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)", marginBottom: 8 }}>
+                    Walkthrough · {i + 1} of {STEPS.length}{step.where ? ` · ${step.where}` : ""}
                 </div>
-
-                <h2 style={{ font: "600 17px var(--font)", color: "var(--txt)", margin: "0 0 9px" }}>
-                    {step.title}
-                </h2>
-                <p style={{ font: "400 13px/1.62 var(--font)", color: "var(--txt-2)", margin: "0 0 18px" }}>
-                    {step.body}
-                </p>
-
-                <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+                <h2 style={{ margin: "0 0 8px", fontFamily: "var(--mz-font-body)", fontWeight: 600, fontSize: 17 }}>{step.title}</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--txt2)" }}>{step.body}</p>
+                {step.try && <p style={{ margin: "8px 0 0", fontSize: 12.5, lineHeight: 1.5, color: "var(--txt)" }}><span style={{ color: "var(--acchi)" }}>Try it: </span>{step.try}</p>}
+                {waiting && <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--txt4)" }}>Opening…</p>}
+                <div style={{ display: "flex", gap: 3, margin: "14px 0 12px" }}>
                     {STEPS.map((_, n) => (
-                        <span key={n} style={{
-                            flex: 1, height: 2,
-                            background: n <= i ? "var(--acc-hi)" : "var(--line)",
+                        <button key={n} onClick={() => setI(n)} aria-label={`Step ${n + 1}`} style={{
+                            flex: 1, height: 3, padding: 0, border: 0, cursor: "pointer",
+                            background: n <= i ? "var(--acchi)" : "var(--gline2)",
                         }} />
                     ))}
                 </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <button className="btn sm" onClick={finish}
-                            style={{ color: "var(--txt-3)" }}>
-                        {last ? "Close" : "Skip"}
-                    </button>
-                    <div style={{ flex: 1 }} />
-                    {i > 0 && <button className="btn sm" onClick={() => setI(i - 1)}>back</button>}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button onClick={finish} style={BTN}>{last ? "Close" : "Skip"}</button>
+                    <span style={{ flex: 1 }} />
+                    {i > 0 && <button onClick={() => setI(i - 1)} style={BTN}>Back</button>}
                     {last
-                        ? <button className="btn sm primary" onClick={finish}>Got it — don&rsquo;t show again</button>
-                        : <button className="btn sm primary" onClick={() => setI(i + 1)}>next</button>}
+                        ? <button onClick={finish} style={{ ...BTN, ...PRIMARY }}>Done</button>
+                        : <button onClick={() => setI(i + 1)} style={{ ...BTN, ...PRIMARY }}>Next</button>}
                 </div>
-
-                {!last && (
-                    <p style={{ font: "400 10px var(--font)", color: "var(--txt-4)", margin: "10px 0 0" }}>
-                        You can reopen this any time from Settings.
-                    </p>
-                )}
             </div>
         </div>
     )
 }
+
+const BTN = {
+    height: 28, padding: "0 12px", border: "1px solid var(--gline2)", background: "transparent",
+    color: "var(--txt2)", font: "inherit", fontSize: 12, cursor: "pointer", borderRadius: 0,
+}
+const PRIMARY = { background: "var(--accdim)", color: "var(--txt)", border: "1px solid var(--acchi)" }
