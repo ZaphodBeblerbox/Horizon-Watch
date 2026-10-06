@@ -134,6 +134,26 @@ function SEV_TINT(u) {
 
 function nowMs() { return performance.now() }
 
+/** A coordinate pair is not a place. */
+const COORD = /^-?\d{1,3}\.\d+°?\s*[NS]?,?\s*-?\d{1,3}\.\d+°?\s*[EW]?/
+function placeOf(loc) { const t = String(loc || "").trim(); return t && !COORD.test(t) ? t : null }
+/** Detector slugs into words ("structural_change" → "structural change"),
+ *  and a title that leads with bare coordinates said as what it is. */
+function readable(t) {
+    let x = String(t || "").replace(/_/g, " ").replace(/\s+/g, " ").trim()
+    const m = x.match(COORD)
+    if (m) x = `${x.slice(m[0].length).trim() || "Item"} — unplaced (${m[0].trim()})`
+    return x
+}
+
+const AUDIENCES = [
+    { key: "Duty analyst", line: "Everything that matters, signal by signal, with sources." },
+    { key: "Executive", line: "The bottom line first — one page, decisions and exposure." },
+    { key: "Operations", line: "By site and asset: what to do, where, and until when." },
+    { key: "Client", line: "Plain language, no internal sourcing detail." },
+]
+const SEV_COLOR = { critical: "#E5484D", significant: "#F5A524", high: "#F5A524", elevated: "#8FB4E8", routine: "#9AA9BC" }
+
 function logLine(html) { return { id: Math.random().toString(36).slice(2), html } }
 
 export default function Generate({ onOpenTab }) {
@@ -202,6 +222,8 @@ export default function Generate({ onOpenTab }) {
                         // use — so "Imagery" means one thing in the whole app.
                         sector: sectorOfSnapshotSection(snapSection),
                         label: item.location_name || item.title || item.headline || item.object_type || item.zone || String(id),
+                        what: readable(item.title || item.headline || item.object_type || item.zone || ""),
+                        where: placeOf(item.location_name),
                     })
                 }
             }
@@ -252,17 +274,23 @@ export default function Generate({ onOpenTab }) {
     // reviewable/adjustable first, and "generate"'s disabled state can
     // honestly reflect whether real evidence exists, rather than only
     // discovering that after the run has already started.
+    // Only the newest gathering counts: a slow first one (the whole world,
+    // on open) finishing after a scoped one replaced Yemen with the North Sea.
+    const corpusTicket = useRef(0)
     async function assembleCorpus() {
+        const ticket = ++corpusTicket.current
         appendLog(logLine(`<b>horizon-brief v4.2 · session ${Math.random().toString(36).slice(2, 8)}</b>`))
         appendLog(logLine(`scope=<i>${scope || "Global overview"}</i> horizon=<i>${horizon}</i>`))
         const t0 = nowMs()
         setStepStatus(0, "running")
         const task = await createSnapshotReportTask({ focus: scope || null, watchZoneId: watchZoneId || null })
+        if (ticket !== corpusTicket.current) return null
         setStepStatus(0, "done", nowMs() - t0)
 
         const t1 = nowMs()
         setStepStatus(1, "running")
         const snap = await apiFetch(`/api/reports/snapshots/${task.snapshot_id}`).then((r) => r.json()).catch(() => null)
+        if (ticket !== corpusTicket.current) return null                 // a newer scope was asked for meanwhile
         const content = (snap && snap.content) || {}
         setCorpus({ task, snapshotContent: content })
         setSelected({})
@@ -272,7 +300,19 @@ export default function Generate({ onOpenTab }) {
         return { task, content }
     }
 
-    useEffect(() => { assembleCorpus().catch((e) => appendLog(logLine(`<u>error assembling evidence</u> — ${e?.message}`))) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    // Assembled on open, and again whenever the scope or the watch area
+    // changes (after a pause in typing) — it was assembled once and never
+    // again, so choosing a watch area changed nothing you could see.
+    const firstScope = useRef(true)
+    useEffect(() => {
+        const delay = firstScope.current ? 0 : 900
+        firstScope.current = false
+        const t = setTimeout(() => {
+            setCorpus(null)
+            assembleCorpus().catch((e) => appendLog(logLine(`<u>error assembling evidence</u> — ${e?.message}`)))
+        }, delay)
+        return () => clearTimeout(t)
+    }, [scope, watchZoneId]) // eslint-disable-line react-hooks/exhaustive-deps
 
     function setStepStatus(i, status, ms) {
         setSteps((prev) => prev.map((s, idx) => (idx === i ? { ...s, status, ms: ms != null ? Math.round(ms) : s.ms } : s)))
@@ -391,231 +431,196 @@ export default function Generate({ onOpenTab }) {
     const evCount = evCountLive
     const genState = running ? "running" : cancelled ? "cancelled" : completedReport ? "complete" : "idle"
 
+    const [q, setQ] = useState("")
+    const [more, setMore] = useState(false)
+    const [showLog, setShowLog] = useState(false)
+    const zoneName = watchZones.find((z) => z.system_id === watchZoneId)?.name
+    const scopeName = scope || zoneName || "the whole world"
+    const ql = q.trim().toLowerCase()
+    const visible = shown.filter((it) => !ql || `${it.what} ${it.where || ""} ${it.sector}`.toLowerCase().includes(ql))
+    // named things first; coordinate-only rows sink to the bottom of each group
+    const bySector = []
+    {
+        const m = new Map()
+        for (const it of visible) { if (!m.has(it.sector)) m.set(it.sector, []); m.get(it.sector).push(it) }
+        const named = (it) => (it.where ? 2 : 0) + (/— unplaced \(/.test(it.what) ? 0 : 1)
+        for (const [k, list] of m) bySector.push({ key: k, items: [...list].sort((a, b) => named(b) - named(a)) })
+    }
+    const P = { border: "1px solid var(--gline)", background: "var(--glass2)", display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0 }
+    const H = { padding: "14px 18px 10px", borderBottom: "1px solid var(--gline)", display: "flex", alignItems: "baseline", gap: 10 }
+    const EYE2 = { fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }
+    const LBL = { fontSize: 12, color: "var(--txt3)", marginBottom: 6, display: "block" }
+    const IN = { height: 34, padding: "0 10px", border: "1px solid var(--gline2)", background: "var(--glass2)", color: "var(--txt)", font: "inherit", fontSize: 13.5, borderRadius: 0, outline: "none", width: "100%", boxSizing: "border-box" }
+    const SEG = (on) => ({ height: 30, padding: "0 12px", border: 0, background: on ? "var(--accdim)" : "transparent", color: on ? "var(--txt)" : "var(--txt3)", font: "inherit", fontSize: 12.5, cursor: "pointer" })
+    const BT = { height: 28, padding: "0 11px", border: "1px solid var(--gline2)", background: "transparent", color: "var(--txt2)", font: "inherit", fontSize: 12, cursor: "pointer", borderRadius: 0, whiteSpace: "nowrap" }
+    const pick = (keys) => setSelected(Object.fromEntries(items.map((i) => [i.key, keys.includes(i.key)])))
+
     return (
-        <div data-testid="view-root-generate" style={{ display: "grid", gridTemplateColumns: "290px 1fr 322px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
-            {/* Left — parameters. Panehead matches the reference's "Briefing
-                parameters" header (HorizonWatch.html:318). */}
-            <div style={{ borderRight: "1px solid var(--line)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--line)", font: "600 12px var(--font)", color: "var(--txt)", flexShrink: 0 }}>Briefing parameters</div>
-                <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
-                <div className="field"><label>Title</label><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="(auto from scope)" /></div>
-                <div className="field"><label>Scope</label><input className="input" value={scope} onChange={(e) => setScope(e.target.value)} placeholder="e.g. Red Sea / Bab el-Mandeb" /></div>
-                <div className="field"><label>Watch area (optional)</label>
-                    <select className="input" value={watchZoneId} onChange={(e) => setWatchZoneId(e.target.value)}>
-                        <option value="">Global overview</option>
-                        {watchZones.map((z) => <option key={z.system_id} value={z.system_id}>{z.name}</option>)}
-                    </select>
-                </div>
-                <div className="field"><label>Language</label>
-                    <div className="seg">
-                        {LANGUAGES.map((l) => (
-                            <button key={l.key} aria-pressed={language === l.key}
-                                    onClick={() => setLanguage(l.key)}>{l.label}</button>
-                        ))}
+        <div data-testid="view-root-generate" style={{ display: "grid", gridTemplateColumns: "minmax(320px, 400px) minmax(0, 1fr) minmax(300px, 360px)", gap: 14, height: "100%", padding: 14, boxSizing: "border-box", overflow: "hidden" }}>
+            {/* ABOUT — what the briefing is about, and for whom */}
+            <section style={P}>
+                <div style={H}><span style={{ fontSize: 15, fontWeight: 600 }}>About this briefing</span></div>
+                <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
+                    <label><span style={LBL}>Title</span><input style={IN} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`Report — ${scope || zoneName || "Global overview"}`} /></label>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 10 }}>
+                        <label><span style={LBL}>About</span><input style={IN} value={scope} onChange={(e) => setScope(e.target.value)} placeholder="Red Sea, Sudan, our tankers…" /></label>
+                        <label><span style={LBL}>Watch area</span>
+                            <select style={IN} value={watchZoneId} onChange={(e) => setWatchZoneId(e.target.value)}>
+                                <option value="">Anywhere</option>
+                                {watchZones.map((z) => <option key={z.system_id} value={z.system_id}>{z.name}</option>)}
+                            </select></label>
                     </div>
-                </div>
-                <div className="field"><label>Audience</label><input className="input" value={audience} onChange={(e) => setAudience(e.target.value)} /></div>
-                <div className="field"><label>Forecast horizon</label>
-                    <div className="seg">{HORIZONS.map((h) => <button key={h.key} aria-pressed={horizon === h.key} onClick={() => setHorizon(h.key)}>{h.label}</button>)}</div>
-                </div>
-                {/* §S4.3's document sections — what the brief CONTAINS. */}
-                <div className="field"><label>Sections</label>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {DOC_SECTIONS.map((d) => (
-                            <label key={d.key} style={{ display: "flex", alignItems: "center", gap: 7, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
-                                <input type="checkbox" className="check" checked={docSectionsOn[d.key]}
-                                       onChange={() => setDocSectionsOn((p) => ({ ...p, [d.key]: !p[d.key] }))} />
-                                {d.label}
-                            </label>
-                        ))}
-                    </div>
-                    {!docSectionsOn.sourcing_method && (
-                        <span className="fieldnote" style={{ color: "var(--amber)" }}>
-                            Without “Sourcing and method” the brief cannot say where it came from.
-                            That does not make it shorter, it makes it weaker.
-                        </span>
-                    )}
-                </div>
-
-                {/* Distinct question: what it may be written FROM. These used
-                    to share the word "Sections" with the block above. */}
-                <div className="field"><label>Evidence domains</label>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {SECTION_TOGGLES.map((s) => (
-                            <label key={s.key} style={{ display: "flex", alignItems: "center", gap: 7, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
-                                <input type="checkbox" className="check" checked={sectionsOn[s.key]} onChange={() => setSectionsOn((p) => ({ ...p, [s.key]: !p[s.key] }))} />
-                                {s.label}
-                            </label>
-                        ))}
-                    </div>
-                </div>
-                <div className="field"><label>Classification</label><input className="input" value={classification} title={classification} onChange={(e) => setClassification(e.target.value)} style={{ fontSize: 11, letterSpacing: "-.01em" }} /></div>
-                <div className="field"><label>Standing instruction</label>
-                    <textarea className="input" style={{ minHeight: 60, resize: "vertical" }} value={standingInstruction} onChange={(e) => setStandingInstruction(e.target.value)} placeholder="Optional analyst instruction for the drafting pass" />
-                </div>
-                </div>
-            </div>
-
-            {/* Centre — corpus grid */}
-            <div style={{ overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ font: "600 12px var(--font)", color: "var(--txt)" }}>Available signal corpus</span>
-                    <span style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{evCount} selected · {briefingCount} in basket</span>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                    <button className="btn ghost sm" onClick={() => {
-                        const top12 = [...items].slice(0, 12).map((i) => i.key)
-                        setSelected(Object.fromEntries(items.map((i) => [i.key, top12.includes(i.key)])))
-                    }}>select top 12 by severity</button>
-                    <button className="btn ghost sm" onClick={() => setSelected(Object.fromEntries(items.map((i) => [i.key, false])))}>clear</button>
-                </div>
-
-                {/* PICK BY URGENCY AND SECTOR. Eighty signals sorted by one
-                    key is a list you scroll past, not one you choose from.
-                    Filtering here changes what is SHOWN; it never silently
-                    deselects, because what is selected is the analyst's own
-                    decision and a filter is a way of looking, not an edit. */}
-                {items.length > 0 && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
-                            <span style={{ font: "500 10px var(--mono)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt-3)", marginRight: 4 }}>Urgency</span>
-                            {urgBands.map((u) => (
-                                <GenChip key={u} label={u} count={facets.urgency[u] || 0}
-                                         on={urg.has(u)} onClick={() => toggleFacet(setUrg)(u)} />
-                            ))}
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
-                            <span style={{ font: "500 10px var(--mono)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt-3)", marginRight: 4 }}>Sector</span>
-                            {secBands.map((x) => (
-                                <GenChip key={x} label={x} count={facets.sector[x] || 0}
-                                         on={sec.has(x)} onClick={() => toggleFacet(setSec)(x)} />
-                            ))}
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                            <span style={{ font: "500 10px var(--mono)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt-3)", marginRight: 4 }}>Group</span>
-                            {[["urgency", "urgency"], ["sector", "sector"], ["none", "flat"]].map(([k, l]) => (
-                                <GenChip key={k} label={l} on={groupBy === k} onClick={() => setGroupBy(k)} />
-                            ))}
-                            {(urg.size || sec.size) ? (
-                                <button className="btn ghost sm" style={{ marginLeft: "auto" }}
-                                        onClick={() => { setUrg(new Set()); setSec(new Set()) }}>
-                                    show all {items.length}
+                    <div>
+                        <span style={LBL}>For</span>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                            {AUDIENCES.map((a) => (
+                                <button key={a.key} onClick={() => setAudience(a.key)} style={{
+                                    textAlign: "left", padding: "9px 10px", border: `1px solid ${audience === a.key ? "var(--acchi)" : "var(--gline2)"}`,
+                                    background: audience === a.key ? "var(--accdim)" : "transparent", color: "var(--txt)", font: "inherit", cursor: "pointer", borderRadius: 0,
+                                    display: "flex", flexDirection: "column", gap: 3,
+                                }}>
+                                    <span style={{ fontSize: 13, fontWeight: 600 }}>{a.key}</span>
+                                    <span style={{ fontSize: 11.5, color: "var(--txt3)", lineHeight: 1.35 }}>{a.line}</span>
                                 </button>
-                            ) : null}
+                            ))}
                         </div>
                     </div>
-                )}
-                {!corpus ? (
-                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)", display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{
-                            width: 11, height: 11, borderRadius: "50%", flexShrink: 0,
-                            border: "1.5px solid var(--acc-hi)", animation: "spin 900ms linear infinite",
-                        }} />
-                        Assembling the real, current evidence set for this scope — this runs automatically and can take up to a minute under real load, not stuck.
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                        <div><span style={LBL}>Looking ahead</span>
+                            <div style={{ display: "flex", border: "1px solid var(--gline2)" }}>{HORIZONS.map((h) => <button key={h.key} onClick={() => setHorizon(h.key)} style={SEG(horizon === h.key)}>{h.label}</button>)}</div></div>
+                        <div><span style={LBL}>Language</span>
+                            <div style={{ display: "flex", border: "1px solid var(--gline2)" }}>{LANGUAGES.map((l) => <button key={l.key} onClick={() => setLanguage(l.key)} style={SEG(language === l.key)}>{l.label}</button>)}</div></div>
                     </div>
-                ) : items.length === 0 ? (
-                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>
-                        No real signals available for the selected sections/scope right now.
+                    <div>
+                        <span style={LBL}>What it contains</span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {DOC_SECTIONS.map((d) => (
+                                <label key={d.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--txt2)" }}>
+                                    <input type="checkbox" checked={docSectionsOn[d.key]} onChange={() => setDocSectionsOn((p) => ({ ...p, [d.key]: !p[d.key] }))} />{d.label}
+                                </label>
+                            ))}
+                        </div>
+                        {!docSectionsOn.sourcing_method && <span style={{ fontSize: 12, color: "#F5A524", display: "block", marginTop: 6 }}>Without sourcing and method the briefing cannot say where it came from.</span>}
                     </div>
-                ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        {!shown.length && (
-                            <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>
-                                Nothing in the corpus matches this filter.
-                            </div>
-                        )}
-                        {shownGroups.map((grp) => {
-                            const keys = grp.items.map((i) => i.key)
-                            const allOn = keys.every((k) => selected[k] !== false)
-                            return (
-                                <div key={grp.key ?? "__all__"} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                    {grp.key != null && (
-                                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, paddingBottom: 3, borderBottom: "1px solid var(--line)" }}>
-                                            <input type="checkbox" className="check" checked={allOn}
-                                                   aria-label={`Select all in ${grp.key}`}
-                                                   onChange={() => setSelected((p) => ({
-                                                       ...p, ...Object.fromEntries(keys.map((k) => [k, allOn ? false : true])),
-                                                   }))} />
-                                            <span style={{ font: "500 10px var(--mono)", letterSpacing: ".14em", textTransform: "uppercase", color: SEV_TINT(grp.key) }}>{grp.key}</span>
-                                            <span style={{ font: "400 10px var(--mono)", color: "var(--txt-3)" }}>{grp.items.length}</span>
-                                        </div>
-                                    )}
-                                    {grp.items.map((it) => (
-                                        <label key={it.key} style={{ display: "flex", alignItems: "center", gap: 8, font: "400 12px var(--font)", color: "var(--txt-2)", padding: "3px 0", borderBottom: "1px solid var(--line-soft)" }}>
-                                            <input type="checkbox" className="check" checked={selected[it.key] !== false} onChange={() => setSelected((p) => ({ ...p, [it.key]: p[it.key] === false }))} />
-                                            <span style={{ width: 66, flexShrink: 0, color: SEV_TINT(normaliseUrgency(it.severity)) }}>{normaliseUrgency(it.severity)}</span>
-                                            <span style={{ width: 92, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--txt-3)" }}>{it.sector}</span>
-                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.label}</span>
+                    <button onClick={() => setMore((v) => !v)} style={{ ...BT, alignSelf: "flex-start" }}>{more ? "Less" : "More — evidence kinds, classification, instruction"}</button>
+                    {more && (
+                        <>
+                            <div><span style={LBL}>May be written from</span>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                    {SECTION_TOGGLES.map((x) => (
+                                        <label key={x.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--txt2)" }}>
+                                            <input type="checkbox" checked={sectionsOn[x.key]} onChange={() => setSectionsOn((p) => ({ ...p, [x.key]: !p[x.key] }))} />{x.label}
                                         </label>
                                     ))}
-                                </div>
-                            )
-                        })}
-                    </div>
-                )}
-                {corpus && evCount === 0 && (
-                    <div style={{ marginTop: 8 }}>
-                        <div style={{ font: "400 12px var(--font)", color: "var(--delta-worse)" }}>
-                            Select at least one signal, or choose to generate an empty briefing.
-                        </div>
-                        <label style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
-                            <input type="checkbox" className="check" checked={emptyOverride} onChange={(e) => setEmptyOverride(e.target.checked)} />
-                            Generate without evidence
-                        </label>
-                    </div>
-                )}
-                <div style={{ height: 2, background: "var(--bg-3)", marginTop: "auto" }}>
-                    <div style={{ height: "100%", width: `${Math.round(progress * 100)}%`, background: "var(--acc-hi)", transition: "width 200ms linear" }} />
+                                </div></div>
+                            <label><span style={LBL}>Classification</span><input style={IN} value={classification} onChange={(e) => setClassification(e.target.value)} /></label>
+                            <label><span style={LBL}>Instruction for this briefing</span>
+                                <textarea style={{ ...IN, height: "auto", minHeight: 70, padding: 10, resize: "vertical" }} value={standingInstruction} onChange={(e) => setStandingInstruction(e.target.value)} placeholder="e.g. Focus on shipping through Bab el-Mandeb; name the insurers' likely response." /></label>
+                        </>
+                    )}
                 </div>
-            </div>
+            </section>
 
-            {/* Right — checklist + log. Panehead matches the reference's
-                "Generation" title + live #gen-state label (HorizonWatch.html:329). */}
-            <div style={{ borderLeft: "1px solid var(--line)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-                    <span style={{ font: "600 12px var(--font)", color: "var(--txt)" }}>Generation</span>
-                    <span style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>{genState}</span>
+            {/* EVIDENCE — what it will be written from */}
+            <section style={P}>
+                <div style={{ ...H, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>What it will be written from</span>
+                    <span style={{ fontSize: 12.5, color: "var(--txt3)" }}>{corpus ? `${evCount} chosen of ${items.length}` : "gathering…"}{briefingCount ? ` · ${briefingCount} in your basket` : ""}</span>
+                    <span style={{ flex: 1 }} />
+                    <button style={BT} onClick={() => pick(items.slice(0, 12).map((i) => i.key))}>Top 12</button>
+                    <button style={BT} onClick={() => pick(items.map((i) => i.key))}>All</button>
+                    <button style={BT} onClick={() => pick([])}>None</button>
                 </div>
-                <div style={{ padding: 12, borderBottom: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
-                    {steps.map((s, i) => (
-                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{
-                                width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
-                                border: `1.5px solid ${s.status === "done" ? "var(--tag-green)" : s.status === "running" ? "var(--acc-hi)" : "var(--line-strong)"}`,
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                                animation: s.status === "running" ? "spin 900ms linear infinite" : "none",
-                            }}>
-                                {s.status === "done" && <span style={{ color: "var(--tag-green)", fontSize: 9 }}>✓</span>}
-                                {s.status === "pending" && <span style={{ color: "var(--line-strong)", fontSize: 8, fontFamily: "var(--mono)" }}>{i + 1}</span>}
-                            </span>
-                            <span style={{ flex: 1, font: "400 12px var(--font)", color: s.status === "pending" ? "var(--txt-3)" : "var(--txt)" }}>{s.label}</span>
-                            {s.ms != null && <span style={{ font: "400 10.5px var(--mono)", color: "var(--txt-3)" }}>{s.ms}ms</span>}
+                <div style={{ padding: "10px 18px", borderBottom: "1px solid var(--gline)", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <input style={{ ...IN, width: 240, height: 30 }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find in the evidence…" />
+                    {urgBands.map((u) => (
+                        <button key={u} onClick={() => toggleFacet(setUrg)(u)} style={{ ...BT, height: 26, ...(urg.has(u) ? { background: "var(--accdim)", color: "var(--txt)", border: "1px solid var(--acchi)" } : null) }}>
+                            <i style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: SEV_COLOR[u] || "#9AA9BC", marginRight: 6 }} />{u} {facets.urgency[u] || 0}
+                        </button>
+                    ))}
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", padding: "4px 18px 18px" }}>
+                    {!corpus && <div style={{ padding: "18px 0", color: "var(--txt3)", fontSize: 13 }}>Gathering what we hold on {scopeName}…</div>}
+                    {corpus && items.length === 0 && <div style={{ padding: "18px 0", color: "var(--txt3)", fontSize: 13 }}>Nothing held on {scopeName} for these kinds of evidence.</div>}
+                    {bySector.map((grp) => {
+                        const keys = grp.items.map((i) => i.key)
+                        const allOn = keys.every((k) => selected[k] !== false)
+                        return (
+                            <div key={grp.key} style={{ marginTop: 14 }}>
+                                <label style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 6, borderBottom: "1px solid var(--gline)" }}>
+                                    <input type="checkbox" checked={allOn} onChange={() => setSelected((p) => ({ ...p, ...Object.fromEntries(keys.map((k) => [k, !allOn])) }))} />
+                                    <span style={EYE2}>{grp.key}</span><span style={{ fontSize: 11, color: "var(--txt4)" }}>{grp.items.length}</span>
+                                </label>
+                                {grp.items.map((it) => {
+                                    const u = normaliseUrgency(it.severity)
+                                    return (
+                                        <label key={it.key} style={{ display: "grid", gridTemplateColumns: "18px 8px minmax(0,1fr) auto", gap: 10, alignItems: "baseline", padding: "8px 0", borderBottom: "1px solid var(--gline)", cursor: "pointer", opacity: selected[it.key] === false ? 0.5 : 1 }}>
+                                            <input type="checkbox" checked={selected[it.key] !== false} onChange={() => setSelected((p) => ({ ...p, [it.key]: p[it.key] === false }))} />
+                                            <i style={{ width: 7, height: 7, borderRadius: "50%", background: SEV_COLOR[u] || "#9AA9BC", display: "inline-block", alignSelf: "center" }} />
+                                            <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                                                <span style={{ fontSize: 13.5, color: "var(--txt)", lineHeight: 1.4 }}>{it.what || it.label}</span>
+                                                {it.where && <span style={{ fontSize: 12, color: "var(--txt3)" }}>{it.where}</span>}
+                                            </span>
+                                            <span style={{ fontSize: 11.5, color: SEV_COLOR[u] || "var(--txt3)", whiteSpace: "nowrap" }}>{u}</span>
+                                        </label>
+                                    )
+                                })}
+                            </div>
+                        )
+                    })}
+                    {corpus && evCount === 0 && (
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 13, color: "var(--txt2)" }}>
+                            <input type="checkbox" checked={emptyOverride} onChange={(e) => setEmptyOverride(e.target.checked)} /> Write it without evidence (a template to fill in)
+                        </label>
+                    )}
+                </div>
+            </section>
+
+            {/* WRITE IT */}
+            <section style={P}>
+                <div style={H}><span style={{ fontSize: 15, fontWeight: 600 }}>Write it</span><span style={{ marginLeft: "auto", fontSize: 12, color: "var(--txt3)" }}>{genState === "idle" ? "" : genState}</span></div>
+                <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+                    <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, color: "var(--txt)" }}>
+                        A briefing on <b style={{ fontWeight: 600 }}>{scopeName}</b> for the <b style={{ fontWeight: 600 }}>{audience.toLowerCase()}</b>,
+                        looking {horizon} ahead, in {LANGUAGES.find((l) => l.key === language)?.label}, written from <b style={{ fontWeight: 600 }}>{evCount}</b> piece{evCount === 1 ? "" : "s"} of evidence.
+                    </p>
+                    <button onClick={runGenerate} disabled={running || !corpus || (evCount === 0 && !emptyOverride)} style={{
+                        height: 40, border: "1px solid var(--acchi)", background: "var(--accdim)", color: "var(--txt)", font: "inherit", fontSize: 14, fontWeight: 600,
+                        cursor: "pointer", borderRadius: 0, opacity: running || !corpus || (evCount === 0 && !emptyOverride) ? 0.5 : 1,
+                    }}>{running ? "Writing…" : completedReport ? "Write it again" : "Write the briefing"}</button>
+                    {running && <button onClick={stop} style={{ ...BT, alignSelf: "flex-start" }}>Stop</button>}
+                    <div style={{ height: 3, background: "var(--hov)" }}><div style={{ height: "100%", width: `${Math.round(progress * 100)}%`, background: "var(--acchi)", transition: "width 200ms linear" }} /></div>
+                    <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 9 }}>
+                        {steps.map((st, i) => (
+                            <li key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <span style={{
+                                    width: 16, height: 16, borderRadius: "50%", flex: "none", display: "grid", placeItems: "center", fontSize: 9,
+                                    border: `1.5px solid ${st.status === "done" ? "#4CAF7A" : st.status === "running" ? "var(--acchi)" : "var(--gline2)"}`,
+                                    color: st.status === "done" ? "#4CAF7A" : "var(--txt4)", animation: st.status === "running" ? "spin 900ms linear infinite" : "none",
+                                }}>{st.status === "done" ? "✓" : st.status === "pending" ? i + 1 : ""}</span>
+                                <span style={{ flex: 1, fontSize: 13, color: st.status === "pending" ? "var(--txt3)" : "var(--txt)" }}>{st.label}</span>
+                                {st.ms != null && <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10.5, color: "var(--txt4)" }}>{st.ms < 1000 ? `${st.ms} ms` : `${(st.ms / 1000).toFixed(1)} s`}</span>}
+                            </li>
+                        ))}
+                    </ol>
+                    {completedReport && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid var(--gline)", paddingTop: 12 }}>
+                            <span style={{ fontSize: 13.5 }}>{completedReport.title}</span>
+                            <div style={{ display: "flex", gap: 6 }}>
+                                <button style={{ ...BT, background: "var(--accdim)", color: "var(--txt)", border: "1px solid var(--acchi)" }} onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title)}>Open in the reader</button>
+                                <button style={BT} onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "deck")}>As a deck</button>
+                                <button style={BT} onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "print")}>Print</button>
+                            </div>
                         </div>
-                    ))}
+                    )}
+                    <button onClick={() => setShowLog((v) => !v)} style={{ ...BT, alignSelf: "flex-start", marginTop: "auto" }}>{showLog ? "Hide" : "Show"} the run's log</button>
+                    {showLog && (
+                        <div style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, whiteSpace: "pre-wrap", color: "var(--txt3)", lineHeight: 1.5 }}>
+                            {log.map((l) => <div key={l.id} dangerouslySetInnerHTML={{ __html: l.html.replace(/<\/?[biu]>/g, "") }} />)}
+                        </div>
+                    )}
                 </div>
-                <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", padding: "10px 10px 0" }}>Agent log</div>
-                <div style={{ flex: 1, overflow: "auto", padding: 10, fontFamily: "var(--mono)", fontSize: 11, whiteSpace: "pre-wrap", background: "var(--bg-0)" }}>
-                    {log.map((l) => (
-                        <div key={l.id} dangerouslySetInnerHTML={{
-                            __html: l.html
-                                .replace(/<b>/g, '<b style="color:var(--txt);font-weight:600">').replace(/<i>/g, '<i style="color:var(--tag-green);font-style:normal">')
-                                .replace(/<u>/g, '<u style="color:var(--sev-high);text-decoration:none">'),
-                        }} />
-                    ))}
-                </div>
-                {/* Footer button order matches the reference exactly: generate
-                    (primary, flex:1) · open printable briefing (icon-only) ·
-                    deck (icon-only) · distribute by mail (icon-only, always
-                    disabled — no Mail/Gmail integration exists yet, see
-                    src/lib/ref.js's mail: resolver) · stop (HorizonWatch.html:337-341). */}
-                <div style={{ padding: 10, borderTop: "1px solid var(--line)", display: "flex", gap: 8 }}>
-                    <button className="btn primary" style={{ flex: 1 }} disabled={running || !corpus || (evCount === 0 && !emptyOverride)} onClick={runGenerate}>generate briefing</button>
-                    <button className="btn" disabled={!completedReport} title="Open the printable briefing" onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "print")}><Icon name="print" size={14} /></button>
-                    <button className="btn" disabled={!completedReport} title="Build a presentation" onClick={() => onOpenTab?.(completedReport.report_id, completedReport.title, "deck")}><Icon name="present" size={14} /></button>
-                    <button className="btn" disabled title="Distribute by mail — not yet built"><Icon name="submit" size={14} /></button>
-                    <button className="btn" disabled={!running} onClick={stop}>stop</button>
-                </div>
-            </div>
+            </section>
             <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
         </div>
     )

@@ -27,7 +27,6 @@ import DeckBuilder from "./DeckBuilder.jsx"
 import DocWriter from "./DocWriter.jsx"
 import Notes from "./Notes.jsx"
 import { useSaved } from "../state/savedForBriefing.js"
-import DocSignalsAside from "./DocSignalsAside.jsx"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import API_BASE from "../apiBase.js"
 import Loading from "../ui/Loading.jsx"
@@ -164,37 +163,24 @@ export default function BriefingStudio({
                    "generate briefing" button lives. The screen was not
                    merely clipped; the one control it exists for was off the
                    end of it. */
-                <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 12, minWidth: 0 }}>
-                    <div style={{
-                        flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
-                        overflow: "hidden", border: "1px solid var(--gline)",
-                    }}>
-                        <div style={{
-                            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-                            minHeight: 40, flex: "none", padding: "6px 12px",
-                            borderBottom: "1px solid var(--gline)",
-                        }}>
-                            <span style={EYE}>Or write it yourself</span>
-                            <Act onClick={() => setTab("write")}>Blank document</Act>
-                            <Act onClick={() => setTab("build")}>Blank deck</Act>
-                            <span style={{ fontSize: 11.5, color: "var(--txt4)", textWrap: "pretty" }}>
-                                Both export with the same wordmark and footer.
-                            </span>
-                        </div>
-                        <div style={{ flex: 1, minHeight: 0 }}>
-                            <Generate onOpenTab={(rid, title, kind) => {
-                                if (kind === "deck") { setDeckId(rid); setTab("build") }
-                                else if (kind === "print") onPrint(rid)
-                                else { setReportId(rid); setTab("reader") }
-                                onOpenTab(rid, title, kind)
-                            }} />
-                        </div>
+                // Generate has its own evidence panel; the saved-signals aside
+                // that sat beside it repeated it in the old style. "Write it
+                // yourself" is a quiet line under the header, not a toolbar.
+                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px 0", fontSize: 12.5, color: "var(--txt3)" }}>
+                        Or start from blank:
+                        <button onClick={() => setTab("write")} style={{ border: 0, background: "transparent", color: "var(--acchi)", font: "inherit", cursor: "pointer", padding: 0 }}>a document</button>
+                        ·
+                        <button onClick={() => setTab("build")} style={{ border: 0, background: "transparent", color: "var(--acchi)", font: "inherit", cursor: "pointer", padding: 0 }}>a deck</button>
                     </div>
-                    <DocSignalsAside
-                        title="Signals in scope"
-                        insertLabel="locate"
-                        hint="What the briefing will be written from. Remove anything that does not belong."
-                    />
+                    <div style={{ flex: 1, minHeight: 0 }}>
+                        <Generate onOpenTab={(rid, title, kind) => {
+                            if (kind === "deck") { setDeckId(rid); setTab("build") }
+                            else if (kind === "print") onPrint(rid)
+                            else { setReportId(rid); setTab("reader") }
+                            onOpenTab(rid, title, kind)
+                        }} />
+                    </div>
                 </div>
             )}
 

@@ -8,13 +8,16 @@ const gen = readFileSync(path.join(dir, "Generate.jsx"), "utf8")
 
 describe("§S4.2 — three panes, and the middle one is the argument", () => {
     it("lays out parameters | evidence set | generation", () => {
-        expect(gen).toMatch(/gridTemplateColumns: "\d+px 1fr \d+px"/)
+        // three panes: about | evidence | write it (the middle one flexes)
+        expect(gen).toMatch(/gridTemplateColumns: "minmax\(\d+px, \d+px\) minmax\(0, 1fr\) minmax\(\d+px, \d+px\)"/)
+        expect(gen).toMatch(/About this briefing/)
+        expect(gen).toMatch(/What it will be written from/)
     })
 
     it("makes the evidence set explicit and editable", () => {
         // "A generator with a prompt box and a button produces text nobody
         // can audit."
-        expect(gen).toMatch(/select top 12 by severity/)
+        expect(gen).toMatch(/>Top 12</)
         expect(gen).toMatch(/setSelected/)
     })
 })
@@ -55,7 +58,8 @@ describe("§S4.3 — the document sections", () => {
     it("keeps document sections and evidence domains as separate questions", () => {
         // They shared the word "Sections": what the brief contains, and what
         // it may be written from, are not the same choice.
-        expect(gen).toMatch(/Evidence domains/)
+        expect(gen).toMatch(/What it contains/)
+        expect(gen).toMatch(/May be written from/)
         expect(gen).toMatch(/DOC_SECTIONS/)
         expect(gen).toMatch(/SECTION_TOGGLES/)
     })

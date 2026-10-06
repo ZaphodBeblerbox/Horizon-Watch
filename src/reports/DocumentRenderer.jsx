@@ -321,7 +321,14 @@ export default function DocumentRenderer({ report, sections, mode = "read", xref
 
             {/* Assessment by theme */}
             <div style={{ font: "700 13px var(--font)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 14 }}>Assessment by theme</div>
-            {themes.map((t) => (
+            {/* Themes with nothing in them are one line, not one heading and
+                one "no claims" sentence each. */}
+            {themes.some((t) => !t.claims.length) && (
+                <p style={{ margin: "0 0 18px", color: "var(--txt-3)" }}>
+                    Not covered in this window: {themes.filter((t) => !t.claims.length).map((t) => t.title.toLowerCase()).join(", ")}.
+                </p>
+            )}
+            {themes.filter((t) => t.claims.length).map((t) => (
                 <section key={t.id} style={{ marginBottom: 20 }}>
                     <div style={{ font: "700 12px var(--font)", color: "var(--txt-2)", marginBottom: 6 }}>{t.title}</div>
                     <p style={{ margin: "0 0 6px" }}>{t.paragraph}</p>

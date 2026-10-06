@@ -12,6 +12,8 @@ const WALKTHROUGH_INTERVAL_MS = 3600
 // to show a single site.
 const MINIMAP_SPAN = { signal: 16, scene: 10, node: 20, region: 46 }
 
+const RB = { height: 30, padding: "0 12px", border: "1px solid var(--gline2)", background: "transparent", color: "var(--txt)", font: "inherit", fontSize: 12.5, cursor: "pointer", borderRadius: 0, textAlign: "left" }
+
 function StatusDot({ status }) {
     const color = status === "published" ? "var(--delta-better)" : status === "in_review" ? "var(--sev-high)" : status === "rejected" ? "var(--sev-critical)" : "var(--txt-4)"
     return <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, display: "inline-block", marginRight: 5 }} />
@@ -24,7 +26,7 @@ function StatusDot({ status }) {
  * through lands in the identical state a direct visit would. */
 function ReferencePane({ record, documentClaims, onSelectRef }) {
     if (!record) {
-        return <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Click a reference in the document to inspect it here.</div>
+        return <div style={{ fontSize: 13, color: "var(--txt3)", lineHeight: 1.55 }}>Click an underlined reference in the briefing — a signal, an image, a place — to see it here, on the map above, and to open it where it lives.</div>
     }
     const { kind } = record
     const hasCoord = record.lat != null && record.lon != null
@@ -55,9 +57,9 @@ function ReferencePane({ record, documentClaims, onSelectRef }) {
                 <>
                     <div style={{ font: "400 12.5px var(--font)", color: "var(--txt-2)", marginBottom: 10 }}>{record.text || record.label}</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {hasCoord && <button className="btn sm" onClick={openOnMap}>open on map</button>}
-                        {hasCoord && <button className="btn sm" onClick={animateLeadUp}>animate lead-up</button>}
-                        <button className="btn sm" onClick={openInInbox}>open in inbox</button>
+                        {hasCoord && <button onClick={openOnMap} style={RB}>Open on the map</button>}
+                        {hasCoord && <button onClick={animateLeadUp} style={RB}>Replay the lead-up</button>}
+                        <button onClick={openInInbox} style={RB}>Open in the Inbox</button>
                     </div>
                 </>
             )}
@@ -71,7 +73,7 @@ function ReferencePane({ record, documentClaims, onSelectRef }) {
                         <dt>Scan date</dt><dd style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{(record.scan_timestamp || "").slice(0, 16).replace("T", " ") || "—"}</dd>
                         <dt>Sensor</dt><dd>{record.instrument || "—"}</dd>
                     </dl>
-                    <button className="btn sm" onClick={openChangeDetection}>open change detection</button>
+                    <button onClick={openChangeDetection} style={RB}>Open the imagery</button>
                 </>
             )}
 
@@ -81,7 +83,7 @@ function ReferencePane({ record, documentClaims, onSelectRef }) {
                     <dl className="kv" style={{ marginBottom: 10 }}>
                         <dt>Type</dt><dd style={{ textTransform: "capitalize" }}>{record.type || "—"}</dd>
                     </dl>
-                    <button className="btn sm" onClick={openInOntology}>open in ontology</button>
+                    <button onClick={openInOntology} style={RB}>Open in the graph</button>
                 </>
             )}
 
@@ -137,8 +139,16 @@ function buildRecordLookup(xrefIndex, evidenceClaims, regionNames) {
     return map
 }
 
+const PANE = { border: "1px solid var(--gline)", background: "var(--glass2)", minWidth: 0, minHeight: 0 }
+const BT = { height: 28, padding: "0 11px", border: "1px solid var(--gline2)", background: "transparent", color: "var(--txt2)", font: "inherit", fontSize: 12, cursor: "pointer", borderRadius: 0, whiteSpace: "nowrap" }
+const BT_ON = { background: "var(--accdim)", color: "var(--txt)", border: "1px solid var(--acchi)" }
+const SEGB = { height: 28, padding: "0 12px", border: 0, background: "transparent", color: "var(--txt3)", font: "inherit", fontSize: 12.5, cursor: "pointer" }
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+const fmtDate = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}` }
+
 export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpenGenerate, isVisible = true }) {
     const [reports, setReports] = useState([])
+    const [find, setFind] = useState("")
     const [reportId, setReportId] = useState(initialReportId || null)
     const [report, setReport] = useState(null)
     const [sections, setSections] = useState([])
@@ -297,9 +307,9 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpen
     const activeRecord = activeRef ? recordLookup.get(`${activeRef.kind}:${activeRef.id}`) || { kind: activeRef.kind, id: activeRef.id, label: activeRef.id } : null
 
     return (
-        <div data-testid="view-root-briefings" style={{ display: "grid", gridTemplateColumns: "236px 1fr 336px", height: "100%", overflow: "hidden", background: "var(--bg-0)" }}>
+        <div data-testid="view-root-briefings" style={{ display: "grid", gridTemplateColumns: "minmax(260px, 300px) minmax(0, 1fr) minmax(320px, 380px)", gap: 14, padding: 14, boxSizing: "border-box", height: "100%", overflow: "hidden" }}>
             {/* Left — register + reference index */}
-            <div style={{ borderRight: "1px solid var(--line)", overflowY: "auto", padding: 10 }}>
+            <div style={{ ...PANE, overflowY: "auto", padding: "14px 16px" }}>
                 {/* §S4.1 — "Briefings owns both faces." Dossiers, Ontology and
                     Imagery each had a route into Generate; the surface the
                     briefings actually live on did not, so the only way in was
@@ -308,20 +318,27 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpen
                     renders once a briefing is selected — on an empty register
                     there was no route at all, which is exactly when you most
                     need one. */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                    <span style={{ font: "600 11px var(--font)", color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Briefings</span>
-                    <button className="btn sm" data-testid="briefings-generate" onClick={() => onOpenGenerate?.()}>generate</button>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>Briefings</span>
+                    <button data-testid="briefings-generate" onClick={() => onOpenGenerate?.()} style={{ ...BT, ...BT_ON }}>+ New</button>
                 </div>
+                <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find a briefing…" style={{
+                    width: "100%", boxSizing: "border-box", height: 30, padding: "0 10px", marginBottom: 8, border: "1px solid var(--gline2)",
+                    background: "var(--glass2)", color: "var(--txt)", font: "inherit", fontSize: 13, outline: "none",
+                }} />
                 {reports.length === 0 && (
                     <div style={{ font: "400 11.5px var(--font)", color: "var(--txt-4)", padding: "6px 2px" }}>
                         No briefings yet. Generate writes one from the signals you select.
                     </div>
                 )}
-                {reports.map((r) => (
+                {reports.filter((r) => !find.trim() || `${r.title} ${r.report_id}`.toLowerCase().includes(find.trim().toLowerCase())).map((r) => (
                     <div key={r.report_id} role="button" onClick={() => setReportId(r.report_id)}
-                        style={{ padding: "6px 4px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer", background: r.report_id === reportId ? "var(--bg-2)" : "transparent" }}>
-                        <div style={{ font: "400 12px var(--font)", color: "var(--txt)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title}</div>
-                        <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}><StatusDot status={r.status} />{r.report_id} · {r.status} · {(r.created_at || "").slice(0, 10)}</div>
+                        style={{ padding: "10px 10px", margin: "0 -10px", borderLeft: `2px solid ${r.report_id === reportId ? "var(--acchi)" : "transparent"}`, cursor: "pointer", background: r.report_id === reportId ? "var(--accdim)" : "transparent" }}>
+                        <div style={{ fontSize: 13.5, color: "var(--txt)", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{r.title}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, fontSize: 11.5, color: "var(--txt3)" }}>
+                            <StatusDot status={r.status} />{({ draft: "Draft", in_review: "In review", published: "Published", rejected: "Rejected" })[r.status] || r.status}
+                            <span>· {fmtDate(r.created_at)}</span>
+                        </div>
                     </div>
                 ))}
                 {reportId && (
@@ -347,21 +364,23 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpen
                 )}
             </div>
 
-            {/* Centre — document */}
-            <div style={{ overflowY: "auto", padding: "24px 20px" }}>
+            {/* Centre — the document, on a reading column */}
+            <div style={{ ...PANE, overflowY: "auto", padding: "24px 32px" }}>
                 {!report ? (
-                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)" }}>Select a briefing from the register.</div>
+                    <div style={{ display: "grid", placeItems: "center", height: "100%", color: "var(--txt3)", fontSize: 14, textAlign: "center", lineHeight: 1.6 }}>
+                        <div>Choose a briefing on the left to read it here.<br />
+                            <button onClick={() => onOpenGenerate?.()} style={{ ...BT, ...BT_ON, marginTop: 12 }}>Write a new one</button></div>
+                    </div>
                 ) : (
-                    <div ref={docRef} onClickCapture={handleDocClick} onKeyDownCapture={handleDocKeyDown}>
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 14 }}>
-                            <div className="seg">
-                                <button aria-pressed={mode === "read"} onClick={() => setMode("read")}>read</button>
-                                <button aria-pressed={mode === "edit"} disabled={!editable} onClick={() => setMode("edit")} title={!editable ? `Only draft reports can be edited (this one is ${report.status})` : ""}>edit</button>
-                                <button aria-pressed={false} onClick={() => onOpenGenerate?.()}>generate</button>
+                    <div ref={docRef} onClickCapture={handleDocClick} onKeyDownCapture={handleDocKeyDown} style={{ maxWidth: 820, margin: "0 auto" }}>
+                        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginBottom: 18, position: "sticky", top: -24, padding: "8px 0", background: "var(--bar, var(--glass2))", zIndex: 2 }}>
+                            <div style={{ display: "flex", border: "1px solid var(--gline2)", marginRight: "auto" }}>
+                                <button onClick={() => setMode("read")} style={{ ...SEGB, ...(mode === "read" ? BT_ON : null) }}>Read</button>
+                                <button disabled={!editable} onClick={() => setMode("edit")} title={!editable ? `Only drafts can be edited (this one is ${report.status})` : ""} style={{ ...SEGB, ...(mode === "edit" ? BT_ON : null), opacity: editable ? 1 : 0.45 }}>Edit</button>
                             </div>
-                            {mode === "edit" && <button className="btn sm" onClick={saveNow}>{dirty ? "save draft*" : "save draft"}</button>}
-                            <button className="btn sm" onClick={() => onPrint?.(reportId)}>print / pdf</button>
-                            <button className="btn sm" onClick={() => onOpenDeck?.(reportId)}>deck</button>
+                            {mode === "edit" && <button onClick={saveNow} style={BT}>{dirty ? "Save draft •" : "Saved"}</button>}
+                            <button onClick={() => onPrint?.(reportId)} style={BT}>Print / PDF</button>
+                            <button onClick={() => onOpenDeck?.(reportId)} style={{ ...BT, ...BT_ON }}>Present as a deck</button>
                         </div>
                         <DocumentRenderer
                             report={renderReport} sections={renderSections} mode={mode} xrefIndex={xrefIndex}
@@ -374,8 +393,8 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpen
                 )}
             </div>
 
-            {/* Right — minimap + reference detail */}
-            <div style={{ borderLeft: "1px solid var(--line)", overflowY: "auto" }}>
+            {/* Right — where it is, and the reference in focus */}
+            <div style={{ ...PANE, overflowY: "auto" }}>
                 <Minimap
                     focus={activeRecord?.lat != null ? activeRecord : null}
                     context={evidenceClaims}

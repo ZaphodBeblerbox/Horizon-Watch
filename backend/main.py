@@ -24565,6 +24565,12 @@ async def create_snapshot_report_task(request: Request):
                 raise HTTPException(404, f"watch zone {watch_zone_id} not found or not enabled")
             bbox = (zone.bbox_min_lat, zone.bbox_max_lat, zone.bbox_min_lon, zone.bbox_max_lon)
             zone_label = zone.name
+        elif focus:
+            # The free-text subject as a place: its evidence limited to where
+            # it is about (briefing_scope.py) — a Yemen briefing was being
+            # written from sanctioned ships in the North Sea.
+            import briefing_scope as _bs
+            bbox = await asyncio.get_event_loop().run_in_executor(_executor, _bs.box_for, focus)
 
         row = ReportTask(
             task_id=_task_id(),
