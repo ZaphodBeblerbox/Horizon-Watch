@@ -143,6 +143,24 @@ live system, not inferred.
    - **Notifications only while the system is in use** — live events as they
      happen, never a backlog ("what happened 5 hours ago") on return.
 
+### Owner's list, 2026-10-06 night (in the order proposed)
+
+N. **Asset register, back, with a proper UI** — the owner's own assets (vessels by MMSI/IMO, aircraft by
+   ICAO, vehicles, factories, offices, ports, airports, power stations, people…). Per asset: which signals
+   matter most, how events affect it, what could affect it next, what measures to take. NB the existing
+   `assets` table (database.py `Asset`, 0 rows) is a sourced infrastructure catalogue, not "our assets" —
+   decide whether to extend it or add an owned-assets table. Per-user profile blocker below still applies.
+O. **3D illustrations of asset types**, high detail, slowly turning (vessel types, vehicles, aircraft,
+   factory, office, people, port, airport, substation, power plant…). Approach to agree with the owner.
+P. **Insight "what changed"** does not answer "what changed" — rework.
+Q. **Generate and the interactive reader** — new UI in the current look.
+R. **Crucible** — the owner asks what it does; decide keep/fold/remove.
+S. **Desk as a social feed** ("like a Twitter brief"): share briefings, signals, posts, Telegram videos,
+   images; see the author, post, comment, like with a check mark.
+T. **Prepare for server integration** (no deploy — local commits only): config, storage, media on server (M).
+U. Then **rework the whole frontend UI**.
+V. Telegram video object detection — parked by the owner 2026-10-06 ("not for now").
+
 ### UI design direction (agreed 2026-10-05)
 Professional and sleek, modern, solid; the owner likes the big headlines.
 1. One set of rules: type scale, spacing, ONE heading style
