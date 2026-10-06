@@ -18,9 +18,9 @@ function toJulianDay(date) {
     return date.getTime() / 86400000 + 2440587.5
 }
 
-/** Real solar elevation angle in degrees for a given real lat/lon (degrees)
- * and real Date (any real timezone — computed in UTC internally). */
-export function solarElevationDeg(lat, lon, date = new Date()) {
+/** The sun's elevation and azimuth (degrees; azimuth clockwise from true
+ * north) for a real lat/lon and Date — NOAA's formulas, computed in UTC. */
+export function sunPosition(lat, lon, date = new Date()) {
     const jd = toJulianDay(date)
     const T = (jd - 2451545.0) / 36525.0
 
@@ -74,7 +74,28 @@ export function solarElevationDeg(lat, lon, date = new Date()) {
         + Math.cos(latRad) * Math.cos(declRad) * Math.cos(haRad)
     const zenith = Math.acos(Math.max(-1, Math.min(1, cosZenith))) * DEG
 
-    return 90 - zenith
+    // Azimuth, NOAA's form: from the zenith angle and the declination,
+    // folded by the hour angle (morning sun east, afternoon sun west).
+    const zr = zenith * RAD
+    let azimuth = 0
+    const den = Math.cos(latRad) * Math.sin(zr)
+    if (Math.abs(den) > 1e-9) {
+        const c = Math.max(-1, Math.min(1, (Math.sin(latRad) * Math.cos(zr) - Math.sin(declRad)) / den))
+        const a = Math.acos(c) * DEG
+        azimuth = hourAngle > 0 ? (a + 180) % 360 : (540 - a) % 360
+    }
+    return { elevation: 90 - zenith, azimuth }
+}
+
+/** Real solar elevation angle in degrees for a given real lat/lon (degrees)
+ * and real Date (any real timezone — computed in UTC internally). */
+export function solarElevationDeg(lat, lon, date = new Date()) {
+    return sunPosition(lat, lon, date).elevation
+}
+
+/** The sun's azimuth, degrees clockwise from true north. */
+export function solarAzimuthDeg(lat, lon, date = new Date()) {
+    return sunPosition(lat, lon, date).azimuth
 }
 
 // Real civil-twilight band — standard astronomical definition (civil dawn/

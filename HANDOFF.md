@@ -229,7 +229,7 @@ C. FIRMS heat inside areas of interest → notification asking "Investigate? / S
 D. Notifications fire for new alerts even when the layer is toggled off.
 E. Detection stability (same pass, different tile cut: 38 vs 15 tanks) and the fusion engine's rules
    (2.5° cell × 60 h co-occurrence is too loose).
-F. Localizer workbench: place suggestions (country-restricted, OCR, satellite compare), shadow
+F. DONE 2026-10-06: Locate workbench (src/locate/, backend/locate.py) — "Locate" on a Telegram post: model reads frame clues, geocoder places them in-country, Esri compare + pin; shadow → time windows; road/frame arrow → heading; saved placement moves the pin. Was: place suggestions (country-restricted, OCR, satellite compare), shadow
    chronolocation (solarPosition.js), vehicle direction.
 G. Asset registry; per-user profile (Blocker below). Telegram roles for newly joined channels
    (Middle_East_Spectator, InfosAes, liil050, sh_almoqawamma).

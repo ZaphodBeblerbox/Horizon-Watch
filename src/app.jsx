@@ -1,4 +1,5 @@
 import UpdateBanner from "./desktop/UpdateBanner.jsx"
+import LocateWorkbench from "./locate/LocateWorkbench.jsx"
 import Tutorial from "./ui/Tutorial.jsx"
 import ScreenCapture, { saveCapture } from "./capture/ScreenCapture.jsx"
 import { toast } from "./ui/toast.js"
@@ -1617,6 +1618,14 @@ export default function App() {
         return () => window.removeEventListener("akili:imagery-open-scene", h)
     }, [openTab])
 
+    // The Locate workbench, over everything, for one Telegram post.
+    const [locatePost, setLocatePost] = useState(null)
+    useEffect(() => {
+        const h = (e) => { if (e.detail?.post) setLocatePost(e.detail.post) }
+        window.addEventListener("akili:locate", h)
+        return () => window.removeEventListener("akili:locate", h)
+    }, [])
+
     // Reverse direction — real deep links from non-map destinations (e.g.
     // NewsPage's "jump to location", Watchlists' entity chips) need the map
     // tab open before the akili:fly-to / akili:show-entity events they fire
@@ -1942,6 +1951,7 @@ export default function App() {
             <Tutorial />
             <UpdateBanner />
             <ToastHost />
+            {locatePost && <LocateWorkbench post={locatePost} onClose={() => setLocatePost(null)} />}
             <NotificationStack
                 onOpen={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
                     openTab("situation")

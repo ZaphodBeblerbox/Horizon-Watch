@@ -11948,6 +11948,47 @@ async def api_telegram_video(chan: str, msg_id: int):
     return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "max-age=1800"})
 
 
+@app.post("/api/telegram/located")
+async def api_telegram_located(request: Request):
+    """An analyst's placement from the Locate workbench: where the post was
+    filmed (moves its pin), when (from the shadows) and which way things
+    moved. {channel, msg_id, located: {...} | null}."""
+    import telegram_ingest as _tg
+    user = _require_current_user(request)
+    body = await request.json()
+    chan, mid = str(body.get("channel") or ""), body.get("msg_id")
+    if not re.fullmatch(r"[A-Za-z0-9_/]{3,64}", chan) or not str(mid).isdigit():
+        raise HTTPException(400, "bad post")
+    loc = body.get("located")
+    if loc is not None:
+        loc = {**loc, "by": user.get("display_name") or user.get("email"), "at": datetime.now(timezone.utc).isoformat()}
+    try:
+        ok = await asyncio.get_event_loop().run_in_executor(_executor, _tg.set_located, chan, int(mid), loc)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(404, "no such post")
+    return {"ok": True, "located": loc}
+
+
+@app.post("/api/locate/suggest")
+async def api_locate_suggest(request: Request):
+    """Places a frame may have been filmed at: the vision model reads the
+    clues, the geocoder resolves them inside the post's country (locate.py).
+    {image_b64, text?, country_code?, place?, lat?, lon?}"""
+    import locate as _loc
+    _require_current_user(request)
+    body = await request.json()
+    img = str(body.get("image_b64") or "")
+    if img.startswith("data:"):
+        img = img.split(",", 1)[-1]
+    if not img or len(img) > 8_000_000:
+        raise HTTPException(400, "a frame is needed (under ~6 MB)")
+    near = {"lat": body.get("lat"), "lon": body.get("lon")} if body.get("lat") is not None else None
+    return await asyncio.get_event_loop().run_in_executor(
+        _executor, lambda: _loc.suggest(img, body.get("text") or "", body.get("country_code"), body.get("place"), near))
+
+
 @app.get("/api/telegram/status")
 def api_telegram_status():
     import telegram_ingest as _tg

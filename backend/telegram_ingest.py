@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS telegram_posts (
     PRIMARY KEY (channel, msg_id)
 )"""
 EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": "TEXT", "claim": "INTEGER",
-                 "first_hand": "INTEGER"}
+                 "first_hand": "INTEGER", "located": "TEXT"}
 
 # What each channel is (telegram_channels.json). Unlisted = aggregator.
 CHANNELS_FILE = os.path.join(HERE, "telegram_channels.json")
@@ -272,7 +272,7 @@ def locate(place: str, precision: str, country_code: str) -> tuple[dict | None, 
         return None, f"place too vague to pin ({precision or 'none'})"
     if not place or not country_code:
         return None, "no named place"
-    from geocode_utils import geocode_place
+    from geocode_utils import geocode_place, prefer_settlement
     cc = country_code.lower()
     parts = [p.strip() for p in place.split(",") if p.strip()]
     # The full form first, then the named place with only its country:
@@ -283,6 +283,7 @@ def locate(place: str, precision: str, country_code: str) -> tuple[dict | None, 
     for q in tries:
         hits = [h for h in geocode_place(q, expected_country_codes=[cc]) if (h.get("country_code") or "").lower() == cc]
         if hits:
+            hits = prefer_settlement(hits)
             break
     if not hits:
         return None, f"'{place}' did not resolve inside {country_code.upper()}"
@@ -444,17 +445,19 @@ def published(hours: int = 72) -> list[dict]:
     # A party's own claim is a STATEMENT, not a pin (statements()): an
     # official channel's "we struck X" is cited and notified, never drawn as
     # if someone on the ground had filmed it.
-    rows = con.execute("SELECT * FROM telegram_posts WHERE lat IS NOT NULL AND posted_at >= ?"
+    rows = con.execute("SELECT * FROM telegram_posts WHERE (lat IS NOT NULL OR located IS NOT NULL) AND posted_at >= ?"
                        " AND NOT (role = 'official' AND claim = 1) ORDER BY posted_at DESC",
                        (cutoff,)).fetchall()
     con.close()
     out, seen = [], {}
     for r in rows:
         chan = r["channel"]
+        loc = _located(r["located"])
+        lat, lon = (loc["lat"], loc["lon"]) if loc else (r["lat"], r["lon"])
         # ONE EVENT, ONE PIN. Channels post a claim as several messages and
         # others repost it; the same headline at the same place on the same
         # day is one event, shown once, with who else carried it.
-        key = ((r["headline"] or "").strip().lower(), round(r["lat"], 2), round(r["lon"], 2), r["posted_at"][:10])
+        key = ((r["headline"] or "").strip().lower(), round(lat, 2), round(lon, 2), r["posted_at"][:10])
         if key in seen:
             first = seen[key]
             label = r["channel_title"] or chan
@@ -467,7 +470,10 @@ def published(hours: int = 72) -> list[dict]:
             "id": f"tg-{chan}-{r['msg_id']}", "headline": r["headline"], "text": r["text"],
             "channel": chan, "channel_title": r["channel_title"], "posted_at": r["posted_at"],
             "event_type": r["event_type"], "place": r["place"], "precision": r["precision"],
-            "country_code": r["country_code"], "lat": r["lat"], "lon": r["lon"], "geocoded_as": r["geocoded_as"],
+            "country_code": r["country_code"], "lat": lat, "lon": lon, "geocoded_as": r["geocoded_as"],
+            # Placed by an analyst in the Locate workbench: where it was
+            # filmed, when (from the shadows), and which way things moved.
+            "located": loc,
             "media": r["media"], "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
             "url": None if chan.startswith("c/") else f"https://t.me/{chan}/{r['msg_id']}",
             "also_reported_by": [],
@@ -480,6 +486,31 @@ def published(hours: int = 72) -> list[dict]:
         })
         seen[key] = out[-1]
     return out
+
+
+def _located(raw) -> dict | None:
+    try:
+        d = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) and d.get("lat") is not None and d.get("lon") is not None else None
+
+
+LOCATED_FIELDS = ("lat", "lon", "filmed_from", "filmed_to", "heading_deg", "heading_basis", "note", "by", "at",
+                  "sun_elevation_deg", "method")
+
+
+def set_located(chan: str, msg_id: int, located: dict | None) -> bool:
+    """Store (or clear, with None) where an analyst found a post was filmed."""
+    if located is not None:
+        located = {k: located.get(k) for k in LOCATED_FIELDS if located.get(k) is not None}
+        if not (-90 <= float(located.get("lat", 999)) <= 90 and -180 <= float(located.get("lon", 999)) <= 180):
+            raise ValueError("lat/lon out of range")
+    con = _con()
+    cur = con.execute("UPDATE telegram_posts SET located=? WHERE channel=? AND msg_id=?",
+                      (json.dumps(located) if located else None, chan, int(msg_id)))
+    con.commit(); con.close()
+    return cur.rowcount > 0
 
 
 # Worth interrupting for: a party claiming it struck, attacked, intercepted

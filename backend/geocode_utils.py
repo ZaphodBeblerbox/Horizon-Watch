@@ -184,3 +184,16 @@ def is_geocode_cached(
     key = _make_cache_key(query, expected_country_codes, region_bias, bounds)
     with _cache_lock:
         return key in _cache
+
+
+SETTLEMENT_TYPES = {"city", "town", "village", "hamlet", "suburb", "neighbourhood", "quarter", "locality", "isolated_dwelling"}
+
+
+def prefer_settlement(hits: list[dict]) -> list[dict]:
+    """A town and its province often share a name (Kidal, Hodeidah, Taiz,
+    Idlib), and the geocoder may rank the province first — its centroid is
+    167 km from Kidal town, in open desert. When a post names a town, the
+    settlement comes first; the order is otherwise kept."""
+    def rank(h):
+        return 0 if (h.get("class") == "place" and h.get("type") in SETTLEMENT_TYPES) else 1
+    return sorted(hits, key=rank)

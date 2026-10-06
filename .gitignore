@@ -74,6 +74,7 @@ backend/data/akili.db.prepruned*
 backend/data/enrichment_cache.json
 backend/data/gdelt_judgements.json
 backend/data/scene_notes.json
+backend/data/locate_suggestions.json
 backend/data/zone_context.json
 backend/data/imagery_cache/
 
