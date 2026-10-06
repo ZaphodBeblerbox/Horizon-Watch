@@ -338,16 +338,12 @@ input[type="range"]::-moz-range-thumb {
    Geography is the one surface that can afford to be covered, so the stack
    clears --pane-r horizontally and --strip-h vertically. Off the map, and
    when the right rail is collapsed, it reclaims that space. */
+/* Toasts sit where notification cards sit — see #notifstack. */
 .toast-stack {
     position: fixed;
-    right: calc(var(--pane-r) + 12px);
-    bottom: calc(var(--status) + var(--strip-h) + 12px);
-    z-index: 10002; display: flex; flex-direction: column; gap: 8px;
-    transition: right .24s var(--ease), bottom .2s var(--ease);
+    top: var(--notif-top, 136px); left: 50%; transform: translateX(-50%);
+    z-index: 10002; display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
-/* Same correction as #notifstack above — see the note there. */
-html:not(:has(#timestrip)) .toast-stack { right: 12px; }
-html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) .toast-stack { right: 42px; }
 .toast {
     display: flex; align-items: center; gap: 8px; padding: 8px 12px;
     background: var(--bg-3); border: 1px solid var(--line-strong); border-radius: var(--r);
@@ -408,45 +404,19 @@ html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) .toast-stac
    bell and lands in the tray. A console that shouts at every event trains
    people to dismiss without reading, which loses the one notification that
    mattered. */
+/* ONE PLACE, CENTRED UNDER THE TABS (owner, 2026-10-06). The stack used to
+   move between corners depending on which panes were open, and still landed
+   on panels, Share and the inspector's headline. The centre of the window,
+   just below the tab bar and the map's toolbar row, is the one spot that
+   never holds a panel on any screen — the panes live at the edges. Cards
+   slide down into it and back up out of it. */
+:root { --notif-top: 92px; }
+html:has(.annobar) { --notif-top: 136px; }   /* below the map's toolbar row */
 #notifstack {
     position: fixed;
-    right: calc(var(--pane-r) + 12px);          /* the map channel */
-    bottom: calc(var(--status) + var(--strip-h) + 12px);   /* clears the strip */
+    top: var(--notif-top); left: 50%; transform: translateX(-50%);
     z-index: 88; display: flex; flex-direction: column; gap: 8px;
-    align-items: flex-end; pointer-events: none;   /* .ncard re-enables */
-    transition: right .24s var(--ease), bottom .2s var(--ease);
-}
-/* These were keyed to #view-map.active / .panes.min-r — NEITHER OF WHICH
-   EXISTS IN THIS APP. The consequence was not cosmetic: the :not() rule
-   therefore matched ALWAYS, pinning the stack to right:12px on every screen
-   including Situation, which is §5.4's named failure — "moving the stack up
-   only relocates the collision onto the inspector; the viewport's right edge
-   is permanently occupied by a pane. The stack belongs in the map channel:
-   geography is the one surface that can afford to be covered."
-
-   #timestrip is the real "this is the map view" signal (§11's strip exists
-   only there), and the Inspector pane's own test id is the real "the pane is
-   open" signal — when it is minimised Situation renders a .panetab instead. */
-html:not(:has(#timestrip)) #notifstack { right: 12px; }
-/* OFF THE MAP, NOTIFICATIONS GO TO THE TOP. The rule above put them at the
-   bottom-right everywhere, which on the map is the right answer — geography
-   can afford to be covered. In Workstation the bottom-right of the screen
-   is the document you are writing in and the file tree you are picking
-   from, so a card landed in the middle of the work. Top-right is the one
-   corner of an editing surface that holds nothing. */
-html:not(:has(#timestrip)) #notifstack {
-    top: calc(var(--top, 44px) + 12px);
-    bottom: auto;
-    flex-direction: column;
-}
-/* WITH THE INSPECTOR OPEN, NEVER ON IT. "No time strip" was read as "off
-   the map", so with the strip closed a card went top-right — onto the
-   inspector's headline and the Share button. While the inspector is open the
-   card sits bottom-right, in the map channel just left of it. */
-html:has([data-testid="glass-inspector-pane"]) #notifstack {
-    top: auto;
-    bottom: calc(var(--status, 0px) + var(--strip-h, 0px) + 24px);
-    right: calc(var(--pane-r, 312px) + 24px);
+    align-items: center; pointer-events: none;   /* .ncard re-enables */
 }
 
 /* One card at a time, arriving and leaving under its own power rather than
@@ -456,8 +426,8 @@ html:has([data-testid="glass-inspector-pane"]) #notifstack {
     animation: ncard-in .22s var(--ease) both;
 }
 .ncard-slot.leaving { animation: ncard-out .22s var(--ease) both; }
-@keyframes ncard-in  { from { opacity: 0; transform: translateX(14px) } to { opacity: 1; transform: none } }
-@keyframes ncard-out { from { opacity: 1; transform: none } to { opacity: 0; transform: translateX(14px) } }
+@keyframes ncard-in  { from { opacity: 0; transform: translateY(-12px) } to { opacity: 1; transform: none } }
+@keyframes ncard-out { from { opacity: 1; transform: none } to { opacity: 0; transform: translateY(-12px) } }
 @media (prefers-reduced-motion: reduce) {
     .ncard-slot, .ncard-slot.leaving { animation: none }
 }
@@ -465,11 +435,10 @@ html:has([data-testid="glass-inspector-pane"]) #notifstack {
     font: 400 10px var(--font); color: var(--txt-4);
     padding: 2px 6px; user-select: none;
 }
-html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) #notifstack { right: 42px; }
 
 .ncard {
     display: block;
-    width: min(326px, calc(100vw - var(--pane-l) - var(--pane-r) - 28px));
+    width: min(420px, calc(100vw - var(--pane-l) - var(--pane-r) - 80px));
     /* Solid for the same reason as .notiftray — --tr15 is rgba .9. */
     pointer-events: auto; background: var(--bg-2);
     border: 1px solid var(--line-strong); box-shadow: var(--shadow);

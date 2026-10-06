@@ -84,17 +84,11 @@ describe("no rule is keyed to a selector nothing carries", () => {
         expect(rules).not.toMatch(/\.panes\.min-r/)
     })
 
-    it("anchors them to elements that do exist", () => {
-        for (const sel of ["#notifstack", ".toast-stack"]) {
-            expect(css).toContain(`html:not(:has(#timestrip)) ${sel}`)
-            expect(css).toContain(`html:has(#timestrip):not(:has([data-testid="glass-inspector-pane"])) ${sel}`)
-        }
-        const sit = readFileSync(path.join(root, "src/destinations/Situation.jsx"), "utf8")
-        expect(sit).toMatch(/data-testid="glass-inspector-pane"/)
-    })
-
-    it("keeps the stack in the map channel by default (§5.4)", () => {
-        expect(css).toMatch(/#notifstack \{[^}]*right: calc\(var\(--pane-r\) \+ 12px\)/s)
-        expect(css).toMatch(/#notifstack \{[^}]*bottom: calc\(var\(--status\) \+ var\(--strip-h\) \+ 12px\)/s)
+    it("centres notifications and toasts under the tabs, in one place on every screen", () => {
+        expect(css).toMatch(/#notifstack \{[^}]*top: var\(--notif-top\)[^}]*left: 50%[^}]*translateX\(-50%\)/s)
+        expect(css).toMatch(/\.toast-stack \{[^}]*left: 50%/s)
+        // Never repositioned by which panes are open: that is how cards
+        // ended up on the inspector and on Share.
+        expect(css).not.toMatch(/glass-inspector-pane[^{]*#notifstack/)
     })
 })

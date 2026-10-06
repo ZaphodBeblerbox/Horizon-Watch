@@ -1024,8 +1024,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         bottom: "var(--pane-bottom)", zIndex: 25,
         width: "var(--pane-l)", border: "1px solid var(--gline)",
         display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
-        transform: entered ? "translateX(0)" : "translateX(-14px)",
-        opacity: entered ? 1 : 0,
+        // SLIDES, NEVER POPS (owner). Kept mounted; closed means off the
+        // left edge, not gone — so opening and closing are one motion.
+        transform: leftMin ? "translateX(calc(-100% - 24px))" : (entered ? "translateX(0)" : "translateX(-14px)"),
+        opacity: leftMin ? 0 : (entered ? 1 : 0),
+        transition: "transform 260ms cubic-bezier(.2,.8,.2,1), opacity 200ms ease",
+        pointerEvents: leftMin ? "none" : undefined,
     }
     const rightPaneStyle = {
         // Real shared token (index.html :root — "the map fit AND every map
@@ -1038,8 +1042,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         bottom: "var(--pane-bottom)", zIndex: 25,
         width: "var(--pane-r)", border: "1px solid var(--gline)",
         display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto",
-        transform: entered ? "translateX(0)" : "translateX(14px)",
-        opacity: entered ? 1 : 0,
+        transform: rightMin ? "translateX(calc(100% + 24px))" : (entered ? "translateX(0)" : "translateX(14px)"),
+        opacity: rightMin ? 0 : (entered ? 1 : 0),
+        transition: "transform 260ms cubic-bezier(.2,.8,.2,1), opacity 200ms ease",
+        pointerEvents: rightMin ? "none" : undefined,
     }
     // Real, dynamic clearance for the map's own bottom-right control stack
     // (zIndex 40, so it always stays clickable/visible above these panes)
@@ -1090,8 +1096,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                 noticing it. These panes are reached from the rail's tools
                 group now, which is where every other way into a surface
                 already lives. */}
-            {(asCanvas || leftMin) ? null : (
-            <div className="pane-glass" data-testid="glass-layers-pane" style={leftPaneStyle}>
+            {asCanvas ? null : (
+            <div className="pane-glass" data-testid="glass-layers-pane" data-open={!leftMin} aria-hidden={leftMin || undefined} style={leftPaneStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Layers</span>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1884,8 +1890,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
 
             {/* Right — Inspector (real frosted glass, see Layers pane comment above) */}
             {/* Same as the Layers tab above — reached from the rail. */}
-            {(asCanvas || rightMin) ? null : (
-            <div className="pane-glass" data-testid="glass-inspector-pane" style={rightPaneStyle}>
+            {asCanvas ? null : (
+            <div className="pane-glass" data-testid="glass-inspector-pane" data-open={!rightMin} aria-hidden={rightMin || undefined} style={rightPaneStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
                     <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Inspector</span>
                     <button onClick={() => setRightMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>

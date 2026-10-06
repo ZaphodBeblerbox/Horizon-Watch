@@ -22,6 +22,8 @@ import { useChrome } from "../state/useChrome.js"
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
+
+const TIMELINE_START = "2022-01-01"
 import { publishArchiveState } from "../state/archiveState.js"
 import { fetchWithTimeout } from "../utils/fetchWithTimeout.js"
 import {
@@ -78,13 +80,32 @@ export default function TimeStrip({
     endDate = null,
     onEndDateChange,
 }) {
-    const [face, setFace] = useState("density")
+    // The timeline, always (owner: "event density is useless"). The density
+    // face's code stays below, unreachable, until it is removed for good.
+    const [face, setFace] = useState("timeline")
     // Collapsed the strip keeps its header row, so the face buttons and the
     // collapse control stay reachable; only the chart body goes. --strip-h
     // follows the .collapsed class (index.html), so the panes and the
     // notification stack reclaim the space rather than leaving a gap where
     // the chart used to be.
-    const [stripOpen, toggleStrip] = useChrome("timeStrip")
+    // Opening the strip opens it — no second collapse control inside it.
+    const stripOpen = true
+    void useChrome
+    // THE PANES CLEAR THE STRIP'S REAL HEIGHT. --strip-h was a fixed 76px
+    // while the timeline face is 150px, so the strip slid under both side
+    // panels. Measured and published on the root, so every consumer of
+    // --pane-bottom follows it.
+    const stripRef = useRef(null)
+    useEffect(() => {
+        const el = stripRef.current
+        if (!el || typeof ResizeObserver === "undefined") return undefined
+        const root = document.documentElement
+        const set = () => root.style.setProperty("--strip-h", `${Math.round(el.getBoundingClientRect().height)}px`)
+        set()
+        const ro = new ResizeObserver(set)
+        ro.observe(el)
+        return () => { ro.disconnect(); root.style.removeProperty("--strip-h") }
+    }, [])
     const [range, setRange] = useState(null)      // { min_date, max_date }
     const [rows, setRows] = useState([])          // histogram buckets, with categories
     const [loadError, setLoadError] = useState(false)
@@ -102,7 +123,14 @@ export default function TimeStrip({
         const q = theatreKey ? `?theatre=${encodeURIComponent(theatreKey)}` : ""
         fetchWithTimeout(`${API_BASE}/api/geoconfirmed/date-range${q}`)
             .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (!cancelled) { setRange(d?.min_date ? d : null); setLoadError(!d?.min_date) } })
+            // FROM 2022 (owner). The archive reaches back to 2013, which
+            // squeezed the years that matter into the right-hand edge.
+            .then((d) => {
+                if (cancelled) return
+                const ok = d?.min_date
+                setRange(ok ? { ...d, min_date: d.min_date < TIMELINE_START ? TIMELINE_START : d.min_date } : null)
+                setLoadError(!ok)
+            })
             .catch(() => { if (!cancelled) setLoadError(true) })
         return () => { cancelled = true }
     }, [face, theatreKey])
@@ -219,29 +247,8 @@ export default function TimeStrip({
         : `${zulu(nowMs - windowHours * 3600000)} → ${zulu(nowMs)}`
 
     return (
-        <div className={`timestrip${stripOpen ? "" : " collapsed"}`} id="timestrip">
+        <div ref={stripRef} className={`timestrip${stripOpen ? "" : " collapsed"}`} id="timestrip">
             <div className="head">
-                <button type="button" onClick={toggleStrip}
-                        aria-expanded={stripOpen}
-                        title={stripOpen ? "Collapse the time strip" : "Expand the time strip"}
-                        aria-label={stripOpen ? "Collapse the time strip" : "Expand the time strip"}
-                        style={{
-                            width: 20, height: 20, marginRight: 6, flexShrink: 0, padding: 0,
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            background: "transparent", border: "none", color: "var(--txt-3)", cursor: "pointer",
-                        }}>
-                    <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"
-                         style={{ transform: stripOpen ? "none" : "rotate(180deg)" }}>
-                        <path d="M1.5 6.5 L5 3 L8.5 6.5" fill="none" stroke="currentColor"
-                              strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                </button>
-                <div className="seg" id="strip-mode">
-                    <button type="button" data-s="density" aria-pressed={face === "density"}
-                            onClick={() => setFace("density")}>event density</button>
-                    <button type="button" data-s="timeline" aria-pressed={face === "timeline"}
-                            onClick={() => setFace("timeline")}>timeline</button>
-                </div>
                 <span className="lbl" id="strip-range">{rangeLabel}</span>
                 <div className="right" id="strip-tools">
                     {/* §11.1 — in archive face this holds ONLY the source tag.

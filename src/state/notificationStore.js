@@ -230,3 +230,10 @@ export function __resetNotifications() {
     state.items = []; state.cards = []; state.muted = false
     notify()
 }
+
+// Any part of the app (or a test) can raise a card without importing this
+// module: window.dispatchEvent(new CustomEvent("akili:notify", { detail })).
+if (typeof window !== "undefined" && !window.__plxNotifyBound) {
+    window.__plxNotifyBound = true
+    window.addEventListener("akili:notify", (e) => { if (e?.detail) pushNotification(e.detail) })
+}
