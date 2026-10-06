@@ -127,13 +127,14 @@ def test_a_name_anywhere_in_the_bundle_beats_a_coordinate():
 
 
 def test_coordinates_are_used_when_nothing_is_named():
+    # At sea the water is named and the point kept.
     e = _bare_engine()
-    assert e._best_location_name([{"lat": 33.25, "lon": 134.25}]) == "33.25°N 134.25°E"
+    assert e._best_location_name([{"lat": 33.25, "lon": 134.25}]).endswith("33.25°N 134.25°E")
 
 
 def test_the_southern_and_western_hemispheres_are_not_negative_degrees():
     e = _bare_engine()
-    assert e._best_location_name([{"lat": -33.9, "lon": -18.4}]) == "33.90°S 18.40°W"
+    assert e._best_location_name([{"lat": -33.9, "lon": -18.4}]).endswith("33.90°S 18.40°W")
 
 
 def test_genuinely_unlocated_still_says_so():
@@ -146,7 +147,7 @@ def test_genuinely_unlocated_still_says_so():
 def test_an_unparseable_coordinate_is_skipped_not_crashed_on():
     e = _bare_engine()
     assert e._best_location_name(
-        [{"lat": "n/a", "lon": "n/a"}, {"lat": 10.0, "lon": 20.0}]) == "10.00°N 20.00°E"
+        [{"lat": "n/a", "lon": "n/a"}, {"lat": 10.0, "lon": 20.0}]) == "Chad · 10.00°N 20.00°E"
 
 
 # ── never "Unknown Location" ────────────────────────────────────────────
@@ -175,7 +176,7 @@ def test_a_signal_name_still_beats_the_key():
 def test_a_signal_position_beats_a_country_key():
     # A point is more use than a country, when both are known.
     e = _bare_engine()
-    assert e._best_location_name([{"lat": 33.25, "lon": 134.25}], "CTY:mx") == "33.25°N 134.25°E"
+    assert e._best_location_name([{"lat": 33.25, "lon": 134.25}], "CTY:mx").endswith("33.25°N 134.25°E")
 
 
 def test_the_markers_for_no_place_are_still_honest():
@@ -190,3 +191,13 @@ def test_an_unknown_country_code_is_not_invented():
     # "zz" is not a country. Returning the bare code is honest; inventing a
     # name would not be.
     assert e._best_location_name([{}], "CTY:zz") == "ZZ"
+
+
+
+def test_an_area_signal_does_not_drag_the_position_inland():
+    # A GPS-jamming cell centre averaged with a vessel at sea put the
+    # fusion in inland Poland; the vessel's position is the fusion's.
+    e = _bare_engine()
+    lat, lon = e._centroid([{"domain": "AIS", "lat": 54.5, "lon": 13.0},
+                            {"domain": "GPS", "lat": 52.25, "lon": 14.25}])
+    assert (lat, lon) == (54.5, 13.0)

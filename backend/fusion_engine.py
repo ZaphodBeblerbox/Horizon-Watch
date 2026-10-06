@@ -115,6 +115,9 @@ SIGNAL_LOG_INTERVAL_S = 30
 _NARRATIVE_OFF_REPORTED = False
 
 
+_COORDISH = re.compile(r"^\s*-?\d+(\.\d+)?°\s*[NS]")
+
+
 def _coord_name(lat, lon) -> str | None:
     """A position as something a person reads, or None if there is none."""
     if lat is None or lon is None:
@@ -589,8 +592,32 @@ class FusionEngine:
         be one. It is the truth, and an analyst can act on it.
         """
         for s in signals:
-            if s.get("location_name"):
+            if s.get("location_name") and not _COORDISH.match(str(s["location_name"])):
                 return s["location_name"]
+        # The waters or chokepoint it is in, named — the same describer the
+        # notifications use — before a bare coordinate.
+        lat, lon = self._centroid(signals)
+        if lat is not None:
+            try:
+                import geo_land
+                country = geo_land.country_at(lat, lon)
+                if country:
+                    coord = _coord_name(lat, lon)
+                    return f"{country} · {coord}" if coord else country
+            except Exception:                                # noqa: BLE001
+                pass
+            try:
+                import notification_context as _nc
+                d = _nc.describe_place(lat, lon)
+                water = d.get("chokepoint") or d.get("waters")
+                if water:
+                    # The water named, the point kept: "North Pacific" alone
+                    # is vaguer than the coordinate it replaced.
+                    water = re.sub(r"^the\s+", "", str(water), flags=re.I)
+                    coord = _coord_name(lat, lon)
+                    return f"{water} · {coord}" if coord else water
+            except Exception:                                # noqa: BLE001
+                pass
         for s in signals:
             name = _coord_name(s.get("lat"), s.get("lon"))
             if name:
@@ -614,7 +641,19 @@ class FusionEngine:
         return max(_haversine_km(lat0, lon0, lat, lon) for lat, lon in coords[1:])
 
     def _centroid(self, signals: list):
-        coords = [(s["lat"], s["lon"]) for s in signals if s.get("lat") is not None and s.get("lon") is not None]
+        # WHERE SOMETHING WAS SEEN, not where an area's centre is. A GPS
+        # interference signal is a 0.5° grid cell, its "position" the cell's
+        # middle; averaged with a vessel at sea it put "Sanctioned vessel
+        # VERA amid GPS jamming" at 52.25°N 14.25°E — inland Poland. Point
+        # observations decide the position; area signals only when alone.
+        def _xy(sig):
+            try:
+                return float(sig["lat"]), float(sig["lon"])
+            except (KeyError, TypeError, ValueError):
+                return None
+        pts = [s for s in signals if str(s.get("domain") or "").upper() != "GPS" and _xy(s)] \
+            or [s for s in signals if _xy(s)]
+        coords = [_xy(s) for s in pts]
         if not coords:
             return None, None
         return sum(c[0] for c in coords) / len(coords), sum(c[1] for c in coords) / len(coords)
