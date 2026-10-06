@@ -29,7 +29,7 @@ import { checkSession, subscribeAuth, isAuthTransientError, canLoginOffline, get
 import { reconcileTheme, getThemeMode, setThemeMode } from "./state/themeStore.js"
 import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from "./state/settingsStore.js"
 import CommandPalette from "./components/CommandPalette.jsx"
-import SettingsModal from "./components/SettingsModal.jsx"
+import Settings from "./destinations/Settings.jsx"
 // Workstation round, Part 8 — importing this for its module-level
 // registerInspectorExtension() side effect (see the file's own comment).
 // Not referenced directly here; every real surface that calls
@@ -64,7 +64,7 @@ const MODULE_TO_TAB_TYPE = {
     situation: "situation", dossiers: "dossiers", generate: "generate",
     replay: "replay", ontology: "ontology", imagery: "imagery",
     forecast: "forecast", cases: "cases", caseWork: "work", team: "team", editor: "editor",
-    chat: "chat", desk: "desk",
+    chat: "chat", desk: "desk", settings: "settings",
 }
 /* Reverse, so the rail lights the right button for whatever tab is open.
    Forecast resolves to `analytics` because Insight is one surface with
@@ -130,7 +130,7 @@ const TAB_TYPE_TO_MODULE = {
     briefings: "briefings", analytics: "analytics", forecast: "analytics",
     sources: "assets", aiCouncil: "fusion", cases: "work",
     dossiers: "dossiers", generate: "generate", replay: "replay",
-    imagery: "imagery", team: "team", editor: "editor",
+    imagery: "imagery", team: "team", editor: "editor", settings: "settings",
 }
 // Mode, not modules (§7.1) — which real module keys a tab type routes to
 // belongs to which mode's rail. Opening a tab whose module is work-mode
@@ -219,7 +219,7 @@ const KNOWN_TAB_TYPES = new Set([
     "caseWork",
     // Reached from the rail's Account button; not a landing tab (see
     // NON_LANDING_TABS) because it is somewhere you go and then leave.
-    "profile", "home", "aiCouncil",
+    "profile", "home", "aiCouncil", "settings",
     // Messages, and the desk feed.
     "chat", "desk",
 ])
@@ -245,7 +245,7 @@ function defaultTabs() {
  */
 /** Modules you visit deliberately and leave — never the view the app
  *  opens on, however recently you were there. */
-const NON_LANDING_TABS = new Set(["team", "profile", "editor", "chat"])
+const NON_LANDING_TABS = new Set(["team", "profile", "editor", "chat", "settings"])
 
 function loadTabsFromStorage() {
     try {
@@ -1186,7 +1186,7 @@ export default function App() {
     // Redesign Round 2 — command palette open state (the global ⌘K/1-7
     // keyboard handler lives further down, after openTab is declared).
     const [paletteOpen, setPaletteOpen] = useState(false)
-    const [settingsOpen, setSettingsOpen] = useState(false)
+    const [settingsSection, setSettingsSection] = useState(null)
 
     // One overlay at a time (PARALLAX spec §19), enforced centrally rather
     // than at each opener — an opener only knows about itself, which is how
@@ -1196,7 +1196,13 @@ export default function App() {
     const [trayOpen, setTrayOpen] = useState(false)
     useEffect(() => subscribeOverlay((cur) => {
         setPaletteOpen(cur === "overlay:palette")
-        setSettingsOpen(cur === "overlay:settings")
+        // Settings is a page now: whatever asks for the old dialog opens it.
+        if (cur === "overlay:settings") {
+            closeOverlay("overlay:settings")
+            setSettingsSection(window.__plxSettingsSection || null)
+            window.__plxSettingsSection = null
+            openTabRef.current?.("settings")
+        }
         setTrayOpen(cur === "overlay:tray")
     }), [])
 
@@ -1984,12 +1990,6 @@ export default function App() {
                 }}
                 onOpenReport={() => openTab("briefings")}
             />
-            {settingsOpen && (
-                <SettingsModal
-                    onClose={() => closeOverlay("overlay:settings")}
-                    onOpenSources={() => openTab("sources")}
-                />
-            )}
         <IconSprite />
             <PlxIcons />
 
@@ -2155,9 +2155,7 @@ export default function App() {
                            roster live together on one screen. */
                         onAccount={() => { setProfileSection(null); openTab("profile") }}
                         isSuperAdmin={!!getCurrentUser()?.is_super_admin}
-                        onHelp={() => openOverlay("overlay:settings")}
-                        feedsOk={systemHealth?.status === "operational"}
-                        feedsLabel={systemHealth?.detail || "7 feeds connected"}
+                        onSettings={() => { setSettingsSection(null); openTab("settings") }}
                     />
                 </>
             )}
@@ -2499,6 +2497,13 @@ export default function App() {
                 {tabs.some(t => t.type === "team") && (
                     <div style={modeLayer(activeTabType === "team")}>
                         <Team onClose={() => openTab("home")} />
+                    </div>
+                )}
+                {tabs.some(t => t.type === "settings") && (
+                    <div style={modeLayer(activeTabType === "settings")}>
+                        <Settings section={settingsSection} onClose={() => openTab("home")}
+                            onAccount={() => { setProfileSection(null); openTab("profile") }}
+                            onOpenSources={() => openTab("sources")} />
                     </div>
                 )}
                 {tabs.some(t => t.type === "profile") && (

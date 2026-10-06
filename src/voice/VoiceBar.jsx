@@ -34,6 +34,7 @@ import { places, a2ToA3 } from "./gazetteer.js"
 import { runVoiceActions } from "./runVoiceActions.js"
 import { logParse, markUndone } from "./voiceLog.js"
 import { isDictation, mayTakeFocus, isShortcutPassthrough } from "./voiceField.js"
+import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 
 const SETTLE_MS = 400
 // The last thing done, kept outside the component: a command that changes
@@ -44,7 +45,14 @@ const UNDO_MS = 6000
 
 const CHEAT = "say it plainly — search for Dubai · show me fires in Yemen · open Imagery · hide GDELT · what's going on in Sudan · zoom in"
 
-export default function VoiceBar({ active = true, floating = false }) {
+export default function VoiceBar({ active: activeProp = true, floating = false }) {
+    // Settings → Voice and AI: the bar off altogether, or rules only.
+    const [voiceCfg, setVoiceCfg] = useState(() => getSettings()?.voice || {})
+    useEffect(() => subscribeSettings((s) => setVoiceCfg(s?.voice || {})), [])
+    const active = activeProp && voiceCfg.enabled !== false
+    const useModel = voiceCfg.model !== false
+    const useModelRef = useRef(useModel)
+    useModelRef.current = useModel
     const input = useRef(null)
     const settle = useRef(null)
     const lastLen = useRef(0)
@@ -113,7 +121,7 @@ export default function VoiceBar({ active = true, floating = false }) {
            one to three steps the server has already checked against what
            the console can do. If it is unavailable, over budget, or finds
            nothing to do, the rules decide as before — offline still works. */
-        const guess = await interpretWithModel(text, ctx)
+        const guess = useModelRef.current ? await interpretWithModel(text, ctx) : null
         if (guess) {
             const out = await runVoiceActions({ ...result, actions: guess.actions, label: guess.label }, ctx)
             setState("idle")

@@ -28,14 +28,14 @@ function getAtPath(obj, path) {
     return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj)
 }
 
-function Toggle({ value, onChange }) {
+export function Toggle({ value, onChange }) {
     return (
         <button
             onClick={() => onChange(!value)}
             aria-pressed={value}
             style={{
-                width: 36, height: 20, borderRadius: "var(--r)", border: "none", flexShrink: 0,
-                background: value ? "var(--acc)" : "var(--bg-4)", cursor: "pointer", position: "relative",
+                width: 36, height: 20, borderRadius: 10, border: "1px solid var(--gline2)", flexShrink: 0,
+                background: value ? "var(--acchi)" : "var(--hov)", cursor: "pointer", position: "relative",
                 padding: 0, transition: "background 0.15s ease",
             }}
         >
@@ -47,19 +47,19 @@ function Toggle({ value, onChange }) {
     )
 }
 
-function Row({ label, hint, children }) {
+export function Row({ label, hint, children }) {
     return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-4)", padding: "var(--space-2) 0", borderBottom: "1px solid var(--line-soft)" }}>
-            <div style={{ minWidth: 0 }}>
-                <div style={{ font: "400 12.5px var(--font)", color: "var(--txt)" }}>{label}</div>
-                {hint && <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginTop: 2 }}>{hint}</div>}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, padding: "10px 0", borderBottom: "1px solid var(--gline)" }}>
+            <div style={{ minWidth: 0, maxWidth: 640 }}>
+                <div style={{ fontSize: 14, color: "var(--txt)" }}>{label}</div>
+                {hint && <div style={{ fontSize: 12, color: "var(--txt3)", marginTop: 3, lineHeight: 1.45 }}>{hint}</div>}
             </div>
             <div style={{ flexShrink: 0 }}>{children}</div>
         </div>
     )
 }
 
-function ChoiceGroup({ value, options, onChange }) {
+export function ChoiceGroup({ value, options, onChange }) {
     return (
         <div style={{ display: "flex", gap: 4 }}>
             {options.map(o => (
@@ -67,10 +67,10 @@ function ChoiceGroup({ value, options, onChange }) {
                     key={o.value}
                     onClick={() => onChange(o.value)}
                     style={{
-                        padding: "4px 10px", font: "400 11px var(--font)", cursor: "pointer",
-                        borderRadius: "var(--r)", border: "1px solid var(--line-strong)",
-                        background: value === o.value ? "var(--acc)" : "var(--bg-2)",
-                        color: value === o.value ? "#fff" : "var(--txt-2)",
+                        height: 28, padding: "0 12px", font: "inherit", fontSize: 12.5, cursor: "pointer",
+                        borderRadius: 0, border: `1px solid ${value === o.value ? "var(--acchi)" : "var(--gline2)"}`,
+                        background: value === o.value ? "var(--accdim)" : "transparent",
+                        color: value === o.value ? "var(--txt)" : "var(--txt2)",
                     }}
                 >
                     {o.label}
@@ -86,8 +86,8 @@ function Select({ value, options, onChange }) {
             value={value}
             onChange={(e) => onChange(e.target.value)}
             style={{
-                background: "var(--bg-2)", border: "1px solid var(--line-strong)", borderRadius: "var(--r)",
-                color: "var(--txt)", font: "400 11.5px var(--font)", padding: "4px 8px", cursor: "pointer",
+                background: "var(--glass2)", border: "1px solid var(--gline2)", borderRadius: 0,
+                color: "var(--txt)", font: "inherit", fontSize: 12.5, height: 30, padding: "0 8px", cursor: "pointer",
             }}
         >
             {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -95,9 +95,9 @@ function Select({ value, options, onChange }) {
     )
 }
 
-function SectionTitle({ children }) {
+export function SectionTitle({ children }) {
     return (
-        <div style={{ font: "700 10px var(--font)", color: "var(--acc-hi)", letterSpacing: "0.08em", textTransform: "uppercase", margin: "var(--space-4) 0 var(--space-2)" }}>
+        <div style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)", margin: "22px 0 4px" }}>
             {children}
         </div>
     )
@@ -145,13 +145,13 @@ function DayCycleLocation() {
         setNote("Cleared — the cycle uses your clock's time zone again.")
     }
     const btn = {
-        background: "none", border: "1px solid var(--line-strong)", borderRadius: "var(--r)",
-        color: "var(--txt-2)", font: "400 11px var(--font)", padding: "4px 8px", cursor: "pointer", whiteSpace: "nowrap",
+        background: "none", border: "1px solid var(--gline2)", borderRadius: "var(--r)",
+        color: "var(--txt2)", font: "400 11px var(--font)", padding: "4px 8px", cursor: "pointer", whiteSpace: "nowrap",
     }
     return (
-        <div style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--line-soft)" }}>
+        <div style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--gline)" }}>
             <div style={{ font: "400 12.5px var(--font)", color: "var(--txt)" }}>Where you are, for the day/night cycle</div>
-            <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginTop: 2, lineHeight: 1.5 }}>
+            <div style={{ font: "400 11px var(--font)", color: "var(--txt4)", marginTop: 2, lineHeight: 1.5 }}>
                 {saved
                     ? `Set to ${saved.label || `${saved.lat}°, ${saved.lon}°`}.`
                     : "Not set — the time of sunrise and sunset is estimated from your clock, and can be hours out far from mid-northern latitudes."}
@@ -164,12 +164,12 @@ function DayCycleLocation() {
                 <button style={btn} onClick={useDevice}>Use my location</button>
                 {saved && <button style={btn} onClick={clear}>Clear</button>}
             </div>
-            {note && <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", marginTop: 6 }}>{note}</div>}
+            {note && <div style={{ font: "400 11px var(--font)", color: "var(--txt3)", marginTop: 6 }}>{note}</div>}
         </div>
     )
 }
 
-function GeneralSection({ settings }) {
+export function GeneralSection({ settings }) {
     const user = getCurrentUser()
     const [timezone, setTimezone] = useState(user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
     const [tzSaving, setTzSaving] = useState(false)
@@ -219,7 +219,7 @@ function GeneralSection({ settings }) {
 }
 
 // ── Map & layers ─────────────────────────────────────────────────────────
-function MapLayersSection({ settings }) {
+export function MapLayersSection({ settings }) {
     return (
         <div>
             <SectionTitle>Globe</SectionTitle>
@@ -240,7 +240,7 @@ function MapLayersSection({ settings }) {
                 General. The real editor lives here now; theaters still carry
                 their own layers, applied when one is selected. */}
             <SectionTitle>Default layers</SectionTitle>
-            <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginBottom: "var(--space-2)" }}>
+            <div style={{ font: "400 11px var(--font)", color: "var(--txt4)", marginBottom: "var(--space-2)" }}>
                 What the map opens with. Also settable from the map: Layers → "save default".
                 Each theater can switch its own set on when you select it (edit the theater).
             </div>
@@ -257,7 +257,7 @@ import StartupLayersEditor from "./StartupLayersEditor.jsx"
 import Loading from "../ui/Loading.jsx"
 
 // ── Alerts ───────────────────────────────────────────────────────────────
-function AlertsSection({ settings, onOpenSources }) {
+export function AlertsSection({ settings, onOpenSources }) {
     const [rules, setRules] = useState(null)
     useEffect(() => {
         fetch(`${API_BASE}/api/rules`).then(r => r.ok ? r.json() : null).then(d => setRules(d?.rules || [])).catch(() => setRules([]))
@@ -296,11 +296,11 @@ function AlertsSection({ settings, onOpenSources }) {
                     options={[10, 15, 30, 60].map(s => ({ value: s, label: `${s}s` }))} />
             </Row>
             <SectionTitle>Detection rules</SectionTitle>
-            <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginBottom: "var(--space-2)" }}>
+            <div style={{ font: "400 11px var(--font)", color: "var(--txt4)", marginBottom: "var(--space-2)" }}>
                 Turn detection rules on or off. Create and edit them in Sources.
             </div>
             {rules === null && <Loading size={18} inline label="Loading" />}
-            {rules?.length === 0 && <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>No rules configured yet.</div>}
+            {rules?.length === 0 && <div style={{ font: "400 11px var(--font)", color: "var(--txt4)" }}>No rules configured yet.</div>}
             {/* Only rules that do something: an unwired rule's switch changed nothing. */}
             {rules?.filter((rule) => rule.wired).map(rule => (
                 <Row key={rule.id} label={rule.name} hint={rule.severity}>
@@ -308,7 +308,7 @@ function AlertsSection({ settings, onOpenSources }) {
                 </Row>
             ))}
             {onOpenSources && (
-                <button onClick={onOpenSources} style={{ marginTop: "var(--space-3)", background: "none", border: "none", color: "var(--acc-hi)", cursor: "pointer", font: "400 11.5px var(--font)", padding: 0 }}>
+                <button onClick={onOpenSources} style={{ marginTop: "var(--space-3)", background: "none", border: "none", color: "var(--acchi)", cursor: "pointer", font: "400 11.5px var(--font)", padding: 0 }}>
                     Manage rules in Sources →
                 </button>
             )}
@@ -344,17 +344,17 @@ function ConnectionHealth() {
     return (
         <div style={{ display: "flex", alignItems: "center", gap: 9,
                       padding: "var(--space-2) 0 var(--space-3)",
-                      borderBottom: "1px solid var(--line-soft)", marginBottom: "var(--space-3)" }}>
+                      borderBottom: "1px solid var(--gline)", marginBottom: "var(--space-3)" }}>
             <span style={{ width: 9, height: 9, borderRadius: "50%", background: s.dot, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
                 <div style={{ font: "600 12.5px var(--font)", color: "var(--txt)" }}>{s.word}</div>
-                <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)", marginTop: 2 }}>{s.text}</div>
+                <div style={{ font: "400 10.5px var(--font)", color: "var(--txt4)", marginTop: 2 }}>{s.text}</div>
             </div>
         </div>
     )
 }
 
-function SourcesSection() {
+export function SourcesSection() {
     const [sources, setSources] = useState(null)
     const load = useCallback(() => {
         fetch(`${API_BASE}/api/health/detailed`).then(r => r.ok ? r.json() : null).then(d => setSources(d?.data_sources || [])).catch(() => setSources([]))
@@ -365,22 +365,22 @@ function SourcesSection() {
         <div>
             <ConnectionHealth />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-2)" }}>
-                <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)" }}>
+                <div style={{ font: "400 11px var(--font)", color: "var(--txt4)" }}>
                     Real per-feed status — a stale feed shows stale with its real age, never silently as live.
                 </div>
-                <button onClick={load} style={{ background: "none", border: "1px solid var(--line-strong)", borderRadius: "var(--r)", color: "var(--txt-2)", cursor: "pointer", font: "400 11px var(--font)", padding: "3px 8px" }}>
+                <button onClick={load} style={{ background: "none", border: "1px solid var(--gline2)", borderRadius: "var(--r)", color: "var(--txt2)", cursor: "pointer", font: "400 11px var(--font)", padding: "3px 8px" }}>
                     Refresh
                 </button>
             </div>
             {sources === null && <Loading size={18} inline label="Loading" />}
             {sources?.map(src => (
-                <div key={src.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--line-soft)" }}>
+                <div key={src.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--gline)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <span style={{ width: 7, height: 7, borderRadius: "50%", background: STATUS_COLOR[src.status] || "var(--grey)", flexShrink: 0 }} />
                         <span style={{ font: "400 12.5px var(--font)", color: "var(--txt)" }}>{src.name}</span>
-                        <span style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)", marginLeft: "auto" }}>{timeAgo(src.last_fetch)}</span>
+                        <span style={{ font: "400 10.5px var(--font)", color: "var(--txt4)", marginLeft: "auto" }}>{timeAgo(src.last_fetch)}</span>
                     </div>
-                    <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)", marginTop: 2, marginLeft: 15 }}>
+                    <div style={{ font: "400 10.5px var(--font)", color: "var(--txt4)", marginTop: 2, marginLeft: 15 }}>
                         {src.status_label || src.status}
                         {src.cadence ? ` · ${src.cadence}` : ""}
                         {src.origin_class ? ` · evidence class ${src.origin_class}` : ""}
@@ -393,7 +393,7 @@ function SourcesSection() {
 }
 
 // ── Briefing ─────────────────────────────────────────────────────────────
-function BriefingSection({ settings }) {
+export function BriefingSection({ settings }) {
     return (
         <div>
             <SectionTitle>Refresh</SectionTitle>
@@ -406,7 +406,7 @@ function BriefingSection({ settings }) {
                 <input
                     value={getAtPath(settings, "briefing.classificationDefault") ?? "UNCLASSIFIED // FOR ANALYTICAL USE ONLY"}
                     onChange={(e) => updateSetting("briefing.classificationDefault", e.target.value)}
-                    style={{ background: "var(--bg-2)", border: "1px solid var(--line-strong)", borderRadius: "var(--r)", color: "var(--txt)", font: "400 11.5px var(--font)", padding: "4px 8px", width: 260 }}
+                    style={{ background: "var(--glass2)", border: "1px solid var(--gline2)", borderRadius: "var(--r)", color: "var(--txt)", font: "400 11.5px var(--font)", padding: "4px 8px", width: 260 }}
                 />
             </Row>
         </div>
@@ -414,20 +414,20 @@ function BriefingSection({ settings }) {
 }
 
 // ── Keyboard ─────────────────────────────────────────────────────────────
-function KeyboardSection() {
+export function KeyboardSection() {
     return (
         <div>
-            <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", marginBottom: "var(--space-2)" }}>
+            <div style={{ font: "400 11px var(--font)", color: "var(--txt4)", marginBottom: "var(--space-2)" }}>
                 Keyboard shortcuts.
             </div>
             {KEYBOARD_SHORTCUTS.map((s, i) => (
-                <div key={i} style={{ display: "flex", gap: "var(--space-3)", padding: "var(--space-2) 0", borderBottom: "1px solid var(--line-soft)", alignItems: "baseline" }}>
-                    <span style={{ font: "600 11px var(--mono)", color: "var(--txt)", background: "var(--bg-2)", border: "1px solid var(--line-strong)", borderRadius: "var(--r)", padding: "1px 6px", flexShrink: 0, whiteSpace: "nowrap" }}>
+                <div key={i} style={{ display: "flex", gap: "var(--space-3)", padding: "var(--space-2) 0", borderBottom: "1px solid var(--gline)", alignItems: "baseline" }}>
+                    <span style={{ font: "600 11px var(--mono)", color: "var(--txt)", background: "var(--glass2)", border: "1px solid var(--gline2)", borderRadius: "var(--r)", padding: "1px 6px", flexShrink: 0, whiteSpace: "nowrap" }}>
                         {s.keys}
                     </span>
                     <div style={{ minWidth: 0 }}>
-                        <div style={{ font: "400 12px var(--font)", color: "var(--txt-2)" }}>{s.action}</div>
-                        <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)" }}>{s.context}</div>
+                        <div style={{ font: "400 12px var(--font)", color: "var(--txt2)" }}>{s.action}</div>
+                        <div style={{ font: "400 10.5px var(--font)", color: "var(--txt4)" }}>{s.context}</div>
                     </div>
                 </div>
             ))}
@@ -436,13 +436,13 @@ function KeyboardSection() {
 }
 
 // ── About ────────────────────────────────────────────────────────────────
-function AboutSection() {
+export function AboutSection() {
     const version = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "—"
     return (
         <div>
             <div style={{ font: "600 14px var(--font)", color: "var(--txt)", marginBottom: 4 }}>Parallax</div>
-            <div style={{ font: "400 12px var(--font)", color: "var(--txt-3)", marginBottom: "var(--space-3)" }}>Trifecta Technologies</div>
-            <Row label="Version"><span style={{ font: "400 11.5px var(--mono)", color: "var(--txt-2)" }}>v{version}</span></Row>
+            <div style={{ font: "400 12px var(--font)", color: "var(--txt3)", marginBottom: "var(--space-3)" }}>Trifecta Technologies</div>
+            <Row label="Version"><span style={{ font: "400 11.5px var(--mono)", color: "var(--txt2)" }}>v{version}</span></Row>
         </div>
     )
 }
@@ -466,7 +466,7 @@ function AboutSection() {
  * here on purpose: creating a session or a view is something you do from the
  * surface it describes, where you can see what you are capturing.
  */
-function SessionsSection() {
+export function SessionsSection() {
     const [sessions, setSessions] = useState(null)
     const [busy, setBusy] = useState(null)
 
@@ -503,27 +503,27 @@ function SessionsSection() {
                 Deleting a session deletes the views inside it.
             </p>
             {sessions.map((s) => (
-                <div key={s.session_id} style={{ borderBottom: "1px solid var(--line-soft)", padding: "6px 0" }}>
+                <div key={s.session_id} style={{ borderBottom: "1px solid var(--gline)", padding: "6px 0" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>{s.name}</span>
-                        <span style={{ font: "9.5px var(--mono)", color: "var(--txt-4)" }}>
+                        <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt2)" }}>{s.name}</span>
+                        <span style={{ font: "9.5px var(--mono)", color: "var(--txt4)" }}>
                             {(s.views || []).length} view{(s.views || []).length === 1 ? "" : "s"}
                         </span>
                         <button type="button" disabled={busy === s.session_id}
                                 onClick={() => removeSession(s.session_id)}
-                                style={{ background: "none", border: 0, color: "var(--txt-4)", cursor: "pointer" }}>✕</button>
+                                style={{ background: "none", border: 0, color: "var(--txt4)", cursor: "pointer" }}>✕</button>
                     </div>
                     {(s.views || []).map((v) => (
                         <div key={v.view_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 2px 12px" }}>
-                            <span style={{ flex: 1, font: "400 11px var(--font)", color: "var(--txt-3)" }}>
+                            <span style={{ flex: 1, font: "400 11px var(--font)", color: "var(--txt3)" }}>
                                 {v.name}
                                 {viewExtraLabels(v).map((l) => (
-                                    <span key={l} style={{ font: "9.5px var(--mono)", color: "var(--txt-4)" }}> · {l}</span>
+                                    <span key={l} style={{ font: "9.5px var(--mono)", color: "var(--txt4)" }}> · {l}</span>
                                 ))}
                             </span>
                             <button type="button" disabled={busy === v.view_id}
                                     onClick={() => removeView(s.session_id, v.view_id)}
-                                    style={{ background: "none", border: 0, color: "var(--txt-4)", cursor: "pointer" }}>✕</button>
+                                    style={{ background: "none", border: 0, color: "var(--txt4)", cursor: "pointer" }}>✕</button>
                         </div>
                     ))}
                 </div>
@@ -572,7 +572,7 @@ export default function SettingsModal({ onClose, onOpenSources }) {
                     display: "flex", overflow: "hidden", fontFamily: "var(--font)",
                 }}
             >
-                <div style={{ width: 170, flexShrink: 0, background: "var(--bg-2)", borderRight: "1px solid var(--line)", padding: "var(--space-3) 0", overflowY: "auto" }}>
+                <div style={{ width: 170, flexShrink: 0, background: "var(--glass2)", borderRight: "1px solid var(--line)", padding: "var(--space-3) 0", overflowY: "auto" }}>
                     <div style={{ font: "700 11px var(--font)", color: "var(--txt)", padding: "0 var(--space-3) var(--space-3)" }}>Settings</div>
                     {SECTIONS.map(s => (
                         <button
@@ -581,8 +581,8 @@ export default function SettingsModal({ onClose, onOpenSources }) {
                             style={{
                                 display: "block", width: "100%", textAlign: "left", padding: "7px var(--space-3)",
                                 background: active === s.key ? "var(--bg-0)" : "transparent",
-                                borderLeft: active === s.key ? "2px solid var(--acc-hi)" : "2px solid transparent",
-                                border: "none", borderLeftWidth: 2, color: active === s.key ? "var(--txt)" : "var(--txt-3)",
+                                borderLeft: active === s.key ? "2px solid var(--acchi)" : "2px solid transparent",
+                                border: "none", borderLeftWidth: 2, color: active === s.key ? "var(--txt)" : "var(--txt3)",
                                 cursor: "pointer", font: "400 12px var(--font)",
                             }}
                         >
@@ -593,7 +593,7 @@ export default function SettingsModal({ onClose, onOpenSources }) {
                 <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-3) var(--space-4)", borderBottom: "1px solid var(--line)" }}>
                         <span style={{ font: "600 12.5px var(--font)", color: "var(--txt)" }}>{SECTIONS.find(s => s.key === active)?.label}</span>
-                        <button onClick={onClose} aria-label="Close settings" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 4 }}>
+                        <button onClick={onClose} aria-label="Close settings" style={{ background: "none", border: "none", color: "var(--txt3)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 4 }}>
                             ×
                         </button>
                     </div>

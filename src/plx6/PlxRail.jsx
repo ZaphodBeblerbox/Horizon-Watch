@@ -30,7 +30,7 @@ export const RAIL_HUE = {
     home: "#5B8DEF", map: "#2BB3A3", graph: "#9B7BE6", inbox: "#3FA7D6",
     desk: "#C08AD8", briefings: "#7F9CC4", analytics: "#4CAF7A", fusion: "#D16BA5",
     work: "#8FA3BF", layers: "#2BB3A3", imagery: "#7C9CE8", selection: "#9AA9BC",
-    timeline: "#4CAF7A", files: "#8FA3BF",
+    timeline: "#4CAF7A", files: "#8FA3BF", settings: "#9AA9BC",
 }
 
 /** The effective rail list — Part C marks `railModes` ▶ EFFECTIVE as the
@@ -110,10 +110,8 @@ export default function PlxRail({
     onSnapshot = () => {},
     onAccount = () => {},
     isSuperAdmin = false,
-    onHelp = () => {},
+    onSettings = () => {},
     initials = "GU",
-    feedsOk = true,
-    feedsLabel = "7 feeds connected",
 }) {
     // Reports stays lit while the document editor is open — they are one
     // surface with three tabs, not two destinations (A3).
@@ -199,19 +197,12 @@ export default function PlxRail({
                 )}
             </button>
 
-            <RailButton label="Help and shortcuts" icon="#g-help"
-                        active={false} onClick={onHelp} />
-
-            {/* Feed health, as one 8×8 square. The full picture lives in
-                Settings; this only ever answers "is anything coming in". */}
-            <span
-                title={feedsLabel} aria-label={feedsLabel}
-                style={{
-                    width: 8, height: 8, flex: "none", borderRadius: 0,
-                    background: feedsOk ? "var(--green)" : "var(--amber)",
-                    marginTop: 8,
-                }}
-            />
+            {/* SETTINGS, where the "?" was: it opened the same dialog under
+                a help icon nobody read as settings. Lit while the page is
+                open. The feed-health square that sat under it is gone — the
+                same thing, in full, is Settings → Feeds and health. */}
+            <RailButton label="Settings" icon="#g-gear" hue={RAIL_HUE.settings}
+                        active={mode === "settings"} onClick={onSettings} />
         </aside>
     )
 }
