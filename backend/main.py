@@ -18049,6 +18049,11 @@ def gdelt_map_points(limit: int = 500):
     try:
         events = _g.EVENTS_CACHE.get("events", []) or []
         points = _g.map_points(events)
+        # Judged per article by the cheap model: a real security event, and
+        # pinned once, where it happened (gdelt_judge.py).
+        import gdelt_judge as _gj
+        points, judged = _gj.filter_points(points)
+        points.sort(key=lambda p: -(p.get("mentions") or 0))
     except Exception as e:                                  # noqa: BLE001
         return JSONResponse({"error": f"{type(e).__name__}: {e}",
                              "points": [], "count": 0}, status_code=500)
@@ -18056,6 +18061,7 @@ def gdelt_map_points(limit: int = 500):
     return {
         "points": points,
         "count": len(points),
+        "judged": judged,
         "considered": len(events),
         "updated_at": _g.EVENTS_CACHE.get("updated_at"),
         # Stated in the payload so a client cannot present these at the same
