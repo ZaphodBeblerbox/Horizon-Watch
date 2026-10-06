@@ -5,7 +5,7 @@ import { useCesium } from "resium"
 import {
     Cartesian2, Cartesian3, Rectangle, Color, PolygonHierarchy,
     SingleTileImageryProvider, ColorMaterialProperty,
-    ClassificationType, LabelStyle, DistanceDisplayCondition, SplitDirection,
+    ClassificationType, LabelStyle, DistanceDisplayCondition, SplitDirection, SceneTransforms,
 } from "cesium"
 import { detectionCorners } from "./detectionShape.js"
 
@@ -33,7 +33,7 @@ function colorForDet(det) {
     return CHANGE_COLORS[det.type] || CATEGORY_COLORS[det.category] || CATEGORY_COLORS.default
 }
 
-export default function GlobeOverwatchLayer({ enabled, detections = [], sentinelOverlay = null }) {
+export default function GlobeOverwatchLayer({ enabled, detections = [], sentinelOverlay = null, onSceneRect = null }) {
     const { viewer } = useCesium()
     const entitiesRef     = useRef([])
     const sentinelLayerRef = useRef(null)
@@ -128,6 +128,32 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
             compareLayerRef.current = null
             if (url) URL.revokeObjectURL(url)
         }
+    }, [viewer, sentinelOverlay?.compare_b64, sentinelOverlay?.bounds]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // WHERE THE IMAGE IS ON SCREEN, every frame while a swipe is active, so
+    // the handle spans the picture and not the whole map.
+    useEffect(() => {
+        if (!viewer || viewer.isDestroyed() || !onSceneRect || !sentinelOverlay?.compare_b64 || !sentinelOverlay?.bounds) {
+            onSceneRect?.(null)
+            return undefined
+        }
+        const b = sentinelOverlay.bounds
+        const corners = [[b.west, b.north], [b.east, b.north], [b.east, b.south], [b.west, b.south]]
+            .map(([lo, la]) => Cartesian3.fromDegrees(lo, la))
+        let last = ""
+        const toWin = SceneTransforms.worldToWindowCoordinates || SceneTransforms.wgs84ToWindowCoordinates
+        const update = () => {
+            const pts = corners.map((c) => toWin(viewer.scene, c)).filter(Boolean)
+            if (pts.length < 4) return
+            const r = { left: Math.min(...pts.map((p) => p.x)), right: Math.max(...pts.map((p) => p.x)),
+                        top: Math.min(...pts.map((p) => p.y)), bottom: Math.max(...pts.map((p) => p.y)),
+                        width: viewer.scene.canvas.clientWidth }
+            const key = [r.left, r.right, r.top, r.bottom].map(Math.round).join(",")
+            if (key !== last) { last = key; onSceneRect(r) }
+        }
+        const off = viewer.scene.postRender.addEventListener(update)
+        update()
+        return () => { off(); onSceneRect(null) }
     }, [viewer, sentinelOverlay?.compare_b64, sentinelOverlay?.bounds]) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {

@@ -411,7 +411,12 @@ export default function Imagery() {
                 <h2 style={{ margin: "0 8px 0 0", fontWeight: 600, fontSize: 18, letterSpacing: "-.01em" }}>Imagery</h2>
                 <nav aria-label="Watched areas" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                     {zones.map((z) => (
-                        <button key={z.system_id} onClick={() => { setManage(false); setZoneId(z.system_id); setScanId(null) }} style={{
+                        <button key={z.system_id} onClick={() => {
+                            setManage(false)
+                            // Clearing the pass only when the area changes: re-clicking
+                            // the area already open left the page with no pass at all.
+                            if (z.system_id !== zoneId) { setZoneId(z.system_id); setScanId(null) }
+                        }} style={{
                             ...BTN, height: 30, display: "flex", alignItems: "center", gap: 8,
                             background: !manage && z.system_id === zoneId ? ON : "transparent",
                             borderColor: !manage && z.system_id === zoneId ? "var(--acchi)" : "var(--gline2)",

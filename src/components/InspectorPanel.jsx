@@ -1,3 +1,4 @@
+import WatchWithSatellites, { canWatch } from "./WatchWithSatellites.jsx"
 import ImagerySignalSection from "./ImagerySignalSection.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
@@ -992,6 +993,7 @@ export default function InspectorPanel({
                             Save for briefing
                         </Button>
                     )}
+                    {canWatch(entityType, data) && <WatchWithSatellites data={data} />}
                 </div>
             )}
         </Wrapper>

@@ -157,20 +157,40 @@ def _signals(db, at: float, span_days: float):
 
 
 def _imagery(db, at: float, span_days: float):
-    from database import SentinelDetection
+    """Imagery SIGNALS (imagery_signals.py), not raw detections. Every scan
+    stores hundreds of detections — tanks, moored ships — and each used to
+    count as independent evidence beside anything nearby, so a busy port
+    fused with every flight overhead. A pass that counted is one item."""
+    from database import Alert
 
     end = datetime.datetime.utcfromtimestamp(at)
     start = end - datetime.timedelta(days=span_days)
     out = []
-    for r in db.query(SentinelDetection).filter(
-        SentinelDetection.centroid_lat.isnot(None),
-        SentinelDetection.created_at >= start,
-        SentinelDetection.created_at <= end,
+    for r in db.query(Alert).filter(
+        Alert.source == "SAT-TASK", Alert.alert_type == "Imagery signal", Alert.status == "active",
+        Alert.lat.isnot(None), Alert.created_at >= start, Alert.created_at <= end,
     ).all():
-        out.append({"lat": r.centroid_lat, "lon": r.centroid_lon,
-                    "ts": r.created_at.timestamp(), "mod": "imagery",
-                    "label": r.object_type or "Detection",
-                    "ref": r.detection_id, "place": r.nearest_port or r.nearest_chokepoint})
+        out.append({"lat": r.lat, "lon": r.lon, "ts": r.created_at.timestamp(), "mod": "imagery",
+                    "label": r.title, "ref": r.alert_id, "place": r.region})
+    return out
+
+
+def _telegram(db, at: float, span_days: float):
+    """Local reports that passed relevance and precise geolocation."""
+    import telegram_ingest as _tg
+    end = datetime.datetime.utcfromtimestamp(at).replace(tzinfo=datetime.timezone.utc)
+    out = []
+    for p in _tg.published(int(span_days * 24) + 1):
+        try:
+            ts = datetime.datetime.fromisoformat(str(p.get("posted_at")).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        if ts > end or p.get("lat") is None:
+            continue
+        out.append({"lat": p["lat"], "lon": p["lon"], "ts": ts.timestamp(), "mod": "telegram",
+                    "label": p.get("headline"), "ref": f"tg-{p.get('id')}", "place": p.get("place")})
     return out
 
 
@@ -193,6 +213,7 @@ def _imagery(db, at: float, span_days: float):
 _MODALITY_ALERT_TYPES = {
     "ais": ("Sanctioned Vessel",),
     "aircraft": ("military_aircraft",),
+    "heat": ("Heat",),                 # heat_watch.py: new heat near what matters
 }
 
 
@@ -277,7 +298,7 @@ def _fusions_sync(at: float, window_days: float, theatres: Optional[list[str]],
         # kinds is still a real finding, and a silent empty list here would
         # disable the feature without anything appearing to break.
         for name, fn in (("confirmation", _confirmations), ("signal", _signals),
-                         ("imagery", _imagery), ("alerts", _alert_modalities)):
+                         ("imagery", _imagery), ("telegram", _telegram), ("alerts", _alert_modalities)):
             try:
                 if fn is _confirmations:
                     items += fn(db, at, window_days, theatres)

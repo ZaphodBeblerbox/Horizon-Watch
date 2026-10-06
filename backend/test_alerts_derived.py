@@ -159,7 +159,7 @@ def test_fusion_notification_names_its_modalities_and_span():
     f = D.detect_fusions([item("confirmation", hours_ago=2),
                           item("imagery", hours_ago=33)], NOW)[0]
     n = D.fusion_notification(f)
-    assert "confirmation + imagery" in n["sub"]
+    assert "confirmed incident + satellite imagery" in n["sub"]
     assert "31h" in n["sub"]
 
 
@@ -193,3 +193,29 @@ def test_every_derived_finding_is_an_ontology_instance():
         assert r["licence_tier"] == "T3"
         assert r["source_ref"], "a finding that cannot name its inputs breaks the chain"
         assert r["edges"] == ["mentioned_with"]
+
+
+
+def test_two_kinds_of_traffic_are_not_a_fusion():
+    """A sanctioned tanker and a military flight in the same region is
+    traffic, not an event."""
+    assert D.detect_fusions([item("ais"), item("aircraft")], NOW) == []
+
+
+def test_evidence_far_apart_or_days_apart_is_not_one_fusion():
+    assert D.detect_fusions([item("confirmation"), item("imagery", lon=57.5)], NOW) == []      # ~130 km
+    assert D.detect_fusions([item("confirmation", hours_ago=2), item("imagery", hours_ago=80)], NOW) == []
+
+
+def test_a_fusion_explains_itself():
+    f = D.detect_fusions([item("confirmation", label="Strike on the port", ref="c1"),
+                          item("heat", lat=26.55, label="New heat (84 MW)", hours_ago=3, ref="h1")], NOW)[0]
+    assert f["headline"] == "Strike on the port"
+    assert any("heat detection: New heat (84 MW) — 5.6 km, 2 h after" == e for e in f["explain"])
+
+
+
+def test_tracking_corroborates_only_when_right_there():
+    far = D.detect_fusions([item("confirmation"), item("aircraft", lat=26.7)], NOW)      # ~22 km
+    near = D.detect_fusions([item("confirmation"), item("aircraft", lat=26.55)], NOW)    # ~5.6 km
+    assert far == [] and len(near) == 1

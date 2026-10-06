@@ -14,10 +14,10 @@
 /** §A4's cell is ~2.5°; these sit comfortably inside one. */
 export const SURGE_HALO_M = 85_000
 export const SURGE_INNER_M = 48_000
-export const FUSION_RING_M = 45_000
-export const FUSION_OUTER_M = 70_000
-export const TICK_OUTER_M = 72_000
-export const TICK_INNER_M = 48_000
+export const FUSION_RING_M = 30_000      // the fusion radius itself (alerts_derived.FUSION_RADIUS_KM)
+export const FUSION_OUTER_M = 40_000
+export const TICK_OUTER_M = 42_000
+export const TICK_INNER_M = 32_000
 
 /**
  * §A8 draws one radial tick per modality, evenly spaced from due north.

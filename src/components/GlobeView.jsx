@@ -221,6 +221,7 @@ export default function GlobeView({
     overwatchSentinelOverlay = null,
     // A pass from the Imagery page, placed on the map (MapSceneCard)
     sceneOverlay = null,
+    onSceneRect = null,
     // Satellite imagery overlay (Sentinel-2)
     satelliteEnabled = false,
     satelliteOpacity = 0.9,
@@ -1203,7 +1204,7 @@ export default function GlobeView({
 
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />
-                {sceneOverlay && <GlobeOverwatchLayer enabled detections={sceneOverlay.detections || []} sentinelOverlay={sceneOverlay} />}
+                {sceneOverlay && <GlobeOverwatchLayer enabled detections={sceneOverlay.detections || []} sentinelOverlay={sceneOverlay} onSceneRect={onSceneRect} />}
 
                 {/* ── Overwatch draw mode: rectangle or polygon selection on globe ── */}
                 <GlobeOverwatchDrawLayer

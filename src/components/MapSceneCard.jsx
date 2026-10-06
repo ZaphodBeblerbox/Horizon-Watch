@@ -34,20 +34,27 @@ export function mapSceneOverlay(scene, ui) {
     }
 }
 
-/** The swipe handle across the map; only while comparing. */
-export function MapSplitHandle({ split, onSplit }) {
+/** The swipe handle, over the image only (rect: its screen box, from the
+ *  globe layer); dragging is held inside the image. */
+export function MapSplitHandle({ split, rect, onSplit }) {
     const ref = useRef(null)
+    if (!rect || rect.right - rect.left < 20) return null
+    const x = Math.max(rect.left, Math.min(rect.right, split * rect.width))
     const begin = (e) => {
         e.preventDefault(); e.stopPropagation()
         const box = ref.current?.parentElement?.getBoundingClientRect()
         if (!box) return
-        const move = (ev) => onSplit(Math.max(0.02, Math.min(0.98, (ev.clientX - box.left) / box.width)))
+        const move = (ev) => {
+            const px = Math.max(rect.left + 2, Math.min(rect.right - 2, ev.clientX - box.left))
+            onSplit(px / rect.width)
+        }
         const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up) }
         window.addEventListener("pointermove", move); window.addEventListener("pointerup", up)
     }
+    const top = Math.max(0, rect.top), h = Math.max(20, rect.bottom - top)
     return (
         <div ref={ref} onPointerDown={begin} style={{
-            position: "absolute", top: 0, bottom: 0, left: `calc(${split * 100}% - 12px)`, width: 24, zIndex: 7,
+            position: "absolute", top, height: h, left: x - 12, width: 24, zIndex: 7,
             cursor: "ew-resize", display: "flex", alignItems: "center", justifyContent: "center",
         }}>
             <div style={{ position: "absolute", top: 0, bottom: 0, left: 11, width: 2, background: "#fff", boxShadow: "0 0 0 1px rgba(0,0,0,.45)" }} />

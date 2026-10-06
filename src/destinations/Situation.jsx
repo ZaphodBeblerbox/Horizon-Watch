@@ -579,6 +579,14 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // A pass sent from the Imagery page ("Show on the map").
     const [mapScene, setMapScene] = useState(() => window.__plxMapScene || null)
     const [mapSceneUi, setMapSceneUi] = useState(MAP_SCENE_UI)
+    const [mapSceneRect, setMapSceneRect] = useState(null)      // the image on screen, for the swipe handle
+    // A swipe starts in the middle of the IMAGE, wherever that is on screen.
+    useEffect(() => {
+        const r = mapSceneRect
+        if (!r || !r.width) return
+        const x = mapSceneUi.split * r.width
+        if (x < r.left || x > r.right) setMapSceneUi((u) => ({ ...u, split: ((r.left + r.right) / 2) / r.width }))
+    }, [mapSceneRect]) // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         const h = (e) => { setMapScene(e.detail || null); setMapSceneUi(MAP_SCENE_UI) }
         window.addEventListener("akili:map-show-scene", h)
@@ -1878,10 +1886,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         onOverwatchBounds={handleImageryBounds}
                         onOverwatchPolygon={handleImageryPolygon}
                         overwatchSentinelOverlay={imageryScene ? { image_b64: imageryScene.image_b64_composited, bounds: imageryScene.bounds } : null}
-                        sceneOverlay={mapSceneLayer}
+                        sceneOverlay={mapSceneLayer} onSceneRect={setMapSceneRect}
                     />
                     {!asCanvas && mapScene && mapSceneLayer?.split != null && (
-                        <MapSplitHandle split={mapSceneUi.split} onSplit={(v) => setMapSceneUi((u) => ({ ...u, split: v }))} />
+                        <MapSplitHandle split={mapSceneUi.split} rect={mapSceneRect} onSplit={(v) => setMapSceneUi((u) => ({ ...u, split: v }))} />
                     )}
                     {!asCanvas && mapScene && (
                         <MapSceneCard scene={mapScene} ui={mapSceneUi} onUi={setMapSceneUi} onScene={setMapScene}

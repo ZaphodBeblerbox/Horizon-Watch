@@ -73,39 +73,25 @@ export function SurgeTip({ surge, nowMs }) {
 }
 
 export function FusionTip({ fusion, nowMs }) {
-    const items = (fusion.items || []).slice(0, 5)
+    const items = fusion.items || []
+    const kinds = [...new Set(items.map((i) => i.kind_label || i.mod))]
     return (
         <>
             <div className="tipk">
-                <svg><use href="#i-fusion" /></svg><span>Fusion point</span>
-                <em>{fusion.mods.length} modalities</em>
+                <svg><use href="#i-fusion" /></svg><span>Corroborated</span>
+                <em>{kinds.length} kinds of evidence</em>
             </div>
-            <b>{fusion.mods.length} independent sources converging at {fusion.place}</b>
+            <b>{clip(fusion.headline || "Converging evidence", 90)}</b>
             <p className="tipp">
-                Different <b>kinds</b> of source agree here within {Math.round(fusion.span_h)} hours.
-                Two records of the same kind would be a busy week.
+                {kinds.join(", ")} — within {Math.round(fusion.span_h)} h, all within 30 km of {fusion.place}.
             </p>
-            <div className="tipmods">
-                {fusion.mods.map((m) => (
-                    <span className="tipmod" key={m}>
-                        <svg><use href={`#${MODICON(m)}`} /></svg>{m}
-                    </span>
-                ))}
-            </div>
             <div className="tipe">
-                <span className="tipl">Triggered by {(fusion.items || []).length} records</span>
-                {items.map((i, n) => (
-                    <div className="tipr" key={`${i.ref}-${n}`}>
-                        <svg><use href={`#${MODICON(i.mod)}`} /></svg>
-                        <span>{clip(i.label || i.ref, 44)}</span>
-                        <em>{agoStr(i.ts, nowMs)}</em>
-                    </div>
+                {(fusion.explain || []).slice(0, 5).map((e, n) => (
+                    <div className="tipr" key={n}><span>{clip(e, 96)}</span></div>
                 ))}
-                {overflowCount((fusion.items || []).length, 5) > 0 && (
-                    <div className="tipmore">+{overflowCount(fusion.items.length, 5)} more · click to open</div>
-                )}
+                {items.length > 5 && <div className="tipmore">+{items.length - 5} more · click to open</div>}
             </div>
-            <div className="tiphint">dashed lines show the records that made this point</div>
+            <div className="tiphint">dashed lines lead to each piece of evidence · {agoStr(fusion.ts, nowMs)}</div>
         </>
     )
 }

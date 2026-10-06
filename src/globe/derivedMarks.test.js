@@ -78,7 +78,8 @@ describe("§A9 — a derived mark must name its inputs", () => {
         // "The one usually left out, and the one that decides whether the
         // finding is believed."
         expect(tips).toMatch(/Triggered by \{\(surge\.rows \|\| \[\]\)\.length\} confirmations/)
-        expect(tips).toMatch(/Triggered by \{\(fusion\.items \|\| \[\]\)\.length\} records/)
+        // A fusion names each piece of evidence, how far and how long from the event.
+        expect(tips).toMatch(/fusion\.explain/)
         expect(tips).toMatch(/more · click to open/)
     })
 
@@ -86,7 +87,7 @@ describe("§A9 — a derived mark must name its inputs", () => {
         expect(tips).toMatch(/href="#i-surge"/)
         expect(tips).toMatch(/href="#i-fusion"/)
         expect(tips).toMatch(/p, Poisson/)
-        expect(tips).toMatch(/tipmods/)
+        expect(tips).toMatch(/kinds of evidence/)
     })
 })
 

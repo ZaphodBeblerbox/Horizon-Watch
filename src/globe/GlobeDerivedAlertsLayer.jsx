@@ -95,12 +95,13 @@ export function surgeLabel(s) {
     return `${topic} · ${s.n}`
 }
 
-/** Which independent modalities agreed, not how many. */
+/** The event the fusion is about, short, and how many kinds of evidence
+ *  agree on it — never feed codes ("CONFIRMATION+TELEGRAM"). */
 export function fusionLabel(f) {
-    const mods = (f.mods || []).map((m) => String(m).toUpperCase())
-    if (!mods.length) return "FUSION"
-    if (mods.length <= 2) return mods.join("+")
-    return `${mods.slice(0, 2).join("+")}+${mods.length - 2}`
+    const head = String(f.headline || "Converging evidence").replace(/\s+—.*$/, "")
+    const short = head.length > 38 ? `${head.slice(0, 36).trim()}…` : head
+    const n = (f.mods || []).length
+    return n ? `${short} · ${n} kinds agree` : short
 }
 
 function labelOpts(text, color) {
@@ -219,8 +220,8 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                     observed_at: Number.isFinite(i.ts)
                         ? new Date(i.ts * 1000).toISOString() : null,
                     belongs_to: f.headline,
-                    why_linked: `one of ${all.length} records that put `
-                              + `${f.mods.length} independent modalities in this cell`
+                    why_linked: (i.km != null ? `${i.km} km and ${Math.abs(i.dt_h)} h ${i.dt_h > 0 ? "after" : "before"} the event` : "")
+                              + ` — one of ${all.length} records, ${f.mods.length} kinds of evidence`
                               + (all.length > MAX_THREADS
                                   ? ` — the ${MAX_THREADS} most spread out are drawn`
                                   : ""),
@@ -254,7 +255,7 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                 // point of the threads: seeing at a glance whether the
                 // "independent" sources are in fact one incident reported
                 // four times.
-                label: labelOpts((i.mod || "").toUpperCase(), RED),
+                label: labelOpts(i.kind_label || i.mod || "", RED),
             })
         }
         threadIdsRef.current = ids

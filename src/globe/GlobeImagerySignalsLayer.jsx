@@ -97,7 +97,9 @@ export default function GlobeImagerySignalsLayer({ enabled = true }) {
                     <Entity key={a.alert_id} id={`imgsig-${a.alert_id}`} position={Cartesian3.fromDegrees(a.lon, a.lat, 0)}
                         billboard={{ image: icon(a.severity), width: size, height: size, color: Color.WHITE.withAlpha(alpha),
                                      heightReference: HeightReference.CLAMP_TO_GROUND,
-                                     distanceDisplayCondition: new DistanceDisplayCondition(0, 15_000_000),
+                                     // Out of the way once you are looking at the place itself
+                                     // (closer than 25 km); back as you zoom out.
+                                     distanceDisplayCondition: new DistanceDisplayCondition(25_000, 15_000_000),
                                      eyeOffset: new Cartesian3(0, 0, -80) }} />
                 )
             })}

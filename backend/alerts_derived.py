@@ -196,6 +196,25 @@ def detect_surges(
 
 # ── §A6 · Fusion ──────────────────────────────────────────────────────────
 
+# What a fusion is built around. Tracking (a sanctioned tanker's AIS, a
+# military flight's ADS-B) is traffic: it happens everywhere, all the time,
+# and two kinds of traffic in the same region is not a finding — measured,
+# most "fusions" were exactly that, a tanker and an unrelated RAF flight 50 km
+# apart. A fusion needs an EVENT at its core: something reported, confirmed,
+# photographed or burning.
+EVENT_MODS = {"confirmation", "signal", "telegram", "imagery", "heat", "therm", "opt", "sar", "press"}
+FUSION_RADIUS_KM = 30.0
+FUSION_SPAN_H = 48.0
+TRACK_RADIUS_KM = 10.0
+TRACK_SPAN_H = 6.0
+
+
+def _km(a: dict, b: dict) -> float:
+    p1, p2 = math.radians(a["lat"]), math.radians(b["lat"])
+    h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(b["lon"] - a["lon"]) / 2) ** 2
+    return 12742 * math.asin(math.sqrt(min(1.0, h)))
+
+
 def detect_fusions(
     items: Iterable[dict],
     now: float,
@@ -203,18 +222,22 @@ def detect_fusions(
     window_days: float = 4,
     limit: int = 5,
 ) -> list[dict]:
-    """Not "several things happened here" — several DIFFERENT KINDS of thing
-    happened here, close in time.
+    """Different KINDS of evidence about one thing: an event, and what
+    corroborates it, close together.
 
-    `items` are dicts with {lat, lon, ts, mod, label, ref}. The test counts
-    DISTINCT MODALITIES, never records, and that is the whole rule: no single
-    modality may raise a finding alone, because the entire value of the
-    finding is that the sources are independent. Two confirmations of one
-    category in a cell is a busy week; a confirmation plus a detector firing
-    plus a corpus signal is a claim that something is going on.
+    `items` are dicts with {lat, lon, ts, mod, label, ref}. Around each
+    event (EVENT_MODS), everything within 30 km and 48 h is gathered; it is
+    a fusion when the gathered items span at least two distinct modalities.
+    Distinct modalities, never records — a single kind of evidence may not
+    raise a finding alone, because the value of the finding is that the
+    sources are independent. Each item says how far and how long from the
+    event it is, so the card can explain itself.
+
+    (Replaced 2026-10-06: any two kinds in the same 2.5° cell over four days,
+    which fused tanker tracks with unrelated flights 250 km away.)
     """
     win = window_days * DAY
-    bag: dict[str, list[dict]] = defaultdict(list)
+    pool = []
     for it in items or []:
         lat, lon, ts = it.get("lat"), it.get("lon"), it.get("ts")
         if lat is None or lon is None or ts is None:
@@ -223,41 +246,57 @@ def detect_fusions(
             continue
         if ts > now or (now - ts) > win:
             continue
-        bag[cell_of(lat, lon)].append(it)
+        pool.append({**it, "lat": float(lat), "lon": float(lon)})
 
+    # A reported event leads (its headline is the card's); imagery and heat
+    # corroborate. Newest first within each.
+    lead = {"confirmation": 0, "signal": 1, "telegram": 1, "press": 1}
+    events = sorted((i for i in pool if i.get("mod") in EVENT_MODS),
+                    key=lambda i: (lead.get(i.get("mod"), 2), -i["ts"]))
+    used: set[int] = set()
     out: list[dict] = []
-    for cell, group in bag.items():
+    for anchor in events:
+        if id(anchor) in used:
+            continue
+        # Events corroborate within 30 km and 48 h. Tracking only when it is
+        # right there — within 10 km and 6 h: a transport flight 25 km out
+        # over the sea is not evidence about a train halted in Tel Aviv.
+        group = [i for i in pool
+                 if (i.get("mod") in EVENT_MODS
+                     and abs(i["ts"] - anchor["ts"]) <= FUSION_SPAN_H * HOUR and _km(anchor, i) <= FUSION_RADIUS_KM)
+                 or (i.get("mod") not in EVENT_MODS
+                     and abs(i["ts"] - anchor["ts"]) <= TRACK_SPAN_H * HOUR and _km(anchor, i) <= TRACK_RADIUS_KM)]
         mods = sorted({i["mod"] for i in group if i.get("mod")})
         if len(mods) < 2:
             continue                                  # the whole rule
+        used.update(id(i) for i in group if i.get("mod") in EVENT_MODS)
+        members = []
+        for i in sorted(group, key=lambda i: -i["ts"]):
+            members.append({**i, "km": round(_km(anchor, i), 1),
+                            "dt_h": round((i["ts"] - anchor["ts"]) / HOUR, 1),
+                            "kind_label": modality_label(i.get("mod"))})
         ts_all = [i["ts"] for i in group]
-        group = sorted(group, key=lambda i: i["ts"], reverse=True)
-        named = next((i for i in group if len(str(i.get("label") or "")) > 4), None)
+        cell = cell_of(anchor["lat"], anchor["lon"])
         out.append({
-            "id": "FUS-" + cell.replace(":", "_").replace("-", "m"),
+            "id": f"FUS-{anchor['lat']:.2f}_{anchor['lon']:.2f}".replace("-", "m").replace("FUSm", "FUS-"),
             "kind": "fusion",
             "cell": cell,
             "mods": mods,
-            "items": group,
+            "items": members,
             "place": cell_name(cell, group),
-            **cell_centre(cell),
+            "lat": anchor["lat"], "lon": anchor["lon"],
             "span_h": (max(ts_all) - min(ts_all)) / HOUR,
             "ts": max(ts_all),
-            # Breadth of KIND always outranks volume: a third modality beats
-            # any number of extra records of a kind already counted.
-            #
-            # §A6 gives this as `modalityCount + min(3, records/4)` and states
-            # the invariant above in the same breath, but that formula does
-            # not hold it: the volume term reaches 3, so two modalities with
-            # 40 records (2 + 3 = 5) outranks three modalities with 3
-            # (3 + 0.75 = 3.75) — exactly the ordering §A6 exists to prevent,
-            # and it fires on the common case, because a cell busy enough to
-            # fuse usually has a pile of confirmations in it. The volume term
-            # is therefore bounded strictly below 1, which keeps it as what
-            # the prose says it is: a tie-breaker between findings of equal
-            # breadth, never a substitute for breadth.
+            # Breadth of kind outranks volume (see the surge notes): the
+            # volume term stays below 1, a tie-breaker between findings of
+            # equal breadth, never a substitute for breadth.
             "strength": len(mods) + min(0.99, len(group) / 40.0),
-            "headline": (named.get("label") if named else "Converging activity"),
+            "headline": anchor.get("label") or "Converging activity",
+            "anchor_mod": anchor.get("mod"),
+            "explain": [f"{m['kind_label']}: {m.get('label') or m.get('mod')} — "
+                        + ("the event" if m.get("ref") == anchor.get("ref")
+                           else f"{m['km']} km, {abs(m['dt_h']):g} h {'after' if m['dt_h'] > 0 else 'before'}")
+                        for m in members[:8]],
             "window_days": window_days,
         })
     out.sort(key=lambda f: f["strength"], reverse=True)
@@ -301,6 +340,11 @@ MODALITY_LABELS = {
     "opt":      "optical imagery",
     "sar":      "radar imagery",
     "therm":    "thermal detection",
+    "heat":     "heat detection",
+    "telegram": "local report",
+    "confirmation": "confirmed incident",
+    "signal":   "news report",
+    "imagery":  "satellite imagery",
     "press":    "reporting",
     "net":      "network telemetry",
     "atmo":     "atmospheric sensing",
