@@ -41,11 +41,23 @@ SYSTEM = (
     'one is already clear>, "entities": [{"kind": "vessel"|"aircraft"|"org"|'
     '"person"|"place"|"facility", "name": <proper name>, "mmsi": <9 digits '
     'or null>, "icao24": <6 hex or null>, "flag": <ISO-2 country or null>, '
-    '"role": <one or two words, or null>}]}\n'
+    '"role": <one or two words, or null>}], "relevance": "security"|"general"}\n'
     # The literal word JSON has to appear, or the API refuses the
     # response_format and the whole batch comes back unenriched.
     "Reply with JSON only: {\"results\": [ ... ]} and nothing else.\n\n"
     "RULES.\n"
+    "- relevance is \"security\" when the signal reports armed conflict, "
+    "military or police operations against armed groups, terrorism, "
+    "maritime or aviation security, sanctions and their evasion, attacks on "
+    "or failures of critical infrastructure, coups, major political "
+    "violence or mass unrest, or state cyber operations. Everything else "
+    "is \"general\": traffic and other accidents, ordinary crime and "
+    "trials, health, weather, sport, culture, business, local politics, "
+    "human-interest stories. 'Pedestrian struck in Ohio' is general; "
+    "'Drone strike on a fuel depot in Bryansk' is security. Killings by "
+    "militias, vigilantes or in communal clashes, and statements by "
+    "governments or the UN about an ongoing war, are security; trials, "
+    "sentences and executions for past attacks are general.\n"
     "- Extract only what the text says. Never a fact you know from "
     "elsewhere, never a guess at an MMSI, an ICAO or a flag.\n"
     "- ALWAYS extract the country as a place entity when the text names or "
@@ -264,8 +276,10 @@ def enrich_batch(signals: list[dict]) -> list[dict]:
                 head = None
         else:
             head = None
+        rel = r.get("relevance")
         out[i] = {
             "id": s.get("id"), "enriched": True,
+            "relevance": rel if rel in ("security", "general") else None,
             "headline": head,
             "entities": ents,
             "keys": [k for k in (resolution_key(e) for e in ents) if k],

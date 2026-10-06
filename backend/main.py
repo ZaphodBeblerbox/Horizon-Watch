@@ -16141,6 +16141,20 @@ def get_surface_pool(response: FastAPIResponse):
     total_ms = (time.perf_counter() - started) * 1000
     payload_bytes = len(_json.dumps(enriched, ensure_ascii=False).encode("utf-8"))
     print(f"[surface/api] count={len(enriched)} attach_ms={attach_ms:.1f} total_ms={total_ms:.1f} payload={payload_bytes}B")
+    # NO NOISE (owner, 2026-10-05: "pedestrian struck in Ohio"). The cheap
+    # enrichment pass judges each signal security or general; general ones
+    # leave the surface. Unjudged ones stay until judged — a background pass
+    # starts for them — so nothing disappears on a guess.
+    dropped = 0
+    try:
+        from routers import enrichment as _en
+        rel = _en.relevance_of(enriched)
+        kept = [it for i, it in enumerate(enriched) if rel.get(i) != "general"]
+        dropped = len(enriched) - len(kept)
+        enriched = kept
+    except Exception as e:
+        _loop_error("surface-relevance", e)
+
     # TELEGRAM IS A SIGNAL LIKE ANY OTHER. Published posts (kinetic, precisely
     # located — telegram_ingest.py) join the surface for 24 h, derived on read
     # so the pool's own ranking and cache are untouched.
@@ -16154,6 +16168,7 @@ def get_surface_pool(response: FastAPIResponse):
         "items": enriched,
         "updated_at": updated,
         "count": len(enriched),
+        "filtered_general": dropped,
         "diagnostics": {
             "attach_ms": round(attach_ms, 1),
             "fetch_ms": round(total_ms, 1),

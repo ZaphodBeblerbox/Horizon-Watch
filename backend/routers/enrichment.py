@@ -105,7 +105,9 @@ def enrich_items(items: list[dict], budget: int = 40, blocking: bool = True) -> 
         hit = data.get(k)
         if hit:
             out[k] = hit
-        elif len(todo) < budget:
+        # Entries from before the relevance judgement are re-read once, so
+        # the filter reaches signals already in the cache.
+        if (not hit or "relevance" not in hit) and len(todo) < budget:
             todo.append({"id": k, "text": text})
 
     if not blocking:
@@ -131,6 +133,7 @@ def enrich_items(items: list[dict], budget: int = 40, blocking: bool = True) -> 
                 continue
             ents = r.get("entities") or []
             rec = {
+                "relevance": r.get("relevance"),
                 "headline": r.get("headline"),
                 "entities": ents,
                 "keys": r.get("keys") or [],
@@ -145,6 +148,18 @@ def enrich_items(items: list[dict], budget: int = 40, blocking: bool = True) -> 
             _save()
 
     return _fold(out)
+
+
+def relevance_of(items: list[dict]) -> dict[int, str | None]:
+    """index -> "security" | "general" | None (not judged yet), and a
+    background pass started for whatever is unjudged. Never blocks."""
+    found = enrich_items(items, budget=60, blocking=False)
+    out = {}
+    for i, it in enumerate(items):
+        text = signal_text(it)
+        rec = found.get(_key(text)) if text else None
+        out[i] = (rec or {}).get("relevance")
+    return out
 
 
 def _fold(out: dict) -> dict:

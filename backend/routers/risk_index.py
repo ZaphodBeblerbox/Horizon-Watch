@@ -204,13 +204,28 @@ def explain_country_risk(iso_code: str, window_days: int = 30, limit: int = 8):
         "headline_is_article": bool(e.get("headline_is_article")),
     } for dt, e in mine[:limit]]
 
+    # RELEVANCE, NOT CENSORSHIP. Each driver says whether the cheap model
+    # judged it security or general news; the drivers are the score's own
+    # evidence, so general ones are marked, not removed — the panel shows the
+    # security ones and counts the rest. News is context only: general items
+    # are dropped from it.
+    news = _recent_articles(iso, limit * 3)
+    try:
+        from routers import enrichment as _en
+        rd = _en.relevance_of([{"headline": d.get("title") or d.get("event_type")} for d in drivers])
+        for i, d in enumerate(drivers):
+            d["relevance"] = rd.get(i)
+        rn = _en.relevance_of([{"headline": n.get("title")} for n in news])
+        news = [n for i, n in enumerate(news) if rn.get(i) != "general"]
+    except Exception:
+        pass
     return {
         "iso_code": iso,
         "risk": risk,
         "window_days": window_days,
         "events_in_window": len(mine),
         "drivers": drivers,
-        "news": _recent_articles(iso, limit),
+        "news": news[:limit],
         # Both codes, because downstream needs different ones: news_articles
         # and flagcdn are keyed on alpha-2, the index on alpha-3.
         "iso2": _iso2(iso),

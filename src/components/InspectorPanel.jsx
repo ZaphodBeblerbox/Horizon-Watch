@@ -669,7 +669,7 @@ export default function InspectorPanel({
                                 {/* One row per story: GDELT codes one article as
                                     several events, so the same headline came
                                     four times. Grouped, with the count kept. */}
-                                {Object.values(countryDetail.drivers.reduce((acc, d) => {
+                                {Object.values(countryDetail.drivers.filter((d) => d.relevance !== "general").reduce((acc, d) => {
                                     const k = (d.title || d.event_type || "").trim().toLowerCase()
                                     if (acc[k]) acc[k].n += 1; else acc[k] = { ...d, n: 1 }
                                     return acc
@@ -693,6 +693,12 @@ export default function InspectorPanel({
                                     </div>
                                 ))}
                             </>
+                        )}
+
+                        {countryDetail.drivers?.some((d) => d.relevance === "general") && (
+                            <div style={{ font: "400 10px var(--mono)", color: "var(--text-dim)", padding: "4px 0" }}>
+                                +{countryDetail.drivers.filter((d) => d.relevance === "general").length} general-news event(s) also counted in the score
+                            </div>
                         )}
 
                         {countryDetail.news?.length > 0 && (
