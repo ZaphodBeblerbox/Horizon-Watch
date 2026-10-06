@@ -11937,7 +11937,7 @@ async def api_telegram_statements(lat: float, lon: float, hours: int = Query(72,
 
 @app.get("/api/telegram/video/{chan}/{msg_id}")
 async def api_telegram_video(chan: str, msg_id: int):
-    """The post's video, downloaded once on first request and served from disk."""
+    """The post's video, fetched from Telegram when opened; not kept (telegram_ingest.VIDEO_DIR)."""
     import telegram_ingest as _tg
     if not re.fullmatch(r"[A-Za-z0-9_]{3,64}", chan):
         raise HTTPException(400, "bad channel")
@@ -11945,7 +11945,7 @@ async def api_telegram_video(chan: str, msg_id: int):
     path, why = await loop.run_in_executor(_executor, _tg.video_path, chan, msg_id)
     if not path:
         raise HTTPException(404, why or "no video")
-    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "max-age=86400"})
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "max-age=1800"})
 
 
 @app.get("/api/telegram/status")

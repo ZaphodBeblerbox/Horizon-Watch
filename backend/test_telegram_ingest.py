@@ -51,7 +51,7 @@ def test_statements_near_matches_region_claims_by_country(monkeypatch):
 def test_prune_videos_keeps_recent_within_budget(tmp_path, monkeypatch):
     import os
     import telegram_ingest as t
-    monkeypatch.setattr(t, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(t, "VIDEO_DIR", str(tmp_path))
     now = 1_800_000_000
     for name, age_days, mb in [("new.mp4", 0.1, 3), ("mid.mp4", 1, 3), ("old.mp4", 5, 1)]:
         f = tmp_path / name

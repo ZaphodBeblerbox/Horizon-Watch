@@ -1,8 +1,8 @@
 /**
  * TelegramMedia.jsx — a Telegram post's picture or video, in our own frame.
  *
- * Video: the console's own copy (GET /api/telegram/video/…, prefetched by
- * the backend as soon as a post is published), autoplaying muted and on a
+ * Video: fetched from Telegram by the backend when opened (GET
+ * /api/telegram/video/…, held for half an hour, never archived), autoplaying muted and on a
  * loop — browsers only autoplay muted — and paused by a click on it, resumed
  * by another. A small button turns the sound on. The still is the poster
  * until the video is ready, and stays if the video cannot be fetched.

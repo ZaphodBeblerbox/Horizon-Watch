@@ -38,8 +38,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TG_DIR = os.path.join(HERE, "data", "telegram")
 MEDIA_DIR = os.path.join(TG_DIR, "media")
 VIDEO_MAX_MB = 80
-VIDEO_KEEP_DAYS = 3        # prefetched videos are a cache (prune_videos)
-VIDEO_KEEP_MB = 600
+# Videos are not kept on this machine (the owner, 2026-10-06: long-term
+# media belongs on the server). One is fetched from Telegram when opened,
+# into the system temp dir, and gone half an hour later — long enough for
+# the player's range requests and a replay, not an archive.
+VIDEO_DIR = os.path.join(__import__("tempfile").gettempdir(), "parallax-telegram-video")
+VIDEO_KEEP_DAYS = 30 / (24 * 60)
+VIDEO_KEEP_MB = 300
 SESSION = os.path.join(TG_DIR, "parallax")
 LOOKBACK_HOURS = 48
 PER_CHANNEL = 150
@@ -388,14 +393,14 @@ def as_surface_items(hours: int = 24) -> list[dict]:
 
 
 def prune_videos(keep_days: float = VIDEO_KEEP_DAYS, keep_mb: float = VIDEO_KEEP_MB, now: float | None = None) -> int:
-    """Videos are a cache: video_path() fetches any of them again on demand.
-    Prefetching kept every one (1 GB in two days filled the disk on
-    2026-10-06), so: none older than keep_days, and the newest under
+    """Videos are a short-lived cache: video_path() fetches any of them again
+    on demand. Prefetching kept every one (1 GB in two days filled the disk
+    on 2026-10-06), so: none older than keep_days, and the newest under
     keep_mb in total. Thumbnails stay — they are small and the record."""
     import time
     now = now or time.time()
     try:
-        vids = [(e.path, e.stat()) for e in os.scandir(MEDIA_DIR) if e.name.endswith(".mp4")]
+        vids = [(e.path, e.stat()) for e in os.scandir(VIDEO_DIR) if e.name.endswith(".mp4")]
     except FileNotFoundError:
         return 0
     vids.sort(key=lambda v: -v[1].st_mtime)
@@ -420,7 +425,7 @@ def prefetch_videos(limit: int = 15) -> int:
     con.close()
     got = 0
     for chan, mid in rows:
-        if chan.startswith("c/") or os.path.exists(os.path.join(MEDIA_DIR, f"{chan}_{mid}.mp4")):
+        if chan.startswith("c/") or os.path.exists(os.path.join(VIDEO_DIR, f"{chan}_{mid}.mp4")):
             continue
         try:
             path, _ = video_path(chan, mid)
@@ -582,7 +587,7 @@ def run_once(hours: int = 6) -> dict:
     with _SESSION_LOCK:
         new = asyncio.run(_collect(hours))
     out = {"collected": new, **classify()}
-    out["videos"] = prefetch_videos()
+    # No prefetch: a video is fetched when someone opens it (VIDEO_DIR).
     out["videos_pruned"] = prune_videos()
     return out
 
@@ -606,9 +611,11 @@ def video_path(chan: str, msg_id: int) -> tuple[str | None, str | None]:
     big"), so the console plays its own copy instead."""
     if chan.startswith("c/"):
         return None, "private channel"
-    os.makedirs(MEDIA_DIR, exist_ok=True)
-    path = os.path.join(MEDIA_DIR, f"{chan}_{msg_id}.mp4")
+    os.makedirs(VIDEO_DIR, exist_ok=True)
+    prune_videos()
+    path = os.path.join(VIDEO_DIR, f"{chan}_{msg_id}.mp4")
     if os.path.exists(path) and os.path.getsize(path) > 0:
+        os.utime(path)                       # still being watched: keep it a while
         return path, None
     with _SESSION_LOCK:
         got = asyncio.run(_download_video(chan, msg_id, path))
