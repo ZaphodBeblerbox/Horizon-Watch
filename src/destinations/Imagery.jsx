@@ -51,7 +51,7 @@ const FIELD = {
     fontSize: 12.5, outline: "none", borderRadius: 0, boxSizing: "border-box",
 }
 const KIND_C = DET_COLORS
-const KIND_WORD = { new: "new since the last pass", removed: "gone since the last pass", existing: "there before", expanded: "grew" }
+const KIND_WORD = { new: "new since the last pass", removed: "gone since the last pass", existing: "there before", expanded: "grew", unconfirmed: "one model only, not seen before" }
 const SENSOR = { OPTICAL: "Sentinel-2 optical · 10 m", SAR: "Sentinel-1 radar · 10 m" }
 const MODES = [["Scene", "scene"], ["Swipe", "swipe"], ["Side by side", "split"], ["Fade", "fade"], ["Blink", "blink"]]
 
@@ -503,10 +503,6 @@ export default function Imagery() {
                                     </optgroup>}
                                 </select>
                             )}
-                            {mode === "fade" && (
-                                <input type="range" min={0} max={100} value={fadeOpacity} onChange={(e) => setFadeOpacity(Number(e.target.value))}
-                                    title="How much of this image shows over the comparison" style={{ width: 120, accentColor: "var(--acchi)" }} />
-                            )}
                             <button onClick={() => setShowBoxes((v) => !v)} style={{ ...BTN, height: 26, fontSize: 11.5, background: showBoxes ? ON : "transparent" }}>Outlines</button>
                             {sensor !== "radar" && <button onClick={() => setChangesOnly((v) => !v)} style={{ ...BTN, height: 26, fontSize: 11.5, background: changesOnly ? ON : "transparent" }}>Changes only</button>}
                             <span style={{ marginLeft: "auto", display: "flex", gap: 10, fontSize: 11, color: "var(--txt3)" }}>
@@ -516,6 +512,7 @@ export default function Imagery() {
                                         {sensor === "radar" ? "radar contact on water" : KIND_WORD[k]}
                                     </span>
                                 ))}
+                                {sensor !== "radar" && <span title="Found by only one of the two detection models">┄ one model only</span>}
                             </span>
                         </div>
                         {mode !== "scene" && (
@@ -536,15 +533,41 @@ export default function Imagery() {
                                         scene={displayScene} view={view} showBoxes={showBoxes} changes={shown}
                                         swipePos={pos} onSwipePos={setSwipePos}
                                         fadeOn={mode === "fade"} fadeOpacity={fadeOpacity}
-                                        swipeHandle={mode === "swipe"} refLabel={compareLabel} stretch
+                                        swipeHandle={mode === "swipe"} refLabel={compareLabel} stretch stamped
                                         clipRef={clipRef} fadeRef={fadeRef} viewerRef={viewerRef}
                                         onSelectDet={setSelectedDet} selectedDet={selectedDet}
                                     />
+                                    {/* WHEN IT WAS TAKEN, on the picture itself — the one fact
+                                        an image cannot be read without. */}
+                                    <Stamp side="left" sensor={sensor === "radar" ? "Radar" : "Optical"}
+                                        when={displayScene.scan?.image_timestamp_utc}
+                                        dim={mode === "blink" && !blinkOn} />
+                                    {mode !== "scene" && (compareImg?.date || displayScene.reference_date) && (
+                                        <Stamp side="right" sensor={against === "hires" ? "Sharp reference" : compareLabel?.split(" · ")[0] || "Compared with"}
+                                            when={against === "hires" ? compareImg?.date : displayScene.reference_date}
+                                            dim={mode === "blink" && blinkOn} />
+                                    )}
                                 </div>
                             )}
                             {liveRadar && sar.loading && <Loading size={20} inline label="Fetching the radar pass and looking for ships — up to a minute the first time" style={{ padding: 16 }} />}
                             {liveRadar && sar.error && <div style={{ padding: 16, color: "var(--txt3)" }}>{sar.error}</div>}
                         </div>
+
+                        {/* The comparison as a slider: how much of each image shows. */}
+                        {(mode === "swipe" || mode === "fade") && displayScene?.reference_image_b64 && (
+                            <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: 12, alignItems: "center", flex: "none", padding: "2px 8px" }}>
+                                <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+                                    This {sensor === "radar" ? "radar " : ""}pass · {fmtDay(displayScene.scan?.image_timestamp_utc)}
+                                </span>
+                                <input type="range" min={0} max={100} step={0.5} aria-label="Compare the two images"
+                                    value={mode === "fade" ? 100 - fadeOpacity : 100 - swipePos}
+                                    onChange={(e) => (mode === "fade" ? setFadeOpacity(100 - Number(e.target.value)) : setSwipePos(100 - Number(e.target.value)))}
+                                    style={{ width: "100%", accentColor: "var(--acchi)", height: 22 }} />
+                                <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", textAlign: "right" }}>
+                                    {against === "hires" ? "Sharp reference" : "Comparison"} · {fmtDay(against === "hires" ? compareImg?.date : displayScene.reference_date)}
+                                </span>
+                            </div>
+                        )}
 
                         {/* The passes as a time slider. */}
                         {!liveRadar && passes.length > 1 && (
@@ -601,6 +624,7 @@ export default function Imagery() {
                                                 <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                                     {d.length_m ? `${Math.round(d.length_m)} × ${Math.round(d.width_m || 0)} m` : noun(d.label, 1)}
                                                     <span style={{ color: "var(--txt3)" }}> · {sensor === "radar" ? (d.note || "radar contact") : KIND_WORD[d.type] || d.type}</span>
+                                                    {d.tier && <span style={{ color: d.tier === "confirmed" ? "var(--green)" : "var(--txt4)" }}> · {d.tier === "confirmed" ? "confirmed" : "one model"}</span>}
                                                 </span>
                                                 <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt3)" }}>{Math.round((d.conf ?? 0) * 100)}%</span>
                                                 {sensor !== "radar" && !String(d.id).startsWith("removed-") ? (
@@ -641,6 +665,25 @@ export default function Imagery() {
                 </div>
             )}
         </section>
+    )
+}
+
+/** The capture time, large, on the image. */
+function Stamp({ side, sensor, when, dim }) {
+    if (!when) return null
+    const s = String(when)
+    const time = s.length > 10 ? ` · ${s.slice(11, 16)} UTC` : ""
+    return (
+        <div style={{
+            position: "absolute", top: 10, [side]: 10, zIndex: 3, pointerEvents: "none",
+            padding: "6px 10px", background: "rgba(10,12,16,.78)", color: "#fff",
+            border: "1px solid rgba(255,255,255,.25)", opacity: dim ? 0.35 : 1, transition: "opacity .2s",
+            display: "flex", flexDirection: "column", gap: 1, textAlign: side === "right" ? "right" : "left",
+        }}>
+            <span style={{ font: "600 9.5px var(--mz-font-mono)", letterSpacing: ".12em", textTransform: "uppercase", opacity: .75 }}>{sensor} · captured</span>
+            <span style={{ font: "600 15px var(--font, inherit)", letterSpacing: "-.01em" }}>{fmtDay(s)} {s.slice(0, 4)}{time}</span>
+            <span style={{ font: "500 11px var(--font, inherit)", opacity: .8 }}>{agoLabel(s)}</span>
+        </div>
     )
 }
 

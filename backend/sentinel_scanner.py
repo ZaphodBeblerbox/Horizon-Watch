@@ -129,6 +129,22 @@ def _decode_and_encode(image_bytes: bytes):
     return img, base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _tier(d: dict) -> str | None:
+    try:
+        return json.loads(d.get("attributes") or "{}").get("tier")
+    except (TypeError, ValueError):
+        return None
+
+
+def _airfields_near(west, south, east, north, pad: float = 0.05) -> list:
+    """(lat, lon) of every airfield and heliport in or near the area."""
+    from database import Airport, get_db
+    with get_db() as db:
+        return [(a.latitude, a.longitude) for a in db.query(Airport.latitude, Airport.longitude).filter(
+            Airport.latitude.between(south - pad, north + pad),
+            Airport.longitude.between(west - pad, east + pad)).all()]
+
+
 def _native_px(b: dict, m_per_px: float = 10.0, cap: int = 2500) -> tuple[int, int]:
     """Pixel size of a bounds at Sentinel-2's native resolution, capped
     keeping the aspect."""
@@ -485,7 +501,9 @@ class SentinelScanner:
         # into fourteen "scenes" and — worse — made each the baseline of the
         # next, so every comparison was an image against itself and nothing
         # could ever change.
-        if _already_held(zone_dict.get("id"), scene.get("id"), scene_dt_naive, "OPTICAL"):
+        # A person pressing "Scan now" wants the pass analysed again (new
+        # detectors, a redrawn boundary); only the scheduler skips.
+        if not zone_dict.get("_force") and _already_held(zone_dict.get("id"), scene.get("id"), scene_dt_naive, "OPTICAL"):
             return {"status": "unchanged", **base_meta}
 
         # NO ml_tasks IS NOT A FAILURE ANY MORE.
@@ -522,34 +540,6 @@ class SentinelScanner:
         # The single large image is still fetched afterwards, at display
         # size, because the comparison view needs something to show. It is
         # no longer what the detector is given.
-        import sentinel_tiles as _stiles
-        plan = _stiles.plan_tiles(bounds_wsen)
-        tiled_out = None
-        if not plan.refused:
-            from PIL import Image as _SImage
-            import io as _sio
-
-            async def _fetch_tile(tile):
-                r = await _fetch_sentinel_image_bytes(
-                    tile.bounds, image_type="true-colour", max_cloud=20, days_back=30,
-                    width=tile.width_px, height=tile.height_px)
-                if r.get("error"):
-                    return {"error": r["error"]}
-                img = await _off_loop(lambda b: _SImage.open(_sio.BytesIO(b)).convert("RGB"),
-                                      r["image_bytes"])
-                return {"image": img}
-
-            async def _detect_tile(img, bbox):
-                return await _off_loop(sentinel_ml.run_object_detection,
-                                       {"true_colour": img}, bbox)
-
-            # system_id is a local of run_scan(), not of this coroutine.
-            _sid = zone_dict.get("system_id") or f"zone-{zone_dict.get('id')}"
-            print(f"[sentinel-scanner] {_sid}: {plan.describe()}")
-            tiled_out = await _stiles.run_tiled_scan(
-                plan, fetch_tile=_fetch_tile, detect_tile=_detect_tile,
-                job_id=f"zone-{_sid}")
-
         # The image of THIS pass (its own date), not the least-cloudy mosaic
         # of the month — a pass labelled 4 Oct must show 4 Oct. Shown at
         # 5 m/px, resampled bicubic by Sentinel Hub.
@@ -566,6 +556,65 @@ class SentinelScanner:
         except Exception as e:
             return {"status": "error", "error_message": f"could not decode fetched image: {e}", **base_meta}
 
+        # WHOLE SCENE AT 5 m, WITH ITS HISTORY. An area that fits in one
+        # 5 m image (up to ~12 km) is detected whole: both models on this
+        # pass for what moves, and on the mean of up to five earlier clear
+        # passes plus this one for what does not (sentinel_ml.STATIC_CLASSES).
+        # Scheduled scans have days between them, so thoroughness wins over
+        # speed here.
+        whole_scene = max(w_px, h_px) < 2500
+        history_imgs = []
+        if whole_scene:
+            try:
+                found = await _satellite_search_impl(stac_bbox, max_cloud=10, days_back=60)
+                this_day = scene_dt.date().isoformat() if scene_dt else None
+                days = []
+                for it in found.get("items") or []:
+                    d = str(it.get("datetime") or "")[:10]
+                    if d and d != this_day and d not in days:
+                        days.append(d)
+                from PIL import Image as _HImage
+                import io as _hio
+
+                async def _past(d):
+                    r = await _fetch_sentinel_image_bytes(bounds_wsen, image_type="true-colour", date_str=d,
+                                                          width=w_px, height=h_px)
+                    return None if r.get("error") else _HImage.open(_hio.BytesIO(r["image_bytes"])).convert("RGB")
+                history_imgs = [im for im in await asyncio.gather(*[_past(d) for d in days[:5]]) if im is not None]
+            except Exception as _he:
+                print(f"[sentinel-scanner] history for the stack unavailable: {type(_he).__name__}: {_he}")
+
+        tiled_out = None
+        if not whole_scene:
+            import sentinel_tiles as _stiles
+            plan = _stiles.plan_tiles(bounds_wsen)
+            tiled_out = None
+            if not plan.refused:
+                from PIL import Image as _SImage
+                import io as _sio
+
+                async def _fetch_tile(tile):
+                    r = await _fetch_sentinel_image_bytes(
+                        tile.bounds, image_type="true-colour", max_cloud=20, days_back=30,
+                        width=tile.width_px, height=tile.height_px)
+                    if r.get("error"):
+                        return {"error": r["error"]}
+                    img = await _off_loop(lambda b: _SImage.open(_sio.BytesIO(b)).convert("RGB"),
+                                          r["image_bytes"])
+                    return {"image": img}
+
+                async def _detect_tile(img, bbox):
+                    return await _off_loop(sentinel_ml.run_object_detection,
+                                           {"true_colour": img}, bbox)
+
+                # system_id is a local of run_scan(), not of this coroutine.
+                _sid = zone_dict.get("system_id") or f"zone-{zone_dict.get('id')}"
+                print(f"[sentinel-scanner] {_sid}: {plan.describe()}")
+                tiled_out = await _stiles.run_tiled_scan(
+                    plan, fetch_tile=_fetch_tile, detect_tile=_detect_tile,
+                    job_id=f"zone-{_sid}")
+
+
         images = {"true_colour": tc_image}
         # Persist the real fetched crop (base64) — the Imagery page's
         # comparison view needs an actual image to render.
@@ -581,8 +630,16 @@ class SentinelScanner:
         # nothing else reproduces; the tiled pass adds the FOURTEEN OTHER
         # DOTA classes that used to be detected and discarded — aircraft,
         # storage tanks, harbour structure, vehicles.
-        if tiled_out and tiled_out.get("status") == "completed":
-            extra = [d for d in tiled_out["detections"] if d.get("object_type") != "vessel"]
+        if whole_scene:
+            dets = await _off_loop(lambda: sentinel_ml.run_object_detection(
+                {"true_colour": tc_image}, ml_bbox, history=history_imgs))
+            all_detections.extend(dets)
+            for d in dets:
+                by_type[d["object_type"]] = by_type.get(d["object_type"], 0) + 1
+            base_meta["m_per_px"] = 5.0
+            base_meta["stack_passes"] = len(history_imgs) + 1
+        elif tiled_out and tiled_out.get("status") == "completed":
+            extra = list(tiled_out["detections"])
             all_detections.extend(extra)
             for d in extra:
                 by_type[d["object_type"]] = by_type.get(d["object_type"], 0) + 1
@@ -594,7 +651,8 @@ class SentinelScanner:
                 f"native-resolution pass failed ({tiled_out.get('error_message')}) — "
                 f"only the vessel detector ran")
 
-        if "ship_detection" in run_tasks:
+        # The old single-model vessel pass only where the new path did not run.
+        if "ship_detection" in run_tasks and not whole_scene and not (tiled_out and tiled_out.get("status") == "completed"):
             # run_ship_detection() returns [] both when the OBB model failed to load AND when it
             # genuinely found nothing - check the session explicitly so those two cases are never
             # conflated (a load failure must never be reported as "0 vessels found"). This is the
@@ -621,7 +679,52 @@ class SentinelScanner:
             # Clustering has nothing to group without ship_detection having run first.
             skipped_tasks.append("vessel_cluster_detection (requires ship_detection to also be enabled)")
 
-        result_summary = {"by_type": by_type, "total_detections": len(all_detections)}
+        # WHAT CANNOT BE THERE IS NOT THERE: a vessel on land, a storage
+        # tank on open water. Judged on WorldCover's land/water map.
+        try:
+            from main import _water_mask
+            import land_water
+            wid, hei = _native_px(bounds_wsen)
+            water = await _water_mask(zone_dict.get("system_id") or f"zone-{zone_dict.get('id')}", bounds_wsen, wid, hei)
+            if water is not None:
+                bb = [min_lon, min_lat, max_lon, max_lat]
+                kept = [d for d in all_detections
+                        if land_water.plausible(d.get("object_type"), water, d.get("centroid_lat"), d.get("centroid_lon"), bb)]
+                dropped = len(all_detections) - len(kept)
+                if dropped:
+                    print(f"[sentinel-scanner] dropped {dropped} detection(s) that cannot be where they were found "
+                          f"(vessel on land / structure on water)")
+                all_detections = kept
+        except Exception as _we:
+            print(f"[sentinel-scanner] land/water check skipped: {type(_we).__name__}: {_we}")
+
+        # An aircraft only one model saw, with no airfield within 3 km, is
+        # a roof or a crane: 17 such "planes" at Jebel Ali port.
+        try:
+            fields = _airfields_near(min_lon, min_lat, max_lon, max_lat)
+            def _near_field(d):
+                return any(abs(d["centroid_lat"] - a) < 0.027 and abs(d["centroid_lon"] - o) < 0.03 for a, o in fields)
+            n0 = len(all_detections)
+            all_detections = [d for d in all_detections
+                              if not (d.get("object_type") == "aircraft" and _tier(d) == "probable" and not _near_field(d))]
+            if len(all_detections) < n0:
+                print(f"[sentinel-scanner] dropped {n0 - len(all_detections)} one-model aircraft with no airfield within 3 km")
+        except Exception as _ae:
+            print(f"[sentinel-scanner] airfield check skipped: {type(_ae).__name__}: {_ae}")
+
+        # COUNTS ARE CONFIRMED OBJECTS. A one-model detection is shown, dashed,
+        # but "17 aircraft" in a headline must mean seventeen aircraft.
+        by_type, probable_by_type = {}, {}
+        for d in all_detections:
+            tgt = probable_by_type if _tier(d) == "probable" else by_type
+            tgt[d["object_type"]] = tgt.get(d["object_type"], 0) + 1
+
+        result_summary = {"by_type": by_type, "total_detections": len(all_detections),
+                          "probable_by_type": probable_by_type}
+        if whole_scene:
+            result_summary["m_per_px"] = 5.0
+            result_summary["stack_passes"] = len(history_imgs) + 1
+            result_summary["models"] = "yolov8m-obb + yolo26x-obb"
         if tiled_out:
             result_summary["m_per_px"] = tiled_out.get("m_per_px")
             result_summary["tiles"] = f"{tiled_out.get('tiles_ok')}/{tiled_out.get('tiles_total')}"
@@ -671,7 +774,7 @@ class SentinelScanner:
             "cloud_cover_percent": None,
             "image_age_hours": round((datetime.datetime.now(datetime.timezone.utc) - acq).total_seconds() / 3600, 2),
         }
-        if _already_held(zone_dict.get("id"), base_meta["image_id"]):
+        if not zone_dict.get("_force") and _already_held(zone_dict.get("id"), base_meta["image_id"]):
             return {"status": "unchanged", **base_meta}
 
         w, h = _native_px(bounds_wsen)

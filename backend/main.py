@@ -17212,11 +17212,11 @@ function evaluatePixel(s) {
 _EVALSCRIPTS = {
     "true-colour": _EVALSCRIPT_TRUE_COLOUR,
 
-    # Water as white, land as black (NDWI from green and near-infrared) —
-    # where a radar "ship" can be a ship at all.
+    # Water as white, land as black (MNDWI, green against short-wave
+    # infrared) — the fallback when WorldCover cannot be read.
     "water-mask": """//VERSION=3
-function setup(){return{input:["B03","B08","dataMask"],output:{bands:4}}}
-function evaluatePixel(s){var w=(s.B03-s.B08)/(s.B03+s.B08+1e-6)>0.05?1:0;return[w,w,w,s.dataMask]}""",
+function setup(){return{input:["B03","B11","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){var w=(s.B03-s.B11)/(s.B03+s.B11+1e-6)>0.1?1:0;return[w,w,w,s.dataMask]}""",
 
     "false-colour": """//VERSION=3
 function setup(){return{input:["B08","B04","B03","dataMask"],output:{bands:4}}}
@@ -22802,33 +22802,39 @@ def _sar_grey_b64(tiff_bytes: bytes, sar_detector, np, size: tuple | None = None
 
 
 async def _water_mask(system_id: str, bounds: dict, w: int, h: int):
-    """Boolean array, True on water, for the area (cached), or None."""
+    """Boolean array, True on water, for the area (cached), or None.
+
+    ESA WorldCover first (land_water.py): a land-cover map, so harbour
+    basins are water and blue roofs are not. If it cannot be read, a
+    Sentinel-2 MNDWI mask — green against short-wave infrared, in which
+    roofs are bright and water dark — rather than NDWI, which called the
+    roofs of Jebel Ali water."""
     import io as _iow
     import numpy as _npw
     from PIL import Image as _PILw
-    key = f"{system_id}-water-{bounds['west']:.4f}-{bounds['south']:.4f}-{bounds['east']:.4f}-{bounds['north']:.4f}.png"
+    import land_water
+    key = f"{system_id}-wc-{bounds['west']:.4f}-{bounds['south']:.4f}-{bounds['east']:.4f}-{bounds['north']:.4f}-{w}x{h}.png"
     _meta, data = _cache_read(key)
     if data is None:
-        r = await _fetch_sentinel_image_bytes(bounds, image_type="water-mask", max_cloud=20, days_back=90, width=w, height=h)
-        if r.get("error"):
-            print(f"[sar] water mask unavailable for {system_id}: {r['error']}", flush=True)
-            return None
-        data = r["image_bytes"]
-        _cache_write(key, {"kind": "water-mask"}, data)
+        loop = asyncio.get_event_loop()
+        mask = await loop.run_in_executor(_executor, land_water.water_mask,
+                                          bounds["west"], bounds["south"], bounds["east"], bounds["north"], w, h)
+        if mask is None:
+            r = await _fetch_sentinel_image_bytes(bounds, image_type="water-mask", max_cloud=20, days_back=90, width=w, height=h)
+            if r.get("error"):
+                print(f"[sar] water mask unavailable for {system_id}: {r['error']}", flush=True)
+                return None
+            mask = _npw.array(_PILw.open(_iow.BytesIO(r["image_bytes"])).convert("L")) > 127
+        buf = _iow.BytesIO()
+        _PILw.fromarray((mask * 255).astype(_npw.uint8)).save(buf, format="PNG")
+        data = buf.getvalue()
+        _cache_write(key, {"kind": "water-mask", "source": "worldcover-or-mndwi"}, data)
     return _npw.array(_PILw.open(_iow.BytesIO(data)).convert("L")) > 127
 
 
 def _on_water(water, lat, lon, bbox) -> bool:
-    """Is the point on water, allowing one pixel of shoreline?"""
-    if lat is None or lon is None:
-        return False
-    hgt, wid = water.shape
-    x = int((lon - bbox[0]) / (bbox[2] - bbox[0]) * wid)
-    y = int((bbox[3] - lat) / (bbox[3] - bbox[1]) * hgt)
-    if not (0 <= x < wid and 0 <= y < hgt):
-        return False
-    win = water[max(0, y - 1):y + 2, max(0, x - 1):x + 2]
-    return bool(win.mean() >= 0.5)
+    import land_water
+    return land_water.on_water(water, lat, lon, bbox)
 
 
 _IMAGERY_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "imagery_cache")
@@ -22951,6 +22957,58 @@ def _cache_write(name: str, meta: dict, data: bytes) -> None:
         _json.dump(meta, fh)
 
 
+def _esri_mosaic(west: float, south: float, east: float, north: float, out_w: int, out_h: int) -> bytes:
+    """Esri World Imagery over exact bounds, stitched from XYZ tiles at the
+    deepest zoom that keeps the mosaic under ~8000 px a side, resampled to
+    out_w×out_h. JPEG bytes."""
+    import io as _iom
+    import math as _mm
+    import urllib.request as _urm
+    from concurrent.futures import ThreadPoolExecutor
+    from PIL import Image as _PILm
+
+    def px(lat, lon, z):
+        n = 256 * 2 ** z
+        x = (lon + 180) / 360 * n
+        y = (1 - _mm.log(_mm.tan(_mm.radians(lat)) + 1 / _mm.cos(_mm.radians(lat))) / _mm.pi) / 2 * n
+        return x, y
+
+    z = 18
+    while z > 10:
+        x0, y0 = px(north, west, z)
+        x1, y1 = px(south, east, z)
+        if max(x1 - x0, y1 - y0) <= 8000:
+            break
+        z -= 1
+    tx0, ty0, tx1, ty1 = int(x0 // 256), int(y0 // 256), int(x1 // 256), int(y1 // 256)
+    url = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+
+    def fetch(t):
+        tx, ty = t
+        for _ in range(3):
+            try:
+                req = _urm.Request(url.format(z=z, y=ty, x=tx), headers={"User-Agent": "Parallax/1.0"})
+                return t, _urm.urlopen(req, timeout=20).read()
+            except Exception:                                # noqa: BLE001
+                continue
+        return t, None
+
+    tiles = [(tx, ty) for ty in range(ty0, ty1 + 1) for tx in range(tx0, tx1 + 1)]
+    mosaic = _PILm.new("RGB", ((tx1 - tx0 + 1) * 256, (ty1 - ty0 + 1) * 256), (0, 0, 0))
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for (tx, ty), raw in pool.map(fetch, tiles):
+            if raw:
+                mosaic.paste(_PILm.open(_iom.BytesIO(raw)).convert("RGB"), ((tx - tx0) * 256, (ty - ty0) * 256))
+    # Cut the exact bounds (Web Mercator pixels), then to the area's grid.
+    # Over a few kilometres the Mercator/plate-carrée difference in rows is
+    # far below a pixel.
+    crop = mosaic.crop((round(x0 - tx0 * 256), round(y0 - ty0 * 256), round(x1 - tx0 * 256), round(y1 - ty0 * 256)))
+    out = crop.resize((out_w, out_h), _PILm.LANCZOS)
+    buf = _iom.BytesIO()
+    out.save(buf, format="JPEG", quality=92)
+    return buf.getvalue()
+
+
 @app.get("/api/imagery/zones/{system_id}/hires")
 def api_imagery_zone_hires(system_id: str):
     """The sharpest picture of the area there is: Esri World Imagery (Vantor/
@@ -22961,7 +23019,7 @@ def api_imagery_zone_hires(system_id: str):
     import urllib.request as _ur
     z = _zone_by_system_id(system_id)
     b = z["bbox"]
-    key = f"{system_id}-esri-{b['min_lon']:.4f}-{b['min_lat']:.4f}-{b['max_lon']:.4f}-{b['max_lat']:.4f}.jpg"
+    key = f"{system_id}-esri3-{b['min_lon']:.4f}-{b['min_lat']:.4f}-{b['max_lon']:.4f}-{b['max_lat']:.4f}.jpg"
     meta, data = _cache_read(key)
     if data is None or time.time() - (meta or {}).get("fetched", 0) > 30 * 86400:
         import math as _m
@@ -22971,9 +23029,13 @@ def api_imagery_zone_hires(system_id: str):
         wpx, hpx = max(64, round(w_m * k)), max(64, round(h_m * k))
         bbox = f"{b['min_lon']},{b['min_lat']},{b['max_lon']},{b['max_lat']}"
         base = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
+        # FROM THE TILE CACHE, STITCHED. The single-image export widened
+        # the bbox to keep its pixels square (70 m off at Khor Fakkan) and,
+        # at 4096 px, timed out. The XYZ tiles are what the map itself
+        # shows: cached, exactly georeferenced, ~1.2 m/px at zoom 17.
+        # The area is cut from the mosaic by its exact bounds.
         try:
-            data = _ur.urlopen(f"{base}/export?bbox={bbox}&bboxSR=4326&imageSR=4326&size={wpx},{hpx}"
-                               f"&format=jpg&f=image", timeout=60).read()
+            data = _esri_mosaic(b["min_lon"], b["min_lat"], b["max_lon"], b["max_lat"], wpx, hpx)
             cx, cy = (b["min_lon"] + b["max_lon"]) / 2, (b["min_lat"] + b["max_lat"]) / 2
             ident = _json.loads(_ur.urlopen(
                 f"{base}/identify?geometry={cx},{cy}&geometryType=esriGeometryPoint&sr=4326&layers=all:0"
@@ -23468,7 +23530,8 @@ def _launch_zone_scan_background(zone_dict: dict, triggered_by: str) -> None:
         from sentinel_scanner import SentinelScanner as _Sc
         for sensor in sensors:
             try:
-                _Sc().run_scan({**zone_dict, "sensor_preference": sensor}, triggered_by=triggered_by)
+                _Sc().run_scan({**zone_dict, "sensor_preference": sensor,
+                                "_force": triggered_by in ("manual", "redraw")}, triggered_by=triggered_by)
             except Exception as _e:
                 print(f"[scan] {sensor} scan error for {zone_dict.get('system_id')}: {_e}")
 

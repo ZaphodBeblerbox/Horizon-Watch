@@ -66,6 +66,12 @@ def previous_scan(db, zone_id, before_scan_id=None, instrument=None):
         cur = db.query(SentinelScan).filter(SentinelScan.scan_id == before_scan_id).first()
         if cur is not None and cur.image_id:
             q = q.filter(or_(SentinelScan.image_id.is_(None), SentinelScan.image_id != cur.image_id))
+        # And an EARLIER moment: the same pass under another tile's id, or
+        # re-analysed with new detectors, is not a baseline for itself.
+        if cur is not None and cur.image_timestamp_utc:
+            import datetime as _dt_ps
+            q = q.filter(or_(SentinelScan.image_timestamp_utc.is_(None),
+                             SentinelScan.image_timestamp_utc < cur.image_timestamp_utc - _dt_ps.timedelta(minutes=15)))
     if instrument:
         q = q.filter(SentinelScan.instrument == instrument)
     return q.order_by(SentinelScan.created_at.desc()).first()
@@ -75,6 +81,14 @@ def detections_for(db, scan_id) -> list[dict]:
     from database import SentinelDetection
 
     rows = db.query(SentinelDetection).filter(SentinelDetection.scan_id == scan_id).all()
+    # Only confirmed objects take part in "what changed": a detection one
+    # model alone saw must not become "a vessel appeared" by itself.
+    def _probable(r):
+        try:
+            return json.loads(r.attributes or "{}").get("tier") == "probable"
+        except (TypeError, ValueError):
+            return False
+    rows = [r for r in rows if not _probable(r)]
     return [{
         "detection_id": r.detection_id,
         "object_type": r.object_type,

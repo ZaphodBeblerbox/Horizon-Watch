@@ -10,7 +10,7 @@
 
 /** Detection outline colours, everywhere imagery is drawn: bright enough to
  *  read over water, desert and city at a glance, each drawn over a dark halo. */
-export const DET_COLORS = { new: "#FFB300", removed: "#FF3B30", existing: "#00E5FF", expanded: "#FFB300" }
+export const DET_COLORS = { new: "#FFB300", removed: "#FF3B30", existing: "#00E5FF", expanded: "#FFB300", unconfirmed: "#B8BCC6" }
 
 const SINGULAR = {
     storage_tank: ["storage tank", "storage tanks"], vessel: ["vessel", "vessels"],

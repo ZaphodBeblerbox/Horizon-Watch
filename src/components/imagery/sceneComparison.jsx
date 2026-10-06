@@ -164,7 +164,9 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
                 const shape = {
                     fill: isSel ? "rgba(0,229,255,0.18)" : "transparent",
                     stroke: c.doubtful ? "#B8BCC6" : strokeFor(c), strokeWidth: isSel ? 2.6 : 2,
-                    strokeDasharray: c.type === "removed" || c.doubtful ? "4 3" : undefined,
+                    // Dashed: gone since the last pass, doubted by the imagery
+                    // note, or found by only one of the two models.
+                    strokeDasharray: c.type === "removed" || c.doubtful ? "4 3" : c.tier === "probable" ? "2 2" : undefined,
                     style: { pointerEvents: "auto", cursor: "pointer" },
                     onClick: (e) => { e.stopPropagation(); onSelectDet && onSelectDet(c) },
                 }
@@ -259,7 +261,7 @@ function SplitPane({ title, src, view, onViewChange, overlay = null, stretch = f
  */
 function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
                         changes, selectedDet, onSelectDet, arrowFor, arrowLabel,
-                        refDate, curDate, handle = true, stretch = false }) {
+                        refDate, curDate, handle = true, stretch = false, showDates = true }) {
     const { scale, tx, ty, frameW, frameH } = useViewerView()
     const rootRef = useRef(null)
     if (!frameW || !frameH) return null
@@ -328,17 +330,17 @@ function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
 
             {/* Which side is which. A wipe with unlabelled halves makes the
                 reader guess which date they are looking at. */}
-            <div style={{ position: "absolute", left: 6, top: 6, font: "400 10px var(--mono)",
+            {showDates && <div style={{ position: "absolute", left: 6, top: 6, font: "400 10px var(--mono)",
                           color: "var(--txt)", background: "var(--bg-0)", padding: "1px 4px",
-                          opacity: 0.85 }}>{curDate}</div>
-            <div style={{ position: "absolute", right: 6, top: 6, font: "400 10px var(--mono)",
+                          opacity: 0.85 }}>{curDate}</div>}
+            {showDates && <div style={{ position: "absolute", right: 6, top: 6, font: "400 10px var(--mono)",
                           color: "var(--txt)", background: "var(--bg-0)", padding: "1px 4px",
-                          opacity: 0.85 }}>{refDate}</div>
+                          opacity: 0.85 }}>{refDate}</div>}
         </div>
     )
 }
 
-export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, onSwipePos, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true, swipeHandle = true, refLabel = null, stretch = false }) {
+export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, onSwipePos, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true, swipeHandle = true, refLabel = null, stretch = false, stamped = false }) {
     // One view for both split panes. Held here rather than in either pane,
     // because the point of a split is that the two sides cannot disagree
     // about where they are looking.
@@ -532,6 +534,7 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                         curDate={fmtDate(scene.scan.image_timestamp_utc)}
                         handle={swipeHandle}
                         stretch={stretch}
+                        showDates={!stamped}
                     />
                 }
             />

@@ -96,10 +96,16 @@ def _shape(d, zone_bbox):
     return None, bbox_percent(d.centroid_lat, d.centroid_lon, zone_bbox)
 
 
-def _size(d):
+def _attrs(d) -> dict:
     try:
-        a = json.loads(d.attributes) if d.attributes else {}
+        return json.loads(d.attributes) if d.attributes else {}
     except (TypeError, ValueError):
+        return {}
+
+
+def _size(d):
+    a = _attrs(d)
+    if not a:
         return None, None
     return (a.get("estimated_length_m") or a.get("vessel_length_m"),
             a.get("estimated_width_m") or a.get("vessel_width_m"))
@@ -128,8 +134,9 @@ def reference_scan(db, zone_id: int, before_scan_id: str):
     if current.image_id:
         q = q.filter(or_(SentinelScan.image_id.is_(None), SentinelScan.image_id != current.image_id))
     if current.image_timestamp_utc:
+        import datetime as _dt_rs
         q = q.filter(or_(SentinelScan.image_timestamp_utc.is_(None),
-                         SentinelScan.image_timestamp_utc < current.image_timestamp_utc))
+                         SentinelScan.image_timestamp_utc < current.image_timestamp_utc - _dt_rs.timedelta(minutes=15)))
     return q.order_by(SentinelScan.created_at.desc()).first()
 
 
@@ -184,19 +191,28 @@ def compare_scans(db, zone, current_scan):
             change_type = "existing"
         elif ref is None:
             change_type = "new"  # honest: no reference exists, so everything is "new" to this view
+        if change_type == "new" and _attrs(d).get("tier") == "probable":
+            # One model alone saw it and the last pass did not: not "new",
+            # just unconfirmed.
+            change_type = "unconfirmed"
         poly, box = _shape(d, zone_bbox)
         length_m, width_m = _size(d)
         changes.append({
             "id": d.detection_id, "label": d.object_type, "type": change_type,
             "conf": round(d.confidence, 3), "bbox": box, "polygon": poly,
             "length_m": length_m, "width_m": width_m, "geo_geometry": d.geo_geometry,
+            # confirmed = both models (or the stack and this pass) agree;
+            # probable = one only. Older detections carry no tier.
+            "tier": _attrs(d).get("tier"), "models": _attrs(d).get("models"),
             "note": "", "severity": d.severity, "reviewed_status": d.reviewed_status,
             "lat": d.centroid_lat, "lon": d.centroid_lon,
             "interpretation": _detection_interpretation(d),
             "instrument": d.instrument or "OPTICAL",
         })
     for r in ref_dets:
-        if id(r) not in matched_ref_ids:
+        # Only a confirmed object can be "gone"; a one-model detection last
+        # time that is absent now was most likely never there.
+        if id(r) not in matched_ref_ids and _attrs(r).get("tier") != "probable":
             poly, box = _shape(r, zone_bbox)
             changes.append({
                 "id": f"removed-{r.detection_id}", "label": r.object_type, "type": "removed",
@@ -207,11 +223,15 @@ def compare_scans(db, zone, current_scan):
             })
 
     # Real per-class counts, reference -> current, with signed deltas.
+    # Counted: confirmed objects (and older, untiered ones) — the headline's
+    # numbers, like the scanner's, never rest on one model alone.
     cur_counts, ref_counts = {}, {}
     for d in current_dets:
-        cur_counts[d.object_type] = cur_counts.get(d.object_type, 0) + 1
+        if _attrs(d).get("tier") != "probable":
+            cur_counts[d.object_type] = cur_counts.get(d.object_type, 0) + 1
     for r in ref_dets:
-        ref_counts[r.object_type] = ref_counts.get(r.object_type, 0) + 1
+        if _attrs(r).get("tier") != "probable":
+            ref_counts[r.object_type] = ref_counts.get(r.object_type, 0) + 1
     labels = sorted(set(cur_counts) | set(ref_counts))
     counts = [[label, cur_counts.get(label, 0), cur_counts.get(label, 0) - ref_counts.get(label, 0)] for label in labels]
 

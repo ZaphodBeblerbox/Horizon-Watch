@@ -28,6 +28,7 @@ backend/data/akili.db-wal
 # Large model files — downloaded at startup on Railway
 backend/yolov8m-obb.onnx
 backend/yolov8m-obb.pt
+backend/models/
 backend/runs/
 # Sentinel-1 SAR vessel-detection weights (allenai/vessel-detection-sentinels)
 # — downloaded + SHA-256-verified at runtime by sar_detector.py, not committed.
