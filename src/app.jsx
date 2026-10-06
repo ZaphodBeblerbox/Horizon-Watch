@@ -1075,7 +1075,7 @@ export default function App() {
         const first = surfaceSeenRef.current === null
         if (first) surfaceSeenRef.current = new Set()
         for (const it of surfaceItems) {
-            if (!it?.id || it.source_type === "telegram" || surfaceSeenRef.current.has(it.id)) continue
+            if (!it?.id || String(it.source_type || "").startsWith("telegram") || surfaceSeenRef.current.has(it.id)) continue
             surfaceSeenRef.current.add(it.id)
             pushNotification({
                 silent: first, id: `sig-${it.id}`, kind: "signal",
@@ -1093,10 +1093,11 @@ export default function App() {
        with its headline while it is fresh. The first load is history and
        goes to the tray silently, like every other feed. */
     const tgSeenRef = useRef(null)
+    const tgPartyRef = useRef({})        // party -> when its last statement interrupted
     useEffect(() => {
         if (!profile) return undefined
         let live = true
-        const load = () => fetch(`${API}/api/telegram/posts?hours=24`, { credentials: "include" })
+        const load = () => fetch(`${API}/api/telegram/posts?hours=24&statements=1`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
                 if (!live || !d) return
@@ -1111,6 +1112,26 @@ export default function App() {
                         sub: [p.channel_title || p.channel, p.place, p.media !== "none" ? p.media : null].filter(Boolean).join(" · "),
                         ref: { lat: p.lat, lon: p.lon },
                         ts: Date.parse(p.posted_at) || Date.now(),
+                    })
+                }
+                // OFFICIAL STATEMENTS: into the tray always; a card only for a
+                // claimed strike, attack, interception or seizure, and at most
+                // one per party every 12 hours — a spokesman at war claims
+                // something every few hours.
+                for (const st of d.statements || []) {
+                    if (tgSeenRef.current.has(st.id)) continue
+                    tgSeenRef.current.add(st.id)
+                    const party = st.party || st.channel
+                    const lastAt = tgPartyRef.current[party] || 0
+                    const ts = Date.parse(st.posted_at) || Date.now()
+                    const loud = !first && st.important && ts - lastAt > 12 * 3600_000
+                    if (loud) tgPartyRef.current[party] = ts
+                    pushNotification({
+                        silent: first || !loud, id: st.id, kind: "telegram", sev: st.important ? "critical" : "moderate",
+                        title: st.headline || "Official statement",
+                        sub: [`${party} — official statement`, st.place].filter(Boolean).join(" · "),
+                        ref: st.cite_lat != null ? { lat: st.cite_lat, lon: st.cite_lon } : null,
+                        ts,
                     })
                 }
             }).catch(() => {})

@@ -1,3 +1,4 @@
+import StatementsSection from "./StatementsSection.jsx"
 import WatchWithSatellites, { canWatch } from "./WatchWithSatellites.jsx"
 import ImagerySignalSection from "./ImagerySignalSection.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
@@ -835,6 +836,11 @@ export default function InspectorPanel({
                 )}
 
                 {entityType === "cable" && data?.id && <CableSection id={String(data.id)} />}
+                {Number.isFinite(Number(data?.lat ?? data?.latitude)) && Number.isFinite(Number(data?.lon ?? data?.longitude))
+                    && !["vessel", "aircraft", "airport", "port", "cable", "pipeline"].includes(entityType) && (
+                    <StatementsSection lat={Number(data?.lat ?? data?.latitude)} lon={Number(data?.lon ?? data?.longitude)}
+                        country={data?.country_code || null} />
+                )}
                 {String(data?.source || data?.domain || "").toUpperCase() === "SAT-TASK" && (data?.alert_id || data?.id) && (
                     <ImagerySignalSection alertId={String(data.alert_id || data.id)} />
                 )}

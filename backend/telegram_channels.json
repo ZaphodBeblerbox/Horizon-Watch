@@ -1,18 +1,118 @@
 {
-  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator.",
-  "YemenWrath":          {"role": "official",   "party": "Houthi forces (Ansar Allah)", "lang": "ar"},
-  "AnsarAllahMCSaadah":  {"role": "official",   "party": "Houthi forces (Ansar Allah)", "lang": "ar"},
-  "RSFSudan":            {"role": "official",   "party": "Rapid Support Forces (RSF)",  "lang": "ar"},
-  "Sd_News_Network":     {"role": "local",      "party": null, "lang": "ar"},
-  "ynetalerts":          {"role": "local",      "party": null, "lang": "he"},
-  "AJENews_Official":    {"role": "outlet",     "party": null, "lang": "en"},
-  "ClashReport":         {"role": "aggregator", "party": null, "lang": "en"},
-  "AMK_Mapping":         {"role": "aggregator", "party": null, "lang": "en"},
-  "OSINTdefender":       {"role": "aggregator", "party": null, "lang": "en"},
-  "GeoPWatch":           {"role": "aggregator", "party": null, "lang": "en"},
-  "me_observer_TG":      {"role": "aggregator", "party": null, "lang": "en"},
-  "intelslava":          {"role": "partisan",   "party": "Russia-aligned", "lang": "en"},
-  "southfronteng":       {"role": "partisan",   "party": "Russia-aligned", "lang": "en"},
-  "rybar_eng":           {"role": "partisan",   "party": "Russia-aligned", "lang": "en"},
-  "militarysummary":     {"role": "partisan",   "party": "Russia-aligned", "lang": "en"}
+  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator. ignore = joined but not read (quotes, tributes, no events). Official channels are statements: never map pins; in the Inbox, cited on events, and notified when they claim an attack.",
+  "YemenWrath": {
+    "role": "official",
+    "party": "Houthi forces (Ansar Allah)",
+    "lang": "ar"
+  },
+  "AnsarAllahMCSaadah": {
+    "role": "official",
+    "party": "Houthi forces (Ansar Allah)",
+    "lang": "ar"
+  },
+  "RSFSudan": {
+    "role": "official",
+    "party": "Rapid Support Forces (RSF)",
+    "lang": "ar"
+  },
+  "Sd_News_Network": {
+    "role": "local",
+    "party": null,
+    "lang": "ar"
+  },
+  "ynetalerts": {
+    "role": "local",
+    "party": null,
+    "lang": "he"
+  },
+  "AJENews_Official": {
+    "role": "outlet",
+    "party": null,
+    "lang": "en"
+  },
+  "ClashReport": {
+    "role": "aggregator",
+    "party": null,
+    "lang": "en"
+  },
+  "AMK_Mapping": {
+    "role": "aggregator",
+    "party": null,
+    "lang": "en"
+  },
+  "OSINTdefender": {
+    "role": "aggregator",
+    "party": null,
+    "lang": "en"
+  },
+  "GeoPWatch": {
+    "role": "aggregator",
+    "party": null,
+    "lang": "en"
+  },
+  "me_observer_TG": {
+    "role": "aggregator",
+    "party": null,
+    "lang": "en"
+  },
+  "intelslava": {
+    "role": "partisan",
+    "party": "Russia-aligned",
+    "lang": "en"
+  },
+  "southfronteng": {
+    "role": "partisan",
+    "party": "Russia-aligned",
+    "lang": "en"
+  },
+  "rybar_eng": {
+    "role": "partisan",
+    "party": "Russia-aligned",
+    "lang": "en"
+  },
+  "militarysummary": {
+    "role": "partisan",
+    "party": "Russia-aligned",
+    "lang": "en"
+  },
+  "Middle_East_Spectator": {
+    "role": "aggregator",
+    "party": null,
+    "lang": "en"
+  },
+  "c/1181169156": {
+    "role": "local",
+    "party": null,
+    "lang": "uk"
+  },
+  "supernova_plus": {
+    "role": "local",
+    "party": null,
+    "lang": "ru"
+  },
+  "idfofficial": {
+    "role": "official",
+    "party": "Israel Defense Forces (IDF)",
+    "lang": "en"
+  },
+  "gazaalanpa": {
+    "role": "partisan",
+    "party": "pro-Palestinian",
+    "lang": "en"
+  },
+  "InfosAes": {
+    "role": "partisan",
+    "party": "Sahel juntas (AES)-aligned",
+    "lang": "fr"
+  },
+  "liil050": {
+    "role": "partisan",
+    "party": "Azawad (FLA)-aligned",
+    "lang": "fr"
+  },
+  "sh_almoqawamma": {
+    "role": "ignore",
+    "party": "Iran-aligned 'resistance' propaganda",
+    "lang": "fa"
+  }
 }

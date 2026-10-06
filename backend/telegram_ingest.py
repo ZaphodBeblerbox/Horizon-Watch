@@ -159,6 +159,8 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                 continue
             chan = getattr(ent, "username", None) or f"c/{ent.id}"
             info = channel_info(chan)
+            if info["role"] == "ignore":
+                continue                      # joined, judged useless (telegram_channels.json)
             async for m in client.iter_messages(ent, limit=PER_CHANNEL):
                 if m.date < cutoff:
                     break
@@ -360,6 +362,16 @@ def as_surface_items(hours: int = 24) -> list[dict]:
     except Exception:
         country_name_from_code = lambda c: None  # noqa: E731
     out = []
+    # Statements reach the Inbox and Home as signals, without a position
+    # anything could draw (the place they name is kept as cite_lat/lon).
+    for st in statements(hours):
+        out.append({
+            **st, "type": "telegram", "source_type": "telegram_statement",
+            "source": st["channel_title"] or st["channel"], "context": st.get("summary_en") or "",
+            "location": st["place"], "location_country": country_name_from_code(st["country_code"] or "") or None,
+            "published_at": st["posted_at"], "confidence": 0.6, "lat": None, "lon": None,
+            "severity_tier": "critical" if st["important"] else "moderate",
+        })
     for p in published(hours):
         out.append({
             **p,
@@ -397,7 +409,11 @@ def published(hours: int = 72) -> list[dict]:
     cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
     con = _con()
     con.row_factory = sqlite3.Row
-    rows = con.execute("SELECT * FROM telegram_posts WHERE lat IS NOT NULL AND posted_at >= ? ORDER BY posted_at DESC",
+    # A party's own claim is a STATEMENT, not a pin (statements()): an
+    # official channel's "we struck X" is cited and notified, never drawn as
+    # if someone on the ground had filmed it.
+    rows = con.execute("SELECT * FROM telegram_posts WHERE lat IS NOT NULL AND posted_at >= ?"
+                       " AND NOT (role = 'official' AND claim = 1) ORDER BY posted_at DESC",
                        (cutoff,)).fetchall()
     con.close()
     out, seen = [], {}
@@ -431,6 +447,83 @@ def published(hours: int = 72) -> list[dict]:
                             + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
         })
         seen[key] = out[-1]
+    return out
+
+
+# Worth interrupting for: a party claiming it struck, attacked, intercepted
+# or seized something — "IDF announces strikes on Gaza". Repelled advances,
+# movements and condemnations go to the Inbox only.
+IMPORTANT = {"strike", "attack", "interception", "explosion", "seizure"}
+
+
+def statements(hours: int = 72) -> list[dict]:
+    """Official channels' own claims: the IDF announcing strikes, the
+    Houthi spokesman claiming a missile attack, the RSF claiming a town.
+    Never map pins. They go to the Inbox and are cited on events near what
+    they name; one that claims an attack or a strike is `important` and
+    raises a notification."""
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
+    con = _con()
+    con.row_factory = sqlite3.Row
+    rows = con.execute("SELECT * FROM telegram_posts WHERE role='official' AND claim=1 AND relevant=1"
+                       " AND posted_at >= ? ORDER BY posted_at DESC", (cutoff,)).fetchall()
+    con.close()
+    out, seen = [], set()
+    for r in rows:
+        key = ((r["headline"] or "").strip().lower(), r["channel"], r["posted_at"][:10])
+        if key in seen:
+            continue
+        seen.add(key)
+        chan = r["channel"]
+        out.append({
+            "id": f"tgs-{chan}-{r['msg_id']}", "statement": True,
+            "headline": r["headline"], "text": r["text"], "summary_en": r["summary_en"],
+            "channel": chan, "channel_title": r["channel_title"], "party": r["party"],
+            "posted_at": r["posted_at"], "event_type": r["event_type"], "place": r["place"],
+            "country_code": r["country_code"], "cite_lat": r["lat"], "cite_lon": r["lon"],
+            "media": r["media"], "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
+            "url": None if chan.startswith("c/") else f"https://t.me/{chan}/{r['msg_id']}",
+            "important": (r["event_type"] or "") in IMPORTANT, "msg_id": r["msg_id"], "lang": r["lang"],
+            "verification": f"{r['party'] or r['channel_title']} — official statement, the party's own claim",
+        })
+    return out
+
+
+def statements_near(lat: float, lon: float, hours: int = 72, km: float = 75, country: str | None = None) -> list[dict]:
+    """Statements about a place: located within `km`, or naming the same
+    country when they could not be placed more precisely."""
+    import math
+    def dist(a, b, c, d):
+        p1, p2 = math.radians(a), math.radians(c)
+        h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(d - b) / 2) ** 2
+        return 12742 * math.asin(math.sqrt(h))
+    # Most claims name a region ("near Bab al-Mandab, Yemen"), not a point:
+    # those match on the country — given, or the one the point lies in.
+    try:
+        from location_extract import country_name_from_code
+    except Exception:
+        country_name_from_code = lambda c: None  # noqa: E731
+    land = None
+    if not country:
+        try:
+            from geo_land import country_at
+            land = (country_at(lat, lon) or "").lower() or None
+        except Exception:
+            land = None
+
+    def same_country(cc):
+        if not cc:
+            return False
+        if country:
+            return cc.lower() == country.lower()
+        return bool(land) and (country_name_from_code(cc) or "").lower() == land
+
+    out = []
+    for s in statements(hours):
+        if s["cite_lat"] is not None and dist(lat, lon, s["cite_lat"], s["cite_lon"]) <= km:
+            out.append({**s, "km": round(dist(lat, lon, s["cite_lat"], s["cite_lon"]))})
+        elif s["cite_lat"] is None and same_country(s["country_code"]):
+            out.append({**s, "km": None})
     return out
 
 

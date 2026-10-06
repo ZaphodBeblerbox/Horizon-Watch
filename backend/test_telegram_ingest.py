@@ -33,3 +33,16 @@ def test_a_precise_place_retries_without_its_region(monkeypatch):
     monkeypatch.setattr(geocode_utils, "geocode_place", fake)
     hit, why = ti.locate("Ras Al-Arah, Bab Al-Mandab, Yemen", "village", "ye")
     assert why is None and calls == ["Ras Al-Arah, Bab Al-Mandab, Yemen", "Ras Al-Arah, Yemen"]
+
+
+def test_statements_near_matches_region_claims_by_country(monkeypatch):
+    import telegram_ingest as t
+    rows = [
+        {"id": "a", "cite_lat": 12.6, "cite_lon": 43.3, "country_code": "YE"},   # located, ~300 km from Sanaa
+        {"id": "b", "cite_lat": None, "cite_lon": None, "country_code": "YE"},   # "near Bab al-Mandab, Yemen"
+        {"id": "c", "cite_lat": None, "cite_lon": None, "country_code": "SA"},
+    ]
+    monkeypatch.setattr(t, "statements", lambda hours=72: rows)
+    near = {s["id"] for s in t.statements_near(15.35, 44.2)}          # Sanaa, country from the point
+    assert near == {"b"}
+    assert {s["id"] for s in t.statements_near(12.7, 43.35, country="YE")} == {"a", "b"}

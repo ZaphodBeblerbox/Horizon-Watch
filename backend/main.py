@@ -11913,12 +11913,26 @@ async def _escalation_loop():
 
 
 @app.get("/api/telegram/posts")
-async def api_telegram_posts(hours: int = Query(72, ge=1, le=720)):
+async def api_telegram_posts(hours: int = Query(72, ge=1, le=720), statements: bool = False):
     """Telegram posts that passed relevance and precise geolocation
-    (telegram_ingest.py). Unverified by nature; each says so."""
+    (telegram_ingest.py). Unverified by nature; each says so. With
+    statements=1, official channels' own claims come too (never pins)."""
     import telegram_ingest as _tg
     loop = asyncio.get_event_loop()
-    return {"posts": await loop.run_in_executor(_executor, _tg.published, hours)}
+    out = {"posts": await loop.run_in_executor(_executor, _tg.published, hours)}
+    if statements:
+        out["statements"] = await loop.run_in_executor(_executor, _tg.statements, hours)
+    return out
+
+
+@app.get("/api/telegram/statements")
+async def api_telegram_statements(lat: float, lon: float, hours: int = Query(72, ge=1, le=720),
+                                  km: float = 75, country: str | None = None):
+    """What the parties say about a place: official statements located
+    within `km`, or naming the country."""
+    import telegram_ingest as _tg
+    loop = asyncio.get_event_loop()
+    return {"statements": await loop.run_in_executor(_executor, lambda: _tg.statements_near(lat, lon, hours, km, country))}
 
 
 @app.get("/api/telegram/video/{chan}/{msg_id}")
