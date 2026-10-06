@@ -14,10 +14,14 @@ describe("imagery passes", () => {
             scan("d", "S2B_2", "2026-09-29T07:02:37"),
             { scan_id: "e", status: "error", triggered_by: "schedule" },
         ])
-        expect(p.map((x) => x.key)).toEqual(["S2A_1", "S2B_2"])
+        expect(p.map((x) => x.key)).toEqual(["OPTICAL:2026-10-04", "OPTICAL:2026-09-29"])
         expect(p[0].checks).toBe(3)
         expect(p[0].fire).toBe(true)
         expect(p[0].scanId).toBe("ccc")       // newest check of that pass
+    })
+    it("leaves a pass that was never counted out of the charts, rather than as zero", () => {
+        const s = countSeries(acquisitions([scan("a", "1", "2026-10-04"), scan("b", "2", "2026-09-29", { result_summary: null })]))
+        expect(s[0].points.map((x) => x.n)).toEqual([2])
     })
     it("charts each class across passes, oldest first", () => {
         const s = countSeries(acquisitions([scan("a", "1", "2026-10-04"), scan("b", "2", "2026-09-29", { result_summary: { by_type: { vessel: 5 } } })]))

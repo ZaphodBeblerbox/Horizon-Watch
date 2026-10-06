@@ -141,15 +141,24 @@ def _native_px(b: dict, m_per_px: float = 10.0, cap: int = 2500) -> tuple[int, i
     return max(32, round(w * k)), max(32, round(h * k))
 
 
-def _already_held(zone_id, image_id) -> bool:
-    """Has this zone a completed scan of exactly this acquisition?"""
-    if not zone_id or not image_id:
+def _already_held(zone_id, image_id, when=None, instrument="OPTICAL") -> bool:
+    """Has this zone a completed scan of this acquisition? Matched on the
+    id, or on the same sensor within 15 minutes of the same moment — an
+    area across two Sentinel-2 tiles is the same pass under two ids
+    (S2C_40RDN_… and S2C_39RZH_…), and the second copy, cut differently,
+    counted 38 tanks where the first counted 15."""
+    if not zone_id or not (image_id or when):
         return False
     from database import SentinelScan, get_db
     with get_db() as db:
-        return db.query(SentinelScan.id).filter(
-            SentinelScan.zone_id == zone_id, SentinelScan.image_id == image_id,
-            SentinelScan.status == "completed").first() is not None
+        q = db.query(SentinelScan.id).filter(SentinelScan.zone_id == zone_id, SentinelScan.status == "completed")
+        if image_id and q.filter(SentinelScan.image_id == image_id).first() is not None:
+            return True
+        if when is not None:
+            lo, hi = when - datetime.timedelta(minutes=15), when + datetime.timedelta(minutes=15)
+            return q.filter(SentinelScan.instrument == instrument,
+                            SentinelScan.image_timestamp_utc.between(lo, hi)).first() is not None
+        return False
 
 
 class SentinelScanner:
@@ -476,7 +485,7 @@ class SentinelScanner:
         # into fourteen "scenes" and — worse — made each the baseline of the
         # next, so every comparison was an image against itself and nothing
         # could ever change.
-        if scene.get("id") and _already_held(zone_dict.get("id"), scene.get("id")):
+        if _already_held(zone_dict.get("id"), scene.get("id"), scene_dt_naive, "OPTICAL"):
             return {"status": "unchanged", **base_meta}
 
         # NO ml_tasks IS NOT A FAILURE ANY MORE.
@@ -541,11 +550,13 @@ class SentinelScanner:
                 plan, fetch_tile=_fetch_tile, detect_tile=_detect_tile,
                 job_id=f"zone-{_sid}")
 
-        # At native 10 m/px, not a size bucket: the scene shown is every
-        # pixel the satellite took, up to the Process API's 2500 px limit.
-        w_px, h_px = _native_px(bounds_wsen)
+        # The image of THIS pass (its own date), not the least-cloudy mosaic
+        # of the month — a pass labelled 4 Oct must show 4 Oct. Shown at
+        # 5 m/px, resampled bicubic by Sentinel Hub.
+        w_px, h_px = _native_px(bounds_wsen, m_per_px=5)
         img_result = await _fetch_sentinel_image_bytes(bounds_wsen, image_type="true-colour",
                                                          max_cloud=20, days_back=30,
+                                                         date_str=scene_dt.date().isoformat() if scene_dt else None,
                                                          width=w_px, height=h_px)
         if img_result.get("error"):
             return {"status": "error", "error_message": f"image fetch failed: {img_result['error']}", **base_meta}
@@ -639,38 +650,35 @@ class SentinelScanner:
         Every real detection this returns is tagged instrument="SAR" —
         see SentinelScanner.run_scan()'s own comment on why that's no
         longer always "OPTICAL"."""
-        import base64
-        from main import _fetch_sentinel1_raw_bands_geotiff
+        from main import (_fetch_sentinel1_raw_bands_geotiff, _satellite_search_sentinel1_impl,
+                          _sar_grey_b64, _water_mask, _on_water)
+        import numpy as np
         import sar_detector
 
-        img_result = await _fetch_sentinel1_raw_bands_geotiff(bounds_wsen, max_age_days=30)
-        if img_result.get("error"):
-            return {"status": "error", "error_message": f"Sentinel-1 image fetch failed: {img_result['error']}", "instrument": "SAR"}
-
-        tiff_bytes = img_result["image_bytes"]
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        # Which radar pass: the latest Sentinel-1 acquisition over the area,
+        # by date — so a pass already held is skipped before any download.
+        bbox = [bounds_wsen["west"], bounds_wsen["south"], bounds_wsen["east"], bounds_wsen["north"]]
+        found = await _satellite_search_sentinel1_impl(bbox, days_back=30)
+        stamps = sorted((str(it.get("datetime") or "") for it in (found.get("items") or []) if it.get("datetime")), reverse=True)
+        if not stamps:
+            return {"status": "error", "instrument": "SAR",
+                    "error_message": f"no Sentinel-1 pass over this area in 30 days{': ' + found['error'] if found.get('error') else ''}"}
+        acq = datetime.datetime.fromisoformat(stamps[0].replace("Z", "+00:00"))
+        day = acq.date().isoformat()
         base_meta = {
-            "instrument": "SAR",
-            # Sentinel Hub's mosaickingOrder="mostRecent" resolves the real
-            # underlying acquisition server-side but doesn't return its
-            # exact timestamp to this request shape — honestly reported as
-            # "now" (when this fetch happened) rather than a fabricated
-            # acquisition date; cloud_cover/image_age concepts don't apply
-            # to a SAR fetch at all (real, deliberate None, not a copy of
-            # the optical path's fields).
-            "image_id": None,
-            "image_timestamp_utc": now_utc.replace(tzinfo=None),
+            "instrument": "SAR", "image_id": f"S1-{day}",
+            "image_timestamp_utc": acq.replace(tzinfo=None),
             "cloud_cover_percent": None,
-            "image_age_hours": None,
+            "image_age_hours": round((datetime.datetime.now(datetime.timezone.utc) - acq).total_seconds() / 3600, 2),
         }
-
-        # Sentinel Hub does not name the acquisition behind a mostRecent
-        # mosaic, so the bytes are its identity: the same pass fetched twice
-        # is the same GeoTIFF.
-        import hashlib
-        base_meta["image_id"] = "S1-" + hashlib.sha1(tiff_bytes).hexdigest()[:20]
         if _already_held(zone_dict.get("id"), base_meta["image_id"]):
             return {"status": "unchanged", **base_meta}
+
+        w, h = _native_px(bounds_wsen)
+        img_result = await _fetch_sentinel1_raw_bands_geotiff(bounds_wsen, width=w, height=h, date_from=day, date_to=day)
+        if img_result.get("error"):
+            return {"status": "error", "error_message": f"Sentinel-1 image fetch failed: {img_result['error']}", **base_meta}
+        tiff_bytes = img_result["image_bytes"]
 
         try:
             sar_dets = await _off_loop(sar_detector.run_sar_ship_detection_from_geotiff_bytes, tiff_bytes)
@@ -679,14 +687,17 @@ class SentinelScanner:
         except Exception as e:
             return {"status": "error", "error_message": f"SAR detection crashed: {type(e).__name__}: {e}", **base_meta}
 
-        # Real preview image for the Imagery comparison view — generated
-        # locally from the same real fetched/rescaled bands rather than a
-        # second live Sentinel Hub call, using the false-colour VH/VV/ratio
-        # mapping _EVALSCRIPT_SAR_VV_VH already establishes as this app's
-        # real SAR visual convention.
+        # A bright return on land is a building, not a ship.
+        water = await _water_mask(zone_dict.get("system_id") or f"zone-{zone_dict.get('id')}", bounds_wsen, w, h)
+        if water is not None:
+            n0 = len(sar_dets)
+            sar_dets = [d for d in sar_dets if _on_water(water, d.get("lat"), d.get("lon"), bbox)]
+            print(f"[sentinel-scanner] SAR {day}: {n0} radar contacts, {len(sar_dets)} on water")
+
+        # Greyscale backscatter on the area's own grid, so it lines up with
+        # the optical passes and the sharp reference.
         try:
-            import numpy as np
-            base_meta["image_b64"] = await _off_loop(_sar_preview_b64, tiff_bytes, sar_detector, np)
+            base_meta["image_b64"] = await _off_loop(_sar_grey_b64, tiff_bytes, sar_detector, np, (w, h))
         except Exception as e:
             print(f"[sentinel-scanner] SAR preview image generation failed (non-fatal): {e}")
 

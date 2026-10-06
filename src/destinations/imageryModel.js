@@ -30,7 +30,9 @@ export function acquisitions(scans) {
     const groups = new Map()
     for (const s of scans || []) {
         if (s?.status !== "completed" || !s.image_timestamp_utc) continue
-        const key = s.image_id || `${s.instrument || "OPTICAL"}:${day(s.image_timestamp_utc)}`
+        // One pass a day per sensor: a change-detection run stores the same
+        // acquisition at day precision under its own id.
+        const key = `${s.instrument || "OPTICAL"}:${day(s.image_timestamp_utc)}`
         const g = groups.get(key)
         if (!g) {
             groups.set(key, { key, scan: s, scans: [s], triggers: new Set([s.triggered_by]) })
@@ -41,13 +43,16 @@ export function acquisitions(scans) {
         // Represent the pass by the newest check that still holds the image.
         const better = (s.has_image && !g.scan.has_image)
             || (Boolean(s.has_image) === Boolean(g.scan.has_image) && String(s.created_at) > String(g.scan.created_at))
-        if (better) g.scan = s
+        if (better || (!g.scan.result_summary?.by_type && s.result_summary?.by_type)) g.scan = s
     }
     return [...groups.values()]
         .map((g) => ({
             key: g.key, scanId: g.scan.scan_id, when: g.scan.image_timestamp_utc,
             instrument: g.scan.instrument || "OPTICAL", cloud: g.scan.cloud_cover_percent,
-            byType: g.scan.result_summary?.by_type || {}, hasImage: Boolean(g.scan.has_image),
+            byType: g.scan.result_summary?.by_type || {},
+            // Counted at all? Older runs stored no summary — unknown, not zero.
+            counted: Boolean(g.scans.find((x) => x.result_summary?.by_type)),
+            hasImage: Boolean(g.scans.some((x) => x.has_image)),
             checks: g.scans.length, fire: g.triggers.has("firms_fire"),
             triggers: [...g.triggers].filter(Boolean),
         }))
@@ -59,7 +64,7 @@ export function countSeries(passes) {
     const chron = [...(passes || [])].reverse()
     const labels = new Set(chron.flatMap((p) => Object.keys(p.byType || {})))
     return [...labels].map((label) => ({
-        label, points: chron.map((p) => ({ when: p.when, n: p.byType?.[label] || 0, key: p.key })),
+        label, points: chron.filter((p) => p.counted).map((p) => ({ when: p.when, n: p.byType?.[label] || 0, key: p.key })),
     })).sort((a, b) => Math.max(...b.points.map((x) => x.n)) - Math.max(...a.points.map((x) => x.n)))
 }
 

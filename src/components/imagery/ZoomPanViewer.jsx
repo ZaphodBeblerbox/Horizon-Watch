@@ -57,7 +57,7 @@ export const useViewerView = () => useContext(ViewerViewContext)
 
 const ZoomPanViewer = forwardRef(function ZoomPanViewer(
     { src, alt = "scene", children, overlay = null, onBackgroundClick,
-      minHeight = 320, fill = false, footer = null,
+      minHeight = 320, fill = false, footer = null, stretch = false,
       // CONTROLLED MODE. When `view`/`onViewChange` are supplied the viewer
       // stops owning its own zoom and defers to the caller. That is what
       // makes a comparison honest: two panes driven by ONE view are always
@@ -73,7 +73,12 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
     // LETTERBOXES a scene whose aspect ratio differs from the pane, and an
     // overlay mapped to the pane instead of to the image sits off its
     // objects by the width of the bars.
-    const [natural, setNatural] = useState({ w: 0, h: 0 })
+    const [loadedSize, setNatural] = useState({ w: 0, h: 0 })
+    // `stretch`: the image is a georeferenced scene whose frame already has
+    // the area's shape — it fills the frame exactly, so every image of the
+    // area (optical, radar, the sharp reference, an old square fetch) lines
+    // up with every other and with the outlines.
+    const natural = stretch ? frame : loadedSize
 
     const isControlled = controlledView != null && typeof onViewChange === "function"
     const view = isControlled ? controlledView : ownView
@@ -220,7 +225,7 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
                                    w: e.currentTarget.naturalWidth,
                                    h: e.currentTarget.naturalHeight,
                                })}
-                               style={{ display: "block", width: "100%", height: "100%", objectFit: "contain" }} />
+                               style={{ display: "block", width: "100%", height: "100%", objectFit: stretch ? "fill" : "contain" }} />
                         : null}
                     <ViewerScaleContext.Provider value={view.scale}>
                         {children}

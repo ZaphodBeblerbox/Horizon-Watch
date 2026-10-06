@@ -578,14 +578,58 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         return () => window.removeEventListener("akili:map-show-scene", h)
     }, [])
     const mapSceneLayer = useMemo(() => mapSceneOverlay(mapScene, mapSceneUi), [mapScene, mapSceneUi])
+    // Drawing for the Imagery page: a new area (the panel's own "Watch this
+    // area" takes it from there) or a new boundary for an existing one,
+    // saved as soon as the shape is closed.
+    const redrawTarget = useRef(null)          // {systemId, name} while redrawing
+    useEffect(() => {
+        const h = (e) => {
+            redrawTarget.current = e.detail?.systemId ? { systemId: e.detail.systemId, name: e.detail.name } : null
+            setImageryPanelOpen(true)
+            setImageryDrawMode(e.detail?.mode || "rectangle")
+            setImageryDrawn(null)
+            setImageryDrawActive(true)
+            toast(redrawTarget.current
+                ? `Draw the new boundary of ${redrawTarget.current.name} — two clicks for a box, Esc to cancel`
+                : "Draw the area to watch — two clicks for a box, Esc to cancel")
+        }
+        window.addEventListener("akili:imagery-draw", h)
+        return () => window.removeEventListener("akili:imagery-draw", h)
+    }, [])
+    const saveRedraw = useCallback(async (polygon) => {
+        const t = redrawTarget.current
+        redrawTarget.current = null
+        try {
+            const r = await fetch(`${API_BASE}/api/watch-zones/${t.systemId}`, {
+                method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ polygon_geojson: polygon }),
+            })
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            await fetch(`${API_BASE}/api/watch-zones/${t.systemId}/scan-now`, { method: "POST", credentials: "include" }).catch(() => {})
+            toast(`${t.name}: new boundary saved — a pass over it is being fetched`, { icon: "i-check" })
+            setImageryPanelOpen(false); setImageryDrawn(null)
+            window.__plxImageryTarget = { systemId: t.systemId }
+            window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "imagery" } }))
+        } catch (e) { toast(`Could not save the boundary — ${e.message}`, { icon: "i-alert" }) }
+    }, [])
     const handleImageryBounds = useCallback((bounds) => {
+        setImageryDrawActive(false)
+        if (redrawTarget.current) {
+            const { north: n, south: so, east: e, west: w } = bounds
+            saveRedraw({ type: "Polygon", coordinates: [[[w, so], [e, so], [e, n], [w, n], [w, so]]] })
+            return
+        }
         setImageryDrawn({ bounds, polygonVertices: null })
-        setImageryDrawActive(false)
-    }, [])
+    }, [saveRedraw])
     const handleImageryPolygon = useCallback(({ vertices, bounds }) => {
-        setImageryDrawn({ bounds, polygonVertices: vertices })
         setImageryDrawActive(false)
-    }, [])
+        if (redrawTarget.current) {
+            const ring = vertices.map(([lat, lon]) => [lon, lat])
+            saveRedraw({ type: "Polygon", coordinates: [[...ring, ring[0]]] })
+            return
+        }
+        setImageryDrawn({ bounds, polygonVertices: vertices })
+    }, [saveRedraw])
     const closeImageryPanel = useCallback(() => {
         setImageryPanelOpen(false)
         setImageryDrawActive(false)

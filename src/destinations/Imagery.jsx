@@ -27,7 +27,7 @@ import { fileSignal } from "../state/filing.js"
 import { agoLabel } from "../utils/formatTime.js"
 import { squareAround } from "../insight/respond.js"
 import {
-    SENSOR_OPTIONS, AOI_CLASSES, fmtDate, SceneComparison,
+    AOI_CLASSES, fmtDate, SceneComparison,
 } from "../components/imagery/sceneComparison.jsx"
 import { acquisitions, changeHeadline, countSeries, DET_COLORS, fmtDay, groupDetections, noun } from "./imageryModel.js"
 
@@ -62,8 +62,18 @@ const whenFull = (iso) => {
     return `${fmtDay(s)} ${s.slice(0, 4)}${hhmm}`
 }
 
+/** Draw a new area on the map, or a new boundary for an existing one. */
+function drawOnMap(zone = null, mode = "rectangle") {
+    window.dispatchEvent(new CustomEvent("akili:open-map"))
+    // After the switch, so the map is there to draw on.
+    setTimeout(() => window.dispatchEvent(new CustomEvent("akili:imagery-draw", {
+        detail: zone ? { systemId: zone.system_id, name: zone.name, mode } : { mode },
+    })), 250)
+}
+
 export default function Imagery() {
     const [manage, setManage] = useState(false)
+    const [sensor, setSensor] = useState("optical")       // optical | radar
     const [adding, setAdding] = useState(false)
     const [zones, setZones] = useState(null)
     const [zoneId, setZoneId] = useState(null)
@@ -74,6 +84,10 @@ export default function Imagery() {
     const [err, setErr] = useState(null)
     const [target, setTarget] = useState(() => window.__plxImageryTarget || null)
 
+    const [sar, setSar] = useState({})                    // {loading, error, data}
+    const [sarDate, setSarDate] = useState(null)
+    const stageRef = useRef(null)
+    const [fit, setFit] = useState({ w: 0, h: 0, cw: 0 })
     const [mode, setMode] = useState("scene")
     const [against, setAgainst] = useState("prev")        // prev | hires | date:YYYY-MM-DD | pass:<scanId>
     const [compareImg, setCompareImg] = useState(null)    // {b64, label, date, loading, error}
@@ -91,7 +105,13 @@ export default function Imagery() {
     const viewerRef = useRef(null)
 
     const zone = useMemo(() => safeArray(zones).find((z) => z.system_id === zoneId) || null, [zones, zoneId])
-    const passes = useMemo(() => acquisitions(scans), [scans])
+    const allPasses = useMemo(() => acquisitions(scans), [scans])
+    const sarPasses = useMemo(() => allPasses.filter((p) => p.instrument === "SAR"), [allPasses])
+    // The passes of the sensor being looked at. Radar passes stored by the
+    // scanner are read like optical ones; with none stored, radar is
+    // fetched live (liveRadar).
+    const passes = useMemo(() => allPasses.filter((p) => (p.instrument === "SAR") === (sensor === "radar")), [allPasses, sensor])
+    const liveRadar = sensor === "radar" && sarPasses.length === 0
     const series = useMemo(() => countSeries(passes), [passes])
 
     // Another screen asked for a scene (Inbox "open imagery", a briefing's
@@ -130,7 +150,8 @@ export default function Imagery() {
             .then((d) => {
                 const list = Array.isArray(d) ? d : safeArray(d?.scans)
                 setScans(list)
-                setScanId((cur) => (cur && list.some((s) => s.scan_id === cur) ? cur : acquisitions(list)[0]?.scanId || null))
+                setScanId((cur) => (cur && list.some((s) => s.scan_id === cur) ? cur
+                    : acquisitions(list).find((p) => p.instrument !== "SAR")?.scanId || null))
             })
             .catch(() => setScans([]))
     }, [])
@@ -212,7 +233,8 @@ export default function Imagery() {
         return { ...scene, reference_image_b64: compareImg?.b64 || null, reference_date: compareImg?.date || null }
     }, [scene, against, compareImg])
     const compareLabel = against === "prev"
-        ? (scene?.reference_date ? `Previous pass · ${whenFull(scene.reference_date)}` : null)
+        ? (sensor === "radar" ? (scene?.scan ? `Optical pass · ${whenFull(scene.scan.image_timestamp_utc)}` : null)
+            : scene?.reference_date ? `Previous pass · ${whenFull(scene.reference_date)}` : null)
         : compareImg?.label || null
 
     useEffect(() => {
@@ -226,6 +248,53 @@ export default function Imagery() {
         const b = zone.bbox
         return ((b.max_lon - b.min_lon) * Math.cos(((b.min_lat + b.max_lat) / 2) * Math.PI / 180)) / Math.max(1e-6, b.max_lat - b.min_lat)
     })() : 1
+
+    // The radar pass, fetched when asked for (the first run downloads the
+    // radar ship detector and can take a minute).
+    useEffect(() => {
+        if (!liveRadar || !zoneId) return undefined
+        let live = true
+        setSar((cur) => ({ ...cur, loading: true, error: null }))
+        fetch(`${API_BASE}/api/imagery/zones/${zoneId}/sar${sarDate ? `?date=${sarDate}` : ""}`, { credentials: "include" })
+            .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d })
+            .then((d) => { if (live) setSar({ data: d }) })
+            .catch((e) => { if (live) setSar({ error: e.message }) })
+        return () => { live = false }
+    }, [liveRadar, zoneId, sarDate])
+    useEffect(() => { setSar({}); setSarDate(null); setSensor("optical") }, [zoneId])
+    useEffect(() => {
+        const first = passes[0]?.scanId
+        if (first && !passes.some((p) => p.scanId === scanId)) setScanId(first)
+    }, [sensor, passes]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Fit the image to the stage, keeping its shape.
+    useEffect(() => {
+        const el = stageRef.current
+        if (!el) return undefined
+        const measure = () => {
+            const cw = el.clientWidth, ch = el.clientHeight
+            if (!cw || !ch) return
+            const w = Math.min(cw, ch * ar)
+            setFit({ w: Math.floor(w), h: Math.floor(w / ar), cw })
+        }
+        measure()
+        const ro = new ResizeObserver(measure)
+        ro.observe(el)
+        return () => ro.disconnect()
+    }, [ar, zone, manage])
+
+    const radarScene = useMemo(() => {
+        if (!liveRadar || !sar.data) return null
+        // Compared against the optical pass by default — what radar sees
+        // next to what it is.
+        const ref = against === "prev" ? { b64: scene?.image_b64, date: scene?.scan?.image_timestamp_utc } : { b64: compareImg?.b64, date: compareImg?.date }
+        return {
+            scan: { image_timestamp_utc: sar.data.date, instrument: "SAR" }, image_b64: sar.data.image_b64,
+            reference_image_b64: ref.b64 || null, reference_date: ref.date || null, changes: sar.data.changes,
+        }
+    }, [sensor, sar, against, scene, compareImg])
+    const displayScene = liveRadar ? radarScene : compareScene
+    const shown = liveRadar ? safeArray(sar.data?.changes) : changes
 
     const exportPixels = useCallback(async () => {
         const b64 = scene?.image_b64
@@ -352,7 +421,8 @@ export default function Imagery() {
                         </button>
                     ))}
                 </nav>
-                <button onClick={() => setAdding((v) => !v)} style={{ ...BTN, height: 30, color: "var(--acchi)" }}>+ Watch an area</button>
+                <button onClick={() => setAdding((v) => !v)} style={{ ...BTN, height: 30, color: "var(--acchi)" }}>+ Watch a place</button>
+                <button onClick={() => drawOnMap()} title="Draw the area yourself, as a box or a polygon" style={{ ...BTN, height: 30, color: "var(--acchi)" }}>✎ Draw an area on the map</button>
                 <div style={{ flex: 1 }} />
                 <button onClick={() => setManage((v) => !v)} style={{ ...BTN, background: manage ? ON : "transparent" }}>
                     {manage ? "Back to the imagery" : "Manage areas"}
@@ -370,215 +440,204 @@ export default function Imagery() {
                     detector finds compared against the pass before.
                 </div>
             ) : (
-                <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.7fr) minmax(280px,1fr)", gap: 14 }}>
-                    {/* THE ANSWER */}
-                    <div style={{ ...CARD, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
-                        <span style={EYE}>
-                            {zone.name} · {SENSOR[pass?.instrument || scene?.scan?.instrument] || "Sentinel"}
-                            {pass ? ` · pass of ${whenFull(pass.when)} · ${agoLabel(pass.when)}` : ""}
-                            {pass?.fire ? " · triggered by a fire detection" : ""}
-                        </span>
-                        {loadingScene && <Loading size={18} inline label="Reading the pass" />}
-                        {!loadingScene && !scene && (
-                            <span style={{ color: "var(--txt3)" }}>
-                                {passes.length ? "Pick a pass on the right." : "This area has not been photographed yet. The first pass arrives with the next scan."}
-                            </span>
-                        )}
-                        {scene && (
-                            <>
-                                <h3 style={{ margin: 0, fontWeight: 600, fontSize: 22, lineHeight: 1.25, letterSpacing: "-.01em", textWrap: "pretty" }}>{headline}</h3>
-                                {note?.summary ? (
-                                    <p style={{ margin: 0, color: "var(--txt2)", fontSize: 13.5, lineHeight: 1.5, maxWidth: 900, textWrap: "pretty" }}>
-                                        {note.summary}
-                                        <span style={{ ...EYE, fontSize: 9, marginLeft: 8 }}>imagery note · {note.model}</span>
-                                    </p>
-                                ) : (
-                                    <span style={{ fontSize: 12, color: "var(--txt4)" }}>
-                                        {scene.image_b64 ? "Writing the imagery note…" : "This pass's image has been retired; its detections are kept."}
-                                    </span>
-                                )}
-                                {note?.quality && <span style={{ fontSize: 12, color: "var(--amber)" }}>{note.quality}</span>}
-                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-                                    <button onClick={showOnMap} style={PRIMARY} disabled={!scene.image_b64}>Show on the map</button>
-                                    <button onClick={() => { setMode("swipe"); if (!scene.reference_image_b64) setAgainst("hires") }} style={BTN}>
-                                        {scene.reference_image_b64 ? `Compare with ${fmtDay(scene.reference_date)}` : "Compare with the sharp reference"}
-                                    </button>
-                                    <button onClick={exportPixels} style={BTN}>Export PNG</button>
-                                    <button onClick={fileScene} style={BTN}>Save for briefing</button>
-                                    <button onClick={deleteScene} style={{ ...BTN, color: "var(--txt3)" }}>Delete pass</button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                    <ContextCard context={context} />
-                    </div>
-
-                    <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-                        {/* THE SCENE */}
-                        {/* The card is the scene's own size: as wide as the image at
-                            76% of the window's height, never a dark frame around it. */}
-                        <div style={{ ...CARD, display: "flex", flexDirection: "column", minWidth: 0, flex: "0 1 auto",
-                                      width: `min(calc(100% - 354px), max(560px, calc(76vh * ${ar.toFixed(4)})))` }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 10px", borderBottom: "1px solid var(--gline)" }}>
-                                <div style={{ display: "flex", border: "1px solid var(--gline2)" }}>
-                                    {MODES.map(([k, v]) => (
-                                        <button key={v} onClick={() => setMode(v)} style={{
-                                            height: 26, padding: "0 10px", border: 0, background: mode === v ? ON : "transparent",
-                                            color: mode === v ? "var(--txt)" : "var(--txt3)", font: "inherit", fontSize: 11.5, cursor: "pointer",
-                                        }}>{k}</button>
-                                    ))}
-                                </div>
-                                {mode !== "scene" && (
-                                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--txt3)" }}>
-                                        against
-                                        <select value={against} onChange={(e) => setAgainst(e.target.value)} style={{ ...FIELD, width: 230, height: 26, fontSize: 11.5 }}>
-                                            <option value="prev">{scene?.reference_date ? `Previous pass · ${fmtDay(scene.reference_date)}` : "Previous pass (none with an image)"}</option>
-                                            <option value="hires">Sharp reference · Esri, sub-metre</option>
-                                            {imagedPasses.length > 0 && <optgroup label="Earlier passes">
-                                                {imagedPasses.map((p) => <option key={p.key} value={`pass:${p.scanId}`}>{whenFull(p.when)}</option>)}
-                                            </optgroup>}
-                                            {dates.length > 0 && <optgroup label="Sentinel-2 on a date">
-                                                {dates.filter((d) => d.date !== String(pass?.when || "").slice(0, 10)).slice(0, 120).map((d) => (
-                                                    <option key={d.date} value={`date:${d.date}`}>{fmtDay(d.date)} {d.date.slice(0, 4)} · {Math.round(d.cloud ?? 0)}% cloud</option>
-                                                ))}
-                                            </optgroup>}
-                                        </select>
-                                    </label>
-                                )}
-                                {mode === "fade" && (
-                                    <input type="range" min={0} max={100} value={fadeOpacity} onChange={(e) => setFadeOpacity(Number(e.target.value))}
-                                        title="How much of this pass shows over the comparison" style={{ width: 110, accentColor: "var(--acchi)" }} />
-                                )}
-                                <button onClick={() => setShowBoxes((v) => !v)} style={{ ...BTN, height: 26, fontSize: 11.5, background: showBoxes ? ON : "transparent" }}>Outlines</button>
-                                <button onClick={() => setChangesOnly((v) => !v)} style={{ ...BTN, height: 26, fontSize: 11.5, background: changesOnly ? ON : "transparent" }}>Changes only</button>
-                                <span style={{ marginLeft: "auto", display: "flex", gap: 10, fontSize: 11, color: "var(--txt3)" }}>
-                                    {["new", "removed", "existing"].map((k) => (
-                                        <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                                            <i style={{ width: 10, height: 0, borderTop: `2px ${k === "removed" ? "dashed" : "solid"} ${KIND_C[k]}` }} />{KIND_WORD[k]}
-                                        </span>
-                                    ))}
+                <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+                    {/* ── THE IMAGE, and what is needed to read it ── */}
+                    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", padding: "10px 14px 10px 18px", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flex: "none" }}>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                                <span style={EYE}>
+                                    {zone.name} · {liveRadar ? `Sentinel-1 radar · ${sar.data ? whenFull(sar.data.date) : "…"} · fetched live` : `${SENSOR[pass?.instrument || scene?.scan?.instrument] || "Sentinel"}${pass ? ` · ${whenFull(pass.when)} · ${agoLabel(pass.when)}` : ""}`}
+                                    {sensor !== "radar" && pass?.fire ? " · triggered by a fire detection" : ""}
                                 </span>
+                                <h3 style={{ margin: "3px 0 0", fontWeight: 600, fontSize: 18, lineHeight: 1.3, letterSpacing: "-.01em", textWrap: "pretty" }}>
+                                    {liveRadar
+                                        ? (sar.data ? `Radar: ${shown.length} ${noun("vessel", shown.length)} on the water${sar.data.date ? ` on ${fmtDay(sar.data.date)}` : ""}.` : sar.error ? "No radar pass to show." : "Reading the radar pass…")
+                                        : loadingScene ? "Reading the pass…" : headline || (passes.length ? "Pick a pass." : "This area has not been photographed yet.")}
+                                </h3>
+                            </div>
+                            <div style={{ display: "flex", gap: 6, flex: "none" }}>
+                                <button onClick={showOnMap} style={PRIMARY} disabled={!scene?.image_b64}>Show on the map</button>
+                                <button onClick={() => drawOnMap(zone)} title="Draw a new boundary for this area on the map" style={BTN}>Redraw area</button>
+                                <button onClick={exportPixels} style={BTN}>Export</button>
+                                <button onClick={fileScene} style={BTN}>Save for briefing</button>
+                                <button onClick={deleteScene} title="Delete this pass" style={{ ...BTN, color: "var(--txt4)", padding: "0 8px" }}>✕</button>
+                            </div>
+                        </div>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: "none" }}>
+                            <div style={{ display: "flex", border: "1px solid var(--gline2)" }} title="Optical sees what things are; radar sees through cloud and at night">
+                                {[["Optical", "optical"], ["Radar", "radar"]].map(([k, v]) => (
+                                    <button key={v} onClick={() => setSensor(v)} style={{
+                                        height: 26, padding: "0 12px", border: 0, background: sensor === v ? "var(--acc)" : "transparent",
+                                        color: sensor === v ? "var(--mz-cream)" : "var(--txt3)", font: "inherit", fontSize: 11.5, fontWeight: 600, cursor: "pointer",
+                                    }}>{k}</button>
+                                ))}
+                            </div>
+                            {liveRadar && sar.data?.dates?.length > 1 && (
+                                <select value={sar.data.date} onChange={(e) => setSarDate(e.target.value)} style={{ ...FIELD, width: 150, height: 26, fontSize: 11.5 }}>
+                                    {sar.data.dates.map((d) => <option key={d} value={d}>{fmtDay(d)} {d.slice(0, 4)}</option>)}
+                                </select>
+                            )}
+                            <div style={{ display: "flex", border: "1px solid var(--gline2)" }}>
+                                {MODES.map(([k, v]) => (
+                                    <button key={v} onClick={() => setMode(v)} style={{
+                                        height: 26, padding: "0 10px", border: 0, background: mode === v ? ON : "transparent",
+                                        color: mode === v ? "var(--txt)" : "var(--txt3)", font: "inherit", fontSize: 11.5, cursor: "pointer",
+                                    }}>{k}</button>
+                                ))}
                             </div>
                             {mode !== "scene" && (
-                                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "5px 12px", fontSize: 11, color: "var(--txt3)", borderBottom: "1px solid var(--gline)" }}>
-                                    <span>{mode === "split" ? "Left" : mode === "swipe" ? "Right of the handle" : mode === "blink" ? (blinkOn ? "Showing this pass" : "Showing") : "Under"}:{" "}
-                                        <b style={{ fontWeight: 600, color: mode === "blink" && blinkOn ? "var(--txt4)" : "var(--txt)" }}>
-                                            {compareImg?.loading ? "loading…" : compareImg?.error ? `unavailable — ${compareImg.error}` : compareLabel || "no earlier image — choose another"}
-                                        </b></span>
-                                    <span>{mode === "split" ? "Right" : mode === "swipe" ? "Left" : mode === "blink" ? "" : "Over"}{mode === "blink" ? "" : ": "}
-                                        <b style={{ fontWeight: 600, color: "var(--txt)" }}>{mode === "blink" ? (blinkOn ? `this pass · ${whenFull(pass?.when)}` : "") : `this pass · ${whenFull(pass?.when)}`}</b></span>
+                                <select value={against} onChange={(e) => setAgainst(e.target.value)} title="What to compare this image with"
+                                    style={{ ...FIELD, width: 250, height: 26, fontSize: 11.5 }}>
+                                    {liveRadar
+                                        ? <option value="prev">{pass ? `Optical pass · ${fmtDay(pass.when)}` : "Optical pass"}</option>
+                                        : <option value="prev">{scene?.reference_date ? `Previous pass · ${fmtDay(scene.reference_date)}` : "Previous pass (no image)"}</option>}
+                                    <option value="hires">Sharp reference · Esri, sub-metre</option>
+                                    {imagedPasses.length > 0 && <optgroup label="Earlier passes">
+                                        {imagedPasses.map((p) => <option key={p.key} value={`pass:${p.scanId}`}>{whenFull(p.when)}</option>)}
+                                    </optgroup>}
+                                    {dates.length > 0 && <optgroup label="Sentinel-2 on a date">
+                                        {dates.filter((d) => d.date !== String(pass?.when || "").slice(0, 10)).slice(0, 120).map((d) => (
+                                            <option key={d.date} value={`date:${d.date}`}>{fmtDay(d.date)} {d.date.slice(0, 4)} · {Math.round(d.cloud ?? 0)}% cloud</option>
+                                        ))}
+                                    </optgroup>}
+                                </select>
+                            )}
+                            {mode === "fade" && (
+                                <input type="range" min={0} max={100} value={fadeOpacity} onChange={(e) => setFadeOpacity(Number(e.target.value))}
+                                    title="How much of this image shows over the comparison" style={{ width: 120, accentColor: "var(--acchi)" }} />
+                            )}
+                            <button onClick={() => setShowBoxes((v) => !v)} style={{ ...BTN, height: 26, fontSize: 11.5, background: showBoxes ? ON : "transparent" }}>Outlines</button>
+                            {sensor !== "radar" && <button onClick={() => setChangesOnly((v) => !v)} style={{ ...BTN, height: 26, fontSize: 11.5, background: changesOnly ? ON : "transparent" }}>Changes only</button>}
+                            <span style={{ marginLeft: "auto", display: "flex", gap: 10, fontSize: 11, color: "var(--txt3)" }}>
+                                {(sensor === "radar" ? ["existing"] : ["new", "removed", "existing"]).map((k) => (
+                                    <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                                        <i style={{ width: 12, height: 0, borderTop: `3px ${k === "removed" ? "dashed" : "solid"} ${KIND_C[k]}` }} />
+                                        {sensor === "radar" ? "radar contact on water" : KIND_WORD[k]}
+                                    </span>
+                                ))}
+                            </span>
+                        </div>
+                        {mode !== "scene" && (
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--txt3)", flex: "none" }}>
+                                <span>{mode === "split" ? "Left" : mode === "swipe" ? "Left of the handle" : mode === "blink" ? "Alternating with" : "Over"}: <b style={{ color: "var(--txt)", fontWeight: 600 }}>this {sensor === "radar" ? "radar pass" : "pass"}</b></span>
+                                <span>{mode === "split" ? "Right" : mode === "swipe" ? "Right of the handle" : mode === "blink" ? "" : "Under"}{mode === "blink" ? "" : ": "}<b style={{ color: "var(--txt)", fontWeight: 600 }}>
+                                    {compareImg?.loading ? "loading…" : compareImg?.error ? `unavailable — ${compareImg.error}` : compareLabel || "no earlier image — choose another"}
+                                </b></span>
+                            </div>
+                        )}
+
+                        {/* The stage: the image fitted to all the room there is, in
+                            its own shape, nothing around it. */}
+                        <div ref={stageRef} style={{ flex: 1, minHeight: 280, position: "relative" }}>
+                            {displayScene && fit.w > 0 && (
+                                <div style={{ position: "absolute", left: (fit.cw - fit.w) / 2, top: 0, width: fit.w, height: fit.h }}>
+                                    <SceneComparison
+                                        scene={displayScene} view={view} showBoxes={showBoxes} changes={shown}
+                                        swipePos={pos} onSwipePos={setSwipePos}
+                                        fadeOn={mode === "fade"} fadeOpacity={fadeOpacity}
+                                        swipeHandle={mode === "swipe"} refLabel={compareLabel} stretch
+                                        clipRef={clipRef} fadeRef={fadeRef} viewerRef={viewerRef}
+                                        onSelectDet={setSelectedDet} selectedDet={selectedDet}
+                                    />
                                 </div>
                             )}
-                            <div>
-                                {compareScene && (
-                                    // The frame takes the area's own shape, so the scene fills it
-                                    // edge to edge — no bars either side.
-                                    <div style={{ position: "relative", width: "100%", aspectRatio: `${ar.toFixed(4)}` }}>
-                                        <SceneComparison
-                                            scene={compareScene} view={view} showBoxes={showBoxes} changes={changes}
-                                            swipePos={pos} onSwipePos={setSwipePos}
-                                            fadeOn={mode === "fade"} fadeOpacity={fadeOpacity}
-                                            swipeHandle={mode === "swipe"} refLabel={compareLabel}
-                                            clipRef={clipRef} fadeRef={fadeRef} viewerRef={viewerRef}
-                                            onSelectDet={setSelectedDet} selectedDet={selectedDet}
-                                        />
-                                    </div>
-                                )}
-                            </div>
+                            {liveRadar && sar.loading && <Loading size={20} inline label="Fetching the radar pass and looking for ships — up to a minute the first time" style={{ padding: 16 }} />}
+                            {liveRadar && sar.error && <div style={{ padding: 16, color: "var(--txt3)" }}>{sar.error}</div>}
                         </div>
 
-                        {/* PASSES, TRENDS, DETECTIONS */}
-                        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 340, flex: "1 1 340px" }}>
-                            <div style={CARD}>
-                                <div style={{ padding: "10px 12px 6px", display: "flex", justifyContent: "space-between" }}>
-                                    <span style={EYE}>Passes</span>
-                                    <span style={{ ...EYE, letterSpacing: ".04em" }}>{passes.length} · every {zone.scan_interval_hours} h checked</span>
-                                </div>
-                                <div style={{ maxHeight: 220, overflow: "auto" }}>
-                                    {passes.map((p) => (
-                                        <button key={p.key} onClick={() => setScanId(p.scanId)} style={{
-                                            display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: "2px 8px", width: "100%",
-                                            padding: "8px 12px", border: 0, borderTop: "1px solid var(--gline)",
-                                            background: p.scanId === scanId ? ON : "transparent", color: "var(--txt)", font: "inherit",
-                                            textAlign: "left", cursor: "pointer",
-                                        }}>
-                                            <span style={{ fontSize: 12.5, fontWeight: 600 }}>{whenFull(p.when)}</span>
-                                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: (p.cloud ?? 0) > 30 ? "var(--amber)" : "var(--txt4)" }}>
-                                                {p.instrument === "SAR" ? "radar" : `${Math.round(p.cloud ?? 0)}% cloud`}
-                                            </span>
-                                            <span style={{ gridColumn: "1 / 3", fontSize: 11, color: "var(--txt3)" }}>
-                                                {Object.entries(p.byType).map(([k, v]) => `${v} ${noun(k, v)}`).join(" · ") || "nothing detected"}
-                                                {p.fire ? " · fire-triggered" : ""}
-                                                {!p.hasImage ? " · image retired" : ""}
-                                            </span>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {series.length > 0 && passes.length > 1 && (
-                                <div style={{ ...CARD, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
-                                    <span style={EYE}>Counts across passes</span>
-                                    {series.slice(0, 5).map((s) => <Bars key={s.label} s={s} selectedKey={pass?.key} onPick={(k) => {
-                                        const p = passes.find((x) => x.key === k); if (p) setScanId(p.scanId)
-                                    }} />)}
-                                </div>
-                            )}
-
-                            <div style={{ ...CARD, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-                                <div style={{ padding: "10px 12px 6px", display: "flex", justifyContent: "space-between" }}>
-                                    <span style={EYE}>What the detector found</span>
-                                    <span style={{ ...EYE, letterSpacing: ".04em" }}>{allChanges.length}</span>
-                                </div>
-                                <div style={{ overflow: "auto", maxHeight: 420 }}>
-                                    {groups.map((g) => {
-                                        const open = openGroup === g.label || groups.length === 1
-                                        return (
-                                            <div key={g.label} style={{ borderTop: "1px solid var(--gline)" }}>
-                                                <button onClick={() => setOpenGroup(open ? null : g.label)} style={{
-                                                    display: "flex", alignItems: "baseline", gap: 8, width: "100%", padding: "8px 12px",
-                                                    border: 0, background: "transparent", color: "var(--txt)", font: "inherit", cursor: "pointer", textAlign: "left",
-                                                }}>
-                                                    <span style={{ fontWeight: 600, fontSize: 13 }}>{g.items.length} {noun(g.label, g.items.length)}</span>
-                                                    <span style={{ fontSize: 11, color: "var(--txt3)" }}>
-                                                        {[g.new && `${g.new} new`, g.removed && `${g.removed} gone`].filter(Boolean).join(" · ") || "unchanged"}
-                                                    </span>
-                                                    <span style={{ marginLeft: "auto", color: "var(--txt4)", fontSize: 11 }}>{open ? "–" : "+"}</span>
-                                                </button>
-                                                {open && g.items.map((d) => (
-                                                    <div key={d.id} onClick={() => setSelectedDet(d)} style={{
-                                                        display: "grid", gridTemplateColumns: "10px minmax(0,1fr) auto auto", gap: "2px 8px",
-                                                        alignItems: "center", padding: "7px 12px 7px 20px", cursor: "pointer",
-                                                        background: selectedDet?.id === d.id ? ON : "transparent",
-                                                    }}>
-                                                        <i style={{ width: 10, height: 0, borderTop: `2px ${d.type === "removed" ? "dashed" : "solid"} ${KIND_C[d.type] || "var(--txt4)"}` }} />
-                                                        <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                                            {d.length_m ? `${Math.round(d.length_m)} × ${Math.round(d.width_m || 0)} m` : noun(d.label, 1)}
-                                                            <span style={{ color: "var(--txt3)" }}> · {KIND_WORD[d.type] || d.type}</span>
-                                                        </span>
-                                                        <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt3)" }}>{Math.round((d.conf ?? 0) * 100)}%</span>
-                                                        {!String(d.id).startsWith("removed-") ? (
-                                                            <button onClick={(e) => { e.stopPropagation(); deleteDetection(d) }} title="Delete this detection"
-                                                                style={{ border: 0, background: "transparent", color: "var(--txt4)", font: "inherit", cursor: "pointer" }}>✕</button>
-                                                        ) : <span />}
-                                                        {(d.note || d.doubtful) && (
-                                                            <span style={{ gridColumn: "2 / 5", fontSize: 11, color: d.doubtful ? "var(--amber)" : "var(--txt2)" }}>
-                                                                {d.doubtful ? "Doubtful — the imagery note does not think this is what the detector says. " : ""}{d.note}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )
-                                    })}
-                                    {scene && !allChanges.length && (
-                                        <div style={{ padding: 12, fontSize: 12, color: "var(--txt3)" }}>Nothing detected in this pass.</div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
+                        {/* The passes as a time slider. */}
+                        {!liveRadar && passes.length > 1 && (
+                            <PassSlider passes={passes} scanId={scanId} onPick={setScanId} />
+                        )}
                     </div>
+
+                    {/* ── READING IT ── */}
+                    <aside style={{ width: 360, flex: "none", borderLeft: "1px solid var(--gline)", overflow: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                        <div style={{ ...CARD, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                            <span style={EYE}>Imagery note</span>
+                            {note?.summary
+                                ? <span style={{ fontSize: 12.5, color: "var(--txt2)", lineHeight: 1.5, textWrap: "pretty" }}>{note.summary}</span>
+                                : <span style={{ fontSize: 12, color: "var(--txt4)" }}>{scene?.image_b64 ? "Writing the note…" : "No image to read for this pass."}</span>}
+                            {note?.quality && <span style={{ fontSize: 12, color: "var(--amber)" }}>{note.quality}</span>}
+                            {note?.model && <span style={{ ...EYE, fontSize: 9 }}>read by {note.model} against what matters here</span>}
+                        </div>
+                        <ContextCard context={context} />
+                        {series.length > 0 && passes.length > 1 && (
+                            <div style={{ ...CARD, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+                                <span style={EYE}>Counts across passes · shaded = normal range</span>
+                                {series.slice(0, 4).map((s) => (
+                                    <CountChart key={s.label} s={s} selectedKey={pass?.key}
+                                        onPick={(k) => { const p = passes.find((x) => x.key === k); if (p) setScanId(p.scanId) }} />
+                                ))}
+                            </div>
+                        )}
+                        <div style={CARD}>
+                            <div style={{ padding: "10px 12px 6px", display: "flex", justifyContent: "space-between" }}>
+                                <span style={EYE}>What the detector found</span>
+                                <span style={{ ...EYE, letterSpacing: ".04em" }}>{shown.length}</span>
+                            </div>
+                            {groupDetections(shown).map((g) => {
+                                const open = openGroup === g.label
+                                return (
+                                    <div key={g.label} style={{ borderTop: "1px solid var(--gline)" }}>
+                                        <button onClick={() => setOpenGroup(open ? null : g.label)} style={{
+                                            display: "flex", alignItems: "baseline", gap: 8, width: "100%", padding: "8px 12px",
+                                            border: 0, background: "transparent", color: "var(--txt)", font: "inherit", cursor: "pointer", textAlign: "left",
+                                        }}>
+                                            <span style={{ fontWeight: 600, fontSize: 13 }}>{g.items.length} {noun(g.label, g.items.length)}</span>
+                                            <span style={{ fontSize: 11, color: "var(--txt3)" }}>
+                                                {sensor === "radar" ? "on the water" : [g.new && `${g.new} new`, g.removed && `${g.removed} gone`].filter(Boolean).join(" · ") || "unchanged"}
+                                            </span>
+                                            <span style={{ marginLeft: "auto", color: "var(--txt4)", fontSize: 11 }}>{open ? "–" : "+"}</span>
+                                        </button>
+                                        {open && g.items.map((d) => (
+                                            <div key={d.id} onClick={() => setSelectedDet(d)} style={{
+                                                display: "grid", gridTemplateColumns: "12px minmax(0,1fr) auto auto", gap: "2px 8px",
+                                                alignItems: "center", padding: "7px 12px 7px 20px", cursor: "pointer",
+                                                background: selectedDet?.id === d.id ? ON : "transparent",
+                                            }}>
+                                                <i style={{ width: 12, height: 0, borderTop: `3px ${d.type === "removed" ? "dashed" : "solid"} ${KIND_C[d.type] || "var(--txt4)"}` }} />
+                                                <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {d.length_m ? `${Math.round(d.length_m)} × ${Math.round(d.width_m || 0)} m` : noun(d.label, 1)}
+                                                    <span style={{ color: "var(--txt3)" }}> · {sensor === "radar" ? (d.note || "radar contact") : KIND_WORD[d.type] || d.type}</span>
+                                                </span>
+                                                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt3)" }}>{Math.round((d.conf ?? 0) * 100)}%</span>
+                                                {sensor !== "radar" && !String(d.id).startsWith("removed-") ? (
+                                                    <button onClick={(e) => { e.stopPropagation(); deleteDetection(d) }} title="Delete this detection"
+                                                        style={{ border: 0, background: "transparent", color: "var(--txt4)", font: "inherit", cursor: "pointer" }}>✕</button>
+                                                ) : <span />}
+                                                {sensor !== "radar" && (d.note || d.doubtful) && (
+                                                    <span style={{ gridColumn: "2 / 5", fontSize: 11, color: d.doubtful ? "var(--amber)" : "var(--txt2)" }}>
+                                                        {d.doubtful ? "Doubtful — the imagery note does not think this is what the detector says. " : ""}{d.note}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )
+                            })}
+                            {!shown.length && <div style={{ padding: 12, fontSize: 12, color: "var(--txt3)" }}>Nothing detected.</div>}
+                        </div>
+                        <div style={CARD}>
+                            <div style={{ padding: "10px 12px 6px" }}><span style={EYE}>Passes</span></div>
+                            {passes.map((p) => (
+                                <button key={p.key} onClick={() => setScanId(p.scanId)} style={{
+                                    display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: "2px 8px", width: "100%",
+                                    padding: "7px 12px", border: 0, borderTop: "1px solid var(--gline)",
+                                    background: p.scanId === scanId ? ON : "transparent", color: "var(--txt)", font: "inherit",
+                                    textAlign: "left", cursor: "pointer",
+                                }}>
+                                    <span style={{ fontSize: 12, fontWeight: 600 }}>{whenFull(p.when)}</span>
+                                    <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: (p.cloud ?? 0) > 30 ? "var(--amber)" : "var(--txt4)" }}>{p.instrument === "SAR" ? "radar" : `${Math.round(p.cloud ?? 0)}% cloud`}</span>
+                                    <span style={{ gridColumn: "1 / 3", fontSize: 11, color: "var(--txt3)" }}>
+                                        {Object.entries(p.byType).map(([k, v]) => `${v} ${noun(k, v)}`).join(" · ") || "nothing detected"}
+                                        {p.fire ? " · fire-triggered" : ""}{!p.hasImage ? " · image retired" : ""}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    </aside>
                 </div>
             )}
         </section>
@@ -616,22 +675,79 @@ function ContextCard({ context }) {
     )
 }
 
-/** One kind's count at each pass: a bar per pass, the shown pass marked. */
-function Bars({ s, selectedKey, onPick }) {
-    const max = Math.max(1, ...s.points.map((p) => p.n))
-    const last = s.points[s.points.length - 1]?.n ?? 0
+/**
+ * One kind's count at each pass, as a line over time, with its normal range
+ * shaded: the mean ± one standard deviation of the passes before the last,
+ * so a pass outside the band is visibly unusual. Hover a point for the pass,
+ * click it to open that pass.
+ */
+function CountChart({ s, selectedKey, onPick }) {
+    const [hover, setHover] = useState(null)
+    const pts = s.points
+    const W = 330, H = 64, P = 6
+    const ns = pts.map((p) => p.n)
+    const base = ns.length > 2 ? ns.slice(0, -1) : ns
+    const mean = base.reduce((a, b) => a + b, 0) / Math.max(1, base.length)
+    const sd = Math.sqrt(base.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, base.length))
+    const max = Math.max(1, ...ns, mean + sd)
+    const x = (i) => P + (pts.length === 1 ? (W - 2 * P) / 2 : (i / (pts.length - 1)) * (W - 2 * P))
+    const y = (n) => H - P - (n / max) * (H - 2 * P)
+    const last = ns[ns.length - 1] ?? 0
+    const off = Math.abs(last - mean) > Math.max(1, sd)
+    const h = hover != null ? pts[hover] : null
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "110px minmax(0,1fr) 28px", gap: 8, alignItems: "end" }}>
-            <span style={{ fontSize: 11.5, color: "var(--txt2)", alignSelf: "center" }}>{noun(s.label, 2)}</span>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 28 }}>
-                {s.points.map((p) => (
-                    <button key={p.key} onClick={() => onPick(p.key)} title={`${fmtDay(p.when)}: ${p.n}`} style={{
-                        flex: 1, minWidth: 3, height: `${Math.max(6, (p.n / max) * 100)}%`, padding: 0, border: 0, cursor: "pointer",
-                        background: p.key === selectedKey ? "var(--acchi)" : p.n ? "var(--txt4)" : "var(--gline2)",
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12 }}>
+                <span style={{ color: "var(--txt2)" }}>{noun(s.label, 2)}</span>
+                <span style={{ marginLeft: "auto", fontFamily: "var(--mz-font-mono)", fontSize: 11, color: h ? "var(--txt)" : off ? "var(--amber)" : "var(--txt)" }}>
+                    {h ? `${fmtDay(h.when)}: ${h.n}` : `${last} now · normal ${Math.max(0, Math.round(mean - sd))}–${Math.round(mean + sd)}`}
+                </span>
+            </div>
+            <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", overflow: "visible" }} onMouseLeave={() => setHover(null)}>
+                <rect x={P} width={W - 2 * P} y={y(mean + sd)} height={Math.max(1, y(Math.max(0, mean - sd)) - y(mean + sd))} fill="var(--accdim)" />
+                <line x1={P} x2={W - P} y1={y(mean)} y2={y(mean)} stroke="var(--txt4)" strokeDasharray="3 3" strokeWidth={1} />
+                <polyline fill="none" stroke="var(--acchi)" strokeWidth={1.8} points={pts.map((p, i) => `${x(i)},${y(p.n)}`).join(" ")} />
+                {pts.map((p, i) => (
+                    <g key={p.key} style={{ cursor: "pointer" }} onMouseEnter={() => setHover(i)} onClick={() => onPick(p.key)}>
+                        <rect x={x(i) - 8} y={0} width={16} height={H} fill="transparent" />
+                        <circle cx={x(i)} cy={y(p.n)} r={p.key === selectedKey ? 4.5 : hover === i ? 4 : 2.6}
+                            fill={p.key === selectedKey ? "var(--acchi)" : "var(--bg-1, #fff)"} stroke="var(--acchi)" strokeWidth={1.6} />
+                    </g>
+                ))}
+            </svg>
+        </div>
+    )
+}
+
+/** The passes on a time line: drag or click to move through them. */
+function PassSlider({ passes, scanId, onPick }) {
+    const chron = [...passes].reverse()
+    const idx = Math.max(0, chron.findIndex((p) => p.scanId === scanId))
+    const t = (p) => new Date(String(p.when).replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(p.when) ? "" : "Z")).getTime()
+    const t0 = t(chron[0]), t1 = t(chron[chron.length - 1])
+    const at = (p) => (t1 > t0 ? (t(p) - t0) / (t1 - t0) : 0.5) * 100
+    return (
+        <div style={{ flex: "none", padding: "4px 8px 0" }}>
+            <div style={{ position: "relative", height: 26 }}>
+                <div style={{ position: "absolute", left: 0, right: 0, top: 12, height: 2, background: "var(--gline2)" }} />
+                {chron.map((p, i) => (
+                    <button key={p.key} onClick={() => onPick(p.scanId)} title={`${whenFull(p.when)}${p.hasImage ? "" : " · image retired"}`} style={{
+                        position: "absolute", left: `calc(${at(p)}% - 7px)`, top: 6, width: 14, height: 14, padding: 0, cursor: "pointer",
+                        border: `2px solid ${i === idx ? "var(--acchi)" : "var(--txt4)"}`,
+                        background: i === idx ? "var(--acchi)" : p.hasImage ? "var(--bg-1, #fff)" : "transparent",
+                        transform: "rotate(45deg)",
                     }} />
                 ))}
             </div>
-            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, textAlign: "right", alignSelf: "center" }}>{last}</span>
+            <div style={{ position: "relative", height: 14, fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>
+                {chron.map((p, i) => (i === 0 || i === chron.length - 1 || i === idx) && (
+                    <span key={p.key} style={{ position: "absolute", left: `${at(p)}%`, transform: `translateX(${i === 0 ? "0" : i === chron.length - 1 ? "-100%" : "-50%"})`,
+                                               color: i === idx ? "var(--txt)" : undefined, whiteSpace: "nowrap" }}>{fmtDay(p.when)}</span>
+                ))}
+            </div>
+            <input type="range" min={0} max={chron.length - 1} value={idx} aria-label="Move through the passes"
+                onChange={(e) => onPick(chron[Number(e.target.value)].scanId)}
+                style={{ width: "100%", accentColor: "var(--acchi)", margin: "2px 0 0" }} />
         </div>
     )
 }
@@ -646,7 +762,6 @@ function NewArea({ onDone, onCancel }) {
     const [place, setPlace] = useState(null)
     const [km, setKm] = useState(5)
     const [every, setEvery] = useState(24)
-    const [sensor, setSensor] = useState("sentinel2_optical")
     const [busy, setBusy] = useState(false)
 
     useEffect(() => {
@@ -669,12 +784,12 @@ function NewArea({ onDone, onCancel }) {
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}` },
                 body: JSON.stringify({
                     name: place.name.slice(0, 80), polygon_geojson: squareAround(place.lat, place.lon, km / 2),
-                    scan_interval_hours: every, sensor_preference: sensor, priority: "high", alert_threshold: "medium",
+                    scan_interval_hours: every, priority: "high", alert_threshold: "medium",
                 }),
             })
             const d = await r.json().catch(() => ({}))
             if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`)
-            toast(`Watching ${place.name} — the first pass is being fetched`, { icon: "i-check" })
+            toast(`Watching ${place.name} — the first optical and radar pass is being fetched now`, { icon: "i-check" })
             onDone(d)
         } catch (e) { toast(`Could not create it — ${e.message}`, { icon: "i-alert" }) } finally { setBusy(false) }
     }
@@ -708,13 +823,9 @@ function NewArea({ onDone, onCancel }) {
                     {[6, 12, 24, 48, 120].map((h) => <option key={h} value={h}>{h} hours</option>)}
                 </select>
             </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={EYE}>Sensor</span>
-                <select value={sensor} onChange={(e) => setSensor(e.target.value)} style={FIELD}>
-                    <option value="sentinel2_optical">Optical — sees what things are, not through cloud</option>
-                    <option value="sentinel1_sar">Radar — ships through cloud and at night</option>
-                </select>
-            </label>
+            <span style={{ fontSize: 11.5, color: "var(--txt3)", alignSelf: "center", lineHeight: 1.35 }}>
+                Optical and radar, every pass.<br />The first pass starts now.
+            </span>
             <span style={{ display: "flex", gap: 6 }}>
                 <button onClick={create} disabled={!place || busy} style={{ ...PRIMARY, opacity: place ? 1 : 0.5 }}>{busy ? "Creating…" : "Watch it"}</button>
                 <button onClick={onCancel} style={BTN}>Cancel</button>
@@ -730,6 +841,14 @@ function NewArea({ onDone, onCancel }) {
  * region can ever detect, so they are on the row rather than behind an
  * edit dialog: changing a cadence should not be a four-click operation.
  */
+const areaKm = (z) => {
+    const b = z?.bbox
+    if (!b) return ""
+    const w = (b.max_lon - b.min_lon) * 111.32 * Math.cos(((b.min_lat + b.max_lat) / 2) * Math.PI / 180)
+    const h = (b.max_lat - b.min_lat) * 110.57
+    return `${w.toFixed(w < 10 ? 1 : 0)} × ${h.toFixed(h < 10 ? 1 : 0)} km`
+}
+
 function AreasTab({ zones, onChanged, onOpen }) {
     const [editing, setEditing] = useState(null)
     const [draft, setDraft] = useState({})
@@ -788,7 +907,7 @@ function AreasTab({ zones, onChanged, onOpen }) {
                     gap: 12, padding: "9px 14px", borderBottom: "1px solid var(--gline)", ...EYE,
                 }}>
                     <span>Area</span><span>Class</span><span>Every</span>
-                    <span>Sensor</span><span>Last pass</span><span />
+                    <span>Sensors · size</span><span>Last pass</span><span />
                 </div>
                 {zones.map((z) => {
                     const on = editing === z.system_id
@@ -808,12 +927,7 @@ function AreasTab({ zones, onChanged, onOpen }) {
                                     </select>
                                     <input type="number" min={1} value={draft.scan_interval_hours || 24} style={FIELD}
                                         onChange={(e) => setDraft((d) => ({ ...d, scan_interval_hours: e.target.value }))} />
-                                    <select value={draft.sensor_preference || "sentinel2_optical"} style={FIELD}
-                                        onChange={(e) => setDraft((d) => ({ ...d, sensor_preference: e.target.value }))}>
-                                        {SENSOR_OPTIONS.map((s) => (
-                                            <option key={s.key || s} value={s.key || s}>{s.label || s}</option>
-                                        ))}
-                                    </select>
+                                    <span style={{ color: "var(--txt3)", fontSize: 12 }}>optical + radar · {areaKm(z)}</span>
                                     <span style={{ color: "var(--txt4)", fontSize: 11 }}>—</span>
                                     <span style={{ display: "flex", gap: 4 }}>
                                         <button onClick={() => save(z)} style={{ ...BTN, border: 0, background: "var(--acc)", color: "var(--mz-cream)" }}>Save</button>
@@ -833,13 +947,14 @@ function AreasTab({ zones, onChanged, onOpen }) {
                                         {z.scan_interval_hours}h
                                     </span>
                                     <span style={{ color: "var(--txt2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                        {z.sensor_preference?.replace(/_/g, " ")}
+                                        optical + radar · {areaKm(z)}
                                     </span>
                                     <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt3)" }}>
                                         {z.last_scanned_at ? fmtDate(z.last_scanned_at) : "never"}
                                     </span>
                                     <span style={{ display: "flex", gap: 4 }}>
                                         <button onClick={() => start(z)} style={BTN}>Edit</button>
+                                        <button onClick={() => drawOnMap(z)} title="Draw a new boundary for this area on the map" style={BTN}>Redraw</button>
                                         <button onClick={() => scanNow(z)} style={BTN}>Scan now</button>
                                         <button onClick={() => togglePause(z)} style={BTN}>
                                             {z.status === "active" ? "Pause" : "Resume"}

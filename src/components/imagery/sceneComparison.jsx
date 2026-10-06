@@ -234,7 +234,7 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
 
 
 /** One side of a split comparison. Shares its view with the other side. */
-function SplitPane({ title, src, view, onViewChange, overlay = null }) {
+function SplitPane({ title, src, view, onViewChange, overlay = null, stretch = false }) {
     return (
         <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
             <div style={{ font: "400 10px var(--mono)", color: "var(--txt-4)",
@@ -244,7 +244,7 @@ function SplitPane({ title, src, view, onViewChange, overlay = null }) {
             </div>
             <div style={{ flex: "1 1 auto", minHeight: 0, border: "1px solid var(--line)" }}>
                 {src
-                    ? <ZoomPanViewer src={src} alt={title} fill view={view}
+                    ? <ZoomPanViewer stretch={stretch} src={src} alt={title} fill view={view}
                                      onViewChange={onViewChange} overlay={overlay} />
                     : <EmptyFrame />}
             </div>
@@ -259,7 +259,7 @@ function SplitPane({ title, src, view, onViewChange, overlay = null }) {
  */
 function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
                         changes, selectedDet, onSelectDet, arrowFor, arrowLabel,
-                        refDate, curDate, handle = true }) {
+                        refDate, curDate, handle = true, stretch = false }) {
     const { scale, tx, ty, frameW, frameH } = useViewerView()
     const rootRef = useRef(null)
     if (!frameW || !frameH) return null
@@ -299,7 +299,7 @@ function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
                                   transformOrigin: "0 0" }}>
                         <img src={curSrc} alt="current scene" draggable={false}
                              style={{ display: "block", width: "100%", height: "100%",
-                                      objectFit: "contain" }} />
+                                      objectFit: stretch ? "fill" : "contain" }} />
                     </div>
                 </div>
             ) : null}
@@ -338,7 +338,7 @@ function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
     )
 }
 
-export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, onSwipePos, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true, swipeHandle = true, refLabel = null }) {
+export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, onSwipePos, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true, swipeHandle = true, refLabel = null, stretch = false }) {
     // One view for both split panes. Held here rather than in either pane,
     // because the point of a split is that the two sides cannot disagree
     // about where they are looking.
@@ -451,7 +451,7 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                 detections={changes?.length ?? null} />
         }
         return (
-            <ZoomPanViewer
+            <ZoomPanViewer stretch={stretch}
                 ref={viewerRef}
                 src={curSrc}
                 alt="current scene"
@@ -499,7 +499,7 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                         no reference image to wipe against — showing the current scene
                     </div>
                     <div style={{ flex: "1 1 auto", minHeight: 0 }}>
-                        <ZoomPanViewer ref={viewerRef} src={curSrc} alt="current scene" fill
+                        <ZoomPanViewer stretch={stretch} ref={viewerRef} src={curSrc} alt="current scene" fill
                             onBackgroundClick={() => onSelectDet && onSelectDet(null)}
                             overlay={<ScreenBoxes changes={showBoxes ? changes : []}
                                         selectedDet={selectedDet} onSelectDet={onSelectDet}
@@ -510,7 +510,7 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
             )
         }
         return (
-            <ZoomPanViewer
+            <ZoomPanViewer stretch={stretch}
                 ref={viewerRef}
                 src={refSrc}
                 alt="reference scene"
@@ -531,6 +531,7 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                         refDate={refLabel || fmtDate(scene.reference_date)}
                         curDate={fmtDate(scene.scan.image_timestamp_utc)}
                         handle={swipeHandle}
+                        stretch={stretch}
                     />
                 }
             />
@@ -552,12 +553,14 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                 src={refSrc}
                 view={splitView}
                 onViewChange={setSplitView}
+                stretch={stretch}
             />
             <SplitPane
                 title={`Current · ${fmtDate(scene.scan.image_timestamp_utc)}`}
                 src={curSrc}
                 view={splitView}
                 onViewChange={setSplitView}
+                stretch={stretch}
                 overlay={
                     <ScreenBoxes changes={showBoxes ? changes : []} selectedDet={selectedDet}
                                  onSelectDet={onSelectDet} arrowFor={showArrow ? sel : null}

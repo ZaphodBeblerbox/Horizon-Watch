@@ -34,7 +34,7 @@ import scan_changes as _changes
 
 # How many scans per region keep their image. Two is the minimum that still
 # allows a before/after comparison to be SHOWN rather than merely computed.
-DEFAULT_KEEP_IMAGES = 2
+DEFAULT_KEEP_IMAGES = 4
 
 
 def _attrs(det) -> dict:
@@ -135,7 +135,7 @@ def apply_change_detection(db, zone_id, scan_id, *, instrument="OPTICAL",
 
 
 def prune_scan_images(db, zone_id, *, keep=DEFAULT_KEEP_IMAGES) -> dict:
-    """Drop the stored image from all but the newest `keep` scans of a region.
+    """Drop the stored image from all but the newest `keep` passes of a region, per sensor.
 
     Detections are never touched. A scan whose image has aged out still
     carries every object it found, with coordinates, so it still plots on the
@@ -155,14 +155,17 @@ def prune_scan_images(db, zone_id, *, keep=DEFAULT_KEEP_IMAGES) -> dict:
     # already held keeps nothing; the newest `keep` passes keep their image.
     freed = 0
     pruned = []
-    held, i = set(), 0
+    # Counted per sensor: an area watched in optical and radar keeps the
+    # last `keep` passes of each, so a comparison always has a "before".
+    held, seen = set(), {}
     for s in scans:
-        acq = s.image_id or (s.image_timestamp_utc.isoformat() if s.image_timestamp_utc else s.scan_id)
+        inst = s.instrument or "OPTICAL"
+        acq = (inst, s.image_id or (s.image_timestamp_utc.isoformat() if s.image_timestamp_utc else s.scan_id))
         duplicate = acq in held
         held.add(acq)
         if not duplicate:
-            i += 1
-            if i <= keep:
+            seen[inst] = seen.get(inst, 0) + 1
+            if seen[inst] <= keep:
                 continue
         if is_pinned(s):
             # An explicit decision by a person outranks a retention rule.

@@ -17212,6 +17212,12 @@ function evaluatePixel(s) {
 _EVALSCRIPTS = {
     "true-colour": _EVALSCRIPT_TRUE_COLOUR,
 
+    # Water as white, land as black (NDWI from green and near-infrared) —
+    # where a radar "ship" can be a ship at all.
+    "water-mask": """//VERSION=3
+function setup(){return{input:["B03","B08","dataMask"],output:{bands:4}}}
+function evaluatePixel(s){var w=(s.B03-s.B08)/(s.B03+s.B08+1e-6)>0.05?1:0;return[w,w,w,s.dataMask]}""",
+
     "false-colour": """//VERSION=3
 function setup(){return{input:["B08","B04","B03","dataMask"],output:{bands:4}}}
 function evaluatePixel(s){return[3.5*s.B08,3.5*s.B04,3.5*s.B03,s.dataMask]}""",
@@ -17441,6 +17447,11 @@ async def _fetch_sentinel_image_bytes(bounds: dict, image_type: str = "true-colo
                     "timeRange": time_range,
                     "mosaickingOrder": mosaic_order,
                 },
+                # Resampled on Sentinel Hub's side, bicubic, when more pixels
+                # are asked for than the 10 m bands hold — a smooth image
+                # rather than the browser's blocky stretch. No detail is
+                # added; the edges stop being stairs.
+                "processing": {"upsampling": "BICUBIC", "downsampling": "BICUBIC"},
             }],
         },
         "output": {
@@ -22766,6 +22777,60 @@ def _scene_note_for(scan, zone, comparison) -> dict:
 
 # ── Imagery: context, a sharp reference, and any date to compare with ─────
 
+def _sar_grey_b64(tiff_bytes: bytes, sar_detector, np, size: tuple | None = None) -> str:
+    """Radar as an analyst reads it: VV backscatter in grey, log-stretched
+    — ships and structures bright, calm water dark."""
+    import base64 as _b64g
+    import io as _iog
+    from PIL import Image as _PILg
+    vv = np.log1p(sar_detector.preprocess_raw_geotiff_bytes(tiff_bytes)["array"][1].astype(np.float32))
+    # Backscatter is heavily skewed — a linear stretch leaves the scene
+    # black around a few bright quays. Log, then a percentile stretch and a
+    # gamma lift, is how SAR is usually shown.
+    lo, hi = np.percentile(vv, 1), np.percentile(vv, 99.7)
+    g = np.clip((vv - lo) / max(1e-6, hi - lo), 0, 1) ** 0.8
+    g = (g * 255).astype(np.uint8)
+    buf = _iog.BytesIO()
+    img = _PILg.fromarray(g, mode="L")
+    # The detector reprojects to web-mercator at its own pixel size; the
+    # page lays every image of an area over the same frame, so put it back
+    # on the area's grid or a swipe against optical does not line up.
+    if size:
+        img = img.resize(size, _PILg.LANCZOS)
+    img.save(buf, format="JPEG", quality=90)
+    return _b64g.b64encode(buf.getvalue()).decode("ascii")
+
+
+async def _water_mask(system_id: str, bounds: dict, w: int, h: int):
+    """Boolean array, True on water, for the area (cached), or None."""
+    import io as _iow
+    import numpy as _npw
+    from PIL import Image as _PILw
+    key = f"{system_id}-water-{bounds['west']:.4f}-{bounds['south']:.4f}-{bounds['east']:.4f}-{bounds['north']:.4f}.png"
+    _meta, data = _cache_read(key)
+    if data is None:
+        r = await _fetch_sentinel_image_bytes(bounds, image_type="water-mask", max_cloud=20, days_back=90, width=w, height=h)
+        if r.get("error"):
+            print(f"[sar] water mask unavailable for {system_id}: {r['error']}", flush=True)
+            return None
+        data = r["image_bytes"]
+        _cache_write(key, {"kind": "water-mask"}, data)
+    return _npw.array(_PILw.open(_iow.BytesIO(data)).convert("L")) > 127
+
+
+def _on_water(water, lat, lon, bbox) -> bool:
+    """Is the point on water, allowing one pixel of shoreline?"""
+    if lat is None or lon is None:
+        return False
+    hgt, wid = water.shape
+    x = int((lon - bbox[0]) / (bbox[2] - bbox[0]) * wid)
+    y = int((bbox[3] - lat) / (bbox[3] - bbox[1]) * hgt)
+    if not (0 <= x < wid and 0 <= y < hgt):
+        return False
+    win = water[max(0, y - 1):y + 2, max(0, x - 1):x + 2]
+    return bool(win.mean() >= 0.5)
+
+
 _IMAGERY_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "imagery_cache")
 
 
@@ -22947,6 +23012,74 @@ async def api_imagery_zone_dates(system_id: str, days: int = Query(365, ge=7, le
     return {"dates": sorted(by_day.values(), key=lambda x: x["date"], reverse=True), "error": res.get("error")}
 
 
+@app.get("/api/imagery/zones/{system_id}/sar")
+async def api_imagery_zone_sar(system_id: str, date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$")):
+    """The area in radar: the Sentinel-1 pass of `date` (or the latest in 30
+    days), a VV/VH false-colour image, and the ships the radar detector
+    (sar_detector.py) finds in it, each with its measured hull. Radar sees
+    through cloud and at night, and a ship on water is a bright return —
+    where optical says what a thing is, radar says that something is there.
+    The radar passes of the last 60 days come back too, to pick another."""
+    import base64 as _b64
+    import numpy as _np
+    import sar_detector
+    from sentinel_scanner import _sar_preview_b64
+    from imagery_pipeline import polygon_percent
+    z = _zone_by_system_id(system_id)
+    b = z["bbox"]
+    bbox = [b["min_lon"], b["min_lat"], b["max_lon"], b["max_lat"]]
+    found = await _satellite_search_sentinel1_impl(bbox, days_back=60)
+    days = sorted({str(it.get("datetime") or "")[:10] for it in (found.get("items") or []) if it.get("datetime")}, reverse=True)
+    if not days:
+        raise HTTPException(404, f"no Sentinel-1 radar pass over this area in 60 days{': ' + found['error'] if found.get('error') else ''}")
+    day = date if date in days else days[0]
+    key = f"{system_id}-s1-{day}-{b['min_lon']:.4f}-{b['min_lat']:.4f}-{b['max_lon']:.4f}-{b['max_lat']:.4f}.json"
+    meta, data = _cache_read(key)
+    if data is None:
+        bounds = {"west": b["min_lon"], "south": b["min_lat"], "east": b["max_lon"], "north": b["max_lat"]}
+        from sentinel_scanner import _native_px
+        w, h = _native_px(bounds)
+        r = await _fetch_sentinel1_raw_bands_geotiff(bounds, width=w, height=h, date_from=day, date_to=day)
+        if r.get("error"):
+            raise HTTPException(502, f"Sentinel-1 image for {day} unavailable: {r['error']}")
+        tiff = r["image_bytes"]
+        loop = asyncio.get_event_loop()
+        preview = await loop.run_in_executor(_executor, _sar_grey_b64, tiff, sar_detector, _np, (w, h))
+        try:
+            dets = await loop.run_in_executor(_executor, sar_detector.run_sar_ship_detection_from_geotiff_bytes, tiff)
+        except Exception as e:                               # noqa: BLE001
+            print(f"[sar] detection failed for {system_id} {day}: {type(e).__name__}: {e}", flush=True)
+            dets = []
+        # A bright radar return on land is a building, not a ship: keep only
+        # detections on water, by Sentinel-2's water index for the area.
+        water = await _water_mask(system_id, bounds, w, h)
+        if water is not None:
+            n0 = len(dets)
+            dets = [d for d in dets if _on_water(water, d.get("lat"), d.get("lon"), bbox)]
+            print(f"[sar] {system_id} {day}: {n0} radar contacts, {len(dets)} on water", flush=True)
+        changes = []
+        for i, d in enumerate(dets):
+            corners = d.get("corners")
+            geo = ({"type": "Polygon", "coordinates": [[[c[1], c[0]] for c in corners] + [[corners[0][1], corners[0][0]]]]}
+                   if corners else None)
+            poly = polygon_percent(geo, bbox) if geo else None
+            xs, ys = ([p[0] for p in poly], [p[1] for p in poly]) if poly else ([], [])
+            changes.append({
+                "id": f"SAR-{day}-{i}", "label": "vessel", "type": "existing", "conf": round(float(d.get("score") or 0), 3),
+                "polygon": poly, "geo_geometry": _json.dumps(geo) if geo else None,
+                "bbox": [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)] if poly else None,
+                "length_m": round(d.get("vessel_length_m") or 0, 1), "width_m": round(d.get("vessel_width_m") or 0, 1),
+                "lat": d.get("lat"), "lon": d.get("lon"), "instrument": "SAR",
+                "note": "fishing vessel" if d.get("is_fishing_vessel") else "",
+            })
+        meta = {"date": day, "width": w, "height": h, "source": "Sentinel-1 GRD · VV/VH"}
+        data = _json.dumps({"image_b64": preview, "changes": changes}).encode()
+        _cache_write(key, meta, data)
+    body = _json.loads(data)
+    return {**meta, "kind": "sar", "image_b64": body["image_b64"], "mime": "image/jpeg",
+            "changes": body["changes"], "dates": days, "attribution": "Copernicus Sentinel-1"}
+
+
 @app.get("/api/imagery/zones/{system_id}/on-date")
 async def api_imagery_zone_on_date(system_id: str, date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
     """The area as Sentinel-2 saw it on one day, true colour at native
@@ -22960,12 +23093,12 @@ async def api_imagery_zone_on_date(system_id: str, date: str = Query(..., patter
     meta, data = _cache_read(key)
     if data is None:
         bounds = {"west": b["min_lon"], "south": b["min_lat"], "east": b["max_lon"], "north": b["max_lat"]}
-        w, h = _native_px(bounds)
+        w, h = _native_px(bounds, m_per_px=5)
         r = await _fetch_sentinel_image_bytes(bounds, image_type="true-colour", date_str=date, width=w, height=h)
         if r.get("error"):
             raise HTTPException(502, f"Sentinel-2 image for {date} unavailable: {r['error']}")
         data = r["image_bytes"]
-        meta = {"date": date, "width": w, "height": h, "shown_m_per_px": 10, "source": "Sentinel-2 L2A"}
+        meta = {"date": date, "width": w, "height": h, "shown_m_per_px": 5, "source": "Sentinel-2 L2A · 10 m, shown at 5 m"}
         _cache_write(key, meta, data)
     return {**meta, "kind": "date", "image_b64": _b64.b64encode(data).decode(), "mime": "image/png",
             "attribution": "Copernicus Sentinel-2"}
@@ -23322,21 +23455,22 @@ def _launch_zone_scan_background(zone_dict: dict, triggered_by: str) -> None:
     for subsequent scans, only gets the real FIRST one running now."""
     import asyncio as _asyncio_wz
 
-    sensor = zone_dict.get("sensor_preference") or "sentinel2_optical"
-    if sensor not in _SENSOR_PIPELINES_DEPLOYED:
-        # Defense in depth — the real user-facing scan-now endpoint already
-        # rejects this immediately with a clear 409; this covers the other
-        # real caller (a just-created zone's automatic first scan) the
-        # same honest way rather than silently launching nothing.
-        print(f"[scan] skipped for {zone_dict.get('system_id')} — no real pipeline deployed for sensor '{sensor}'")
+    # OPTICAL AND RADAR, EVERY PASS. Optical says what a thing is and is
+    # blind under cloud and at night; radar sees through both and says only
+    # that something is there. An area is watched with both, not one chosen
+    # at creation — sensor_preference no longer narrows what is fetched.
+    sensors = [x for x in ("sentinel2_optical", "sentinel1_sar") if x in _SENSOR_PIPELINES_DEPLOYED]
+    if not sensors:
+        print(f"[scan] skipped for {zone_dict.get('system_id')} — no imagery pipeline deployed")
         return
 
     def _blocking_scan():
-        try:
-            from sentinel_scanner import SentinelScanner as _Sc
-            _Sc().run_scan(zone_dict, triggered_by=triggered_by)
-        except Exception as _e:
-            print(f"[scan] real scan error for {zone_dict.get('system_id')}: {_e}")
+        from sentinel_scanner import SentinelScanner as _Sc
+        for sensor in sensors:
+            try:
+                _Sc().run_scan({**zone_dict, "sensor_preference": sensor}, triggered_by=triggered_by)
+            except Exception as _e:
+                print(f"[scan] {sensor} scan error for {zone_dict.get('system_id')}: {_e}")
 
     # THIS IS CALLED FROM A SYNC ENDPOINT, which FastAPI runs in an AnyIO
     # worker thread — and ensure_future() needs a running loop on the calling
