@@ -202,8 +202,23 @@ any S2 date to compare; swipe/split/fade/blink; scene on the Situation map with 
 draw/redraw areas on the map. Real resolution is 10 m (shown at 5 m, bicubic) — the sharp reference is the
 sub-metre view; super-resolution was tried and removed 2026-09-20.
 
+Done 2026-10-06 afternoon (local commits b3efa5c, 0ea2a70, 7fde09c):
+- B/C/D: imagery signals on the map (own layer, pin hides up close); Heat / Imagery signals / Satellite
+  base image are separate switches; heat_watch.py — new heat near watched areas, military sites,
+  airports, or strong (≥30 MW), grouped per 15 km — notifies with Investigate / Scan buttons;
+  automatic FIRE-… area creation off (FIRMS_AUTO_AOI=1 restores). Notifications never depended on
+  layer switches; heat and imagery signals now always notify.
+- E: fusions rebuilt (alerts_derived.py): an event (confirmation, report, Telegram, imagery signal,
+  heat) and what corroborates it within 30 km / 48 h; tracking only within 10 km / 6 h; explained in
+  words; 30 km mark on the map. Imagery feeds fusions as signals, not raw detections.
+- "Watch with satellites" from any alert in the Inspector; map swipe handle spans the image only.
+- Sanctions: name-only matches need the MMSI flag to agree — 5,485 namesake alerts retired.
+- Wispr (K): voice bar works (filter verified by simulated dictation); navigation now falls back to
+  the geocoder ("go to Hormuz" → the strait).
+
 Still open, in order:
-A. **Talk with the owner about what counts as an imagery signal and how** — before building imagery
+A. ~~Talk with the owner about what counts as an imagery signal and how~~ — done, imagery_signals.py.
+A0. (was A) — before building imagery
    signals. When built, opening one on the map loads the image with its detections.
 B. Layers: heat (FIRMS) toggle independent of the satellite overlay; an imagery-signals toggle that
    does not pull the full image overlay.
