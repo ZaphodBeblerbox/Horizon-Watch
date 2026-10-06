@@ -179,54 +179,48 @@ Done (all verified in the browser, committed locally, NOT pushed):
 - Vessel/aircraft feed detail (draught, ETA, status; squawk, climb, target
   altitude, GPS) — `a139417`.
 
+Done since (2026-10-05 evening → 2026-10-06), all committed locally, NOT pushed:
+8. ~~Default layers~~ — `f4ed186`.  9. ~~Imagery page~~ — `3efdb1b`, `2dab452` (see below).
+10. ~~Risk ranking~~ — `1dbf8e9` (evidence-first).  11/23. ~~Insight actionable~~ — `dd0b513`
+    (escalation vs own 28-day baseline, "what may follow", watch-area / theater buttons).
+12/19. ~~Cheap relevance filter~~ — `6737c3a`; GDELT map judged per article — `81e0407`.
+13. ~~Vessel 90-day pattern of life~~ — `723fa72`; ROT in words — `521e60e`.
+14. ~~Settings/tutorial content~~ — `2b91a89`.  15. ~~Infrastructure context~~ — `89a7c78`.
+16. ~~Flows~~ — `dd3f77d`.  17. ~~One-object search~~ — `51f5bbe`.  18. ~~Track filters~~ — `75fcc48`.
+20. ~~Newest critical headline/gradient~~ — `9015718`.  22. ~~Interests~~ — `8e58359` (asset registry still open).
+24. ~~Telegram~~ — `a78ae64` … `38ac3d9` (joined channels, translated, AI-screened, blue diamonds, own video frame).
+- Layout: panels slide, timeline pushes panels, notifications centred — `3b64b8d`; time labels and live
+  notifications — `0d74ddd`; facility logos rejected — `88b4f74`.
+- Notifications in words (country names, low/elevated/high/severe, squawk/FL decoded, dedupe, fusions name
+  what agrees and only 3+ kinds of evidence interrupt) — `999c67c`.
+- Fusions positioned on the observation, not a GPS-jamming cell centre; named by country/waters — `a4a5bc8`.
+
+Imagery as it stands: passes are acquisitions (dedupe by sensor ±15 min); optical AND radar every pass
+(radar ships kept only on water via an S2 NDWI mask); Esri sub-metre "sharp reference" with capture date;
+any S2 date to compare; swipe/split/fade/blink; scene on the Situation map with a Cesium split swipe; per-area
+"what matters here" (zone_context.py) feeding the imagery note (scene_note.py); 4 images kept per sensor;
+draw/redraw areas on the map. Real resolution is 10 m (shown at 5 m, bicubic) — the sharp reference is the
+sub-metre view; super-resolution was tried and removed 2026-09-20.
+
 Still open, in order:
-8. **Default layers** cannot be set (per user, and per theater exists).
-9. **Imagery page** redesign.
-10. **Risk ranking only shows the Baltic.**
-11. **Insight / Forecast** functionality.
-12. **Map data enrichment + cheap OpenAI enrichment everywhere** — feel alive.
-13. Vessel/aircraft steps 2–3: GFW pattern of life (last ports, encounters,
-    dark periods, past names/flags) and derived warnings at the top of the
-    panel. **ROT ±127 must read "turning, rate unknown"** (shows "port 127").
-14. Review the restored settings modal and tutorial content.
-15. **Infrastructure needs context and information** (owner, 2026-10-05):
-    airports, global infrastructure data, submarine cables — clicking one
-    should say what it is, who runs it, what depends on it, and what is
-    happening near it.
-16. **Trade & energy flows** need explanation, graphs, illustrative images and
-    context — and every flow must be verified as correctly geolocated.
-17. **Search/select exactly one object**: one vessel, one aircraft, one
-    airport, one port (by name, MMSI, callsign, ICAO/IATA…).
-18. **Filters for vessels and aircraft**: cargo, military, commercial,
-    sanctioned, country/flag, airline, etc.
-19. **Relevance filter (cheap OpenAI)**: drop signals with no intelligence
-    value ("pedestrian struck in Ohio") from the surface; in the country
-    inspector show only relevant GDELT drivers and news articles.
-20. **Home "Newest critical" must never be "coordinates + intelligence
-    event"** — a short readable headline; its red gradient runs top-down.
-21. Country risk "what drove this score" repeats the same headline 4×
-    (dedupe drivers by headline).
-22. **Relevance is per user**: "Boat collision on the Congo River" is not
-    critical *for this user*. Interests + theaters decide relevance now; an
-    **asset registry** later ("X happened → why it matters for your asset →
-    watch for Y"). Ties to the Blocker below (per-user profile).
-23. **Insight must be actionable**: "likelihood of intensification up x%",
-    precise follow-on actions in this window ("counter-attack from the north
-    more likely as Saudi forces retake Bab el-Mandeb → watch for build-up"),
-    each with a one-click response (create a satellite watch zone, create a
-    localized theater).
-24. **Telegram ingestion** — owner asks whether to; GeoConfirmed already cites
-    Telegram channels heavily (decision pending).
-25. Search jump to a sea ("Black Sea") lands at 20 km — sea/ocean hits need
-    regional height.
+A. **Talk with the owner about what counts as an imagery signal and how** — before building imagery
+   signals. When built, opening one on the map loads the image with its detections.
+B. Layers: heat (FIRMS) toggle independent of the satellite overlay; an imagery-signals toggle that
+   does not pull the full image overlay.
+C. FIRMS heat inside areas of interest → notification asking "Investigate? / Scan?".
+D. Notifications fire for new alerts even when the layer is toggled off.
+E. Detection stability (same pass, different tile cut: 38 vs 15 tanks) and the fusion engine's rules
+   (2.5° cell × 60 h co-occurrence is too loose).
+F. Localizer workbench: place suggestions (country-restricted, OCR, satellite compare), shadow
+   chronolocation (solarPosition.js), vehicle direction.
+G. Asset registry; per-user profile (Blocker below). Telegram roles for newly joined channels
+   (Middle_East_Spectator, InfosAes, liil050, sh_almoqawamma).
+H. GDELT judge (gpt-4o-mini) still admits a few protests/crime as "violent unrest".
 
 ### Seen but not fixed
 - Intermittent page error "the server did not respond within 30s" during
   browser probes, independent of the screen being tested.
 - A Yemen signal headlined "fighting around Taiz" is geocoded to Lahj.
-- Vessel photos fixed (`a139417`, IMO required), but **facility photos can be
-  logos**: Dubai International shows the DXB wordmark. `_usable_image` in
-  `services/wikimedia_image_service.py` does not catch it.
 - A military aircraft (MAE4329) showed type "PC-21" from hexdb with a photo of
   a different airframe — route/type lookup and photo lookup disagree.
 - `src/lib/ref.test.js` calls the live backend and fails whenever it is busy
