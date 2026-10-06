@@ -579,10 +579,21 @@ def _sanctions_hit_is_plausible(hit: dict, vessel: dict) -> bool:
     invent a rule for data we don't have.
     """
     hit_flag  = (hit.get("flag") or "").strip().upper()
-    live_flag = (vessel.get("flag") or vessel.get("country") or "").strip().upper()
+    live_flag = (vessel.get("flag") or vessel.get("country") or _flag_from_mmsi(vessel.get("mmsi")) or "").strip().upper()
     if not hit_flag or not live_flag:
         return True
     return hit_flag == live_flag
+
+
+def _flag_from_mmsi(mmsi) -> str | None:
+    """The flag a vessel broadcasts: the country of its MMSI's first three
+    digits (the MID). AIS position messages carry no flag field, but every
+    MMSI does — 211… is Germany, 314… Barbados."""
+    try:
+        import mmsi_lookup
+        return mmsi_lookup.lookup_mmsi(str(mmsi or "")).get("flag_country")
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def check_sanctions_for_vessel(mmsi: str, name: str = None, vessel: dict = None,
@@ -641,6 +652,18 @@ def check_sanctions_for_vessel(mmsi: str, name: str = None, vessel: dict = None,
         # traffic (including inland river/canal AIS) can share a common word
         # with a sanctioned vessel's name without being that vessel.
         return None
+    if hit.get("_match_type") == "exact_name":
+        # AN EXACT NAME IS STILL ONLY A NAME. Tour boats called "Pegasus"
+        # on Berlin's Spree (MMSI 211…, German) were alerted as the
+        # US-sanctioned, Barbados-flagged tanker Pegasus — 50 alerts, and
+        # fusions placed in Potsdam. A name match must agree with the flag
+        # the vessel broadcasts (its MMSI's country) to count at all.
+        live = (_flag_from_mmsi(mmsi) or "").strip().upper()
+        listed = (hit.get("flag") or "").strip().upper()
+        if live and listed and live != listed:
+            return None
+        if not (live and listed):
+            hit = {**hit, "_name_only_unverified": True}
 
     now = datetime.utcnow()
     last_fired = _sanctions_alert_cooldown.get(mmsi)
@@ -666,7 +689,7 @@ def check_sanctions_for_vessel(mmsi: str, name: str = None, vessel: dict = None,
 
     _sanctions_alert_cooldown[mmsi] = now
 
-    plausible   = _sanctions_hit_is_plausible(hit, vessel)
+    plausible   = _sanctions_hit_is_plausible(hit, {**vessel, "mmsi": mmsi}) and not hit.get("_name_only_unverified")
     vessel_name = hit.get("name") or name or vessel.get("name") or mmsi
 
     return {

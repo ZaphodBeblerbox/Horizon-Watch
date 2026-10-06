@@ -119,7 +119,33 @@ export async function findPlace(text) {
             best = { place: p, n, rank }
         }
     }
-    return best?.place || null
+    if (best) return best.place
+    return geocode(text)
+}
+
+/**
+ * Anything the list does not hold — "Hormuz", a port, a street — through the
+ * same geocoder as the search box. "Go to Hormuz" used to answer "I don't
+ * know where hormuz is" while the search box found it on the first keystroke.
+ */
+async function geocode(text) {
+    const q = String(text || "").trim()
+    if (q.length < 3) return null
+    try {
+        const r = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}&limit=6`, { credentials: "include" })
+        const hits = r.ok ? await r.json() : []
+        // "Hormuz" means the strait, not the island the geocoder ranks first:
+        // a chokepoint whose name contains what was said wins.
+        const hit = (Array.isArray(hits) ? hits : []).find((h) => h.type === "chokepoint"
+                        && String(h.name || "").toLowerCase().includes(q.toLowerCase()))
+                    || (Array.isArray(hits) ? hits.find((h) => Number.isFinite(h.lat)) : null)
+        if (!hit || !Number.isFinite(hit.lat) || !Number.isFinite(hit.lon)) return null
+        const wide = /water|strait|sea|gulf|bay|channel/i.test(`${hit.category || ""} ${hit.name || ""}`)
+        return { name: hit.display_name || hit.name || q, lat: hit.lat, lon: hit.lon,
+                 kind: "place", altitude: wide ? 350_000 : 40_000 }
+    } catch {
+        return null
+    }
 }
 
 /** The risk index for a country, or a reason there is none. */

@@ -84,3 +84,4 @@ backend/data/pipelines_osm/
 backend/data/telegram/
 *.session
 *.session-journal
+backend/data/retired_name_only_sanction_alerts_*.txt
