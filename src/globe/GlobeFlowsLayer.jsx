@@ -41,6 +41,12 @@ const TRADE_COLOR = Color.fromCssColorString("#8E9BAA")
 // really do mean one.
 const DISRUPTED_COLOR = Color.fromCssColorString("#b7822c")
 const ENERGY_COLOR = Color.fromCssColorString("#B9A6FF")
+// By what they carry, so a line says what it is before it is clicked.
+// Neither is red or amber, which mean severity on this map.
+export const GAS_CSS = "#2BB3A3"
+export const OIL_CSS = "#9B6B3D"
+const GAS_COLOR = Color.fromCssColorString(GAS_CSS)
+const OIL_COLOR = Color.fromCssColorString(OIL_CSS)
 
 /**
  * Waypoints to Cartesians, dropping anything unusable.
@@ -122,7 +128,8 @@ export default function GlobeFlowsLayer({ enabled = false, onStatus = null }) {
             if (!r?.id) continue
             const id = `flow-trade-${r.id}`
             setEntity(id, "trade_route", {
-                id, name: r.name || r.id,
+                id, name: r.name || r.id, route_id: r.id, chokepoint_ids: safeArray(r.chokepoints),
+                description: r.description,
                 meta: {
                     kind: "Trade route",
                     description: r.description,
@@ -134,17 +141,35 @@ export default function GlobeFlowsLayer({ enabled = false, onStatus = null }) {
                     usually: data.status?.[r.id]?.traffic?.baseline ?? undefined,
                     incidents: data.status?.[r.id]?.incidents?.count,
                     disrupted_because: (data.status?.[r.id]?.why || []).join("; ") || undefined,
+                    // The line follows the Eurostat MARNET sea-lane network
+                    // between the route's own waypoints (verified off land),
+                    // but a route is still a corridor, not one track.
                     geometry_caveat:
-                        "SCHEMATIC. A real route is a corridor tens of kilometres "
-                        + "wide that each ship chooses its own line through; this is "
-                        + "a handful of waypoints along it, drawn for direction and "
-                        + "context rather than as a surveyed track.",
+                        "Follows the sea-lane network between the route's waypoints. "
+                        + "A real route is a corridor tens of kilometres wide; ships "
+                        + "choose their own line through it.",
                 },
             })
             ids.push(id)
         }
         return () => ids.forEach(deleteEntity)
     }, [enabled, data.routes])
+
+    // Pipelines are records too: name, what it carries, who runs it.
+    useEffect(() => {
+        if (!enabled) return undefined
+        const ids = []
+        data.pipelines.forEach((p, i) => {
+            const id = `flow-energy-${p.id || i}`
+            setEntity(id, "pipeline", {
+                id, name: p.name || "Pipeline", substance: p.substance, operator: p.operator,
+                diameter: p.diameter, length_km: p.length_km, status: p.status, region: p.region,
+                osm_id: p.id, coordinates: p.coordinates,
+            })
+            ids.push(id)
+        })
+        return () => ids.forEach(deleteEntity)
+    }, [enabled, data.pipelines])
 
     if (!enabled) return null
 
@@ -198,15 +223,32 @@ export default function GlobeFlowsLayer({ enabled = false, onStatus = null }) {
             {data.pipelines.map((p, i) => {
                 const positions = routePositions(p?.coordinates)
                 if (positions.length < 2) return null
+                const color = p.substance === "oil" ? OIL_COLOR : p.substance === "gas" ? GAS_COLOR : ENERGY_COLOR
+                // Named at the middle when long enough to matter and only
+                // once zoomed in, so a continent of pipelines is not a
+                // continent of labels.
+                const mid = (p.length_km || 0) >= 300 ? midpointOf(p.coordinates) : null
                 return (
                     <Entity
                         key={`energy-${p.id || i}`}
                         id={`flow-energy-${p.id || i}`}
                         name={p.name || "Pipeline"}
+                        position={mid ? Cartesian3.fromDegrees(mid.lon, mid.lat) : undefined}
                         polyline={{
                             positions, width: 2, clampToGround: true,
-                            material: ENERGY_COLOR.withAlpha(0.85),
+                            material: color.withAlpha(0.85),
                         }}
+                        label={mid ? {
+                            text: `${p.name}${p.substance ? ` · ${p.substance}` : ""}`,
+                            font: "10.5px Arial",
+                            fillColor: color.brighten(0.4, new Color()),
+                            outlineColor: Color.fromCssColorString("#0F1721"),
+                            outlineWidth: 2, style: 2,
+                            pixelOffset: new Cartesian2(0, -8),
+                            distanceDisplayCondition: new DistanceDisplayCondition(0, 2_500_000),
+                            showBackground: true,
+                            backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.65),
+                        } : undefined}
                     />
                 )
             })}

@@ -22,7 +22,7 @@ import API_BASE                  from "../apiBase.js"
 export const INSPECTOR_TYPES = new Set([
     "aircraft", "vessel", "event", "eez", "cable", "infra", "heatmap_cell",
     "alert", "assessment", "fusion", "airport", "port",
-    "sentinel_detection", "chokepoint", "geoconfirmed", "telegram",
+    "sentinel_detection", "chokepoint", "geoconfirmed", "telegram", "pipeline",
     // PARALLAX addendum §A8's derived marks. "fusion" was already here for
     // the old fusion_events; "surge" was not, so a click on a surge fell
     // through to the raw-html popup, which had no html and so did nothing.

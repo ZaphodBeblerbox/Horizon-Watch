@@ -14,6 +14,7 @@ import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 import VesselHistorySection from "./VesselHistorySection.jsx"
 import TelegramMedia from "./TelegramMedia.jsx"
+import TradeRouteSection from "./TradeRouteSection.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 
@@ -828,6 +829,10 @@ export default function InspectorPanel({
                                 || data?.name || entityId}
                             bounds={entityType === "eez" ? (data?.bounds || null) : null} />
                     </div>
+                )}
+
+                {entityType === "trade_route" && data?.route_id && (
+                    <TradeRouteSection routeId={data.route_id} chokepoints={data.chokepoint_ids || []} />
                 )}
 
                 {entityType === "chokepoint" && data?.name && (

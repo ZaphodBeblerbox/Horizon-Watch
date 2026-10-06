@@ -1235,6 +1235,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                     <span style={{ display: "block", font: "400 10px var(--font)",
                                                    color: "var(--txt-4)" }}>
                                         <LayerStatus status={flowsStatus} />
+                                        {/* What the lines are. */}
+                                        <span style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 3 }}>
+                                            <span><i style={{ display: "inline-block", width: 14, borderTop: "2px dashed #8E9BAA", verticalAlign: "middle", marginRight: 4 }} />shipping route</span>
+                                            <span><i style={{ display: "inline-block", width: 14, borderTop: "2px solid #2BB3A3", verticalAlign: "middle", marginRight: 4 }} />gas pipeline</span>
+                                            <span><i style={{ display: "inline-block", width: 14, borderTop: "2px solid #9B6B3D", verticalAlign: "middle", marginRight: 4 }} />oil pipeline</span>
+                                        </span>
                                     </span>
                                 ) : null}
                             </span>

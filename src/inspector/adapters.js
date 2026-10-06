@@ -707,6 +707,31 @@ function adaptTelegram(data = {}) {
     }
 }
 
+// ── pipeline ───────────────────────────────────────────────────────────────────
+// OpenStreetMap transmission pipelines (/api/infrastructure/pipelines-osm).
+function adaptPipeline(data = {}) {
+    const what = data.substance === "gas" ? "Gas pipeline" : data.substance === "oil" ? "Oil pipeline" : "Pipeline"
+    return {
+        identity: {
+            title: data.name || what,
+            subtitle: [what, data.operator, data.length_km ? `${Math.round(data.length_km).toLocaleString()} km mapped` : null].filter(Boolean).join(" · "),
+            entityType: "pipeline", subtype: null, sanctionsStatus: null,
+        },
+        description: "Crowd-mapped in OpenStreetMap: what is built, not what is flowing today. "
+            + "Coverage is good in Europe and thin in parts of Africa and central Asia, so a missing pipeline is not evidence that none exists.",
+        attributes: compact([
+            attr("Carries", data.substance),
+            attr("Operator", data.operator),
+            attr("Diameter", data.diameter ? `${data.diameter} mm` : null),
+            attr("Length mapped", data.length_km ? `${Math.round(data.length_km).toLocaleString()} km` : null),
+            attr("Status", data.status),
+            attr("Record", data.osm_id ? `https://www.openstreetmap.org/way/${String(data.osm_id).replace(/^osm-way-/, "")}` : null),
+        ]),
+        provenance: { feed: "OpenStreetMap (man_made=pipeline, usage=transmission)", ingestedAt: null },
+        actions: { canJumpToLocation: false },
+    }
+}
+
 // ── dispatch ───────────────────────────────────────────────────────────────────
 
 
@@ -1200,6 +1225,7 @@ const ADAPTERS = {
     gfw_event: adaptGfwEvent,
     chokepoint: adaptChokepoint,
     telegram: adaptTelegram,
+    pipeline: adaptPipeline,
 }
 
 /**

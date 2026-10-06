@@ -13,7 +13,7 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "aircraft", "airport", "alert", "assessment", "cable", "chokepoint",
             "country_risk", "eez", "event", "frontline", "fusion", "fusion_member",
             "gdelt_event", "geoconfirmed", "heatmap_cell", "infra", "port",
-            "sentinel_detection", "surge", "telegram", "thermal_anomaly", "trade_route", "vessel",
+            "pipeline", "sentinel_detection", "surge", "telegram", "thermal_anomaly", "trade_route", "vessel",
             "facility_osm", "warmap_area", "gfw_event", "airspace",
             // Nav interference cells. Without this entry the click falls
             // through to the raw-html popup, which is exactly the failure
