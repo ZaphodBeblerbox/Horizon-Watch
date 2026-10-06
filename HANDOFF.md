@@ -161,6 +161,10 @@ T. **Prepare for server integration** (no deploy — local commits only): config
 U. Then **rework the whole frontend UI**.
 V. Telegram video object detection — parked by the owner 2026-10-06 ("not for now").
 
+Owner's decisions (2026-10-06): 3D models DRAWN IN CODE (three.js), as detailed as possible; Crucible
+FOLDED INTO SETTINGS (fusion rules + pipeline → Feeds and health), off the rail; server = RAILWAY, prepare
+only (local commits, no deploy — standing rule); order = audit fixes → N → P → Q → S → O → T → U.
+
 ### UI design direction (agreed 2026-10-05)
 Professional and sleek, modern, solid; the owner likes the big headlines.
 1. One set of rules: type scale, spacing, ONE heading style
