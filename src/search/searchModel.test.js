@@ -101,3 +101,14 @@ describe("seas", () => {
         expect(altitudeForHit({ category: "place", type: "sea", name: "x" })).toBe(1_800_000)
     })
 })
+
+describe("live tracks", () => {
+    it("put a matching vessel or aircraft first, labelled with what identifies it", () => {
+        const g = buildSuggestions("maersk", { remote: [
+            { type: "location", name: "Maersk Tower", lat: 55.7, lon: 12.6, category: "building" },
+            { type: "vessel", name: "MAERSK LAGUNA", mmsi: "219515000", flag: "Denmark", ship_type: "cargo", lat: 51.4, lon: 4.0 },
+        ] })
+        expect(g[0].group).toBe("Live tracks")
+        expect(g[0].items[0].sub).toBe("Vessel · cargo · Denmark · MMSI 219515000")
+    })
+})

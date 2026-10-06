@@ -95,6 +95,15 @@ export default function SearchBar({
         else if (item.kind === "signal") onSignal?.(item.raw)
         else if (item.kind === "theater") onTheater?.(item.id)
         else if (item.kind === "module") onModule?.(item.id)
+        else if (item.kind === "track") {
+            // Fly there and open it: the inspector pins and follows the track.
+            const h = item.raw
+            onModule?.("map")
+            window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: h.lat, lon: h.lon, altitude: h.type === "vessel" ? 40_000 : 120_000 } }))
+            window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
+                entityType: h.type, entityId: h.type === "vessel" ? `ais-${h.mmsi}` : `adsb-${String(h.icao).toLowerCase()}`, data: h.data,
+            } }))
+        }
         setOpen(false)
         input.current?.blur()
     }

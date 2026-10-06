@@ -98,7 +98,20 @@ export function buildSuggestions(query, { places = [], remote = [], theaters = [
     if (allPlaces.length) groups.push({ group: "Places", items: allPlaces })
 
     // Things on the map the backend knows by name: chokepoints, ports, airports, cables, zones.
-    const feats = remote.filter((h) => h.type !== "location" && h.type !== "rule" && Number.isFinite(h.lat) && Number.isFinite(h.lon))
+    // One ship or one aircraft, live: its own group, first — an identifier
+    // typed into a map search is the most specific thing anyone asks for.
+    const tracks = remote.filter((h) => (h.type === "vessel" || h.type === "aircraft") && Number.isFinite(h.lat))
+        .slice(0, 6)
+        .map((h) => ({
+            kind: "track", id: `${h.type}:${h.mmsi || h.icao}`, label: h.name,
+            sub: h.type === "vessel"
+                ? ["Vessel", h.ship_type, h.flag, `MMSI ${h.mmsi}`].filter(Boolean).join(" · ")
+                : ["Aircraft", h.airline, h.registration, h.icao].filter(Boolean).join(" · "),
+            raw: h,
+        }))
+    if (tracks.length) groups.unshift({ group: "Live tracks", items: tracks })
+
+    const feats = remote.filter((h) => !["location", "rule", "vessel", "aircraft"].includes(h.type) && Number.isFinite(h.lat) && Number.isFinite(h.lon))
         .map((h, i) => ({ h, i, r: matchRank(h.name, q) }))
         .sort((a, b) => (a.r < 0 ? 9 : a.r) - (b.r < 0 ? 9 : b.r) || a.i - b.i)
         .map((x) => x.h)

@@ -21253,8 +21253,48 @@ async def unified_search(
             return 3
         return 4
 
+    # ONE VESSEL, ONE AIRCRAFT. The live tracks by what an analyst types:
+    # a ship's name or MMSI, an aircraft's callsign, registration or ICAO
+    # hex. Exact identifiers rank first; a name needs 3+ characters.
+    tracks = []
+    if _want("vessel") or _want("aircraft"):
+        qu = q.strip().upper()
+        if _want("vessel"):
+            with _AIS_LOCK:
+                vs = list(_AIS_VESSELS.values())
+            # Names are filled from history on the way out (vessel_identity),
+            # as /api/ais/vessels does: the live cache often has none yet.
+            try:
+                import vessel_identity as _vi
+                vs = await loop.run_in_executor(_executor, _vi.enrich_all, vs)
+            except Exception:
+                pass
+            for v in vs:
+                name = str(v.get("name") or "").upper()
+                mmsi = str(v.get("mmsi") or "")
+                if (qu == mmsi or (qu.isdigit() and len(qu) >= 5 and mmsi.startswith(qu))
+                        or (len(qu) >= 3 and qu in name)) and v.get("lat") is not None:
+                    tracks.append({"type": "vessel", "name": v.get("name") or f"MMSI {mmsi}", "mmsi": mmsi,
+                                   "flag": v.get("flag"), "ship_type": v.get("ship_type"),
+                                   "lat": v["lat"], "lon": v["lon"], "exact": qu in (mmsi, name), "data": v})
+                    if len(tracks) >= 6:
+                        break
+        if _want("aircraft") and len(qu) >= 3:
+            n = 0
+            for a in list(_GLOBAL_ADSB_CACHE.values()):
+                cs = str(a.get("flight") or "").strip().upper()
+                hx = str(a.get("icao") or a.get("hex") or "").upper()
+                reg = str(a.get("registration") or "").upper()
+                if (qu in (hx, reg) or cs.startswith(qu)) and a.get("lat") is not None:
+                    tracks.append({"type": "aircraft", "name": cs or reg or hx, "icao": hx, "registration": reg or None,
+                                   "airline": a.get("airline"), "lat": a["lat"], "lon": a["lon"],
+                                   "exact": qu in (cs, hx, reg), "data": {**a, "icao": hx}})
+                    n += 1
+                    if n >= 6:
+                        break
+    tracks.sort(key=lambda t: not t["exact"])
     combined = sorted(all_db + nom_hits, key=_score)
-    return combined[:15]
+    return (tracks[:6] + combined)[:18]
 
 
 @app.get("/api/airports/by-region/{region_id}")
