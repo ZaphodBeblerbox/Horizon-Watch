@@ -218,6 +218,11 @@ G. Asset registry; per-user profile (Blocker below). Telegram roles for newly jo
 H. GDELT judge (gpt-4o-mini) still admits a few protests/crime as "violent unrest".
 I. **Enhance the generated briefings** (owner, 2026-10-06).
 K. **Check the Wispr integration** (owner, 2026-10-06).
+L. (LAST priority, owner 2026-10-06) Open sub-metre radar archives as a comparison layer: Umbra open data
+   (Jebel Ali 33 passes Dec 2024–Jul 2025, Jeddah 13, Red Sea coast 21; archive ends Aug 2025) and Capella
+   (Bandar Abbas, Bahrain, Kuwait, Muscat, Doha, Djibouti, Aden … ~1 image each). Also: check Sentinel-1
+   ship detections against Umbra at Jebel Ali. Catalogues: s3.us-west-2.amazonaws.com/umbra-open-data-catalog/stac,
+   capella-open-data.s3.us-west-2.amazonaws.com/stac.
 J. Imagery signals are built (imagery_signals.py, by area kind); smoke plumes and active fires are in
    (smoke.py, found the Khurais plume 5 Oct); still missing: the map-layer separation in B. Multi-image super-resolution was TESTED and REJECTED
    (2026-10-06, storage tanks vs the sub-metre reference, Khor Fakkan + Jebel Ali):
