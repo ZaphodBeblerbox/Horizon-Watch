@@ -17,6 +17,8 @@
  * that SAME filtered list — never independently recomputed, so they can't
  * disagree.
  */
+import { EMPTY_VESSEL_FILTER, EMPTY_AIRCRAFT_FILTER } from "../globe/trackFilters.js"
+import { VesselFilterPanel, AircraftFilterPanel } from "../components/TrackFilterPanel.jsx"
 import { useChrome, getStartupLayers, saveStartupLayers, clearStartupLayers } from "../state/useChrome.js"
 import { createPortal } from "react-dom"
 import { captureElement } from "../capture/Capturable.jsx"
@@ -501,6 +503,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         facMilitary: false, facMedical: false, facSecurity: false,
     })
     const [tracksOn, setTracksOn] = useState({ vessels: false, aircraft: false, sanctionedOnly: false })
+    // What kind of vessel / aircraft is drawn (globe/trackFilters.js).
+    const [vesselFilter, setVesselFilter] = useState(EMPTY_VESSEL_FILTER)
+    const [aircraftFilter, setAircraftFilter] = useState(EMPTY_AIRCRAFT_FILTER)
+    const [trackFacets, setTrackFacets] = useState(null)
+    const vesselFilterOn = useMemo(() => ({ ...vesselFilter, sanctionedOnly: tracksOn.sanctionedOnly }), [vesselFilter, tracksOn.sanctionedOnly])
+    const aircraftFilterOn = useMemo(() => ({ ...aircraftFilter, watchlistedOnly: tracksOn.sanctionedOnly }), [aircraftFilter, tracksOn.sanctionedOnly])
 
     // THE LAUNCH STATE THE USER SAVED. Applied once, and only if they have
     // actually saved one — getStartupLayers() returns null when they never
@@ -1516,7 +1524,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         // (§L5) and split in two. They are fixed facilities,
                         // not live tracks, and they were sharing one switch.
                     ].map(([key, label, count]) => (
-                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                        <Fragment key={key}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
                             <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>{label}</span>
                             <span style={{ font: "400 11px var(--mono)", color: "var(--txt-4)" }}>{count == null ? "—" : count}</span>
                             <button
@@ -1527,6 +1536,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                 <svg className="icon sm"><use href={tracksOn[key] ? "#i-eye" : "#i-eye-off"} /></svg>
                             </button>
                         </div>
+                        {key === "vessels" && tracksOn.vessels && (
+                            <VesselFilterPanel filter={vesselFilter} onChange={setVesselFilter} facets={trackFacets?.vessels} />
+                        )}
+                        {key === "aircraft" && tracksOn.aircraft && (
+                            <AircraftFilterPanel filter={aircraftFilter} onChange={setAircraftFilter} facets={trackFacets?.aircraft} />
+                        )}
+                        </Fragment>
                     ))}
                 </div>
 
@@ -1701,6 +1717,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         geoConfirmedEnabled={groupsOnV.news && geoConfirmedOn}
                         gdeltEnabled={groupsOnV.news && gdeltOn}
                         telegramEnabled={groupsOnV.news && telegramOn}
+                        vesselFilter={vesselFilterOn}
+                        aircraftFilter={aircraftFilterOn}
+                        onTrackFacets={setTrackFacets}
                         gdeltTypes={gdeltTypes}
                         firesEnabled={groupsOnV.imagery && firesOn}
                         geoConfirmedTheatres={geoConfirmedTheatres}

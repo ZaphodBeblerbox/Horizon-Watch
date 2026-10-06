@@ -1,4 +1,5 @@
 import "../cesiumConfig.js"
+import { filterVessels, filterAircraft, facet, vesselFlag, vesselType, aircraftCountry, aircraftKind } from "../globe/trackFilters.js"
 import { MARKER_DEPTH_TEST_M } from "../globe/entityIcons.js"
 import { Component, useRef, useMemo, useState, useEffect } from "react"
 import { Viewer, CameraFlyTo, ImageryLayer } from "resium"
@@ -145,6 +146,11 @@ export default function GlobeView({
     onAirspaceStatus = null,
     flowsEnabled = false,
     onFlowsStatus = null,
+    // Track filters (globe/trackFilters.js) and a callback that receives
+    // what is present — flags, airlines, countries — for the controls.
+    vesselFilter = null,
+    aircraftFilter = null,
+    onTrackFacets = null,
     onBasemapHealth = null,
     // NASA FIRMS thermal anomalies — the feed that already tasks imagery,
     // finally visible.
@@ -985,8 +991,21 @@ export default function GlobeView({
         return () => { cleanup?.() }
     }, [])
 
-    const aisData  = externalAIS  !== null ? externalAIS  : vessels
-    const adsbData = externalADSB !== null ? externalADSB : aircraft
+    const aisAll  = externalAIS  !== null ? externalAIS  : vessels
+    const adsbAll = externalADSB !== null ? externalADSB : aircraft
+    const sanctionedSet = useMemo(() => new Set([...(sanctionedMmsis.confirmed || []), ...(sanctionedMmsis.possible || [])].map(String)), [sanctionedMmsis])
+    const watchSet = useMemo(() => new Set([...(watchlistedIcaos || [])].map((x) => String(x).toLowerCase())), [watchlistedIcaos])
+    const aisData  = useMemo(() => (vesselFilter ? filterVessels(aisAll, vesselFilter, sanctionedSet) : aisAll), [aisAll, vesselFilter, sanctionedSet])
+    const adsbData = useMemo(() => (aircraftFilter ? filterAircraft(adsbAll, aircraftFilter, watchSet) : adsbAll), [adsbAll, aircraftFilter, watchSet])
+    useEffect(() => {
+        if (!onTrackFacets) return
+        onTrackFacets({
+            vessels: { total: aisAll?.length || 0, shown: aisData.length, flags: facet(aisAll, vesselFlag), types: facet(aisAll, vesselType),
+                       sanctioned: (aisAll || []).filter((v) => sanctionedSet.has(String(v.mmsi))).length },
+            aircraft: { total: adsbAll?.length || 0, shown: adsbData.length, airlines: facet(adsbAll, (a) => a.airline),
+                        countries: facet(adsbAll, aircraftCountry), kinds: facet(adsbAll, aircraftKind) },
+        })
+    }, [aisAll, adsbAll, aisData.length, adsbData.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const initialDestination = useMemo(() =>
         Cartesian3.fromDegrees(center[1] ?? 10, center[0] ?? 20, zoomToAlt(zoom))
