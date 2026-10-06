@@ -37,6 +37,9 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 TG_DIR = os.path.join(HERE, "data", "telegram")
 MEDIA_DIR = os.path.join(TG_DIR, "media")
+VIDEO_MAX_MB = 80
+VIDEO_KEEP_DAYS = 3        # prefetched videos are a cache (prune_videos)
+VIDEO_KEEP_MB = 600
 SESSION = os.path.join(TG_DIR, "parallax")
 LOOKBACK_HOURS = 48
 PER_CHANNEL = 150
@@ -384,6 +387,30 @@ def as_surface_items(hours: int = 24) -> list[dict]:
     return out
 
 
+def prune_videos(keep_days: float = VIDEO_KEEP_DAYS, keep_mb: float = VIDEO_KEEP_MB, now: float | None = None) -> int:
+    """Videos are a cache: video_path() fetches any of them again on demand.
+    Prefetching kept every one (1 GB in two days filled the disk on
+    2026-10-06), so: none older than keep_days, and the newest under
+    keep_mb in total. Thumbnails stay — they are small and the record."""
+    import time
+    now = now or time.time()
+    try:
+        vids = [(e.path, e.stat()) for e in os.scandir(MEDIA_DIR) if e.name.endswith(".mp4")]
+    except FileNotFoundError:
+        return 0
+    vids.sort(key=lambda v: -v[1].st_mtime)
+    gone, total = 0, 0
+    for path, st in vids:
+        total += st.st_size
+        if now - st.st_mtime > keep_days * 86400 or total > keep_mb * 1024 * 1024:
+            try:
+                os.remove(path)
+                gone += 1
+            except OSError:
+                pass
+    return gone
+
+
 def prefetch_videos(limit: int = 15) -> int:
     """Download the videos of newly published posts so they play at once
     when opened, instead of after a fetch from Telegram on first click."""
@@ -547,7 +574,6 @@ import threading
 # One Telethon session file, used by the live loop and by video fetches:
 # never two clients on it at once (its SQLite would lock).
 _SESSION_LOCK = threading.Lock()
-VIDEO_MAX_MB = 80
 
 
 def run_once(hours: int = 6) -> dict:
@@ -557,6 +583,7 @@ def run_once(hours: int = 6) -> dict:
         new = asyncio.run(_collect(hours))
     out = {"collected": new, **classify()}
     out["videos"] = prefetch_videos()
+    out["videos_pruned"] = prune_videos()
     return out
 
 

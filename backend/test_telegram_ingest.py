@@ -46,3 +46,17 @@ def test_statements_near_matches_region_claims_by_country(monkeypatch):
     near = {s["id"] for s in t.statements_near(15.35, 44.2)}          # Sanaa, country from the point
     assert near == {"b"}
     assert {s["id"] for s in t.statements_near(12.7, 43.35, country="YE")} == {"a", "b"}
+
+
+def test_prune_videos_keeps_recent_within_budget(tmp_path, monkeypatch):
+    import os
+    import telegram_ingest as t
+    monkeypatch.setattr(t, "MEDIA_DIR", str(tmp_path))
+    now = 1_800_000_000
+    for name, age_days, mb in [("new.mp4", 0.1, 3), ("mid.mp4", 1, 3), ("old.mp4", 5, 1)]:
+        f = tmp_path / name
+        f.write_bytes(b"0" * mb * 1024 * 1024)
+        os.utime(f, (now - age_days * 86400,) * 2)
+    (tmp_path / "x.jpg").write_bytes(b"0")
+    assert t.prune_videos(keep_days=3, keep_mb=4, now=now) == 2      # old by age, mid by budget
+    assert sorted(os.listdir(tmp_path)) == ["new.mp4", "x.jpg"]
