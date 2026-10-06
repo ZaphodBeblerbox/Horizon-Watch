@@ -18,6 +18,9 @@ live system, not inferred.
 - **Never "Unknown Location".** If a thing's place cannot be resolved, it is
   not published.
 - Do not raise key rotation again.
+- **Media is not stored on the owner's laptop** (2026-10-06). Telegram videos
+  are fetched when opened and held 30 minutes in the temp dir; nothing is
+  prefetched. Long-term media storage belongs on the server (item M).
 
 ## Gotchas that cost hours — read these first
 
@@ -232,6 +235,8 @@ G. Asset registry; per-user profile (Blocker below). Telegram roles for newly jo
    (Middle_East_Spectator, InfosAes, liil050, sh_almoqawamma).
 H. GDELT judge (gpt-4o-mini) still admits a few protests/crime as "violent unrest".
 I. **Enhance the generated briefings** (owner, 2026-10-06).
+M. **Long-term media storage on the server** (owner, 2026-10-06): Telegram videos (and later imagery
+   archives) kept server-side, not on the laptop; locally they are a 30-minute temp cache only.
 K. **Check the Wispr integration** (owner, 2026-10-06).
 L. (LAST priority, owner 2026-10-06) Open sub-metre radar archives as a comparison layer: Umbra open data
    (Jebel Ali 33 passes Dec 2024–Jul 2025, Jeddah 13, Red Sea coast 21; archive ends Aug 2025) and Capella
