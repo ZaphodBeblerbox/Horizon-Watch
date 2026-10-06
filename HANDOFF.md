@@ -219,8 +219,14 @@ H. GDELT judge (gpt-4o-mini) still admits a few protests/crime as "violent unres
 I. **Enhance the generated briefings** (owner, 2026-10-06).
 K. **Check the Wispr integration** (owner, 2026-10-06).
 J. Imagery signals are built (imagery_signals.py, by area kind); smoke plumes and active fires are in
-   (smoke.py, found the Khurais plume 5 Oct); still missing: the map-layer separation in B. Multi-image super-resolution (L1BSR-style) not tried yet — the
-   temporal stack (mean of six clear passes, fixed objects only) is what is in.
+   (smoke.py, found the Khurais plume 5 Oct); still missing: the map-layer separation in B. Multi-image super-resolution was TESTED and REJECTED
+   (2026-10-06, storage tanks vs the sub-metre reference, Khor Fakkan + Jebel Ali):
+   - AllenAI Satlas 8-image ESRGAN (4×): crisp tanks but invents texture (sea turned to olive
+     "forest", desert to scrub — trained on US NAIP); detection collapsed to 0 confirmed tanks.
+   - Registered shift-and-add (phase correlation, 2×): faithful, ±noise vs one pass.
+   - Sub-pixel registration of the existing stack: passes already within 0.5–1 px at 5 m; ±noise.
+   What stays: Sentinel Hub bicubic 5 m + mean of six clear passes for fixed objects (recall 0.54
+   at Jebel Ali). Real resolution needs a sharper sensor (commercial: Planet, SkySat, Umbra/Capella SAR).
 
 ### Detection models (not in git — `backend/models/` is ignored)
 The scanner runs `yolov8m-obb.onnx` (backend/, already present) and `backend/models/yolo26x-obb.onnx`.
