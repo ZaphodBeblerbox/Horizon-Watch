@@ -1,4 +1,5 @@
 import UpdateBanner from "./desktop/UpdateBanner.jsx"
+import Assets from "./destinations/Assets.jsx"
 import { getEntity } from "./globe/entityStore.js"
 import VoiceBar from "./voice/VoiceBar.jsx"
 import { setVoicePage } from "./voice/voiceContext.js"
@@ -60,8 +61,8 @@ import { MODULES } from "./data/modules.js"
    The older keys below them are kept so existing callers keep working. */
 const MODULE_TO_TAB_TYPE = {
     home: "home", map: "situation", graph: "ontology", inbox: "watchlists",
-    briefings: "briefings", analytics: "analytics", assets: "sources",
-    fusion: "aiCouncil", work: "cases",
+    briefings: "briefings", analytics: "analytics", feeds: "sources",
+    fusion: "settings", work: "cases", assets: "assets",
     situation: "situation", dossiers: "dossiers", generate: "generate",
     replay: "replay", ontology: "ontology", imagery: "imagery",
     forecast: "forecast", cases: "cases", caseWork: "work", team: "team", editor: "editor",
@@ -129,7 +130,7 @@ const canvasLayer = (on, chrome) => ({
 const TAB_TYPE_TO_MODULE = {
     home: "home", situation: "map", ontology: "graph", watchlists: "inbox",
     briefings: "briefings", analytics: "analytics", forecast: "analytics",
-    sources: "assets", aiCouncil: "fusion", cases: "work",
+    assets: "assets", cases: "work",
     dossiers: "dossiers", generate: "generate", replay: "replay",
     imagery: "imagery", team: "team", editor: "editor", settings: "settings",
 }
@@ -175,7 +176,6 @@ import TheaterEditor from "./components/TheaterEditor.jsx"
 import {
     listTheaters, createTheater, updateTheater, deleteTheater,
 } from "./lib/theatersApi.js"
-import Crucible from "./destinations/Crucible.jsx"
 import MyWork from "./destinations/MyWork.jsx"
 import Replay from "./destinations/Replay.jsx"
 import Imagery from "./destinations/Imagery.jsx"
@@ -220,7 +220,7 @@ const KNOWN_TAB_TYPES = new Set([
     "caseWork",
     // Reached from the rail's Account button; not a landing tab (see
     // NON_LANDING_TABS) because it is somewhere you go and then leave.
-    "profile", "home", "aiCouncil", "settings",
+    "profile", "home", "settings", "assets",
     // Messages, and the desk feed.
     "chat", "desk",
 ])
@@ -1494,6 +1494,8 @@ export default function App() {
     const activeTabIdRef = useRef(null)
 
     const openTab = useCallback((type, opts) => {
+        // Crucible is a section of Settings now (2026-10-06); old links land there.
+        if (type === "aiCouncil" || type === "fusion") { setSettingsSection("fusion"); type = "settings" }
         // Redesign Round 2 — real tab types for the new 7-module rail
         // (data/modules.js) plus the pre-existing "dashboard"/"sources"/
         // "aiCouncil" types, which are no longer reachable from the new
@@ -2456,14 +2458,6 @@ export default function App() {
                     </div>
                 )}
 
-                {tabs.some(t => t.type === "aiCouncil") && (
-                    <div style={modeLayer(activeTabType === "aiCouncil")}>
-                        {/* v6 ▣ Crucible. What was here was AICouncil.jsx, a
-                            129-line placeholder behind the rail's Crucible
-                            entry. */}
-                        <Crucible onOpenModule={(m) => openTab(MODULE_TO_TAB_TYPE[m] || m)} />
-                    </div>
-                )}
 
                 {/* Insight — v6 Part B ▣ Insight. Full-width, no side panes.
                     ONE SURFACE, THREE TABS. "Analytics" and "Forecast" were
@@ -2521,9 +2515,15 @@ export default function App() {
                         <Team onClose={() => openTab("home")} />
                     </div>
                 )}
+                {tabs.some(t => t.type === "assets") && (
+                    <div style={modeLayer(activeTabType === "assets")}>
+                        <Assets />
+                    </div>
+                )}
                 {tabs.some(t => t.type === "settings") && (
                     <div style={modeLayer(activeTabType === "settings")}>
                         <Settings section={settingsSection} onClose={() => openTab("home")}
+                            onOpenModule={(m) => openTab(MODULE_TO_TAB_TYPE[m] || m)}
                             onAccount={() => { setProfileSection(null); openTab("profile") }}
                             onOpenSources={() => openTab("sources")} />
                     </div>

@@ -30,7 +30,7 @@ export const RAIL_HUE = {
     home: "#5B8DEF", map: "#2BB3A3", graph: "#9B7BE6", inbox: "#3FA7D6",
     desk: "#C08AD8", briefings: "#7F9CC4", analytics: "#4CAF7A", fusion: "#D16BA5",
     work: "#8FA3BF", layers: "#2BB3A3", imagery: "#7C9CE8", selection: "#9AA9BC",
-    timeline: "#4CAF7A", files: "#8FA3BF", settings: "#9AA9BC",
+    timeline: "#4CAF7A", files: "#8FA3BF", settings: "#9AA9BC", assets: "#C9A227",
 }
 
 /** The effective rail list — Part C marks `railModes` ▶ EFFECTIVE as the
@@ -51,7 +51,9 @@ export const RAIL_MODES = [
        entry promised a register of what you protect and opened something
        else entirely. The feed inventory is still reachable; it just is not
        pretending to be an asset register from the rail. */
-    ["fusion",    "Crucible (U)",                              "#g-fusion"],
+    /* The asset register, back as what it says: the things this desk
+       protects, and what is happening near each (destinations/Assets.jsx). */
+    ["assets",    "Assets · what we protect",                  "#g-asset"],
     ["work",      "My work",                                   "#g-work"],
 ]
 

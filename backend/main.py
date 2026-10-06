@@ -384,6 +384,7 @@ from routers import signals_export as _signals_export_router
 from routers import geoconfirmed as _geoconfirmed_router
 from routers import risk_index as _risk_index_router
 from routers import alerts_derived as _alerts_derived_router   # PARALLAX addendum §A12
+from routers import my_assets as _my_assets_router            # the asset register (owned_assets.py)
 app.include_router(_intel_router.router)
 app.include_router(_briefings_router.router)
 app.include_router(_infra_router.router)
@@ -391,6 +392,7 @@ app.include_router(_infra_router.router)
 import routers.graph as _graph_router
 app.include_router(_graph_router.router)
 app.include_router(_tile_proxy_router.router)
+app.include_router(_my_assets_router.router)
 app.include_router(_analytics_router.router)
 app.include_router(_forge_router.router)
 app.include_router(_signals_export_router.router)

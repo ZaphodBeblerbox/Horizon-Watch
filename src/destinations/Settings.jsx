@@ -18,6 +18,7 @@ import API_BASE from "../apiBase.js"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
 import InterestsEditor from "../components/InterestsEditor.jsx"
+import Crucible from "./Crucible.jsx"
 import {
     GeneralSection, MapLayersSection, AlertsSection, SourcesSection, BriefingSection,
     KeyboardSection, AboutSection, SessionsSection, Row, SectionTitle, Toggle,
@@ -31,7 +32,7 @@ const CARD = {
 const NAV = [
     ["General", "general"], ["Your interests", "interests"], ["Map and layers", "mapLayers"],
     ["Alerts and notifications", "alerts"], ["Voice and AI", "ai"], ["Sessions and views", "sessions"],
-    ["Feeds and health", "sources"], ["Briefings", "briefing"], ["Shortcuts", "keyboard"], ["About", "about"],
+    ["Feeds and health", "sources"], ["How signals are fused", "fusion"], ["Briefings", "briefing"], ["Shortcuts", "keyboard"], ["About", "about"],
 ]
 const LEAD = {
     general: "Theme, density, time zone.",
@@ -41,6 +42,7 @@ const LEAD = {
     ai: "The model behind spoken commands and the readers, and what it costs.",
     sessions: "Saved desks and views.",
     sources: "Every feed, and when it last delivered.",
+    fusion: "The engine behind fusions: what it combines, at what radius and window, what cues a satellite pass, and the detectors it runs.",
     briefing: "Defaults for generated reports.",
     keyboard: "Every shortcut.",
     about: "",
@@ -100,7 +102,7 @@ function AiSection({ settings }) {
     )
 }
 
-export default function Settings({ section = null, onClose = null, onAccount = null, onOpenSources = null }) {
+export default function Settings({ section = null, onClose = null, onAccount = null, onOpenSources = null, onOpenModule = null }) {
     const [sec, setSec] = useState(section || "general")
     useEffect(() => { if (section) setSec(section) }, [section])
     const [settings, setSettings] = useState(getSettings)
@@ -160,6 +162,7 @@ export default function Settings({ section = null, onClose = null, onAccount = n
                             {sec === "ai" && <AiSection settings={settings} />}
                             {sec === "sessions" && <SessionsSection />}
                             {sec === "sources" && <SourcesSection />}
+                            {sec === "fusion" && <Crucible embedded onOpenModule={onOpenModule || (() => {})} />}
                             {sec === "briefing" && <BriefingSection settings={settings} />}
                             {sec === "keyboard" && <KeyboardSection />}
                             {sec === "about" && <AboutSection />}

@@ -20,6 +20,7 @@
  * instead of drawing ticks it cannot justify. Theaters and assets are the
  * spec's first-run defaults until those models land.
  */
+import { EXPOSURE } from "./Assets.jsx"
 import Dots from "../ui/Dots.jsx"
 import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
@@ -101,8 +102,16 @@ const rowBtn = {
     font: "inherit", textAlign: "left", cursor: "pointer",
 }
 
+const EXPO_RANK = { high: 3, elevated: 2, low: 1, quiet: 0, unknown: -1 }
+
 export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {}, theaters: userTheaters = [] }) {
     const [user, setUser] = useState(() => getCurrentUser())
+    // The asset register, most exposed first (destinations/Assets.jsx).
+    const [myAssets, setMyAssets] = useState(null)
+    useEffect(() => {
+        fetch(`${API_BASE}/api/my-assets`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : { assets: [] })).then((d) => setMyAssets(d.assets || [])).catch(() => setMyAssets([]))
+    }, [])
     const [surface, setSurface] = useState([])
     const [boards, setBoards] = useState([])
     const [onto, setOnto] = useState(null)
@@ -755,24 +764,45 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                         </Card>
 
                         <Card tour="assets">
-                            <CardHead title="Your assets" meta="0">
-                                <button onClick={() => onOpenModule("assets")} style={{
+                            <CardHead title="Your assets" meta={myAssets ? String(myAssets.length) : "…"}>
+                                <button onClick={() => { window.__plxAddAsset = true; onOpenModule("assets") }} style={{
                                     marginLeft: "auto", height: 26, padding: "0 8px", border: 0,
                                     background: "transparent", color: "var(--acchi)", font: "inherit",
                                     fontSize: 12, cursor: "pointer",
                                 }}>+ Add asset</button>
                             </CardHead>
-                            <div style={{ padding: 14, fontSize: 12, lineHeight: 1.5, color: "var(--txt3)", textWrap: "pretty" }}>
-                                Nothing registered yet. Add a vessel, facility or route and Parallax
-                                will flag activity that comes near it.
-                                <div style={{ marginTop: 10 }}>
-                                    <button onClick={() => onOpenModule("assets")} style={{
-                                        height: 28, padding: "0 12px", border: "1px solid var(--gline2)",
-                                        background: "transparent", color: "var(--txt)", font: "inherit",
-                                        cursor: "pointer", borderRadius: 4,
-                                    }}>Add an asset →</button>
+                            {myAssets?.length ? (
+                                <div style={{ display: "flex", flexDirection: "column" }}>
+                                    {[...myAssets].sort((x, y) => EXPO_RANK[y.exposure] - EXPO_RANK[x.exposure]).slice(0, 5).map((a) => (
+                                        <button key={a.id} onClick={() => onOpenModule("assets")} style={{
+                                            display: "grid", gridTemplateColumns: "10px minmax(0,1fr)", gap: 10, alignItems: "baseline",
+                                            padding: "9px 14px", border: 0, borderTop: "1px solid var(--gline)", background: "transparent",
+                                            color: "var(--txt)", font: "inherit", textAlign: "left", cursor: "pointer",
+                                        }}>
+                                            <i style={{ width: 8, height: 8, borderRadius: "50%", background: (EXPOSURE[a.exposure] || EXPOSURE.unknown).color, display: "inline-block" }} />
+                                            <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                                                <span style={{ fontSize: 13 }}>{a.name} <span style={{ color: "var(--txt3)", fontSize: 12 }}>· {a.kind_label}</span></span>
+                                                <span style={{ fontSize: 12, color: "var(--txt3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {a.top ? a.top.title : (EXPOSURE[a.exposure] || EXPOSURE.unknown).label}
+                                                </span>
+                                            </span>
+                                        </button>
+                                    ))}
                                 </div>
-                            </div>
+                            ) : (
+                                <div style={{ padding: 14, fontSize: 12, lineHeight: 1.5, color: "var(--txt3)", textWrap: "pretty" }}>
+                                    {myAssets ? "Nothing registered yet. Add a vessel, an aircraft, a site or a team and Parallax will rank what happens near it and say how it affects you." : "Reading the register…"}
+                                    {myAssets && (
+                                        <div style={{ marginTop: 10 }}>
+                                            <button onClick={() => { window.__plxAddAsset = true; onOpenModule("assets") }} style={{
+                                                height: 28, padding: "0 12px", border: "1px solid var(--gline2)",
+                                                background: "transparent", color: "var(--txt)", font: "inherit",
+                                                cursor: "pointer", borderRadius: 4,
+                                            }}>Add an asset →</button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </Card>
 
                         <Card>

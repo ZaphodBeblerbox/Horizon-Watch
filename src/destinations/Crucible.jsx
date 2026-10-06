@@ -47,7 +47,7 @@ const SEV = {
 const pct = (x) => `${Math.round((x || 0) * 100)}%`
 const num = (n) => (n ?? 0).toLocaleString()
 
-export default function Crucible({ onOpenModule = () => {} }) {
+export default function Crucible({ onOpenModule = () => {}, embedded = false }) {
     const [tab, setTab] = useState("pipe")
     const [fusions, setFusions] = useState(null)
     const [corr, setCorr] = useState(null)
@@ -437,7 +437,11 @@ export default function Crucible({ onOpenModule = () => {} }) {
         : "reading the pipeline"
 
     return (
-        <section data-screen-label="Crucible" style={MODE_SURFACE}>
+        // Embedded: a section of Settings (owner, 2026-10-06 — a view of
+        // the engine, not a screen you work in), so no full-screen frame.
+        <section data-screen-label="Crucible" style={embedded
+            ? { display: "flex", flexDirection: "column", minHeight: 680, margin: "0 -22px -22px", position: "relative" }
+            : MODE_SURFACE}>
             <header style={{
                 display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
                 padding: "14px 20px 0", borderBottom: "1px solid var(--gline)", flex: "none",

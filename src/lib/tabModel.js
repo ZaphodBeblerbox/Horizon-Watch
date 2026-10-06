@@ -8,7 +8,7 @@ export const TAB_LABELS = {
     analytics: "Analytics", generate: "Generate", briefings: "Briefings", replay: "Replay",
     ontology: "Ontology", imagery: "Imagery",
     map: "Map", dashboard: "Dashboard", reports: "Reports", watchlists: "Watchlists",
-    sources: "Intel", aiCouncil: "AI Council", settings: "Settings",
+    sources: "Intel", aiCouncil: "AI Council", settings: "Settings", assets: "Assets",
 }
 
 /**

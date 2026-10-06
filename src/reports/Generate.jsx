@@ -449,7 +449,7 @@ export default function Generate({ onOpenTab }) {
                         ))}
                     </div>
                 </div>
-                <div className="field"><label>Classification</label><input className="input" value={classification} onChange={(e) => setClassification(e.target.value)} /></div>
+                <div className="field"><label>Classification</label><input className="input" value={classification} title={classification} onChange={(e) => setClassification(e.target.value)} style={{ fontSize: 11, letterSpacing: "-.01em" }} /></div>
                 <div className="field"><label>Standing instruction</label>
                     <textarea className="input" style={{ minHeight: 60, resize: "vertical" }} value={standingInstruction} onChange={(e) => setStandingInstruction(e.target.value)} placeholder="Optional analyst instruction for the drafting pass" />
                 </div>
