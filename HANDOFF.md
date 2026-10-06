@@ -237,7 +237,7 @@ H. DONE 2026-10-06: GDELT judge now reads act/force/actor/casualties; code keeps
 I. **Enhance the generated briefings** (owner, 2026-10-06).
 M. **Long-term media storage on the server** (owner, 2026-10-06): Telegram videos (and later imagery
    archives) kept server-side, not on the laptop; locally they are a 30-minute temp cache only.
-K. **Check the Wispr integration** (owner, 2026-10-06).
+K. DONE 2026-10-06: Wispr checked — dictation into the voice bar works; navigation falls back to the geocoder.
 L. (LAST priority, owner 2026-10-06) Open sub-metre radar archives as a comparison layer: Umbra open data
    (Jebel Ali 33 passes Dec 2024–Jul 2025, Jeddah 13, Red Sea coast 21; archive ends Aug 2025) and Capella
    (Bandar Abbas, Bahrain, Kuwait, Muscat, Doha, Djibouti, Aden … ~1 image each). Also: check Sentinel-1
