@@ -1,4 +1,5 @@
 import UpdateBanner from "./desktop/UpdateBanner.jsx"
+import { getEntity } from "./globe/entityStore.js"
 import VoiceBar from "./voice/VoiceBar.jsx"
 import { setVoicePage } from "./voice/voiceContext.js"
 import Tutorial from "./ui/Tutorial.jsx"
@@ -1627,6 +1628,33 @@ export default function App() {
 
     useEffect(() => { setVoicePage(activeTabType) }, [activeTabType])
 
+    /* OPENING A NOTIFICATION opens the thing it is about, not just the
+       place. Fly there, then find it among what the map has drawn (each
+       layer keys its entities its own way) and put it in the inspector;
+       if the map is not drawing it, the notification itself is shown. */
+    const openNotificationItem = useCallback((n) => {
+        if (!n) return
+        const at = n.ref?.lat != null && n.ref?.lon != null ? n.ref : null
+        openTab("situation")
+        if (at) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: at.lat, lon: at.lon, altitude: 250000 } }))
+        const raw = String(n.id || "").replace(/^sig-/, "")
+        const keys = [n.id, raw, n.alertId, `geoconfirmed-${raw}`, `gdelt-${raw}`, `fusion-${n.alertId || raw}`,
+                      `imgsig-${n.alertId || raw}`, `surge-${raw}`, `alert-forge-${n.alertId || raw}`].filter(Boolean)
+        setTimeout(() => {
+            for (const k of keys) {
+                const hit = getEntity(k)
+                if (hit) {
+                    window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: hit.type, entityId: k, data: hit.data } }))
+                    return
+                }
+            }
+            window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
+                entityType: "alert", entityId: n.id,
+                data: { id: n.id, title: n.title, message: n.sub, severity: n.sev, lat: at?.lat, lon: at?.lon, source: n.kind },
+            } }))
+        }, at ? 1700 : 300)
+    }, [openTab])
+
 
     // Reverse direction — real deep links from non-map destinations (e.g.
     // NewsPage's "jump to location", Watchlists' entity chips) need the map
@@ -1957,19 +1985,13 @@ export default function App() {
                 gets this one, so "search for Dubai" works from Home too. */}
             {!isMobile && !presenting && activeTabType !== "situation" && <VoiceBar active floating />}
             <NotificationStack
-                onOpen={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
-                    openTab("situation")
-                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
-                } }}
+                onOpen={openNotificationItem}
                 onAcknowledge={(n) => markNotificationRead(n.id)}
             />
             <NotificationTray
                 open={trayOpen}
                 onClose={() => closeOverlay("overlay:tray")}
-                onOpenItem={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
-                    openTab("situation")
-                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 250000 } }))
-                } }}
+                onOpenItem={openNotificationItem}
             />
             {/* The centred palette is replaced by the tab bar's SearchBar,
                 which listens for overlay:palette and focuses itself. */}
