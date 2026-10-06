@@ -144,6 +144,10 @@ export default function GlobeGdeltLayer({ enabled = false, limit = 500, types = 
                     goldstein: p.goldstein,
                     tone: p.tone,
                     mentions: p.mentions,
+                    // One pin for many outlets (gdelt_judge._one_per_story),
+                    // and the headline as published, under the judge's rewrite.
+                    reports: p.reports || 1,
+                    original_title: p.original_title,
                     confidence: p.confidence,
                     geo_precision: p.geo_precision,
                 },

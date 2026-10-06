@@ -13,13 +13,16 @@ So each ARTICLE (not each coded event) is read once by the cheap model
     category — armed conflict, terrorism, military movement, maritime
              security or violent unrest are drawn; crime, courts,
              accidents, opinion and politics are not. Classified by the
-             model, decided by MAP_CATEGORIES here — a yes/no with a
-             list of exceptions let every county-court shooting through.
+             model, decided by keep() here — a yes/no with a list of
+             exceptions let every county-court shooting through.
+    act, force, actor — what physically happened and who did it, so a
+             peaceful march, an arrest or a reaction is not "unrest".
     where  — the one place it happened, as named in the headline.
 
 and the answer is cached by URL in data/gdelt_judgements.json. The map
 then draws a story only if it was kept, and only at the coded location
-that matches `where` — one pin per story, at the right city.
+that matches `where` — one pin per story, at the right city, and one pin
+for many outlets reporting the same thing at the same place.
 
 Unjudged stories are not drawn. The judge runs in the background, a few
 seconds behind the feed; a wrong pin is worse than a late one.
@@ -50,6 +53,14 @@ WIDE_MENTIONS = 10
 # category does not.
 MAP_CATEGORIES = {"armed_conflict", "terrorism", "military_movement", "maritime_security", "violent_unrest"}
 
+# What physically happened, read separately from the category: the category
+# alone let "students protest at Cornell", "police tighten security for
+# festivals" and six arrests in one terror-plot story through as unrest and
+# terrorism (2026-10-06). The map wants acts of force and movements of force.
+ACTS_DRAWN = {"attack", "clash", "riot", "seizure", "deployment", "interception"}
+UNREST_ACTORS = {"rioters", "crowd", "state_forces", "police", "armed_group", "settlers"}
+NEVER_ACTORS = {"individual", "criminal"}      # a lone attacker or a crime is not a security event
+
 SYSTEM = """You classify news headlines for a conflict and security monitoring map.
 For each numbered item (a headline, then the places a machine coder associated with it), give:
 - category, exactly one of:
@@ -71,8 +82,19 @@ For each numbered item (a headline, then the places a machine coder associated w
 - where: the single place where the event happened, as the HEADLINE names it, as specific as it allows
   ("Khurais, Saudi Arabia"), or null if the headline names no place. The coder's places are often wrong:
   use one only if the headline is about that place. Never the place of the speaker or the newspaper.
+- act: the act the headline REPORTS AS NEWS, exactly one of (a denial, a letter, a condemnation or a claim about an
+  attack is a statement, not an attack):
+  attack (a strike, bombing, shooting, raid, arson, ambush), clash (two armed sides fighting), riot (a crowd using force),
+  seizure (a ship, place or people taken by force), deployment (forces moved or positioned), interception (a missile,
+  drone or aircraft intercepted or shot down), exercise, arrest, protest (peaceful), statement (a claim, condemnation,
+  warning, reaction or report about an event), plan (something announced or prepared), other
+- force: true only if, in this incident, someone was killed or injured or property was destroyed by force.
+- actor: who acted, exactly one of: state_forces (military), police, armed_group, terrorist_group, settlers, rioters,
+  crowd, criminal, individual (one person acting alone: a pupil, a gunman), unknown
+- casualties: the number of people the headline says were killed or injured in this incident, 0 if none, null if unsaid
 - headline: a short plain English headline (max 12 words) naming who did what where. No numbers that are not in the original.
-Answer as JSON: {"results": [{"n": 1, "category": "...", "incident": true, "where": "...", "headline": "..."}, ...]}"""
+Answer as JSON: {"results": [{"n": 1, "category": "...", "incident": true, "where": "...", "act": "...", "force": true,
+"actor": "...", "casualties": 0, "headline": "..."}, ...]}"""
 
 
 def _load() -> dict:
@@ -91,6 +113,25 @@ def _save() -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(_CACHE, fh)
     os.replace(tmp, _PATH)
+
+
+def keep(j: dict) -> bool:
+    """The model classifies; this decides. A drawn category, one concrete
+    incident, and an act of force or a movement of force. Violent unrest
+    additionally needs force used by a crowd or the state — not a lone
+    pupil, a criminal, or a protest that passed off peacefully."""
+    cat, act, actor = j.get("category"), j.get("act"), j.get("actor")
+    if cat not in MAP_CATEGORIES or not j.get("incident") or act not in ACTS_DRAWN or actor in NEVER_ACTORS:
+        return False
+    if act == "deployment" and actor == "police":
+        return False                                   # festival security is not a force movement
+    if cat == "violent_unrest":
+        # A crowd's force with people hurt, or settlers/armed men burning homes.
+        hurt = isinstance(j.get("casualties"), int) and j["casualties"] > 0
+        return bool(j.get("force")) and actor in UNREST_ACTORS and (hurt or actor in ("settlers", "armed_group"))
+    if act in ("attack", "clash", "riot"):
+        return bool(j.get("force")) or cat in ("armed_conflict", "terrorism", "maritime_security")
+    return True
 
 
 def worth_reading(p: dict) -> bool:
@@ -173,9 +214,15 @@ def judge_batch(stories: list[dict]) -> list[dict | None]:
             head = r.get("headline")
             cat = r.get("category") if isinstance(r.get("category"), str) else None
             incident = r.get("incident") is True
-            out[i] = {"category": cat, "incident": incident, "keep": cat in MAP_CATEGORIES and incident,
-                      "where": r.get("where") if isinstance(r.get("where"), str) else None,
-                      "headline": head.strip()[:160] if isinstance(head, str) and head.strip() else None}
+            j = {"category": cat, "incident": incident,
+                 "act": r.get("act") if isinstance(r.get("act"), str) else None,
+                 "force": r.get("force") is True,
+                 "actor": r.get("actor") if isinstance(r.get("actor"), str) else None,
+                 "casualties": r.get("casualties") if isinstance(r.get("casualties"), int) else None,
+                 "where": r.get("where") if isinstance(r.get("where"), str) else None,
+                 "headline": head.strip()[:160] if isinstance(head, str) and head.strip() else None}
+            j["keep"] = keep(j)
+            out[i] = j
     return out
 
 
@@ -195,6 +242,27 @@ def _run(stories: dict[str, dict]) -> None:
         _RUNNING.clear()
 
 
+def _one_per_story(kept: list[dict], cache: dict) -> list[dict]:
+    """Many outlets, one event: the RAF Fairford arrests were six pins.
+    Stories of the same act at the same judged place are one pin —
+    the most-mentioned — carrying how many reports it stands for."""
+    groups: dict[tuple, list[dict]] = {}
+    for p in kept:
+        j = cache.get(p.get("source_url")) or {}
+        # By place and act, not category: one outlet's "ISIS attack near
+        # Kirkuk" is terrorism, another's is armed conflict — one event.
+        key = (j.get("act"), _fold((p.get("judged_where") or "").split(",")[0]).strip())
+        groups.setdefault(key, []).append(p)
+    out = []
+    for ps in groups.values():
+        best = dict(max(ps, key=lambda q: q.get("mentions") or 0))
+        if len(ps) > 1:
+            best["reports"] = len(ps)
+            best["other_urls"] = [q.get("source_url") for q in ps if q is not best and q.get("source_url") != best.get("source_url")][:8]
+        out.append(best)
+    return out
+
+
 def filter_points(points: list[dict]) -> tuple[list[dict], dict]:
     """The map's GDELT pins, judged. Starts a background pass for unjudged
     stories and never blocks. Returns (kept points, counts)."""
@@ -206,7 +274,7 @@ def filter_points(points: list[dict]) -> tuple[list[dict], dict]:
             by_url.setdefault(p["source_url"], []).append(p)
 
     unjudged = {u: {"title": ps[0]["title"], "places": sorted({q.get("location_name") or "" for q in ps})}
-                for u, ps in by_url.items() if "incident" not in cache.get(u, {})}
+                for u, ps in by_url.items() if "casualties" not in cache.get(u, {})}
     if unjudged and not _RUNNING.is_set():
         _RUNNING.set()
         threading.Thread(target=_run, args=(unjudged,), daemon=True, name="gdelt-judge").start()
@@ -214,8 +282,10 @@ def filter_points(points: list[dict]) -> tuple[list[dict], dict]:
     kept = []
     for url, ps in by_url.items():
         j = cache.get(url)
-        if not j or not j.get("keep") or not headline_names(j.get("where"), ps[0]["title"]):
+        if not j or not keep(j) or not headline_names(j.get("where"), ps[0]["title"]):
             continue
+        if j.get("act") == "deployment" and re.search(r"\bpolice\b", ps[0]["title"], re.I):
+            continue                                   # the model called the police "state forces"
         at = [p for p in ps if place_matches(j.get("where"), p.get("location_name") or "")]
         if not at:
             continue
@@ -226,6 +296,7 @@ def filter_points(points: list[dict]) -> tuple[list[dict], dict]:
             p["title"] = j["headline"]
         p["judged_where"] = j.get("where")
         kept.append(p)
+    kept = _one_per_story(kept, cache)
     counts = {"stories": len(by_url), "judged": sum(1 for u in by_url if u in cache),
               "kept": len(kept), "pending": len(unjudged)}
     return kept, counts

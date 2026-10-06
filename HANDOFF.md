@@ -233,7 +233,7 @@ F. Localizer workbench: place suggestions (country-restricted, OCR, satellite co
    chronolocation (solarPosition.js), vehicle direction.
 G. Asset registry; per-user profile (Blocker below). Telegram roles for newly joined channels
    (Middle_East_Spectator, InfosAes, liil050, sh_almoqawamma).
-H. GDELT judge (gpt-4o-mini) still admits a few protests/crime as "violent unrest".
+H. DONE 2026-10-06: GDELT judge now reads act/force/actor/casualties; code keeps acts of force or force movements only (48 → 17 pins); one pin per event (place + act).
 I. **Enhance the generated briefings** (owner, 2026-10-06).
 M. **Long-term media storage on the server** (owner, 2026-10-06): Telegram videos (and later imagery
    archives) kept server-side, not on the laptop; locally they are a 30-minute temp cache only.

@@ -23,8 +23,8 @@ def test_filter_draws_only_kept_stories_once_at_the_judged_place(monkeypatch):
     pts.append({"source_url": "https://example.com/court", "title": "Court issues warrant", "event_type": "Fight",
                 "event_types": ["Fight"], "mentions": 10, "location_name": "Varanasi, India"})
     monkeypatch.setattr(gj, "_CACHE", {
-        url: {"category": "armed_conflict", "incident": True, "keep": True, "where": "Khurais, Saudi Arabia", "headline": "Houthi missile hits Aramco site at Khurais"},
-        "https://example.com/court": {"category": "legal", "incident": True, "keep": False, "where": None, "headline": None}})
+        url: {"category": "armed_conflict", "incident": True, "act": "attack", "force": True, "actor": "armed_group", "casualties": 1, "where": "Khurais, Saudi Arabia", "headline": "Houthi missile hits Aramco site at Khurais"},
+        "https://example.com/court": {"category": "legal", "incident": True, "act": "other", "casualties": None, "where": None, "headline": None}})
     monkeypatch.setattr(gj, "_save", lambda: None)
     kept, counts = gj.filter_points(pts)
     assert [p["location_name"] for p in kept] == ["Khurais, Saudi Arabia"]
@@ -41,3 +41,40 @@ def test_headline_must_name_the_judged_place():
 def test_country_only_answer_is_not_pinned_on_a_city():
     assert not gj.place_matches("Saudi Arabia", "Mecca, Makkah, Saudi Arabia")
     assert gj.place_matches("Saudi Arabia", "Saudi Arabia")
+
+
+def test_keep_needs_an_act_of_force_or_a_movement_of_force():
+    from gdelt_judge import keep
+    base = {"incident": True, "force": False}
+    # 2026-10-06 leaks, as the model now reads them
+    assert not keep({**base, "category": "violent_unrest", "act": "protest", "actor": "crowd"})        # Cornell students
+    assert not keep({**base, "category": "violent_unrest", "act": "other", "actor": "state_forces"})   # festival security
+    assert not keep({**base, "category": "violent_unrest", "act": "attack", "force": True, "actor": "individual"})  # pupil
+    assert not keep({**base, "category": "terrorism", "act": "arrest", "actor": "state_forces"})       # RAF Fairford arrests
+    assert not keep({**base, "category": "military_movement", "act": "exercise", "actor": "state_forces"})
+    assert not keep({**base, "category": "maritime_security", "act": "statement", "actor": "state_forces"})  # India condemns
+    # kept
+    assert not keep({**base, "category": "armed_conflict", "act": "attack", "force": True, "actor": "individual"})  # pupil again
+    assert not keep({**base, "category": "military_movement", "act": "deployment", "actor": "police"})          # Vizag festivals
+    assert not keep({**base, "category": "violent_unrest", "act": "riot", "force": True, "actor": "crowd", "casualties": 0})
+    assert keep({**base, "category": "violent_unrest", "act": "riot", "force": True, "actor": "rioters", "casualties": 12})
+    assert keep({**base, "category": "violent_unrest", "act": "attack", "force": True, "actor": "settlers"})
+    assert keep({**base, "category": "armed_conflict", "act": "attack", "actor": "state_forces"})
+    assert keep({**base, "category": "military_movement", "act": "deployment", "actor": "state_forces"})
+    # an old judgement without an act is re-asked, not drawn
+    assert not keep({"category": "armed_conflict", "incident": True, "keep": True})
+
+
+def test_many_outlets_one_event_is_one_pin(monkeypatch):
+    import gdelt_judge as g
+    pts, cache = [], {}
+    for i, m in enumerate([3, 9, 5]):
+        u = f"https://ex.com/fairford{i}"
+        pts.append({"source_url": u, "title": "Seventh man arrested over RAF Fairford attack plot", "event_type": "Assault",
+                    "location_name": "Fairford, Gloucestershire, United Kingdom", "mentions": m, "lat": 51.7, "lon": -1.8})
+        cache[u] = {"category": "terrorism", "incident": True, "act": "attack", "force": False, "actor": "terrorist_group", "casualties": 0,
+                    "where": "Fairford, United Kingdom", "headline": "Man arrested over RAF Fairford plot"}
+    monkeypatch.setattr(g, "_load", lambda: cache)
+    monkeypatch.setattr(g, "_RUNNING", type("E", (), {"is_set": lambda self: True})())
+    kept, _ = g.filter_points(pts)
+    assert len(kept) == 1 and kept[0]["mentions"] == 9 and kept[0]["reports"] == 3

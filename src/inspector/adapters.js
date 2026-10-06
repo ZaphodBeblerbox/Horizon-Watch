@@ -753,8 +753,10 @@ export function adaptGdeltEvent(data = {}) {
         attr("Headline", data.name || m.title),
         attr("Coding", types),
         attr("Actors", m.actors),
-        attr("Location", m.location_name),
+        attr("Location", m.location_name || m.location),
         attr("Date", m.date ? fmtTimestamp(m.date) : null),
+        attr("Headline as published", m.original_title),
+        attr("Reported by", m.reports > 1 ? `${m.reports} articles about the same event` : null),
         attr("Mentions", m.mentions != null ? String(m.mentions) : null),
         // Goldstein is meaningless as a bare number to anyone who has not
         // read the codebook, so the scale is stated with it.
