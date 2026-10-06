@@ -1625,7 +1625,7 @@ export default function App() {
     // The Locate workbench, over everything, for one Telegram post.
     const [locatePost, setLocatePost] = useState(null)
     useEffect(() => {
-        const h = (e) => { if (e.detail?.post) setLocatePost(e.detail.post) }
+        const h = (e) => { if (e.detail?.post) setLocatePost({ ...e.detail.post, _frame: e.detail.frame || null, _frameAt: e.detail.frameAt ?? null }) }
         window.addEventListener("akili:locate", h)
         return () => window.removeEventListener("akili:locate", h)
     }, [])

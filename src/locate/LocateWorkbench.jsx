@@ -22,6 +22,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
 import SatView from "./SatView.jsx"
 import { videoSrc } from "../components/TelegramMedia.jsx"
+import { captureFrame, sampleFrames, fmtT } from "./frames.js"
 import {
     elevationFromShadow, sunWindows, bearing, headingFromFrame, compass, solarClock, utcClock, norm360,
 } from "./locateMath.js"
@@ -81,8 +82,10 @@ function Frame({ src, segs, tool, onSeg }) {
 
 export default function LocateWorkbench({ post, onClose }) {
     const vid = useRef(null)
-    const [frame, setFrame] = useState(post.media === "video" ? null : abs(post.thumb_url))
-    const [frameNote, setFrameNote] = useState(null)
+    const [frame, setFrame] = useState(post._frame || (post.media === "video" ? null : abs(post.thumb_url)))
+    const [frameNote, setFrameNote] = useState(post._frame && post._frameAt != null ? `frame at ${fmtT(post._frameAt)} of the video` : null)
+    const [strip, setStrip] = useState(null)        // [{t, url}] across the video
+    const [vt, setVt] = useState(post._frameAt || 0)
     const [segs, setSegs] = useState({ object: null, shadow: null, motion: null })
     const [frameTool, setFrameTool] = useState(null)
     const start = Number.isFinite(post.lat) ? { lat: post.lat, lon: post.lon } : { lat: 15.35, lon: 44.2 }
@@ -101,19 +104,28 @@ export default function LocateWorkbench({ post, onClose }) {
         return () => window.removeEventListener("keydown", k)
     }, [onClose])
 
+    // The whole video as a strip, to find the frame without scrubbing blind.
+    useEffect(() => {
+        if (post.media !== "video" || frame || strip) return undefined
+        let live = true
+        sampleFrames(videoSrc(post), 12).then((f) => { if (live) setStrip(f) }).catch(() => { if (live) setStrip([]) })
+        return () => { live = false }
+    }, [post, frame, strip])
+
+    const seek = (t) => { const v = vid.current; if (v) { v.pause(); v.currentTime = Math.max(0, Math.min(v.duration || t, t)) } }
+    const step = (dt) => { const v = vid.current; if (v) seek(v.currentTime + dt) }
+
     const grab = () => {
         const v = vid.current
         if (!v || !v.videoWidth) return
-        try {
-            const c = document.createElement("canvas")
-            c.width = v.videoWidth; c.height = v.videoHeight
-            c.getContext("2d").drawImage(v, 0, 0)
-            setFrame(c.toDataURL("image/jpeg", 0.92))
-            setFrameNote(`frame at ${v.currentTime.toFixed(1)} s of the video`)
-            setSegs({ object: null, shadow: null, motion: null })
-        } catch {
+        const shot = captureFrame(v)
+        if (shot) {
+            setFrame(shot)
+            setFrameNote(`frame at ${fmtT(v.currentTime)} of the video`)
+        } else {
             setFrame(abs(post.thumb_url)); setFrameNote("the video could not be read — using the post's still")
         }
+        setSegs({ object: null, shadow: null, motion: null })
     }
 
     const frameB64 = async () => {
@@ -209,10 +221,29 @@ export default function LocateWorkbench({ post, onClose }) {
                     {!frame && post.media === "video" && (
                         <>
                             <video ref={vid} src={videoSrc(post)} crossOrigin="use-credentials" controls playsInline muted
-                                style={{ width: "100%", maxHeight: "58vh", background: "#000" }} />
-                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                <button onClick={grab} style={{ ...BTN, ...ON }}>Use this frame</button>
-                                <span style={{ color: "var(--txt3)" }}>Pause where the place, a shadow or a vehicle shows best.</span>
+                                onTimeUpdate={(e) => setVt(e.currentTarget.currentTime)} onSeeked={(e) => setVt(e.currentTarget.currentTime)}
+                                onLoadedMetadata={(e) => { if (post._frameAt) e.currentTarget.currentTime = post._frameAt }}
+                                style={{ width: "100%", maxHeight: "50vh", background: "#000" }} />
+                            <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                                <button onClick={() => step(-1)} style={BTN} title="Back one second">−1 s</button>
+                                <button onClick={() => step(-1 / 25)} style={BTN} title="Back one frame">◂ frame</button>
+                                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt2)", minWidth: 52, textAlign: "center" }}>{fmtT(vt)}</span>
+                                <button onClick={() => step(1 / 25)} style={BTN} title="Forward one frame">frame ▸</button>
+                                <button onClick={() => step(1)} style={BTN} title="Forward one second">+1 s</button>
+                                <button onClick={grab} style={{ ...BTN, ...ON, marginLeft: 8 }}>Use this frame</button>
+                            </div>
+                            <span style={{ color: "var(--txt3)" }}>Pick the frame where the place shows best — a sign, a skyline, a mosque, a road junction, a clear shadow.</span>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: 4 }}>
+                                {strip == null && <span style={{ color: "var(--txt4)" }}>Laying out the video…</span>}
+                                {(strip || []).map((f) => (
+                                    <button key={f.t} onClick={() => seek(f.t)} title={`Go to ${fmtT(f.t)}`}
+                                        style={{ padding: 0, border: Math.abs(f.t - vt) < 0.3 ? "2px solid var(--acchi)" : "1px solid var(--gline2)",
+                                                 background: "#000", cursor: "pointer", position: "relative", lineHeight: 0 }}>
+                                        <img src={f.url} alt="" style={{ width: "100%", display: "block" }} />
+                                        <span style={{ position: "absolute", right: 2, bottom: 2, font: "10px var(--mz-font-mono)", color: "#fff",
+                                                       background: "rgba(0,0,0,.6)", padding: "0 3px", lineHeight: 1.4 }}>{fmtT(f.t)}</span>
+                                    </button>
+                                ))}
                             </div>
                         </>
                     )}
