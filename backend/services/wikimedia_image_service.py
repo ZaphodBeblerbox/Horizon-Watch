@@ -42,8 +42,11 @@ _COMMONS = "https://commons.wikimedia.org/w/api.php"
 
 # Filename fragments that mean "this is not a photograph of the place".
 _NOT_A_PHOTOGRAPH = re.compile(
-    r"(logo|wordmark|seal|coat[_ ]of[_ ]arms|crest|emblem|flag|"
-    r"locator|location[_ ]map|locmap|karte|map[_ ]of|\.svg$)",
+    # word[_ ]?mark: "DXB_word_mark.svg" was Dubai International's photo.
+    # \.svg anywhere: Wikipedia serves vector art as ".svg/120px-….svg.png",
+    # which "\.svg$" never matched — and an SVG is a drawing, not a photo.
+    r"(logo|word[_ ]?mark|seal|coat[_ ]of[_ ]arms|crest|emblem|flag|"
+    r"locator|location[_ ]map|locmap|karte|map[_ ]of|\.svg)",
     re.I,
 )
 
