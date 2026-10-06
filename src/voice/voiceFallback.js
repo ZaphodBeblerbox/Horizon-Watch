@@ -34,58 +34,64 @@ export async function interpretWithModel(text, ctx) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
-            body: JSON.stringify({ text, people, selected: !!ctx?.selectedId }),
+            body: JSON.stringify({ text, people, selected: !!ctx?.selectedId, page: ctx?.page || null }),
         })
         d = await r.json()
     } catch {
         return null
     }
-    if (!d?.ok || !d.intent) return null
+    if (!d?.ok) return null
+    // One to three steps ("show me fires in Yemen" = heat on, fly to Yemen).
+    const steps = Array.isArray(d.steps) && d.steps.length ? d.steps : [{ intent: d.intent, slots: d.slots }]
+    const out = steps.map((st) => stepToAction(st, ctx)).filter(Boolean)
+    if (!out.length) return null
+    return { actions: out.map((o) => o.action), label: out.map((o) => o.label).join(" · ") }
+}
 
-    const s = d.slots || {}
-    switch (d.intent) {
+const PAGE_NAME = { situation: "the map", home: "Home", inbox: "the Inbox", imagery: "Imagery", replay: "Replay",
+                    briefings: "Briefings", cases: "Cases", ontology: "Ontology", forecast: "Forecast",
+                    dossiers: "Dossiers", analytics: "Analytics", team: "Team" }
+
+/** One checked step from the server -> the action shape the runner knows. */
+export function stepToAction(st, ctx) {
+    const s = st?.slots || {}
+    switch (st?.intent) {
         case "navigate":
-            return { actions: [{ type: "navigate", place: s.place }], label: `Flying to ${s.place}` }
+            return { action: { type: "navigate", place: s.place }, label: `Flying to ${s.place}` }
+        case "search":
+            return { action: { type: "search", query: s.query }, label: `Searching “${s.query}”` }
+        case "open_page":
+            return { action: { type: "open_page", page: s.page }, label: `Opened ${PAGE_NAME[s.page] || s.page}` }
+        case "layer":
+            return { action: { type: "layer", layer: s.layer, on: s.on }, label: `${s.on === false ? "Hiding" : "Showing"} ${String(s.layer).replace(/_/g, " ")}` }
+        case "zoom":
+            return { action: { type: "zoom", direction: s.direction }, label: `Zoomed ${s.direction}` }
         case "risk":
-            return { actions: [{ type: "risk", place: s.place }], label: `Risk for ${s.place}` }
+            return { action: { type: "risk", place: s.place }, label: `Risk for ${s.place}` }
         case "send_situation":
             return {
-                actions: [{
-                    type: "send_situation", place: s.place, name: s.name,
-                    ...(s.kind === "group" ? { conversationId: s.id } : { userId: s.id }),
-                }],
+                action: { type: "send_situation", place: s.place, name: s.name,
+                          ...(s.kind === "group" ? { conversationId: s.id } : { userId: s.id }) },
                 label: `Sent the ${s.place} picture to ${s.name}`,
             }
         case "explain":
-            return { actions: [{ type: "explain", place: s.place }], label: `Explaining ${s.place}` }
+            return { action: { type: "explain", place: s.place }, label: `Explaining ${s.place}` }
         case "message":
             return {
-                actions: [{
-                    type: "message", name: s.name, text: s.text,
-                    ...(s.kind === "group" ? { conversationId: s.id } : { userId: s.id }),
-                }],
+                action: { type: "message", name: s.name, text: s.text,
+                          ...(s.kind === "group" ? { conversationId: s.id } : { userId: s.id }) },
                 label: `Sent to ${s.name}`,
             }
         case "note":
-            return { actions: [{ type: "note", text: s.text }], label: "Noted" }
-        case "filter":
-            return { actions: [{ type: "filter", text: s.text }], label: "Filtered" }
+            return { action: { type: "add_note", text: s.text }, label: "Noted" }
         case "create_folder":
-            return { actions: [{ type: "create_folder", name: s.name }], label: `Folder “${s.name}”` }
+            return { action: { type: "create_folder", name: s.name }, label: `Folder “${s.name}”` }
         case "file_to":
-            if (!ctx?.selectedId) return null
-            return {
-                actions: [{ type: "file_to", itemId: ctx.selectedId, folder: s.folder }],
-                label: `Filed under ${s.folder}`,
-            }
+            return ctx?.selectedId ? { action: { type: "file_to", itemId: ctx.selectedId, folder: s.folder }, label: `Filed under ${s.folder}` } : null
         case "add_to_basket":
-            if (!ctx?.selectedId) return null
-            return { actions: [{ type: "add_to_basket", itemId: ctx.selectedId }], label: "Added" }
+            return ctx?.selectedId ? { action: { type: "add_to_basket", itemId: ctx.selectedId }, label: "Added" } : null
         case "generate_briefing":
-            return {
-                actions: [{ type: "generate_briefing", basketId: ctx?.activeBasketId }],
-                label: "Generating",
-            }
+            return { action: { type: "generate_briefing", basketId: ctx?.activeBasketId }, label: "Generating" }
         default:
             return null
     }

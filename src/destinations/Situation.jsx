@@ -1079,6 +1079,62 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         }
     }, [groupsOn, timeWindow])
 
+    /* SPOKEN LAYER SWITCHES ("turn on the heat layer", "hide GDELT").
+       The names are the backend's LAYERS list (routers/voice_ai.py); a
+       child layer brings its group on with it, or switching it on would
+       show nothing. on: null flips. The previous value is kept per layer
+       for Undo. */
+    const voiceLayerPrev = useRef({})
+    const voiceLayers = useRef(null)
+    voiceLayers.current = {
+        vessels: [tracksOn.vessels, (v) => setTracksOn((p) => ({ ...p, vessels: v }))],
+        aircraft: [tracksOn.aircraft, (v) => setTracksOn((p) => ({ ...p, aircraft: v }))],
+        sanctioned_only: [tracksOn.sanctionedOnly, (v) => setTracksOn((p) => ({ ...p, sanctionedOnly: v, vessels: v || p.vessels }))],
+        heat: [firesOn, setFiresOn, "imagery"],
+        imagery_signals: [imagerySignalsOn, setImagerySignalsOn, "imagery"],
+        satellite_image: [satImageOn, setSatImageOn, "imagery"],
+        gdelt: [gdeltOn, setGdeltOn, "news"],
+        telegram: [telegramOn, setTelegramOn, "news"],
+        geoconfirmed: [geoConfirmedOn, setGeoConfirmedOn, "news"],
+        gps_interference: [gpsInterferenceOn, setGpsInterferenceOn, "air"],
+        airspace: [airspaceOn, setAirspaceOn],
+        alerts: [groupsOn.alerts, (v) => setGroupsOn((p) => ({ ...p, alerts: v }))],
+        zones: [groupsOn.zones, (v) => setGroupsOn((p) => ({ ...p, zones: v }))],
+        ...Object.fromEntries(["risk", "frontlines", "flows", "aois", "labels"].map((k) =>
+            [k, [contextOn[k], (v) => setContextOn((p) => ({ ...p, [k]: v }))]])),
+        ...Object.fromEntries([["cables", "cables"], ["ports", "ports"], ["airfields", "airfields"], ["chokepoints", "chokepoints"],
+            ["power", "power"], ["military_sites", "facMilitary"]].map(([k, key]) =>
+            [k, [infraOn[key], (v) => setInfraOn((p) => ({ ...p, [key]: v }))]])),
+    }
+    useEffect(() => {
+        const onLayer = (e) => {
+            const { layer, on } = e.detail || {}
+            const entry = voiceLayers.current[layer]
+            if (!entry) return
+            const [cur, set, parent] = entry
+            const next = on == null ? !cur : !!on
+            voiceLayerPrev.current[layer] = { value: !!cur, parent: parent ? !!groupsOn[parent] : null }
+            set(next)
+            if (next && parent) setGroupsOn((p) => ({ ...p, [parent]: true }))
+            if (e.detail.report) e.detail.report(next)
+        }
+        const onUndo = (e) => {
+            const { layer } = e.detail || {}
+            const prev = voiceLayerPrev.current[layer]
+            const entry = voiceLayers.current[layer]
+            if (!prev || !entry) return
+            entry[1](prev.value)
+            if (entry[2] && prev.parent === false) setGroupsOn((p) => ({ ...p, [entry[2]]: false }))
+            delete voiceLayerPrev.current[layer]
+        }
+        window.addEventListener("akili:voice-layer", onLayer)
+        window.addEventListener("akili:voice-layer-undo", onUndo)
+        return () => {
+            window.removeEventListener("akili:voice-layer", onLayer)
+            window.removeEventListener("akili:voice-layer-undo", onUndo)
+        }
+    }, [groupsOn])
+
     const [timelineOn] = useChrome("timeline")
 
     const off = (o) => (asCanvas ? {} : o)

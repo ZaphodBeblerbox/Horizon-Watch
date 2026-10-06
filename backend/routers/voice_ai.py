@@ -44,30 +44,55 @@ _cache: dict[str, tuple[float, dict]] = {}
 # can do: the destructive and the irreversible are not on the list, because
 # a guessed "delete" is a different kind of wrong from a guessed "fly to".
 INTENTS = {
-    "navigate":   "go somewhere on the map. slots: place",
-    "explain": ("explain what is happening in a place, from the signals we hold — "
-                "use this for 'explain the situation in Mali', 'what is going on in X'. "
-                "slots: place"),
-    "send_situation": ("send somebody the current picture for a place — use this for "
-                       "'send the situation in X to Y', 'what we have on X to Y'. "
+    "navigate":   "fly the map to a place (country, city, strait, port, base, coordinates). slots: place",
+    "search": ("look something up in the search box and open the best match — a place, a ship or aircraft by "
+               "name, a signal, a theater. Use for 'search for X', 'find X', 'look up X', 'where is X', and for a "
+               "named vessel or aircraft. slots: query"),
+    "explain": ("explain what is happening in a place, from the signals we hold — 'what is going on in X', "
+                "'the latest in X', 'brief me on X'. slots: place"),
+    "risk":       "show the risk index for a place. slots: place",
+    "open_page":  "open a page of the console. slots: page (one of the pages listed)",
+    "layer": ("switch a map layer on or off. slots: layer (one of the layers listed), on (true to show, false to "
+              "hide, null to flip)"),
+    "zoom":       "zoom the map. slots: direction ('in' or 'out')",
+    "send_situation": ("send somebody the current picture for a place — 'send the situation in X to Y'. "
                        "slots: place, recipient"),
     "message":    "send a written message to a person or group. slots: recipient, text",
     "note":       "write a note. slots: text",
-    "filter":     "filter what is shown. slots: text",
-    "risk":       "show a risk index or score for a place. slots: place",
     "create_folder": "make a folder in the case files. slots: name",
     "file_to":    "file the selected thing into a named folder. slots: folder",
     "add_to_basket": "add the selected thing to the briefing basket. slots: none",
-    "generate_briefing": "generate a briefing from the basket. slots: none",
+    "generate_briefing": "open the briefing generator. slots: none",
     "none":       "nothing in this sentence is an instruction to the console",
 }
 
+# The pages and map layers a sentence may name — the console's own keys.
+PAGES = {
+    "home": "Home (the day's overview)", "situation": "the Map", "inbox": "Inbox (all signals)",
+    "dossiers": "Dossiers", "analytics": "Analytics", "replay": "Replay (history)", "imagery": "Imagery (satellite)",
+    "briefings": "Briefings", "cases": "Cases (files)", "ontology": "Ontology (the graph)", "forecast": "Forecast",
+    "team": "Team",
+}
+LAYERS = {
+    "vessels": "ships (AIS)", "aircraft": "aircraft (ADS-B)", "sanctioned_only": "only sanctioned ships",
+    "heat": "fires / heat (FIRMS)", "imagery_signals": "imagery signals", "satellite_image": "the satellite base image",
+    "gdelt": "news events (GDELT)", "telegram": "Telegram reports", "geoconfirmed": "GeoConfirmed (verified footage)",
+    "gps_interference": "GPS jamming", "airspace": "airspace closures", "risk": "country risk shading",
+    "frontlines": "frontlines", "flows": "trade and energy flows", "aois": "areas of interest", "labels": "place labels",
+    "cables": "undersea cables", "ports": "ports", "airfields": "airports and airfields", "chokepoints": "chokepoints",
+    "power": "power plants", "military_sites": "military facilities", "alerts": "alerts", "zones": "zones",
+}
+MAX_STEPS = 3
+
 SYSTEM = (
-    "You turn one spoken sentence from an intelligence analyst into one intent.\n"
-    "Reply with JSON only: {\"intent\": <name>, \"slots\": {...}, \"confidence\": 0-1}.\n"
-    "Choose an intent ONLY from the list given. If the sentence is not an "
-    "instruction, or you are unsure which it is, answer intent \"none\".\n"
-    "Never invent a name, place or folder that is not in the sentence."
+    "You turn one spoken sentence from an intelligence analyst into what the console should do: one to three "
+    "steps, in order. The sentence is dictated, so expect filler words, run-ons and misheard names; read the intent.\n"
+    "Reply with JSON only: {\"steps\": [{\"intent\": <name>, \"slots\": {...}}], \"confidence\": 0-1}.\n"
+    "Choose intents ONLY from the list given, pages and layers ONLY from their lists. 'Show me fires in Yemen' is "
+    "two steps: layer heat on, then navigate Yemen. 'Search for Dubai' is search. A ship or aircraft name is search. "
+    "If the sentence is not an instruction, or you cannot tell what it asks, answer {\"steps\": []}.\n"
+    "Never invent a name, place or folder that is not in the sentence; fix only obvious dictation misspellings of "
+    "place names (\"hormoose\" -> \"Hormuz\")."
 )
 
 
@@ -115,12 +140,51 @@ def _clean(intent: str, slots: dict, ctx: dict) -> dict | None:
                 }}
         return None
 
-    for required in {"navigate": ["place"], "risk": ["place"], "explain": ["place"],
+    if intent == "open_page":
+        page = (slots.get("page") or "").strip().lower()
+        page = {"map": "situation"}.get(page, page)
+        return {"intent": intent, "slots": {"page": page}} if page in PAGES else None
+
+    if intent == "layer":
+        layer = (slots.get("layer") or "").strip().lower().replace(" ", "_")
+        if layer not in LAYERS:
+            return None
+        on = str(slots.get("on")).strip().lower()             # "True"/"False"/"None" after coercion
+        return {"intent": intent, "slots": {"layer": layer,
+                                            "on": True if on == "true" else False if on == "false" else None}}
+
+    if intent == "zoom":
+        d = (slots.get("direction") or "").strip().lower()
+        return {"intent": intent, "slots": {"direction": d}} if d in ("in", "out") else None
+
+    for required in {"navigate": ["place"], "risk": ["place"], "explain": ["place"], "search": ["query"],
                      "create_folder": ["name"], "file_to": ["folder"],
                      "note": ["text"], "filter": ["text"]}.get(intent, []):
         if not (slots.get(required) or "").strip():
             return None
     return {"intent": intent, "slots": slots}
+
+
+def read_answer(parsed: dict, ctx: dict) -> dict:
+    """The model's steps, each checked; a single-intent answer is one step.
+    The first step stays at the top level for older callers."""
+    raw = parsed.get("steps")
+    if not isinstance(raw, list):
+        raw = [{"intent": parsed.get("intent"), "slots": parsed.get("slots")}] if parsed.get("intent") else []
+    steps = []
+    for st in raw[:MAX_STEPS]:
+        if isinstance(st, dict):
+            c = _clean(str(st.get("intent") or ""), st.get("slots") if isinstance(st.get("slots"), dict) else {}, ctx)
+            if c:
+                steps.append(c)
+    if not steps:
+        return {"ok": False, "intent": None, "steps": [],
+                "why": "That did not resolve to anything this console can do."}
+    try:
+        conf = float(parsed.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    return {"ok": True, **steps[0], "steps": steps, "confidence": conf}
 
 
 @router.get("/ai-status")
@@ -151,9 +215,10 @@ async def interpret(request: Request):
                     "kind": p.get("kind") or "user"}
                    for p in (body.get("people") or [])][:40],
         "selected": bool(body.get("selected")),
+        "page": str(body.get("page") or "")[:30] or None,
     }
 
-    key = f"{text.lower()}|{','.join(sorted(p['name'] for p in ctx['people']))}"
+    key = f"{text.lower()}|{ctx['page']}|{','.join(sorted(p['name'] for p in ctx['people']))}"
     hit = _cache.get(key)
     if hit and time.time() - hit[0] < CACHE_TTL:
         return {**hit[1], "cached": True}
@@ -171,16 +236,21 @@ async def interpret(request: Request):
 
     model = openai_gate.model_for(openai_gate.VOICE)
     menu = "\n".join(f"- {k}: {v}" for k, v in INTENTS.items())
+    pages = ", ".join(f"{k} ({v})" for k, v in PAGES.items())
+    layers = ", ".join(f"{k} ({v})" for k, v in LAYERS.items())
     who = ", ".join(p["name"] for p in ctx["people"]) or "nobody"
     user = (f"Sentence: {text}\n\n"
             f"Intents:\n{menu}\n\n"
+            f"Pages: {pages}\n"
+            f"Map layers: {layers}\n"
+            f"Page open now: {ctx['page'] or 'unknown'}\n"
             f"People and groups that can be addressed: {who}\n"
             f"Something is selected on the map: {'yes' if ctx['selected'] else 'no'}")
 
     try:
         resp = client.chat.completions.create(
             model=model,
-            max_tokens=MAX_TOKENS,
+            max_tokens=MAX_TOKENS + 100,
             temperature=0,
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": SYSTEM},
@@ -204,13 +274,7 @@ async def interpret(request: Request):
     except (json.JSONDecodeError, IndexError, AttributeError):
         return {"ok": False, "intent": None, "why": "The model did not answer in the agreed format."}
 
-    cleaned = _clean(str(parsed.get("intent") or ""), parsed.get("slots") or {}, ctx)
-    if not cleaned:
-        out = {"ok": False, "intent": None,
-               "why": "That did not resolve to anything this console can do."}
-    else:
-        out = {"ok": True, **cleaned,
-               "confidence": float(parsed.get("confidence") or 0.0)}
+    out = read_answer(parsed, ctx)
 
     _cache[key] = (time.time(), out)
     if len(_cache) > 500:

@@ -37,6 +37,8 @@ export default function SearchBar({
     const [sel, setSel] = useState(0)
     const [remote, setRemote] = useState([])
     const [pending, setPending] = useState(false)
+    const [remoteFor, setRemoteFor] = useState("")      // the query `remote` answers
+    const goFor = useRef(null)                         // a spoken search waiting to open its best match
     const [places, setPlaces] = useState([])
     const input = useRef(null)
     const box = useRef(null)
@@ -72,8 +74,8 @@ export default function SearchBar({
         const timer = setTimeout(() => {
             fetch(`${API_BASE}/api/search?q=${encodeURIComponent(t)}&limit=10`, { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : []))
-                .then((d) => { if (live) { setRemote(Array.isArray(d) ? d : []); setPending(false) } })
-                .catch(() => { if (live) { setRemote([]); setPending(false) } })
+                .then((d) => { if (live) { setRemote(Array.isArray(d) ? d : []); setRemoteFor(t); setPending(false) } })
+                .catch(() => { if (live) { setRemote([]); setRemoteFor(t); setPending(false) } })
         }, 160)
         return () => { live = false; clearTimeout(timer) }
     }, [q])
@@ -87,6 +89,8 @@ export default function SearchBar({
         return buildSuggestions(q, { places, remote, theaters, modules: MODULES, signals })
     }, [q, coords?.lat, coords?.lon, places, remote, theaters, signals]) // eslint-disable-line react-hooks/exhaustive-deps
     const flat = groups.flatMap((g) => g.items)
+    const flatRef = useRef(flat)
+    flatRef.current = flat
 
     const choose = (item) => {
         if (!item) return
@@ -107,6 +111,35 @@ export default function SearchBar({
         setOpen(false)
         input.current?.blur()
     }
+
+    /* A SPOKEN SEARCH ("search for Dubai"): the words go into the box, the
+       suggestions open, and once the backend has answered for those words
+       the best match is taken — as Enter would. Nothing found leaves the
+       list open on "no results" rather than guessing. */
+    useEffect(() => {
+        const h = (e) => {
+            const query = String(e.detail?.query || "").trim()
+            if (!query) return
+            setQ(query); setSel(0); setOpen(true)
+            goFor.current = e.detail?.go ? query : null
+            input.current?.focus()
+        }
+        window.addEventListener("akili:search", h)
+        return () => window.removeEventListener("akili:search", h)
+    }, [])
+    useEffect(() => {
+        const want = goFor.current
+        if (!want || q.trim() !== want) return undefined
+        const exact = flat.find((it) => it.kind === "place" && String(it.label || "").toLowerCase().split(",")[0].trim() === want.toLowerCase())
+        const go = (item) => { if (goFor.current !== want) return; goFor.current = null; if (item) choose(item) }
+        // A place the shipped gazetteer knows by that exact name goes at
+        // once; otherwise wait for the backend (ships, streets, ports) —
+        // but never more than 2.5 s, then take the best there is.
+        if (exact) { go(exact); return undefined }
+        if (coords || remoteFor === want) { go(flat[0]); return undefined }
+        const t = setTimeout(() => go(flatRef.current[0]), 2500)
+        return () => clearTimeout(t)
+    }) // eslint-disable-line react-hooks/exhaustive-deps
 
     const onKey = (e) => {
         if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setSel((i) => Math.min(i + 1, flat.length - 1)) }

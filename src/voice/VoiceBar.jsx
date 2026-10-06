@@ -36,17 +36,29 @@ import { logParse, markUndone } from "./voiceLog.js"
 import { isDictation, mayTakeFocus, isShortcutPassthrough } from "./voiceField.js"
 
 const SETTLE_MS = 400
+// The last thing done, kept outside the component: a command that changes
+// page unmounts the bar that ran it ("open Imagery" from the map), and the
+// bar on the new page shows what happened instead of nothing.
+let _lastDone = null
 const UNDO_MS = 6000
 
-const CHEAT = "go to [place] · file this under [folder] · create a folder called … · add to briefing that … · note … · [place] risk index"
+const CHEAT = "say it plainly — search for Dubai · show me fires in Yemen · open Imagery · hide GDELT · what's going on in Sudan · zoom in"
 
-export default function VoiceBar({ active = true }) {
+export default function VoiceBar({ active = true, floating = false }) {
     const input = useRef(null)
     const settle = useRef(null)
     const lastLen = useRef(0)
     const [state, setState] = useState("idle")      // idle | heard | working
     const [chip, setChip] = useState(null)          // { result, ctx } awaiting confirm
-    const [undo, setUndo] = useState(null)          // { label, fn, logIndex }
+    const [undo, setUndo] = useState(() =>
+        (_lastDone && Date.now() - _lastDone.at < UNDO_MS ? _lastDone.undo : null))   // { label, fn, logIndex }
+    // Set before the page can change under us, so the next bar has it.
+    const remember = (u) => { _lastDone = { undo: u, at: Date.now() }; setUndo(u) }
+    useEffect(() => {
+        if (!undo) return undefined
+        const t = setTimeout(() => setUndo((u) => (u === undo ? null : u)), UNDO_MS)
+        return () => clearTimeout(t)
+    }, [undo])
 
     /* Warm the lookups the moment the bar exists.
        The gazetteer is a 691KB asset and the ISO table is a round trip;
@@ -94,26 +106,26 @@ export default function VoiceBar({ active = true }) {
         const result = parseCommand(text, ctx)
         const logIndex = logParse(result)
 
-        /* THE RULES FIRST, THE MODEL ONLY WHEN THEY GIVE UP. Everything
-           the parser recognises runs for nothing; a sentence it cannot
-           place goes to a cheap model, which answers with an intent the
-           server has already checked. Only if that fails too does the
-           chip appear asking what was meant. */
-        if (!result.confident) {
-            const guess = await interpretWithModel(text, ctx)
-            if (guess) {
-                const out = await runVoiceActions({ ...result, actions: guess.actions }, ctx)
-                setState("idle")
-                if (out.ran) {
-                    if (out.undo) {
-                        setUndo({ label: out.label || guess.label, fn: out.undo, logIndex })
-                        setTimeout(() => setUndo((u) => (u && u.logIndex === logIndex ? null : u)), UNDO_MS)
-                    }
-                    return
-                }
-                setChip({ result, ctx, logIndex, problem: out.problem })
+        /* THE MODEL FIRST, THE RULES WHEN IT CANNOT ANSWER. Spoken
+           sentences are free-form ("uh, can you search for Dubai"), and the
+           regex rules read most of them as notes. The model (gpt-4o-mini,
+           about a hundredth of a cent a sentence) reads every sentence into
+           one to three steps the server has already checked against what
+           the console can do. If it is unavailable, over budget, or finds
+           nothing to do, the rules decide as before — offline still works. */
+        const guess = await interpretWithModel(text, ctx)
+        if (guess) {
+            const out = await runVoiceActions({ ...result, actions: guess.actions, label: guess.label }, ctx)
+            setState("idle")
+            if (out.ran) {
+                remember({ label: out.label || guess.label, fn: out.undo || null, logIndex })
+                setTimeout(() => setUndo((u) => (u && u.logIndex === logIndex ? null : u)), UNDO_MS)
                 return
             }
+            setChip({ result, ctx, logIndex, problem: out.problem })
+            return
+        }
+        if (!result.confident) {
             setChip({ result, ctx, logIndex })
             setState("idle")
             return
@@ -127,7 +139,7 @@ export default function VoiceBar({ active = true }) {
         setState("idle")
         if (!out.ran) { setChip({ result, ctx, logIndex, problem: out.problem }); return }
         if (out.undo) {
-            setUndo({ label: out.label, fn: out.undo, logIndex })
+            remember({ label: out.label, fn: out.undo, logIndex })
             setTimeout(() => setUndo((u) => (u && u.logIndex === logIndex ? null : u)), UNDO_MS)
         }
     }, [])
@@ -140,7 +152,7 @@ export default function VoiceBar({ active = true }) {
         setChip(out.ran ? null : { ...chip, problem: out.problem })
         if (out.ran && out.undo) {
             const { logIndex } = chip
-            setUndo({ label: out.label, fn: out.undo, logIndex })
+            remember({ label: out.label, fn: out.undo, logIndex })
             setTimeout(() => setUndo((u) => (u && u.logIndex === logIndex ? null : u)), UNDO_MS)
         }
     }, [chip])
@@ -205,8 +217,10 @@ export default function VoiceBar({ active = true }) {
 
     return (
         <div data-screen-label="Voice bar" style={{
-            position: "absolute", left: "50%", transform: "translateX(-50%)",
-            bottom: "calc(var(--pane-bottom) + 8px)", zIndex: 26,
+            // On the map it sits over the globe; on every other page it
+            // floats at the bottom of the window, so a sentence works anywhere.
+            position: floating ? "fixed" : "absolute", left: "50%", transform: "translateX(-50%)",
+            bottom: floating ? 18 : "calc(var(--pane-bottom) + 8px)", zIndex: floating ? 55 : 26,
             display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
             // Only as wide as what is in it now that the bar is a mark.
             width: "auto", maxWidth: "min(680px, calc(100% - 120px))", pointerEvents: "none",
@@ -237,8 +251,8 @@ export default function VoiceBar({ active = true }) {
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {undo.label}
                     </span>
-                    <button onClick={async () => { await undo.fn(); markUndone(undo.logIndex); setUndo(null) }}
-                        style={BTN}>Undo</button>
+                    {undo.fn && <button onClick={async () => { await undo.fn(); markUndone(undo.logIndex); setUndo(null) }}
+                        style={BTN}>Undo</button>}
                 </div>
             )}
 

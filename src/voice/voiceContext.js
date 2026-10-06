@@ -101,12 +101,18 @@ export function getVoiceSelection() { return _selected }
 let _briefing = null
 export function setVoiceBriefing(id) { _briefing = id || null }
 
+/** The page the console has open (app.jsx tells us), so "zoom in" on
+ *  Home can be read as "on the map". */
+let _page = null
+export function setVoicePage(p) { _page = p || null }
+
 export function buildVoiceContext() {
     const cur = getCursor?.() || null
     return {
         selectedId: _selected?.id || undefined,
         cursor: cur && Number.isFinite(cur.lat) ? { lat: cur.lat, lng: cur.lon ?? cur.lng } : undefined,
         activeBasketId: DEFAULT_BASKET.id,
+        page: _page || undefined,
         currentBriefingId: _briefing || undefined,
         baskets: [DEFAULT_BASKET],
         users: _users,

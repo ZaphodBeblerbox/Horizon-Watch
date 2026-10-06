@@ -187,6 +187,35 @@ export async function runVoiceActions(result, ctx) {
                 // No undo: moving a camera is not a change to anything.
                 break
             }
+            /* ── SAID FREELY, READ BY THE MODEL ──────────────────────
+               Search, pages, layers and zoom: what the console's own
+               controls do, reached by events the controls listen for. */
+            case "search": {
+                window.dispatchEvent(new CustomEvent("akili:search", { detail: { query: a.query, go: true } }))
+                label = `Searching “${a.query}”`
+                break
+            }
+            case "open_page": {
+                window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: a.page } }))
+                label = `Opened ${a.page === "situation" ? "the map" : a.page}`
+                break
+            }
+            case "layer": {
+                window.dispatchEvent(new CustomEvent("akili:open-map"))
+                let shown = a.on
+                window.dispatchEvent(new CustomEvent("akili:voice-layer", {
+                    detail: { layer: a.layer, on: a.on, report: (v) => { shown = v } },
+                }))
+                label = `${shown === false ? "Hid" : "Showing"} ${String(a.layer).replace(/_/g, " ")}`
+                done.push(undoable(label, () => window.dispatchEvent(new CustomEvent("akili:voice-layer-undo", { detail: { layer: a.layer } }))))
+                break
+            }
+            case "zoom": {
+                window.dispatchEvent(new CustomEvent("akili:open-map"))
+                window.dispatchEvent(new CustomEvent("akili:voice-zoom", { detail: { direction: a.direction } }))
+                label = `Zoomed ${a.direction}`
+                break
+            }
             case "risk": {
                 const place = await findPlace(a.place)
                 if (!place) {
@@ -316,6 +345,7 @@ export async function runVoiceActions(result, ctx) {
         }
     }
 
+    if (result.actions.length > 1 && result.label) label = result.label
     if (!done.length && !label) return { ran: false, label: "", problem: "Nothing to do." }
     if (label) toast(label)
     return {

@@ -1,4 +1,6 @@
 import UpdateBanner from "./desktop/UpdateBanner.jsx"
+import VoiceBar from "./voice/VoiceBar.jsx"
+import { setVoicePage } from "./voice/voiceContext.js"
 import LocateWorkbench from "./locate/LocateWorkbench.jsx"
 import Tutorial from "./ui/Tutorial.jsx"
 import ScreenCapture, { saveCapture } from "./capture/ScreenCapture.jsx"
@@ -1618,6 +1620,8 @@ export default function App() {
         return () => window.removeEventListener("akili:imagery-open-scene", h)
     }, [openTab])
 
+    useEffect(() => { setVoicePage(activeTabType) }, [activeTabType])
+
     // The Locate workbench, over everything, for one Telegram post.
     const [locatePost, setLocatePost] = useState(null)
     useEffect(() => {
@@ -1952,6 +1956,9 @@ export default function App() {
             <UpdateBanner />
             <ToastHost />
             {locatePost && <LocateWorkbench post={locatePost} onClose={() => setLocatePost(null)} />}
+            {/* Voice everywhere: the map has its own bar; every other page
+                gets this one, so "search for Dubai" works from Home too. */}
+            {!isMobile && !presenting && !locatePost && activeTabType !== "situation" && <VoiceBar active floating />}
             <NotificationStack
                 onOpen={(n) => { if (n.ref?.lat != null && n.ref?.lon != null) {
                     openTab("situation")

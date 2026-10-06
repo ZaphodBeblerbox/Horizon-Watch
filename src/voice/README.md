@@ -1,6 +1,6 @@
 # Voice commands
 
-Hold **fn**, speak, and the map does it. No click first, and no model.
+Hold **fn**, speak, and the console does it — on any page. No click first.
 
 ## How it works
 
@@ -72,8 +72,23 @@ JSON.parse(localStorage["plx.voice.log"]).filter(e => e.undone)
 - **One command per sentence.** "Dismiss this and show cyber" runs the first
   only.
 
-## Not built
+## How a sentence is read (2026-10-06)
 
-- LLM interpretation. `onUnrecognised(raw, ctx)` in `runVoiceActions.js` is
-  the hook if we ever add a cheap fallback behind a flag; it does nothing today.
-- "Zoom to <place>" — needs a gazetteer lookup. TODO.
+The model first, the rules when it cannot answer. Every sentence goes to
+`POST /api/voice/interpret` (backend/routers/voice_ai.py, gpt-4o-mini via
+openai_gate, about $0.0001 a sentence, cached for an hour). It returns one
+to three steps, each checked on the server against INTENTS, PAGES and
+LAYERS — "show me fires in Yemen" is `layer heat on` then `navigate Yemen`.
+If the model is unavailable, over budget or finds nothing to do, the regex
+rules in `voiceCommands.js` decide exactly as before, so offline still works.
+
+| Said | Done by |
+|---|---|
+| search for / find / where is X | `akili:search` — the search box opens the best match (an exact place at once, else the backend's answer, at most 2.5 s) |
+| open Imagery / take me to the inbox | `akili:navigate` |
+| turn on the heat layer / hide GDELT | `akili:voice-layer` in Situation; a child layer brings its group on; Undo restores |
+| zoom in / out | `akili:voice-zoom` in GlobeView |
+| go to / explain / risk / message / note … | as before |
+
+The bar is on every page: the map has its own, app.jsx mounts a floating
+one elsewhere.

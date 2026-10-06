@@ -467,6 +467,21 @@ export default function GlobeView({
         return () => window.removeEventListener("akili:fly-to", handler)
     }, [])
 
+    // akili:voice-zoom — "zoom in" / "zoom out": halve or double the
+    // camera's height above the ground.
+    useEffect(() => {
+        const handler = (e) => {
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer || viewer.isDestroyed()) return
+            const h = viewer.camera.positionCartographic.height
+            if (e.detail?.direction === "in") viewer.camera.zoomIn(h * 0.5)
+            else viewer.camera.zoomOut(h)
+            viewer.scene.requestRender()
+        }
+        window.addEventListener("akili:voice-zoom", handler)
+        return () => window.removeEventListener("akili:voice-zoom", handler)
+    }, [])
+
     // akili:set-camera — V3 Phase 1, §5.1 real session restore. Instant
     // (setView, not flyTo): switching sessions resumes a desk, it doesn't
     // tour the globe to it. Real position + orientation, not just a
