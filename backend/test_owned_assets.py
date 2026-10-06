@@ -70,3 +70,9 @@ def test_generic_advice_is_dropped():
     out = oa.cited_only(raw, {"a1"})
     assert [c["what"] for c in out["could_affect"]] == ["Coalition air strikes on northern Sanaa"]
     assert [m["action"] for m in out["measures"]] == ["Keep the 12 staff home until 48 hours pass without strikes"]
+
+
+def test_a_story_restated_with_new_numbers_is_one_item():
+    items = [_it("a", 5, 2, "high", "GPS degraded over the Gulf — 6 of 23 aircraft (26%)"),
+             _it("b", 6, 3, "high", "GPS degraded over the Gulf — 4 of 16 aircraft (25%)")]
+    assert len(oa.rank(AT, 30, items, now=NOW)) == 1

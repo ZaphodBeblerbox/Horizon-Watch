@@ -71,6 +71,7 @@ PAGES = {
     "home": "Home (the day's overview)", "situation": "the Map", "inbox": "Inbox (all signals)",
     "dossiers": "Dossiers", "analytics": "Analytics", "replay": "Replay (history)", "imagery": "Imagery (satellite)",
     "briefings": "Briefings", "cases": "Cases (files)", "ontology": "Ontology (the graph)", "forecast": "Forecast",
+    "assets": "Assets (our register)", "settings": "Settings",
     "team": "Team",
 }
 LAYERS = {
@@ -81,6 +82,7 @@ LAYERS = {
     "frontlines": "frontlines", "flows": "trade and energy flows", "aois": "areas of interest", "labels": "place labels",
     "cables": "undersea cables", "ports": "ports", "airfields": "airports and airfields", "chokepoints": "chokepoints",
     "power": "power plants", "military_sites": "military facilities", "alerts": "alerts", "zones": "zones",
+    "assets": "our own assets (the register)",
 }
 MAX_STEPS = 3
 

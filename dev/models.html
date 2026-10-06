@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Asset models — review</title>
+<style>
+ body { margin: 0; background: #12161d; color: #cfd6df; font: 13px system-ui; }
+ #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 10px; padding: 10px; }
+ figure { margin: 0; background: #1a1f28; border: 1px solid #2a3140; }
+ figure img { display: block; width: 100%; }
+ figcaption { padding: 6px 10px; }
+</style></head>
+<body><div id="grid"></div>
+<script type="module">
+import { MODELS, build } from "/src/assets/three/index.js"
+import { createStage } from "/src/assets/three/stage.js"
+const params = new URLSearchParams(location.search)
+const only = params.get("kind")
+const views = (params.get("views") || "-0.62:0.36").split(",").map((v) => v.split(":").map(Number))
+const stage = createStage(null, { interactive: false, preserve: true, pixelRatio: 1 })
+stage.resize(1120, 700)
+const grid = document.getElementById("grid")
+for (const kind of Object.keys(MODELS).filter((k) => !only || k === only)) {
+  for (const [az, el] of views) {
+    const t0 = performance.now()
+    const b0 = build(kind); stage.setModel(b0, params.get("views") === "default" ? {} : { azimuth: az, elevation: el })
+    stage.render()
+    const fig = document.createElement("figure")
+    fig.innerHTML = `<img src="${stage.renderer.domElement.toDataURL("image/png")}"><figcaption>${kind} · az ${az} el ${el} · ${Math.round(performance.now() - t0)} ms</figcaption>`
+    grid.appendChild(fig)
+  }
+}
+document.body.dataset.done = "1"
+</script></body></html>

@@ -132,6 +132,13 @@ def situation(asset: dict) -> dict:
     return {"asset": asset, "position": at, "signals": ranked, "exposure": oa.exposure(ranked)}
 
 
+@router.get("/reverse")
+async def reverse(lat: float, lon: float):
+    """The address at a clicked point (placing an asset on the map)."""
+    from geocode_utils import reverse_geocode
+    return {"place": await asyncio.get_event_loop().run_in_executor(None, reverse_geocode, lat, lon)}
+
+
 @router.get("/kinds")
 def kinds():
     return {"kinds": [{"key": k, **v} for k, v in oa.KINDS.items()], "importance": list(oa.IMPORTANCE)}

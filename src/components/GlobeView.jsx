@@ -27,6 +27,7 @@ import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeTelegramLayer        from "../globe/GlobeTelegramLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
+import GlobeAssetsLayer          from "../globe/GlobeAssetsLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
 import GlobeWarMapLayer          from "../globe/GlobeWarMapLayer.jsx"
@@ -136,6 +137,7 @@ export default function GlobeView({
     gdeltEnabled = false,
     telegramEnabled = false,
     imagerySignalsEnabled = false,
+    assetsEnabled = true,
     gdeltTypes = null,
     frontlinesEnabled = false,
     warmapTheatres = [],
@@ -1162,6 +1164,7 @@ export default function GlobeView({
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
                 <GlobeTelegramLayer enabled={telegramEnabled} hours={24} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
+                <GlobeAssetsLayer enabled={assetsEnabled} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
                 <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds}
                                       onStatus={onFacilityStatus} />

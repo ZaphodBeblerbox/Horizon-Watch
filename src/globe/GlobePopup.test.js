@@ -19,6 +19,8 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             // through to the raw-html popup, which is exactly the failure
             // this test exists to catch.
             "gps_interference",
+            // Our own assets: routed to their page in the register.
+            "owned_asset",
         ].sort())
     })
 

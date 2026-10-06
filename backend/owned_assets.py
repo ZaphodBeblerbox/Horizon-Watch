@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS owned_assets (
     lat REAL, lon REAL,           -- fixed point, or the last known position of a mover
     radius_km   REAL,
     country     TEXT,
+    address     TEXT,             -- as found by the address search or the map pin
     importance  TEXT DEFAULT 'normal',
     notes       TEXT,
     shared      INTEGER DEFAULT 0,
@@ -106,6 +107,8 @@ def _db_path() -> str:
 def _con():
     con = sqlite3.connect(_db_path(), timeout=60)
     con.executescript(DDL)
+    if "address" not in {r[1] for r in con.execute("PRAGMA table_info(owned_assets)")}:
+        con.execute("ALTER TABLE owned_assets ADD COLUMN address TEXT")
     con.row_factory = sqlite3.Row
     return con
 
@@ -150,7 +153,7 @@ def clean(body: dict, partial: bool = False) -> dict:
         if imp not in IMPORTANCE:
             raise ValueError("importance is critical, high or normal")
         out["importance"] = imp
-    for f in ("country", "notes"):
+    for f in ("country", "notes", "address"):
         if f in body:
             out[f] = (str(body.get(f) or "").strip() or None) if body.get(f) is not None else None
     if "identifiers" in body:
@@ -202,10 +205,10 @@ def create(user_id: str, body: dict) -> dict:
     d = clean(body)
     aid = f"OA-{uuid.uuid4().hex[:8]}"
     con = _con()
-    con.execute("INSERT INTO owned_assets (id, owner_id, name, kind, identifiers, lat, lon, radius_km, country, importance,"
-                " notes, shared, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    con.execute("INSERT INTO owned_assets (id, owner_id, name, kind, identifiers, lat, lon, radius_km, country, address, importance,"
+                " notes, shared, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (aid, str(user_id), d["name"], d["kind"], json.dumps(d.get("identifiers") or {}), d.get("lat"), d.get("lon"),
-                 d.get("radius_km"), d.get("country"), d.get("importance") or "normal", d.get("notes"), d.get("shared", 0),
+                 d.get("radius_km"), d.get("country"), d.get("address"), d.get("importance") or "normal", d.get("notes"), d.get("shared", 0),
                  _now(), _now()))
     con.commit(); con.close()
     return get(aid, user_id)
@@ -297,10 +300,13 @@ def rank(at: dict, radius_km: float, items: list[dict], now: _dt.datetime | None
         w = SEV_W.get(str(it.get("severity") or "").lower(), 0.3)
         score = w * (0.35 + 0.65 * (1 - d / radius_km)) * (0.5 ** (age_h / 24))
         out.append({**it, "km": round(d, 1), "age_h": round(age_h, 1), "score": round(score, 4)})
-    # one item per title (outlets repeat a story), the best-scored kept
+    # one item per story: outlets repeat it, and detectors restate it with new
+    # numbers ("6 of 23 aircraft", "4 of 16 aircraft") — compared without digits
+    import re as _re
     best: dict[str, dict] = {}
     for it in sorted(out, key=lambda x: -x["score"]):
-        best.setdefault(str(it.get("title") or it.get("id")).strip().lower(), it)
+        key = _re.sub(r"[\d.,%()]+", "#", str(it.get("title") or it.get("id")).strip().lower())
+        best.setdefault(key, it)
     return sorted(best.values(), key=lambda x: -x["score"])[:limit]
 
 

@@ -426,6 +426,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // signals a pass raised, the heat detections, and the full satellite
     // base image — which used to come on with the group and hide the map.
     const [imagerySignalsOn, setImagerySignalsOn] = useState(true)
+    // Our assets on the map (GlobeAssetsLayer): on — they are the point.
+    const [assetsOn, setAssetsOn] = useState(true)
     const [satImageOn, setSatImageOn] = useState(false)
     // Default off: it is a specialist reading, and a globe that
     // opens with every layer lit is not a map of anything.
@@ -1098,6 +1100,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         geoconfirmed: [geoConfirmedOn, setGeoConfirmedOn, "news"],
         gps_interference: [gpsInterferenceOn, setGpsInterferenceOn, "air"],
         airspace: [airspaceOn, setAirspaceOn],
+        assets: [assetsOn, setAssetsOn],
         alerts: [groupsOn.alerts, (v) => setGroupsOn((p) => ({ ...p, alerts: v }))],
         zones: [groupsOn.zones, (v) => setGroupsOn((p) => ({ ...p, zones: v }))],
         ...Object.fromEntries(["risk", "frontlines", "flows", "aois", "labels"].map((k) =>
@@ -1276,6 +1279,14 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     onDelete={(viewId) => { deleteActiveSessionView(viewId).catch(() => toast("Could not delete view", { icon: "i-alert" })) }}
                     onSaveCurrent={(name) => { saveCurrentAsView(name).catch(() => toast("Could not save view", { icon: "i-alert" })) }}
                 />
+
+                <LayerGroup id="our-assets" title="Our assets" activeCount={assetsOn ? 1 : 0}>
+                    <SubLayerRow
+                        label="Assets in the register"
+                        hint="Your vessels, aircraft, sites and people, each ringed in how exposed it is now, with its watch radius close in. A click opens it."
+                        on={assetsOn} parentOn={true}
+                        onToggle={() => setAssetsOn((v) => !v)} />
+                </LayerGroup>
 
                 <LayerGroup id="event-domains" title="Event domains"
                             activeCount={LAYER_GROUPS.filter((g) => groupsOn[g.key]).length}>
@@ -1913,6 +1924,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         gpsInterferenceEnabled={groupsOnV.air && (!asCanvas && gpsInterferenceOn)}
                         satelliteEnabled={groupsOnV.imagery && satImageOn} infraEnabled={infraOnV.power}
                         imagerySignalsEnabled={groupsOnV.imagery && imagerySignalsOn}
+                        assetsEnabled={!asCanvas && assetsOn}
                         nauticalEnabled={infraOnV.nautical}
                         eezEnabled={groupsOnV.zones}
                         /* Context layers — separate from event domains, per build spec v2 §4.2 */

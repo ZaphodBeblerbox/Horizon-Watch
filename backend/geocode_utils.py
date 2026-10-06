@@ -197,3 +197,39 @@ def prefer_settlement(hits: list[dict]) -> list[dict]:
     def rank(h):
         return 0 if (h.get("class") == "place" and h.get("type") in SETTLEMENT_TYPES) else 1
     return sorted(hits, key=rank)
+
+
+_reverse_cache: dict = {}
+
+
+def reverse_geocode(lat: float, lon: float) -> dict | None:
+    """A point -> the address there ({label, country, country_code}), for
+    placing an asset by clicking the map. Same Nominatim service, same
+    one-request-a-second limit, cached to ~10 m."""
+    global _last_request_ts
+    key = (round(float(lat), 4), round(float(lon), 4))
+    if key in _reverse_cache:
+        return _reverse_cache[key]
+    out = None
+    try:
+        with _rate_lock:
+            wait = 1.0 - (time.monotonic() - _last_request_ts)
+            if wait > 0:
+                time.sleep(wait)
+            with httpx.Client(timeout=10.0, headers=NOMINATIM_HEADERS) as c:
+                r = c.get(NOMINATIM_URL.replace("/search", "/reverse"),
+                          params={"format": "json", "lat": key[0], "lon": key[1], "zoom": "18", "addressdetails": "1", "accept-language": "en"})
+                _last_request_ts = time.monotonic()
+                r.raise_for_status()
+                d = r.json()
+        a = d.get("address") or {}
+        street = " ".join(x for x in (a.get("road"), a.get("house_number")) if x)
+        place = a.get("city") or a.get("town") or a.get("village") or a.get("suburb") or a.get("county") or a.get("state")
+        label = ", ".join(x for x in (d.get("name") if d.get("name") and d.get("name") != a.get("road") else None,
+                                      street or None, place, a.get("country")) if x)
+        out = {"label": label or d.get("display_name"), "display_name": d.get("display_name"),
+               "country": a.get("country"), "country_code": (a.get("country_code") or "").upper() or None}
+    except Exception:                                        # noqa: BLE001
+        out = None
+    _reverse_cache[key] = out
+    return out

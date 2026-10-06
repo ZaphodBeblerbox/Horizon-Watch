@@ -22,8 +22,14 @@ const INPUT = {
    place instead; the same suggestions as the search box (local countries
    and cities instantly, the geocoder for the rest) and the camera height
    that suits it. The numbers stay available, folded, for whoever has one. */
-export default function PlacePicker({ onPick, placeholder = "Type a place — Bab el-Mandeb, Red Sea, Taiwan…", label = "Find a place" }) {
-    const [q, setQ] = useState("")
+export default function PlacePicker({ onPick, placeholder = "Type a place — Bab el-Mandeb, Red Sea, Taiwan…", label = "Find a place",
+                                     keep = false, value = null }) {
+    // keep: the chosen place stays in the field (an address you are setting,
+    // not a search you are done with). value: set from outside — the address
+    // of a pin dropped on a map.
+    const [q, setQ] = useState(value || "")
+    const [open, setOpen] = useState(false)
+    useEffect(() => { if (value != null) { setQ(value); setOpen(false) } }, [value])
     const [places, setPlaces] = useState([])
     const [remote, setRemote] = useState([])
     useEffect(() => { loadPlaces().then(setPlaces).catch(() => {}) }, [])
@@ -46,21 +52,38 @@ export default function PlacePicker({ onPick, placeholder = "Type a place — Ba
                 : x.items.map((i) => ({ ...i, lat: i.raw?.lat, lon: i.raw?.lon, altitude: 600_000 })))
             .filter((i) => Number.isFinite(i.lat) && Number.isFinite(i.lon)).slice(0, 7)
     }, [q, places, remote])
+    // the place as an address: its name and where it is, without the
+    // suggestion's category tag ("· place", "· port")
+    const asAddress = (it) => [it.label, String(it.sub || "").split(" · ")[0]].filter(Boolean).join(", ")
+    const choose = (it) => { onPick({ ...it, address: asAddress(it) }); setOpen(false); setQ(keep ? asAddress(it) : "") }
     return (
         <div style={{ position: "relative" }}>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder}
-                   onKeyDown={(e) => { if (e.key === "Enter" && items[0]) { e.preventDefault(); onPick(items[0]); setQ("") } }}
-                   style={INPUT} aria-label={label} />
-            {q.trim().length >= 2 && items.length > 0 && (
-                <div style={{ position: "absolute", top: 32, left: 0, right: 0, zIndex: 5, background: "var(--bg-1, var(--canvas))",
-                              border: "1px solid var(--gline2)", boxShadow: "var(--gshadow)" }}>
+            <input value={q} onChange={(e) => { setQ(e.target.value); setOpen(true) }} placeholder={placeholder}
+                   onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+                   onKeyDown={(e) => {
+                       if (e.key !== "Enter") return
+                       e.preventDefault()
+                       if (items[0]) { choose(items[0]); return }
+                       // Enter before the suggestions arrive: look it up now, take the best
+                       const t = q.trim()
+                       if (t.length < 2) return
+                       fetch(`${API_BASE}/api/search?q=${encodeURIComponent(t)}&limit=3`, { credentials: "include" })
+                           .then((r) => (r.ok ? r.json() : [])).then((d) => {
+                               const hit = (Array.isArray(d) ? d : []).find((x) => Number.isFinite(Number(x.lat)) && Number.isFinite(Number(x.lon)))
+                               if (hit) choose({ ...hit, lat: Number(hit.lat), lon: Number(hit.lon), label: hit.label || hit.name || t, sub: hit.sub || "" })
+                           }).catch(() => {})
+                   }}
+                   style={{ ...INPUT, ...(keep ? { height: 34, fontSize: 13.5 } : null) }} aria-label={label} />
+            {open && q.trim().length >= 2 && items.length > 0 && (
+                <div style={{ position: "absolute", top: "calc(100% + 2px)", left: 0, right: 0, zIndex: 20, background: "var(--bg-1, var(--canvas))",
+                              border: "1px solid var(--gline2)", boxShadow: "var(--gshadow)", overflow: "hidden" }}>
                     {items.map((it) => (
-                        <div key={it.id} onMouseDown={(e) => { e.preventDefault(); onPick(it); setQ("") }}
-                             style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "6px 10px", cursor: "pointer" }}
+                        <div key={it.id} onMouseDown={(e) => { e.preventDefault(); choose(it) }}
+                             style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 10px", cursor: "pointer", minWidth: 0 }}
                              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--accdim)" }}
                              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent" }}>
-                            <span style={{ fontSize: 13, color: "var(--txt)" }}>{it.label}</span>
-                            <span style={{ fontSize: 11.5, color: "var(--txt-4, var(--txt4))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.sub}</span>
+                            <span style={{ fontSize: 13, color: "var(--txt)", flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.label}</span>
+                            <span style={{ fontSize: 11.5, color: "var(--txt-4, var(--txt4))", flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.sub}</span>
                         </div>
                     ))}
                 </div>
