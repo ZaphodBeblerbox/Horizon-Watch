@@ -33,6 +33,7 @@ import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 import Minimap from "../components/Minimap.jsx"
 import TelegramMedia from "../components/TelegramMedia.jsx"
 import { THEATER_SCOPE } from "../data/theaterScope.js"
+import { whenLabel } from "../utils/formatTime.js"
 
 /* A null resolution overwrites a default; .catch never fires on one. */
 const safeArray = (v) => (Array.isArray(v) ? v : [])
@@ -109,6 +110,26 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
 
     useEffect(() => subscribeAuth(setUser), [])
 
+    /* HOME IS LIVE. The surface (critical signals, Telegram footage) is
+       re-read every minute so the lead, Newest and "From the ground" show
+       what is happening now; a failed poll keeps what is on screen. */
+    useEffect(() => {
+        const load = () => fetch(`${API_BASE}/api/surface`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (d) setSurface(safeArray(d?.items ?? d)) })
+            .catch(() => {})
+        const t = setInterval(load, 60_000)
+        return () => clearInterval(t)
+    }, [])
+    // The clock the page reads: the greeting (morning / afternoon / evening
+    // brief) and every "x min ago" move on by themselves.
+    const [, setTick] = useState(0)
+    useEffect(() => {
+        const t = setInterval(() => setTick((n) => n + 1), 60_000)
+        return () => clearInterval(t)
+    }, [])
+    const dayPart = (() => { const h = new Date().getHours(); return h < 12 ? "morning" : h < 18 ? "afternoon" : "evening" })()
+
     useEffect(() => {
         const opts = { credentials: "include" }
         fetch(`${API_BASE}/api/surface`, opts)
@@ -151,7 +172,8 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     const firstName = (user?.display_name || user?.name || user?.email || "").split(/[\s@.]/)[0]
     const seed = useRef(Math.floor(Math.random() * 997)).current
     const { lead: greeting, sub: sinceMeta, kicker } = useMemo(
-        () => greetingFor(firstName, { seed }), [firstName, seed])
+        // dayPart in the deps: the brief turns over morning, afternoon, evening.
+        () => greetingFor(firstName, { seed }), [firstName, seed, dayPart])
     const initials = ((firstName[0] || "G").toUpperCase()
         + (user?.display_name?.split(" ")[1]?.[0] || "U").toUpperCase())
     const clock = new Date().toISOString().slice(11, 16) + "Z"
@@ -229,11 +251,14 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     const [outlook, setOutlook] = useState(null)
     useEffect(() => {
         let live = true
-        fetch(`${API_BASE}/api/enrich/outlook`, { credentials: "include" })
+        const load = (first) => fetch(`${API_BASE}/api/enrich/outlook`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (live) setOutlook(d) })
-            .catch(() => { if (live) setOutlook({ ok: false }) })
-        return () => { live = false }
+            .then((d) => { if (live && d) setOutlook(d) })
+            .catch(() => { if (live && first) setOutlook({ ok: false }) })
+        load(true)
+        // The backend rebuilds the outlook every 20 minutes; read it as often.
+        const t = setInterval(() => load(false), 20 * 60_000)
+        return () => { live = false; clearInterval(t) }
     }, [])
 
     const critical = surface.filter((s) => s.severity_tier === "critical").length
@@ -274,7 +299,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
             items: overnight.map((s) => ({
                 c: SEV_DOT[s.severity_tier] || "var(--txt4)",
                 t: s.title || s.headline || "Untitled signal",
-                sub: [s.source || s.source_type, (s.published_at || "").slice(11, 16)].filter(Boolean).join(" · "),
+                sub: [s.source || s.source_type, whenLabel(s.published_at)].filter(Boolean).join(" · "),
                 go: () => onOpenModule("inbox"),
             })),
         },
@@ -412,7 +437,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                             <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
                                 <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase",
                                                color: groundVideo.severity_tier === "critical" ? "var(--red)" : "var(--txt3)" }}>
-                                    From the ground · {String(groundVideo.published_at).slice(11, 16)}Z · <bdi>{groundVideo.source}</bdi>
+                                    From the ground · {whenLabel(groundVideo.published_at)} · <bdi>{groundVideo.source}</bdi>
                                 </span>
                                 <h3 style={{ margin: 0, fontSize: 24, lineHeight: 1.2, fontWeight: 600, textWrap: "pretty" }}>{groundVideo.headline}</h3>
                                 <span style={{ fontSize: 13, color: "var(--txt2)", textWrap: "pretty" }}>{groundVideo.context}</span>

@@ -1062,6 +1062,31 @@ export default function App() {
         }
     }, [notifFeed])
 
+    /* LIVE SIGNALS. Each signal that newly appears on the surface (already
+       screened for relevance by the server) is announced: into the tray and
+       the bell always, as a card when critical or high. The first load is
+       history and goes in silently; the store's 30-minute freshness rule
+       keeps a late-ingested old event from interrupting. Telegram announces
+       itself below. */
+    const surfaceSeenRef = useRef(null)
+    useEffect(() => {
+        if (!surfaceItems?.length) return
+        const first = surfaceSeenRef.current === null
+        if (first) surfaceSeenRef.current = new Set()
+        for (const it of surfaceItems) {
+            if (!it?.id || it.source_type === "telegram" || surfaceSeenRef.current.has(it.id)) continue
+            surfaceSeenRef.current.add(it.id)
+            pushNotification({
+                silent: first, id: `sig-${it.id}`, kind: "signal",
+                sev: it.severity_tier === "critical" ? "critical" : it.severity_tier === "significant" ? "high" : "moderate",
+                title: it.headline || "New signal",
+                sub: [it.location || it.location_country, it.source].filter(Boolean).join(" · "),
+                ref: (it.lat != null && it.lon != null) ? { lat: it.lat, lon: it.lon } : null,
+                ts: Date.parse(it.published_at || "") || Date.now(),
+            })
+        }
+    }, [surfaceItems])
+
     /* LIVE TELEGRAM. The backend reads the joined channels every minute;
        each newly published post (kinetic, precisely located) raises a card
        with its headline while it is fresh. The first load is history and
@@ -1200,7 +1225,8 @@ export default function App() {
         }
         fetchSurfaceRef.current = fetchSurface
         fetchSurface()
-        const t = setInterval(fetchSurface, 120000)
+        // Every minute: new relevant signals are announced as they arrive.
+        const t = setInterval(fetchSurface, 60000)
         return () => {
             cancelled = true
             clearInterval(t)

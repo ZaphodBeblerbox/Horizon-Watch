@@ -58,6 +58,7 @@ import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 import LayerSubGroup from "../components/LayerSubGroup.jsx"
 import LayerStatus from "../components/LayerStatus.jsx"
 import FlowsPanel from "../components/FlowsPanel.jsx"
+import { whenLabel } from "../utils/formatTime.js"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -1977,7 +1978,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                             <svg className="icon sm"><use href="#i-clock" /></svg>
                                         </button>
                                     )}
-                                    <span className="time">{timeAgoLabel(r.publishedAt, nowMs)}</span>
+                                    <span className="time">{whenLabel(r.publishedAt, nowMs) || timeAgoLabel(r.publishedAt, nowMs)}</span>
                                 </div>
                             ))}
                         </div>
@@ -1992,7 +1993,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             <span className={`dia ${SEV_CLASS_BY_RANK[selected.severityRank] || "moderate"}`} />
                             <span>{SEV_LEGEND[selected.severityRank]?.label || "Moderate"}</span>
                             <span style={{ color: "var(--txt-4)" }}>· {selected.kind === "fusion" ? "Fusion" : "Signal"}</span>
-                            <span style={{ marginLeft: "auto", color: "var(--txt-4)" }}>{timeAgoLabel(selected.publishedAt, nowMs)}</span>
+                            <span style={{ marginLeft: "auto", color: "var(--txt-4)" }}>{whenLabel(selected.publishedAt, nowMs) || timeAgoLabel(selected.publishedAt, nowMs)}</span>
                         </div>
                         <div style={{ font: "600 15px var(--font)", color: "var(--txt)", margin: "8px 0" }}>{selected.title}</div>
                         <div className="card">

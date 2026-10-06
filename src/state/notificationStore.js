@@ -107,6 +107,8 @@ export function interrupts(n, now = Date.now()) {
     if (Number.isFinite(ts) && now - ts > MAX_INTERRUPT_AGE_MS) return false
     return n.sev === "critical"
         || n.kind === "escalate" || n.kind === "assign" || n.kind === "rfi" || n.kind === "telegram"
+        // A newly arrived relevant signal of high or critical severity.
+        || (n.kind === "signal" && n.sev === "high")
         || n.kind === "surge" || n.kind === "fusion"
 }
 

@@ -41,3 +41,28 @@ export function fmtWhen(ts, { precision } = {}) {
     const mm = String(d.getUTCMinutes()).padStart(2, "0")
     return `${day}, ${hh}:${mm}Z`
 }
+
+/** "just now", "12 min ago", "2 h 10 min ago", "3 d ago" — UTC-safe. */
+export function agoLabel(ts, now = Date.now()) {
+    const t = ts instanceof Date ? ts.getTime() : typeof ts === "number" ? ts
+        : Date.parse(/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(String(ts)) ? `${ts}Z` : String(ts))
+    if (!Number.isFinite(t)) return null
+    const m = Math.max(0, Math.round((now - t) / 60000))
+    if (m < 1) return "just now"
+    if (m < 60) return `${m} min ago`
+    const h = Math.floor(m / 60), r = m % 60
+    if (h < 24) return r ? `${h} h ${r} min ago` : `${h} h ago`
+    const d = Math.floor(h / 24)
+    return `${d} d ago`
+}
+
+/** When a signal was noticed, and how long ago: "14:32Z · 2 h 10 min ago";
+ *  older than a day it carries the date: "4 Oct 2026, 09:10Z · 2 d ago". */
+export function whenLabel(ts, now = Date.now()) {
+    const ago = agoLabel(ts, now)
+    if (!ago) return null
+    const full = fmtWhen(ts, { precision: "minute" })
+    const t = Date.parse(/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(String(ts)) ? `${ts}Z` : String(ts))
+    const clock = full && Number.isFinite(t) && now - t < 24 * 3600 * 1000 ? full.split(", ").pop() : full
+    return clock ? `${clock} · ${ago}` : ago
+}

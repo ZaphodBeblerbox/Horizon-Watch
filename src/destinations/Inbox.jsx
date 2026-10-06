@@ -32,6 +32,7 @@ import {
 import { subscribeLive } from "../state/liveEvents.js"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import Loading from "../ui/Loading.jsx"
+import { whenLabel } from "../utils/formatTime.js"
 
 const SEV_FLOORS = [
     { key: null, label: "all" },
@@ -276,7 +277,7 @@ export default function Inbox() {
                                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                                 }}>{r.title}</b>
                                 <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>
-                                    {hhmm(r.ts)}
+                                    {r.ts ? whenLabel(r.ts) : hhmm(r.ts)}
                                 </span>
                                 <span style={{
                                     fontSize: 11, color: "var(--txt3)", minWidth: 0,

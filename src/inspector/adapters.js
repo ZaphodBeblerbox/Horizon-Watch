@@ -28,7 +28,7 @@
 import { resolveSanctionsStatus } from "../globe/entityIcons.js"
 import { vesselShipType, acClassify } from "../globe/iconUtils.js"
 import { extentOf } from "../utils/extent.js"
-import { fmtWhen } from "../utils/formatTime.js"
+import { fmtWhen, whenLabel } from "../utils/formatTime.js"
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -680,7 +680,7 @@ function adaptTelegram(data = {}) {
     return {
         identity: {
             title: data.headline || "Telegram post",
-            subtitle: ["Telegram", data.channel_title || data.channel, data.place, data.posted_at ? fmtTimestamp(data.posted_at, { precision: "minute" }) : null]
+            subtitle: ["Telegram", data.channel_title || data.channel, data.place, data.posted_at ? whenLabel(data.posted_at) : null]
                 .filter(Boolean).join(" · "),
             entityType: "telegram", subtype: null, sanctionsStatus: null,
         },
