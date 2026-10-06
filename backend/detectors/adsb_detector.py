@@ -44,7 +44,12 @@ class ADSBPatternDetector:
                 "squawk":    squawk,
                 "lat":       aircraft.get("lat"),
                 "lng":       aircraft.get("lon"),
-                "message":   f"{labels[squawk]}: {callsign or aircraft.get('hex','?')} squawking {squawk}",
+                # Written in words (notification_context.plain does the same
+                # for alerts stored before this): "BAF431 declared an
+                # emergency (squawk 7700)", not "EMERGENCY: BAF431 squawking 7700".
+                "message":   f"{callsign or aircraft.get('hex','?')} "
+                             f"{ {'7700': 'declared an emergency', '7600': 'lost radio contact', '7500': 'signalled a hijacking'}.get(squawk, labels[squawk].lower()) } "
+                             f"(squawk {squawk})",
                 "timestamp": datetime.utcnow().isoformat(),
             })
 

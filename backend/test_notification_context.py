@@ -150,3 +150,12 @@ def test_unknown_flag_code_is_omitted_not_printed_raw():
     t, _ = nc.sanctioned_vessel_headline(vessel_name="X", mmsi="1", lat=0, lon=0,
                                          flag="zz", sanction_lists=[])
     assert "zz" not in t.lower().replace("zz", "") or "-flagged" not in t
+
+
+def test_plain_turns_codes_into_words():
+    import notification_context as nc
+    assert nc.plain("EMERGENCY: BAF431 squawking 7700 in the North Sea") == \
+        "Belgian Air Force BAF431 declared an emergency (squawk 7700) in the North Sea"
+    assert nc.plain("Military aircraft RCH5013 at FL068") == "US Air Force transport RCH5013 at 6,800 ft"
+    assert nc.plain("Military aircraft XYZ12 at FL250") == "Military aircraft XYZ12 at 25,000 ft"
+    assert nc.plain("Sanctioned vessel AURA in the Gulf of Mexico") == "Sanctioned vessel AURA in the Gulf of Mexico"

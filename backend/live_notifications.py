@@ -42,6 +42,14 @@ _STATE_DIR = Path(os.getenv("DATA_DIR", Path(__file__).parent / "data"))
 _RISK_STATE = _STATE_DIR / "risk_band_state.json"
 
 
+def _plain(t):
+    try:
+        import notification_context as _nc
+        return _nc.plain(t)
+    except Exception:                                        # noqa: BLE001
+        return t
+
+
 def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
@@ -81,7 +89,11 @@ def gdelt_items(hours: int = 48, limit: int = 40) -> list[dict]:
     try:
         import gdelt_events as _ge
         cutoff = (_now() - datetime.timedelta(hours=hours)).date().isoformat()
-        for pin in _ge.map_points(_ge.EVENTS_CACHE.get("events") or []):
+        import gdelt_judge as _gj
+        # The same judgement the map uses: a security incident, pinned once
+        # where the headline says it happened.
+        judged, _counts = _gj.filter_points(_ge.map_points(_ge.EVENTS_CACHE.get("events") or []))
+        for pin in judged:
             date = str(pin.get("date") or "")[:10]
             if date and date < cutoff:
                 continue
@@ -106,9 +118,8 @@ def gdelt_items(hours: int = 48, limit: int = 40) -> list[dict]:
                 "id": f"gdelt-{pin['id']}",
                 "title": pin["title"],
                 "sev": _sev_from_goldstein(g),
-                "reason": (f"{pin.get('event_type') or 'kinetic event'} reported in "
-                           f"{place} · {pin.get('mentions') or 0} mentions "
-                           f"· machine-coded from a wire story"),
+                "reason": (f"Reported in {pin.get('judged_where') or place} · "
+                           f"{pin.get('mentions') or 0} news mentions"),
                 "notify": True,
                 "kind": "signal",
                 "source": "Wire Reports",
@@ -191,12 +202,26 @@ def derived_items(limit: int = 20) -> list[dict]:
             # Named by kind of evidence, never by feed — and counted by kind
             # too, so the number in the sentence matches the list after it.
             mods = _D.modality_labels(f.get("mods") or [])
+            labels = []
+            for it in f.get("items") or []:
+                lab = _plain(it.get("label"))
+                if lab and lab not in labels and len(lab) > 8:
+                    labels.append(lab)
+            title = _plain(f.get("headline"))
+            if not title or len(title) < 12:
+                title = labels[0] if labels else None
+            if not title:
+                continue
             out.append({
                 "id": f"fusion-{f.get('id')}",
-                "title": f.get("headline") or "Independent sources agree",
+                "title": title,
                 "sev": "critical" if len(mods) >= 3 else "high",
-                "reason": f"{len(mods)} independent modalities agree: {', '.join(mods)}",
-                "notify": True,
+                "reason": (f"Seen in the same area within {float(f.get('span_h') or 0):.0f} h by "
+                           f"{' and '.join(mods)}: " + "; ".join(labels[:3])),
+                # Two kinds of evidence in the same 250 km cell over three
+                # days is too loose to interrupt for (a tanker and an
+                # unrelated RAF flight 50 km apart); three is not.
+                "notify": len(mods) >= 3,
                 "kind": "fusion",
                 "source": "fusion",
                 "lat": f.get("lat"), "lon": f.get("lon"),
@@ -309,6 +334,9 @@ def _save_bands(b: dict) -> None:
         print(f"[live-notif] risk state save: {type(ex).__name__}: {ex}")
 
 
+BAND_WORD = {1: "low", 2: "elevated", 3: "high", 4: "severe"}
+
+
 def risk_change_items(current: list[dict]) -> list[dict]:
     """Countries whose risk BAND moved since the last check.
 
@@ -330,14 +358,25 @@ def risk_change_items(current: list[dict]) -> list[dict]:
         was = prev.get(iso)
         if was is None or was == band:
             continue
-        direction = "rose" if band > was else "fell"
+        rose = band > was
+        try:
+            from country_codes import name_of
+            name = name_of(iso) or iso
+        except Exception:                                   # noqa: BLE001
+            name = iso
+        drivers = [d.get("label") or d.get("name") for d in (row.get("drivers") or []) if isinstance(d, dict)]
         out.append({
             "id": f"risk-{iso}-{was}-{band}",
-            "title": f"{iso} country risk {direction} to band {band}",
-            "sev": "high" if band >= 4 and band > was else "moderate",
-            "reason": (f"band {was} → {band} "
-                       f"(score {row.get('score')}) on the GDELT risk index"),
-            "notify": True,
+            "title": (f"{name}: risk {'up' if rose else 'down'} from {BAND_WORD.get(was, was)} "
+                      f"to {BAND_WORD.get(band, band)}"),
+            "sev": "high" if band >= 4 and rose else "moderate",
+            "reason": (f"Conflict and unrest reporting about {name} over the last 30 days moved its "
+                       f"risk score to {float(row.get('score') or 0):.0f} of 100"
+                       + (f" — mostly {', '.join(drivers[:2])}" if drivers else "")),
+            # A move between low and elevated is a feed item, not an
+            # interruption: only reaching high or severe, or leaving it,
+            # earns a card.
+            "notify": (rose and band >= 3) or (not rose and was >= 3),
             "kind": "escalate",
             "source": "risk index",
             "lat": None, "lon": None,

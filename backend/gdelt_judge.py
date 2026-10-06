@@ -122,11 +122,15 @@ def place_matches(where: str | None, location_name: str) -> bool:
 
 
 def headline_names(where: str | None, title: str) -> bool:
-    """The judged place must be one the headline itself names: any word of
-    four letters or more of `where` appears in the title. Stops the model
-    from picking a coder's wrong city off the list ("Gaza strike" at Bokkos)."""
+    """The judged place must be one the headline itself names — its most
+    specific part, not merely the country: "Houthis claim attacks on Saudi
+    airports" names Saudi Arabia, not Mecca, and was pinned at Mecca
+    because the coder chose it. Stops the model from taking a coder's
+    wrong city off the list ("Gaza strike" at Bokkos)."""
     t = _fold(title)
-    return any(len(w) >= 4 and re.search(rf"\b{w}", t) for w in _fold(where or "").split())
+    head = (where or "").split(",")[0]
+    words = [w for w in _fold(head).split() if len(w) >= 4]
+    return bool(words) and all(re.search(rf"\b{w}", t) for w in words)
 
 
 def judge_batch(stories: list[dict]) -> list[dict | None]:

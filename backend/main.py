@@ -27596,7 +27596,7 @@ def api_get_notifications(
             continue
         out.append({
             "id": r.alert_id,
-            "title": headline,
+            "title": _nc.plain(headline),
             "sev": verdict["sev"],
             "reason": verdict["reason"],
             "notify": verdict["notify"],
@@ -27636,8 +27636,10 @@ def api_get_notifications(
         for e in extra:
             if e["id"] in seen_ids:
                 continue
+            if not include_silent and not e.get("notify", True):
+                continue
             seen_ids.add(e["id"])
-            out.append(e)
+            out.append({**e, "title": _nc.plain(e.get("title"))})
     except Exception as ex:                                 # noqa: BLE001
         # A failure in a derived source must never take the alert tray
         # down with it.
@@ -27665,6 +27667,16 @@ def api_get_notifications(
     #
     # Each source gets a guaranteed share instead, newest-first within it,
     # so a quiet feed is never crowded out by a chatty one.
+    # ONE CARD PER THING. An aircraft squawking 7700 raises an alert per
+    # position report — six identical "BAF431 declared an emergency" cards.
+    # The newest copy of each title stands for all of them.
+    newest: dict = {}
+    for o in out:
+        k = re.sub(r"\s+", " ", str(o.get("title") or o.get("id"))).strip().lower()
+        if k not in newest or str(o.get("created_at") or "") > str(newest[k].get("created_at") or ""):
+            newest[k] = o
+    out = list(newest.values())
+
     by_kind: dict = {}
     for o in out:
         by_kind.setdefault(o.get("kind") or "signal", []).append(o)

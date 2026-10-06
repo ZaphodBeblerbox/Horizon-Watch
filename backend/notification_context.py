@@ -1291,3 +1291,50 @@ def notification_kind(alert_type: Optional[str]) -> str:
     if k == "geoconfirmed_event":
         return "signal"
     return "signal"
+
+
+
+# ── Plain words ───────────────────────────────────────────────────────────
+#
+# Every notification title passes through plain() before it reaches a
+# person. "EMERGENCY: BAF431 squawking 7700", "at FL068" and "RCH5013" are
+# codes an analyst has to decode; the card should already have done it.
+
+# Callsign prefixes of the military operators seen most in the feed.
+MILITARY_CALLSIGNS = {
+    "RCH": "US Air Force transport", "REACH": "US Air Force transport", "CNV": "US Navy",
+    "RRR": "Royal Air Force", "ASCOT": "Royal Air Force transport", "GAF": "German Air Force",
+    "BAF": "Belgian Air Force", "FAF": "French Air Force", "CTM": "French Air Force",
+    "IAM": "Italian Air Force", "NAF": "Royal Netherlands Air Force", "PLF": "Polish Air Force",
+    "HKY": "US Air Force", "DUKE": "US Army", "PAT": "US Army", "SAM": "US government VIP",
+    "NATO": "NATO", "MMF": "NATO tanker fleet", "SVF": "Swedish Air Force", "HAF": "Hellenic Air Force",
+    "TUAF": "Turkish Air Force", "RSD": "Russian state flight", "RFF": "Russian Air Force",
+}
+SQUAWK_MEANING = {
+    "7700": "declared an emergency", "7600": "lost radio contact", "7500": "signalled a hijacking",
+}
+
+
+def operator_of(callsign: str | None) -> str | None:
+    cs = (callsign or "").upper()
+    for k in sorted(MILITARY_CALLSIGNS, key=len, reverse=True):
+        if cs.startswith(k) and (len(cs) == len(k) or cs[len(k)].isdigit()):
+            return MILITARY_CALLSIGNS[k]
+    return None
+
+
+def plain(title: str | None) -> str | None:
+    """A notification title with its codes turned into words."""
+    if not title:
+        return title
+    t = str(title)
+    m = re.match(r"^(?:EMERGENCY|HIJACK|COMMS FAILURE): (\S+) squawking (7[567]00)(.*)$", t)
+    if m:
+        cs, code, rest = m.groups()
+        who = f"{operator_of(cs)} {cs}" if operator_of(cs) else f"Aircraft {cs}"
+        t = f"{who} {SQUAWK_MEANING[code]} (squawk {code}){rest}"
+    m = re.match(r"^Military aircraft (\S+)(.*)$", t)
+    if m and operator_of(m.group(1)):
+        t = f"{operator_of(m.group(1))} {m.group(1)}{m.group(2)}"
+    t = re.sub(r"\bat FL(\d{2,3})\b", lambda x: f"at {int(x.group(1)) * 100:,} ft", t)
+    return t

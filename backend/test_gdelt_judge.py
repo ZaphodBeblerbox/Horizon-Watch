@@ -17,7 +17,7 @@ def test_worth_reading_skips_narrow_framing():
 
 def test_filter_draws_only_kept_stories_once_at_the_judged_place(monkeypatch):
     url = "https://example.com/aramco"
-    pts = [{"source_url": url, "title": "Bangladeshi killed in Houthi attack on Saudi Aramco site", "event_type": "Fight",
+    pts = [{"source_url": url, "title": "Bangladeshi killed in Houthi attack on Aramco site at Khurais", "event_type": "Fight",
             "event_types": ["Fight"], "mentions": m, "location_name": loc}
            for loc, m in (("Riyadh, Saudi Arabia", 20), ("Hajjah, Yemen", 8), ("Khurais, Saudi Arabia", 4))]
     pts.append({"source_url": "https://example.com/court", "title": "Court issues warrant", "event_type": "Fight",
@@ -33,7 +33,8 @@ def test_filter_draws_only_kept_stories_once_at_the_judged_place(monkeypatch):
 
 
 def test_headline_must_name_the_judged_place():
-    assert gj.headline_names("Khurais, Saudi Arabia", "Bangladeshi killed in Houthi attack on Saudi Aramco facility")
+    assert gj.headline_names("Khurais, Saudi Arabia", "Houthi missile hits Aramco facility at Khurais")
+    assert not gj.headline_names("Mecca, Saudi Arabia", "Houthis claim attacks on Saudi airports")
     assert not gj.headline_names("Bokkos, Nigeria", "Christian mother, daughter killed in Gaza strike")
 
 
