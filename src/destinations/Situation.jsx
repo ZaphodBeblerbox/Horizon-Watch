@@ -17,6 +17,7 @@
  * that SAME filtered list — never independently recomputed, so they can't
  * disagree.
  */
+import MapSceneCard, { MAP_SCENE_UI, MapSplitHandle, mapSceneOverlay } from "../components/MapSceneCard.jsx"
 import { EMPTY_VESSEL_FILTER, EMPTY_AIRCRAFT_FILTER } from "../globe/trackFilters.js"
 import { VesselFilterPanel, AircraftFilterPanel } from "../components/TrackFilterPanel.jsx"
 import { useChrome, getStartupLayers, saveStartupLayers, clearStartupLayers } from "../state/useChrome.js"
@@ -568,6 +569,15 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const [imageryDrawn, setImageryDrawn] = useState(null) // {bounds, polygonVertices|null}
     const [imageryScene, setImageryScene] = useState(null) // {image_b64, image_b64_composited, bounds, sensor, capture_timestamp, cloud_cover}
     const [imageryDetections, setImageryDetections] = useState([])
+    // A pass sent from the Imagery page ("Show on the map").
+    const [mapScene, setMapScene] = useState(() => window.__plxMapScene || null)
+    const [mapSceneUi, setMapSceneUi] = useState(MAP_SCENE_UI)
+    useEffect(() => {
+        const h = (e) => { setMapScene(e.detail || null); setMapSceneUi(MAP_SCENE_UI) }
+        window.addEventListener("akili:map-show-scene", h)
+        return () => window.removeEventListener("akili:map-show-scene", h)
+    }, [])
+    const mapSceneLayer = useMemo(() => mapSceneOverlay(mapScene, mapSceneUi), [mapScene, mapSceneUi])
     const handleImageryBounds = useCallback((bounds) => {
         setImageryDrawn({ bounds, polygonVertices: null })
         setImageryDrawActive(false)
@@ -1806,7 +1816,15 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         onOverwatchBounds={handleImageryBounds}
                         onOverwatchPolygon={handleImageryPolygon}
                         overwatchSentinelOverlay={imageryScene ? { image_b64: imageryScene.image_b64_composited, bounds: imageryScene.bounds } : null}
+                        sceneOverlay={mapSceneLayer}
                     />
+                    {!asCanvas && mapScene && mapSceneLayer?.split != null && (
+                        <MapSplitHandle split={mapSceneUi.split} onSplit={(v) => setMapSceneUi((u) => ({ ...u, split: v }))} />
+                    )}
+                    {!asCanvas && mapScene && (
+                        <MapSceneCard scene={mapScene} ui={mapSceneUi} onUi={setMapSceneUi} onScene={setMapScene}
+                            onClose={() => { setMapScene(null); window.__plxMapScene = null }} />
+                    )}
                     {/* §10.1 / §10.2 / §10 `.mapmeta` — the map's own chrome,
                         inside the map container so it is positioned against the
                         canvas rather than the screen. Replaces MapControlStack's

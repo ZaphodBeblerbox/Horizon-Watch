@@ -54,11 +54,18 @@ def previous_scan(db, zone_id, before_scan_id=None, instrument=None):
     """
     from database import SentinelScan
 
+    from sqlalchemy import or_
     q = (db.query(SentinelScan)
            .filter(SentinelScan.zone_id == zone_id,
                    SentinelScan.status == "completed"))
     if before_scan_id:
         q = q.filter(SentinelScan.scan_id != before_scan_id)
+        # A different ACQUISITION, not merely a different row: the same pass
+        # stored twice compared against itself reports that nothing ever
+        # changes.
+        cur = db.query(SentinelScan).filter(SentinelScan.scan_id == before_scan_id).first()
+        if cur is not None and cur.image_id:
+            q = q.filter(or_(SentinelScan.image_id.is_(None), SentinelScan.image_id != cur.image_id))
     if instrument:
         q = q.filter(SentinelScan.instrument == instrument)
     return q.order_by(SentinelScan.created_at.desc()).first()
@@ -142,11 +149,21 @@ def prune_scan_images(db, zone_id, *, keep=DEFAULT_KEEP_IMAGES) -> dict:
                .order_by(SentinelScan.created_at.desc())
                .all())
 
+    # Count ACQUISITIONS, not rows. The same pass stored once per check
+    # used to fill every slot, so the real previous pass lost its pixels
+    # and no comparison had a "before" to show. A copy of a pass that is
+    # already held keeps nothing; the newest `keep` passes keep their image.
     freed = 0
     pruned = []
-    for i, s in enumerate(scans):
-        if i < keep:
-            continue
+    held, i = set(), 0
+    for s in scans:
+        acq = s.image_id or (s.image_timestamp_utc.isoformat() if s.image_timestamp_utc else s.scan_id)
+        duplicate = acq in held
+        held.add(acq)
+        if not duplicate:
+            i += 1
+            if i <= keep:
+                continue
         if is_pinned(s):
             # An explicit decision by a person outranks a retention rule.
             continue

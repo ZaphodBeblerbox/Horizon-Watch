@@ -344,3 +344,23 @@ def test_detection_ids_stay_readable():
 # weights, minutes of CPU per scene and container memory pressure, for a
 # picture that by design could never originate a detection, it did not earn
 # its place. torch stays declared: the SAR vessel detector needs it.
+
+
+def test_polygon_percent_maps_the_outline_into_the_frame():
+    import imagery_pipeline as ip
+    g = {"type": "Polygon", "coordinates": [[[10.0, 20.0], [10.5, 20.0], [10.5, 20.5], [10.0, 20.0]]]}
+    assert ip.polygon_percent(g, [10.0, 20.0, 11.0, 21.0]) == [[0.0, 1.0], [0.5, 1.0], [0.5, 0.5]]
+    assert ip.polygon_percent(None, [10.0, 20.0, 11.0, 21.0]) is None
+
+
+def test_copies_of_one_pass_do_not_take_the_retention_slots(db):
+    zone = make_zone(db)
+    old = make_scan(db, zone, when_offset_min=0)
+    old.image_id = "S2-old"
+    copies = [make_scan(db, zone, when_offset_min=10 + i) for i in range(3)]
+    for c in copies:
+        c.image_id = "S2-new"
+    db.commit()
+    out = ss.prune_scan_images(db, zone.id, keep=2)
+    # the newest copy and the previous pass keep their pixels; the two older copies do not
+    assert sorted(out["pruned"]) == sorted([copies[0].scan_id, copies[1].scan_id])

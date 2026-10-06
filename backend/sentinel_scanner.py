@@ -129,6 +129,29 @@ def _decode_and_encode(image_bytes: bytes):
     return img, base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _native_px(b: dict, m_per_px: float = 10.0, cap: int = 2500) -> tuple[int, int]:
+    """Pixel size of a bounds at Sentinel-2's native resolution, capped
+    keeping the aspect."""
+    import math
+    lat = (b["south"] + b["north"]) / 2
+    w_m = (b["east"] - b["west"]) * 111_320 * math.cos(math.radians(lat))
+    h_m = (b["north"] - b["south"]) * 110_574
+    w, h = max(32, round(w_m / m_per_px)), max(32, round(h_m / m_per_px))
+    k = min(1.0, cap / max(w, h))
+    return max(32, round(w * k)), max(32, round(h * k))
+
+
+def _already_held(zone_id, image_id) -> bool:
+    """Has this zone a completed scan of exactly this acquisition?"""
+    if not zone_id or not image_id:
+        return False
+    from database import SentinelScan, get_db
+    with get_db() as db:
+        return db.query(SentinelScan.id).filter(
+            SentinelScan.zone_id == zone_id, SentinelScan.image_id == image_id,
+            SentinelScan.status == "completed").first() is not None
+
+
 class SentinelScanner:
     def run_scan(self, zone_dict: dict, triggered_by: str = "schedule") -> dict:
         """Synchronous entry point — called via loop.run_in_executor() from main.py.
@@ -179,6 +202,24 @@ class SentinelScanner:
             result = {"status": "error", "error_message": f"scan crashed: {type(e).__name__}: {e}"}
 
         detections = result.get("detections") or []
+
+        if result.get("status") == "unchanged":
+            # Nothing new to look at: no row, no detections, just the
+            # schedule moved on.
+            try:
+                with get_db() as db:
+                    zone = db.query(WatchZone).filter(WatchZone.id == zone_id).first()
+                    if zone is not None:
+                        now = datetime.datetime.utcnow()
+                        zone.last_scanned_at = now
+                        interval = zone.scan_interval_hours or zone_dict.get("scan_interval_hours") or 120
+                        zone.next_scan_at = now + datetime.timedelta(hours=interval)
+                        db.commit()
+            except Exception as _ue:
+                print(f"[sentinel-scanner] could not advance schedule for zone={system_id}: {_ue}")
+            print(f"[sentinel-scanner] zone={system_id} triggered_by={triggered_by}: "
+                  f"acquisition {result.get('image_id')} already held — nothing new")
+            return {"scan_id": None, "status": "unchanged", "image_id": result.get("image_id")}
 
         try:
             with get_db() as db:
@@ -429,6 +470,15 @@ class SentinelScanner:
             "image_age_hours": image_age_hours,
         }
 
+        # THE SAME PASS IS NOT A NEW SCENE. Sentinel-2 revisits every few
+        # days and the scheduler checks more often than that, so most checks
+        # find the acquisition already held. Storing it again made one image
+        # into fourteen "scenes" and — worse — made each the baseline of the
+        # next, so every comparison was an image against itself and nothing
+        # could ever change.
+        if scene.get("id") and _already_held(zone_dict.get("id"), scene.get("id")):
+            return {"status": "unchanged", **base_meta}
+
         # NO ml_tasks IS NOT A FAILURE ANY MORE.
         #
         # This used to abort the scan outright when a zone requested no
@@ -491,8 +541,12 @@ class SentinelScanner:
                 plan, fetch_tile=_fetch_tile, detect_tile=_detect_tile,
                 job_id=f"zone-{_sid}")
 
+        # At native 10 m/px, not a size bucket: the scene shown is every
+        # pixel the satellite took, up to the Process API's 2500 px limit.
+        w_px, h_px = _native_px(bounds_wsen)
         img_result = await _fetch_sentinel_image_bytes(bounds_wsen, image_type="true-colour",
-                                                         max_cloud=20, days_back=30)
+                                                         max_cloud=20, days_back=30,
+                                                         width=w_px, height=h_px)
         if img_result.get("error"):
             return {"status": "error", "error_message": f"image fetch failed: {img_result['error']}", **base_meta}
 
@@ -610,6 +664,14 @@ class SentinelScanner:
             "image_age_hours": None,
         }
 
+        # Sentinel Hub does not name the acquisition behind a mostRecent
+        # mosaic, so the bytes are its identity: the same pass fetched twice
+        # is the same GeoTIFF.
+        import hashlib
+        base_meta["image_id"] = "S1-" + hashlib.sha1(tiff_bytes).hexdigest()[:20]
+        if _already_held(zone_dict.get("id"), base_meta["image_id"]):
+            return {"status": "unchanged", **base_meta}
+
         try:
             sar_dets = await _off_loop(sar_detector.run_sar_ship_detection_from_geotiff_bytes, tiff_bytes)
         except sar_detector.SarDetectorError as e:
@@ -638,6 +700,11 @@ class SentinelScanner:
                 "centroid_lon": d["lon"],
                 "severity": "info",
                 "alert_tier": "silent",
+                # The hull the model measured — length, beam, heading — as
+                # the same GeoJSON polygon an optical detection carries.
+                "geo_geometry": json.dumps({"type": "Polygon", "coordinates": [
+                    [[c[1], c[0]] for c in d["corners"]] + [[d["corners"][0][1], d["corners"][0][0]]]]})
+                    if d.get("corners") else None,
                 "attributes": json.dumps({
                     "vessel_length_m": round(d["vessel_length_m"], 1),
                     "vessel_width_m": round(d["vessel_width_m"], 1),

@@ -22743,7 +22743,232 @@ def api_imagery_scene(scan_id: str):
             "reference_image_b64": ref_image_b64,
             "zone": _zone_row_to_dict(zone),
             **comparison,
+            **_scene_note_for(scan, zone, comparison),
         }
+
+
+def _scene_note_for(scan, zone, comparison) -> dict:
+    """The analyst's reading of this pass (scene_note.py): cached, or
+    started in the background and reported as pending."""
+    import scene_note, zone_context
+    note = scene_note.cached(scan.scan_id)
+    ctx = zone_context.cached(zone.system_id)
+    # Written once the area's context is known, so the note reads the pass
+    # against what matters there; the page asks for the context first.
+    if note is None and scan.status == "completed" and scan.image_b64 and ctx:
+        scene_note.request(
+            scan.scan_id, context=ctx, zone_name=zone.name, instrument=scan.instrument or "OPTICAL",
+            when=scan.image_timestamp_utc.isoformat() if scan.image_timestamp_utc else None,
+            image_b64=scan.image_b64, changes=comparison.get("changes") or [],
+            counts=comparison.get("counts") or [], reference_date=comparison.get("reference_date"))
+    return {"note": note, "note_pending": note is None and scene_note.pending(scan.scan_id)}
+
+
+# ── Imagery: context, a sharp reference, and any date to compare with ─────
+
+_IMAGERY_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "imagery_cache")
+
+
+def _zone_by_system_id(system_id: str):
+    from database import WatchZone, get_db as _gdb_zc
+    with _gdb_zc() as db:
+        z = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
+        if not z:
+            raise HTTPException(404, f"area {system_id} not found")
+        return _zone_row_to_dict(z)
+
+
+def _km_between(lat1, lon1, lat2, lon2) -> float:
+    import math as _m
+    p1, p2 = _m.radians(lat1), _m.radians(lat2)
+    h = _m.sin((p2 - p1) / 2) ** 2 + _m.cos(p1) * _m.cos(p2) * _m.sin(_m.radians(lon2 - lon1) / 2) ** 2
+    return 12742 * _m.asin(_m.sqrt(h))
+
+
+def _parse_ts_safe(v) -> float:
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _zone_surroundings(z: dict) -> dict:
+    """What the console knows around an area: signals within 150 km in the
+    last week (surface pool and Telegram), FIRMS fires within 25 km in 14
+    days, AIS vessels within the area's reach now."""
+    b = z["bbox"]
+    lat, lon = (b["min_lat"] + b["max_lat"]) / 2, (b["min_lon"] + b["max_lon"]) / 2
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    with _SURFACE_POOL_LOCK:
+        pool = list(_SURFACE_POOL)
+    try:
+        import telegram_ingest as _tg
+        pool += [{"headline": p.get("headline"), "lat": p.get("lat"), "lon": p.get("lon"),
+                  "published_at": p.get("posted_at") or p.get("published_at")} for p in _tg.published(168)]
+    except Exception:                                        # noqa: BLE001
+        pass
+    sigs, seen = [], set()
+    for s_ in pool:
+        if s_.get("lat") is None or not s_.get("headline") or s_["headline"] in seen:
+            continue
+        if str(s_.get("published_at") or "") < cutoff:
+            continue
+        d = _km_between(lat, lon, s_["lat"], s_["lon"])
+        # Two rings: what happens at the place, and the regional situation
+        # it sits in — a Gulf port's imagery is read in the light of strikes
+        # a thousand kilometres away.
+        if d <= 1200:
+            seen.add(s_["headline"])
+            sigs.append({"headline": s_["headline"], "km": round(d), "published_at": s_.get("published_at"),
+                         "severity": s_.get("severity_tier"), "ring": "local" if d <= 150 else "regional"})
+    sigs.sort(key=lambda x: (x["ring"] != "local", -_parse_ts_safe(x.get("published_at"))))
+    fires = 0
+    try:
+        from database import FireDetection, get_db as _gdb_fd
+        since = datetime.utcnow() - timedelta(days=14)
+        with _gdb_fd() as db:
+            for f in db.query(FireDetection).filter(FireDetection.acquired_at >= since,
+                                                    FireDetection.lat.between(lat - 0.3, lat + 0.3),
+                                                    FireDetection.lon.between(lon - 0.3, lon + 0.3)).all():
+                if _km_between(lat, lon, f.lat, f.lon) <= 25:
+                    fires += 1
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[zone_context] fires: {type(e).__name__}: {e}", flush=True)
+    span_km = max(5.0, _km_between(b["min_lat"], b["min_lon"], b["max_lat"], b["max_lon"]))
+    with _AIS_LOCK:
+        vessels = sum(1 for v in _AIS_VESSELS.values()
+                      if v.get("lat") is not None and _km_between(lat, lon, v["lat"], v["lon"]) <= span_km)
+    local = [x for x in sigs if x["ring"] == "local"][:10]
+    regional = [x for x in sigs if x["ring"] == "regional"][:12]
+    return {"signals": local + regional, "local": len([x for x in sigs if x["ring"] == "local"]),
+            "regional": len([x for x in sigs if x["ring"] == "regional"]),
+            "fires": fires, "vessels_now": vessels, "lat": lat, "lon": lon}
+
+
+@app.get("/api/imagery/zones/{system_id}/context")
+def api_imagery_zone_context(system_id: str):
+    """What to look for in this area given where it is (zone_context.py)."""
+    import zone_context
+    z = _zone_by_system_id(system_id)
+    rec = zone_context.cached(system_id, fresh_only=True)
+    if rec is None:
+        sur = _zone_surroundings(z)
+        with _SURFACE_POOL_LOCK:
+            warming = not _SURFACE_POOL
+        # Just after a start the signal pool is still empty, and a profile
+        # written then would call a war zone quiet for twelve hours.
+        if warming:
+            return {"surroundings": sur, "pending": True}
+        zone_context.request(system_id, name=z["name"], aoi_class=z.get("aoi_class") or "custom",
+                             lat=sur["lat"], lon=sur["lon"], surroundings=sur)
+        stale = zone_context.cached(system_id)
+        return {**(stale or {"surroundings": sur}), "pending": True}
+    return {**rec, "pending": False}
+
+
+def _cache_read(name: str):
+    path = os.path.join(_IMAGERY_CACHE_DIR, name)
+    try:
+        with open(path + ".json", encoding="utf-8") as fh:
+            meta = _json.load(fh)
+        with open(path, "rb") as fh:
+            return meta, fh.read()
+    except OSError:
+        return None, None
+
+
+def _cache_write(name: str, meta: dict, data: bytes) -> None:
+    os.makedirs(_IMAGERY_CACHE_DIR, exist_ok=True)
+    path = os.path.join(_IMAGERY_CACHE_DIR, name)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    with open(path + ".json", "w", encoding="utf-8") as fh:
+        _json.dump(meta, fh)
+
+
+@app.get("/api/imagery/zones/{system_id}/hires")
+def api_imagery_zone_hires(system_id: str):
+    """The sharpest picture of the area there is: Esri World Imagery (Vantor/
+    Maxar and others, typically 0.3-0.6 m), exported over the area's exact
+    bounds at up to 4096 px, with the capture date and source from Esri's
+    own metadata. Not current — a reference for what is normally there."""
+    import base64 as _b64
+    import urllib.request as _ur
+    z = _zone_by_system_id(system_id)
+    b = z["bbox"]
+    key = f"{system_id}-esri-{b['min_lon']:.4f}-{b['min_lat']:.4f}-{b['max_lon']:.4f}-{b['max_lat']:.4f}.jpg"
+    meta, data = _cache_read(key)
+    if data is None or time.time() - (meta or {}).get("fetched", 0) > 30 * 86400:
+        import math as _m
+        w_m = (b["max_lon"] - b["min_lon"]) * 111_320 * _m.cos(_m.radians((b["min_lat"] + b["max_lat"]) / 2))
+        h_m = (b["max_lat"] - b["min_lat"]) * 110_574
+        k = 4096 / max(w_m, h_m)
+        wpx, hpx = max(64, round(w_m * k)), max(64, round(h_m * k))
+        bbox = f"{b['min_lon']},{b['min_lat']},{b['max_lon']},{b['max_lat']}"
+        base = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
+        try:
+            data = _ur.urlopen(f"{base}/export?bbox={bbox}&bboxSR=4326&imageSR=4326&size={wpx},{hpx}"
+                               f"&format=jpg&f=image", timeout=60).read()
+            cx, cy = (b["min_lon"] + b["max_lon"]) / 2, (b["min_lat"] + b["max_lat"]) / 2
+            ident = _json.loads(_ur.urlopen(
+                f"{base}/identify?geometry={cx},{cy}&geometryType=esriGeometryPoint&sr=4326&layers=all:0"
+                f"&tolerance=2&mapExtent={bbox}&imageDisplay={wpx},{hpx},96&returnGeometry=false&f=json",
+                timeout=30).read())
+            att = ((ident.get("results") or [{}])[0] or {}).get("attributes") or {}
+        except Exception as e:                               # noqa: BLE001
+            raise HTTPException(502, f"Esri imagery unavailable: {type(e).__name__}: {e}")
+        d = str(att.get("DATE (YYYYMMDD)") or "")
+        meta = {"fetched": time.time(), "width": wpx, "height": hpx,
+                "date": f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 and d.isdigit() else None,
+                "resolution_m": float(att["RESOLUTION (M)"]) if att.get("RESOLUTION (M)") not in (None, "Null") else None,
+                "shown_m_per_px": round(max(w_m, h_m) / 4096, 2),
+                "source": " · ".join(x for x in (att.get("SOURCE"), att.get("SOURCE_INFO")) if x and x != "Null") or "Esri World Imagery"}
+        _cache_write(key, meta, data)
+    return {**{k: v for k, v in meta.items() if k != "fetched"}, "kind": "hires",
+            "image_b64": _b64.b64encode(data).decode(), "mime": "image/jpeg",
+            "attribution": "Esri World Imagery"}
+
+
+@app.get("/api/imagery/zones/{system_id}/dates")
+async def api_imagery_zone_dates(system_id: str, days: int = Query(365, ge=7, le=1500), max_cloud: int = Query(30, ge=0, le=100)):
+    """Sentinel-2 acquisitions over the area in the last `days`, one per day,
+    with cloud cover — the dates that can be compared against."""
+    z = _zone_by_system_id(system_id)
+    b = z["bbox"]
+    end = datetime.now(timezone.utc)
+    rng = f"{(end - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')}/{end.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+    res = await _satellite_search_impl([b["min_lon"], b["min_lat"], b["max_lon"], b["max_lat"]],
+                                       max_cloud=max_cloud, date_range=rng)
+    by_day = {}
+    for it in res.get("items") or []:
+        d = str(it.get("datetime") or "")[:10]
+        if d and (d not in by_day or (it.get("cloud_cover") or 100) < (by_day[d].get("cloud") or 100)):
+            by_day[d] = {"date": d, "cloud": it.get("cloud_cover")}
+    return {"dates": sorted(by_day.values(), key=lambda x: x["date"], reverse=True), "error": res.get("error")}
+
+
+@app.get("/api/imagery/zones/{system_id}/on-date")
+async def api_imagery_zone_on_date(system_id: str, date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
+    """The area as Sentinel-2 saw it on one day, true colour at native
+    10 m/px over the area's exact bounds — to compare a pass against any
+    earlier date, not only the previous pass. Cached; the past does not change."""
+    import base64 as _b64
+    from sentinel_scanner import _native_px
+    z = _zone_by_system_id(system_id)
+    b = z["bbox"]
+    key = f"{system_id}-s2-{date}-{b['min_lon']:.4f}-{b['min_lat']:.4f}-{b['max_lon']:.4f}-{b['max_lat']:.4f}.png"
+    meta, data = _cache_read(key)
+    if data is None:
+        bounds = {"west": b["min_lon"], "south": b["min_lat"], "east": b["max_lon"], "north": b["max_lat"]}
+        w, h = _native_px(bounds)
+        r = await _fetch_sentinel_image_bytes(bounds, image_type="true-colour", date_str=date, width=w, height=h)
+        if r.get("error"):
+            raise HTTPException(502, f"Sentinel-2 image for {date} unavailable: {r['error']}")
+        data = r["image_bytes"]
+        meta = {"date": date, "width": w, "height": h, "shown_m_per_px": 10, "source": "Sentinel-2 L2A"}
+        _cache_write(key, meta, data)
+    return {**meta, "kind": "date", "image_b64": _b64.b64encode(data).decode(), "mime": "image/png",
+            "attribution": "Copernicus Sentinel-2"}
 
 
 @app.get("/api/imagery/scenes/{scan_id}/export.pdf")

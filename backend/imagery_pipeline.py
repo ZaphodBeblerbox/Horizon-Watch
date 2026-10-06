@@ -68,6 +68,43 @@ def bbox_percent(lat, lon, zone_bbox, box_km=0.12):
     return [round(x, 4), round(y, 4), round(min(w, 1.0), 4), round(min(h, 1.0), 4)]
 
 
+def polygon_percent(geo_geometry, zone_bbox):
+    """The detection's own outline, as [[x, y], ...] fractions of the frame
+    (x from the west edge, y from the north edge), or None. The frame is the
+    zone's bounding box, which is what the scene image covers."""
+    try:
+        g = json.loads(geo_geometry) if isinstance(geo_geometry, str) else geo_geometry
+        ring = (g or {}).get("coordinates", [[]])[0]
+    except (TypeError, ValueError, IndexError, AttributeError):
+        return None
+    min_lon, min_lat, max_lon, max_lat = zone_bbox
+    if not ring or max_lon <= min_lon or max_lat <= min_lat:
+        return None
+    if len(ring) > 1 and ring[0] == ring[-1]:
+        ring = ring[:-1]                      # GeoJSON closes the ring; the frame does not need to
+    pts = [[round((lon - min_lon) / (max_lon - min_lon), 5), round((max_lat - lat) / (max_lat - min_lat), 5)]
+           for lon, lat in ring]
+    return pts or None
+
+
+def _shape(d, zone_bbox):
+    """polygon + the bbox around it, falling back to the fixed box."""
+    poly = polygon_percent(d.geo_geometry, zone_bbox)
+    if poly:
+        xs, ys = [p[0] for p in poly], [p[1] for p in poly]
+        return poly, [round(min(xs), 4), round(min(ys), 4), round(max(xs) - min(xs), 4), round(max(ys) - min(ys), 4)]
+    return None, bbox_percent(d.centroid_lat, d.centroid_lon, zone_bbox)
+
+
+def _size(d):
+    try:
+        a = json.loads(d.attributes) if d.attributes else {}
+    except (TypeError, ValueError):
+        return None, None
+    return (a.get("estimated_length_m") or a.get("vessel_length_m"),
+            a.get("estimated_width_m") or a.get("vessel_width_m"))
+
+
 def reference_scan(db, zone_id: int, before_scan_id: str):
     """The zone's most recent OTHER real completed scan strictly before the
     given one, of the SAME real instrument — never pairs across zones,
@@ -81,14 +118,19 @@ def reference_scan(db, zone_id: int, before_scan_id: str):
     current = db.query(SentinelScan).filter(SentinelScan.scan_id == before_scan_id).first()
     if not current:
         return None
-    return (
-        db.query(SentinelScan)
-        .filter(SentinelScan.zone_id == zone_id, SentinelScan.status == "completed",
-                SentinelScan.created_at < current.created_at,
-                SentinelScan.instrument == (current.instrument or "OPTICAL"))
-        .order_by(SentinelScan.created_at.desc())
-        .first()
-    )
+    from sqlalchemy import or_
+    q = (db.query(SentinelScan)
+         .filter(SentinelScan.zone_id == zone_id, SentinelScan.status == "completed",
+                 SentinelScan.created_at < current.created_at,
+                 SentinelScan.instrument == (current.instrument or "OPTICAL")))
+    # The previous ACQUISITION: re-stored copies of this same pass are not a
+    # baseline, they are this image again.
+    if current.image_id:
+        q = q.filter(or_(SentinelScan.image_id.is_(None), SentinelScan.image_id != current.image_id))
+    if current.image_timestamp_utc:
+        q = q.filter(or_(SentinelScan.image_timestamp_utc.is_(None),
+                         SentinelScan.image_timestamp_utc < current.image_timestamp_utc))
+    return q.order_by(SentinelScan.created_at.desc()).first()
 
 
 def _real_detections(db, scan_id, exclude_rejected=True):
@@ -142,9 +184,12 @@ def compare_scans(db, zone, current_scan):
             change_type = "existing"
         elif ref is None:
             change_type = "new"  # honest: no reference exists, so everything is "new" to this view
+        poly, box = _shape(d, zone_bbox)
+        length_m, width_m = _size(d)
         changes.append({
             "id": d.detection_id, "label": d.object_type, "type": change_type,
-            "conf": round(d.confidence, 3), "bbox": bbox_percent(d.centroid_lat, d.centroid_lon, zone_bbox),
+            "conf": round(d.confidence, 3), "bbox": box, "polygon": poly,
+            "length_m": length_m, "width_m": width_m, "geo_geometry": d.geo_geometry,
             "note": "", "severity": d.severity, "reviewed_status": d.reviewed_status,
             "lat": d.centroid_lat, "lon": d.centroid_lon,
             "interpretation": _detection_interpretation(d),
@@ -152,9 +197,10 @@ def compare_scans(db, zone, current_scan):
         })
     for r in ref_dets:
         if id(r) not in matched_ref_ids:
+            poly, box = _shape(r, zone_bbox)
             changes.append({
                 "id": f"removed-{r.detection_id}", "label": r.object_type, "type": "removed",
-                "conf": round(r.confidence, 3), "bbox": bbox_percent(r.centroid_lat, r.centroid_lon, zone_bbox),
+                "conf": round(r.confidence, 3), "bbox": box, "polygon": poly, "geo_geometry": r.geo_geometry,
                 "note": "no longer detected vs. the reference scene", "severity": r.severity,
                 "reviewed_status": "pending", "lat": r.centroid_lat, "lon": r.centroid_lon,
                 "instrument": r.instrument or "OPTICAL",

@@ -191,9 +191,9 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
             // small inside a much larger pane, which is the opposite of
             // what a 10 m/px fetch is for.
             ? { position: "relative", width: "100%", height: "100%",
-                minHeight: 0, overflow: "hidden", background: "var(--bg-0)" }
+                minHeight: 0, overflow: "hidden", background: "transparent" }
             : { position: "relative", width: "100%", minHeight,
-                overflow: "hidden", background: "var(--bg-0)" }}>
+                overflow: "hidden", background: "transparent" }}>
             <div
                 ref={frameRef}
                 onPointerDown={onPointerDown}

@@ -72,6 +72,9 @@ backend/data/akili.db.vacuumed
 backend/data/akili.db.prepruned*
 backend/data/enrichment_cache.json
 backend/data/gdelt_judgements.json
+backend/data/scene_notes.json
+backend/data/zone_context.json
+backend/data/imagery_cache/
 
 # Files people attached in chat, and the OSM pipeline cache. The first is
 # user data and the second is regenerated from the source on demand.

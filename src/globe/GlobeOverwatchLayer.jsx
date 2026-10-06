@@ -5,7 +5,7 @@ import { useCesium } from "resium"
 import {
     Cartesian2, Cartesian3, Rectangle, Color, PolygonHierarchy,
     SingleTileImageryProvider, ColorMaterialProperty,
-    ClassificationType, LabelStyle, DistanceDisplayCondition,
+    ClassificationType, LabelStyle, DistanceDisplayCondition, SplitDirection,
 } from "cesium"
 import { detectionCorners } from "./detectionShape.js"
 
@@ -25,8 +25,12 @@ const CATEGORY_COLORS = {
     default:         "#FFCC00",
 }
 
+// A scene compared against its previous pass colours by what changed —
+// the same key as the Imagery page.
+const CHANGE_COLORS = { new: "#FFB300", removed: "#FF3B30", existing: "#00E5FF" }
+
 function colorForDet(det) {
-    return CATEGORY_COLORS[det.category] || CATEGORY_COLORS.default
+    return CHANGE_COLORS[det.type] || CATEGORY_COLORS[det.category] || CATEGORY_COLORS.default
 }
 
 export default function GlobeOverwatchLayer({ enabled, detections = [], sentinelOverlay = null }) {
@@ -67,7 +71,7 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
             }).then(provider => {
                 if (cancelled || viewer.isDestroyed()) return
                 const layer = viewer.imageryLayers.addImageryProvider(provider)
-                layer.alpha = 1.0
+                layer.alpha = sentinelOverlay.alpha ?? 1.0
                 sentinelLayerRef.current = layer
                 console.log("[overwatch] Sentinel overlay rendered")
             }).catch(e => {
@@ -88,7 +92,53 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                 sentinelUrlRef.current = null
             }
         }
-    }, [viewer, sentinelOverlay])
+    }, [viewer, sentinelOverlay?.image_b64, sentinelOverlay?.bounds]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Opacity changes without re-decoding the image.
+    useEffect(() => {
+        if (sentinelLayerRef.current) sentinelLayerRef.current.alpha = sentinelOverlay?.alpha ?? 1.0
+    }, [sentinelOverlay?.alpha])
+
+    // ── Swipe on the map: a second image right of the split, this one left ──
+    const compareLayerRef = useRef(null)
+    useEffect(() => {
+        if (!viewer || viewer.isDestroyed()) return undefined
+        const b64 = sentinelOverlay?.compare_b64, bounds = sentinelOverlay?.bounds
+        if (!b64 || !bounds) return undefined
+        let cancelled = false, url = null
+        try {
+            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+            url = URL.createObjectURL(new Blob([bytes]))
+            SingleTileImageryProvider.fromUrl(url, {
+                rectangle: Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north),
+            }).then((provider) => {
+                if (cancelled || viewer.isDestroyed()) return
+                const layer = viewer.imageryLayers.addImageryProvider(provider)
+                layer.splitDirection = SplitDirection.RIGHT
+                compareLayerRef.current = layer
+                // Under the scene's own layer, so the split shows one or the other.
+                if (sentinelLayerRef.current) viewer.imageryLayers.raiseToTop(sentinelLayerRef.current)
+            }).catch(() => {})
+        } catch (_) { /* undecodable — no swipe */ }
+        return () => {
+            cancelled = true
+            if (compareLayerRef.current && !viewer.isDestroyed()) {
+                try { viewer.imageryLayers.remove(compareLayerRef.current, true) } catch (_) {}
+            }
+            compareLayerRef.current = null
+            if (url) URL.revokeObjectURL(url)
+        }
+    }, [viewer, sentinelOverlay?.compare_b64, sentinelOverlay?.bounds]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        if (!viewer || viewer.isDestroyed()) return
+        const split = sentinelOverlay?.compare_b64 ? sentinelOverlay?.split : null
+        if (sentinelLayerRef.current) {
+            sentinelLayerRef.current.splitDirection = split == null ? SplitDirection.NONE : SplitDirection.LEFT
+        }
+        viewer.scene.splitPosition = split == null ? 0.5 : split
+        viewer.scene.requestRender?.()
+    })
 
     // ── Detection entities ────────────────────────────────────────────────────
     useEffect(() => {
@@ -136,7 +186,7 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                     material: new ColorMaterialProperty(color.withAlpha(0.28)),
                     outline: true,
                     outlineColor: color.withAlpha(0.95),
-                    outlineWidth: 2,
+                    outlineWidth: 3,
                     height: 0,
                 },
             }))
@@ -162,7 +212,8 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                     // Hide when the camera is far out, or a busy scene turns
                     // into a wall of overlapping text.
-                    distanceDisplayCondition: new DistanceDisplayCondition(0, 2.0e6),
+                    // Only close in: over a port, thirty tags at once are noise.
+                    distanceDisplayCondition: new DistanceDisplayCondition(0, 6000),
                 },
             }))
 
@@ -174,7 +225,7 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                 id: `ow-box-outline-${Math.random()}`,
                 polyline: {
                     positions: ring,
-                    width: 2,
+                    width: 3,
                     material: new ColorMaterialProperty(color.withAlpha(0.95)),
                     clampToGround: true,
                     classificationType: ClassificationType.TERRAIN,

@@ -1587,6 +1587,14 @@ export default function App() {
         return () => window.removeEventListener("akili:navigate", h)
     }, [openTab])
 
+    // "Open this scene" from Inbox or a briefing: go to Imagery and leave
+    // the target where the page picks it up, mounted or not.
+    useEffect(() => {
+        const h = (e) => { window.__plxImageryTarget = e.detail || null; openTab("imagery") }
+        window.addEventListener("akili:imagery-open-scene", h)
+        return () => window.removeEventListener("akili:imagery-open-scene", h)
+    }, [openTab])
+
     // Reverse direction — real deep links from non-map destinations (e.g.
     // NewsPage's "jump to location", Watchlists' entity chips) need the map
     // tab open before the akili:fly-to / akili:show-entity events they fire

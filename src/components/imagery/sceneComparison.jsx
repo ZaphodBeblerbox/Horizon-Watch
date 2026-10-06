@@ -17,6 +17,7 @@
 // real, selectable, persisted choices (an analyst's stated intent is never
 // silently dropped), but a real scan attempt against one of them is
 // honestly rejected server-side.
+import { DET_COLORS } from "../../destinations/imageryModel.js"
 import { useRef, useState } from "react"
 import ZoomPanViewer, { DetectionArrow, useViewerScale, useViewerView } from "./ZoomPanViewer.jsx"
 import { IDENTITY } from "./viewportMath.js"
@@ -144,8 +145,7 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
         w: scale * b[2] * imgW,
         h: scale * b[3] * imgH,
     })
-    const strokeFor = (c) => (c.type === "new" ? "var(--sev-high)"
-        : c.type === "removed" ? "var(--sev-critical)" : "var(--acc-hi)")
+    const strokeFor = (c) => DET_COLORS[c.type] || DET_COLORS.existing
 
     // A caption earns its place by on-screen size; on a dense scene every
     // box carrying one is an unreadable mass over the imagery.
@@ -160,20 +160,36 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
                 if (r.x + r.w < 0 || r.y + r.h < 0 || r.x > frameW || r.y > frameH) return null
                 const isSel = selectedDet?.id === c.id
                 const w = Math.max(r.w, 3), h = Math.max(r.h, 3)
+                const name = `${String(c.label || "").replace(/_/g, " ")} · ${Math.round(c.conf * 100)}%`
+                const shape = {
+                    fill: isSel ? "rgba(0,229,255,0.18)" : "transparent",
+                    stroke: c.doubtful ? "#B8BCC6" : strokeFor(c), strokeWidth: isSel ? 2.6 : 2,
+                    strokeDasharray: c.type === "removed" || c.doubtful ? "4 3" : undefined,
+                    style: { pointerEvents: "auto", cursor: "pointer" },
+                    onClick: (e) => { e.stopPropagation(); onSelectDet && onSelectDet(c) },
+                }
+                // The detector's own outline — the rotated hull of the ship,
+                // the tank's footprint — when it has one; the box otherwise.
+                // Too small to see as a polygon, it is drawn as the box so
+                // it can still be found and clicked.
+                const poly = Array.isArray(c.polygon) && c.polygon.length >= 3 && (r.w >= 4 || r.h >= 4)
+                    ? c.polygon.map(([x, y]) => toScreen([x, y, 0, 0])).map((p) => `${p.x},${p.y}`).join(" ")
+                    : null
                 return (
                     <g key={c.id}>
-                        <rect x={r.x} y={r.y} width={w} height={h}
-                            fill={isSel ? "rgba(95,149,208,0.12)" : "transparent"}
-                            stroke={strokeFor(c)} strokeWidth={isSel ? 2 : 1.2}
-                            strokeDasharray={c.type === "removed" ? "4 3" : undefined}
-                            style={{ pointerEvents: "auto", cursor: "pointer" }}
-                            onClick={(e) => { e.stopPropagation(); onSelectDet && onSelectDet(c) }}>
-                            <title>{`${c.label} · ${Math.round(c.conf * 100)}%`}</title>
-                        </rect>
+                        {/* A dark halo under the colour, so the outline reads on
+                            bright desert and dark water alike. */}
+                        {poly
+                            ? <polygon points={poly} fill="none" stroke="rgba(0,0,0,0.75)" strokeWidth={shape.strokeWidth + 2.4} style={{ pointerEvents: "none" }} />
+                            : <rect x={r.x} y={r.y} width={w} height={h} fill="none" stroke="rgba(0,0,0,0.75)" strokeWidth={shape.strokeWidth + 2.4} style={{ pointerEvents: "none" }} />}
+                        {poly
+                            ? <polygon points={poly} {...shape}><title>{name}</title></polygon>
+                            : <rect x={r.x} y={r.y} width={w} height={h} {...shape}><title>{name}</title></rect>}
                         {isSel || w >= LABEL_MIN_PX ? (
                             <text x={r.x} y={r.y - 3}
-                                style={{ font: "400 9px var(--mono)", fill: "var(--txt)" }}>
-                                {`${c.id.slice(0, 8)} · ${Math.round(c.conf * 100)}%`}
+                                style={{ font: "400 9.5px var(--mono)", fill: "var(--txt)", paintOrder: "stroke",
+                                         stroke: "var(--bg-0, #000)", strokeWidth: 3 }}>
+                                {name}
                             </text>
                         ) : null}
                     </g>
@@ -243,7 +259,7 @@ function SplitPane({ title, src, view, onViewChange, overlay = null }) {
  */
 function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
                         changes, selectedDet, onSelectDet, arrowFor, arrowLabel,
-                        refDate, curDate }) {
+                        refDate, curDate, handle = true }) {
     const { scale, tx, ty, frameW, frameH } = useViewerView()
     const rootRef = useRef(null)
     if (!frameW || !frameH) return null
@@ -294,7 +310,7 @@ function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
 
             {/* A handle, not a hairline. The old 2px divider had nothing to
                 grab and no indication it could be dragged. */}
-            <div
+            {handle && <div
                 onPointerDown={beginDrag}
                 style={{ position: "absolute", top: 0, bottom: 0, left: x - 10, width: 20,
                          cursor: "ew-resize", pointerEvents: "auto",
@@ -308,7 +324,7 @@ function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
                               font: "400 9px var(--mono)", color: "var(--acc-hi)" }}>
                     ↔
                 </div>
-            </div>
+            </div>}
 
             {/* Which side is which. A wipe with unlabelled halves makes the
                 reader guess which date they are looking at. */}
@@ -322,7 +338,7 @@ function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
     )
 }
 
-export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, onSwipePos, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true }) {
+export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onSwipeDrag, onSwipePos, fadeOn, fadeOpacity, clipRef, fadeRef, onSelectDet, selectedDet, fullscreen = false, viewerRef = null, showArrow = true, swipeHandle = true, refLabel = null }) {
     // One view for both split panes. Held here rather than in either pane,
     // because the point of a split is that the two sides cannot disagree
     // about where they are looking.
@@ -512,8 +528,9 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
                         onSelectDet={onSelectDet}
                         arrowFor={showArrow ? sel : null}
                         arrowLabel={selectedDet?.label}
-                        refDate={fmtDate(scene.reference_date)}
+                        refDate={refLabel || fmtDate(scene.reference_date)}
                         curDate={fmtDate(scene.scan.image_timestamp_utc)}
+                        handle={swipeHandle}
                     />
                 }
             />
@@ -531,7 +548,7 @@ export function SceneComparison({ scene, view, showBoxes, changes, swipePos, onS
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6,
                       width: "100%", height: "100%", minHeight: 0 }}>
             <SplitPane
-                title={`Reference · ${fmtDate(scene.reference_date)}`}
+                title={refLabel || `Reference · ${fmtDate(scene.reference_date)}`}
                 src={refSrc}
                 view={splitView}
                 onViewChange={setSplitView}
