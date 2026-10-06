@@ -17,7 +17,6 @@ import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 import VesselHistorySection from "./VesselHistorySection.jsx"
 import TelegramMedia from "./TelegramMedia.jsx"
-import LocateButton from "../locate/LocateButton.jsx"
 import TradeRouteSection from "./TradeRouteSection.jsx"
 import { AroundSection, CableSection } from "./InfrastructureContext.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
@@ -770,7 +769,7 @@ export default function InspectorPanel({
                 {/* A Telegram post's picture or video, in our own frame:
                     autoplaying, paused by a click (TelegramMedia.jsx). */}
                 {entityType === "telegram" && (data?.thumb_url || data?.media === "video") && (
-                    <div style={{ marginBottom: "var(--space-4)" }}><TelegramMedia post={data} /><LocateButton post={data} /></div>
+                    <div style={{ marginBottom: "var(--space-4)" }}><TelegramMedia post={data} /></div>
                 )}
                 {media?.photoUrl && entityType !== "telegram" && (
                     <div style={{ marginBottom: "var(--space-4)" }}>

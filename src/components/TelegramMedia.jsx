@@ -10,7 +10,6 @@
  */
 import { useEffect, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
-import { captureFrame } from "../locate/frames.js"
 
 const abs = (u) => (!u ? null : u.startsWith("http") ? u : `${API_BASE}${u}`)
 
@@ -32,7 +31,7 @@ export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(
     if (src && !failed) {
         return (
             <div style={{ position: "relative", background: "#000", borderRadius: radius, overflow: "hidden" }}>
-                <video ref={v} key={src} src={src} poster={still || undefined} crossOrigin="use-credentials"
+                <video ref={v} key={src} src={src} poster={still || undefined}
                        autoPlay muted={muted} loop playsInline preload="auto"
                        onError={() => setFailed(true)}
                        onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
@@ -41,23 +40,6 @@ export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(
                 {paused && (
                     <span aria-hidden style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none",
                                                color: "#fff", fontSize: 34, textShadow: "0 1px 6px rgba(0,0,0,.6)" }}>▶</span>
-                )}
-                {/* LOCATE THIS FRAME: pause where the place shows best, and
-                    the Locate workbench opens on exactly that screenshot. */}
-                {post?.channel && !String(post.channel).startsWith("c/") && (
-                    <button onClick={(e) => {
-                                e.stopPropagation()
-                                const el = v.current
-                                if (!el) return
-                                el.pause()
-                                const frame = captureFrame(el)
-                                window.dispatchEvent(new CustomEvent("akili:locate", { detail: { post, frame, frameAt: el.currentTime } }))
-                            }}
-                            title="Pause where the place shows best, then locate from this exact frame"
-                            style={{ position: "absolute", left: 8, bottom: 8, border: 0, borderRadius: 4, padding: "3px 8px",
-                                     background: paused ? "rgba(0,0,0,.75)" : "rgba(0,0,0,.55)", color: "#fff", font: "500 11px var(--font)", cursor: "pointer" }}>
-                        ⌖ Locate this frame
-                    </button>
                 )}
                 <button onClick={(e) => { e.stopPropagation(); setMuted((m) => !m) }}
                         title={muted ? "Sound on" : "Sound off"} aria-label={muted ? "Sound on" : "Sound off"}

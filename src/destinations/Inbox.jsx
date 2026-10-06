@@ -23,7 +23,6 @@ import { buildWatchQueueRows } from "./dashboardLogic.js"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import Minimap from "../components/Minimap.jsx"
 import TelegramMedia from "../components/TelegramMedia.jsx"
-import LocateButton from "../locate/LocateButton.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import {
@@ -371,7 +370,7 @@ export default function Inbox() {
 
                             {/* A Telegram report leads with its footage. */}
                             {selected.row?.raw?.source_type === "telegram" && (selected.row.raw.thumb_url || selected.row.raw.media === "video") && (
-                                <div style={{ marginBottom: 18, maxWidth: 900 }}><TelegramMedia post={selected.row.raw} maxHeight="56vh" /><LocateButton post={selected.row.raw} /></div>
+                                <div style={{ marginBottom: 18, maxWidth: 900 }}><TelegramMedia post={selected.row.raw} maxHeight="56vh" /></div>
                             )}
 
                             {/* The locator, before the body — "where in the
