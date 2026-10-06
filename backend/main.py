@@ -11703,6 +11703,30 @@ def get_aircraft_history(
     }
 
 
+@app.get("/api/insight/escalation")
+async def api_insight_escalation(limit: int = Query(12, ge=1, le=60)):
+    """Countries whose share of the world's violent events rose against their
+    own 28-day normal (escalation.py, GDELT daily files)."""
+    import escalation as _esc
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _esc.escalations, limit)
+
+
+async def _escalation_loop():
+    """Fetch any missing GDELT day every six hours (yesterday's file appears
+    in the morning UTC); the first pass backfills the baseline."""
+    import escalation as _esc
+    await asyncio.sleep(120)
+    while True:
+        try:
+            got = await asyncio.get_event_loop().run_in_executor(_executor, _esc.backfill, 35)
+            if got:
+                print(f"[escalation] fetched {got} day(s)", flush=True)
+        except Exception as e:
+            _loop_error("escalation", e)
+        await asyncio.sleep(6 * 3600)
+
+
 @app.get("/api/telegram/posts")
 async def api_telegram_posts(hours: int = Query(72, ge=1, le=720)):
     """Telegram posts that passed relevance and precise geolocation
@@ -15330,6 +15354,7 @@ async def _outlook_refresh_loop():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(_telegram_loop())
+    asyncio.create_task(_escalation_loop())
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
     # The day's outlook — concrete, cited, resolvable forecasts for the Home

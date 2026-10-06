@@ -26,6 +26,7 @@ import Loading from "../ui/Loading.jsx"
 import { splitByTheater, boardCountry } from "../data/theaterScope.js"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import RiskRanking from "./RiskRanking.jsx"
+import WhatsNext from "../insight/WhatsNext.jsx"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 const ON = "var(--accdim)"
@@ -357,6 +358,7 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
 
         return (
             <>
+                <WhatsNext onOpenModule={onOpenModule} />
                 {/* WHICH BOARDS THIS THEATER IS ABOUT.
                     The in-scope row comes first and is the default; the rest
                     stay reachable, because a theater is where you are

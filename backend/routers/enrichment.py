@@ -378,7 +378,22 @@ def refresh_outlook(limit: int = 45) -> dict:
         import main as _main
         import outlook as _outlook
         with _main._SURFACE_POOL_LOCK:
-            pool = list(_main._SURFACE_POOL)[:max(5, min(60, limit))]
+            pool = list(_main._SURFACE_POOL)
+        # Security signals only (the relevance judgement), and Telegram's
+        # located front-line reports with them: an outlook built on a
+        # plane crash or an execution date is the noise the owner rejected.
+        try:
+            rel = relevance_of(pool)
+            pool = [it for i, it in enumerate(pool) if rel.get(i) != "general"]
+        except Exception:
+            pass
+        try:
+            import telegram_ingest as _tg
+            if _tg.logged_in():
+                pool = pool + _tg.as_surface_items(24)
+        except Exception:
+            pass
+        pool = pool[:max(5, min(60, limit))]
 
         # AN EMPTY POOL IS NOT A QUIET DAY. Right after a restart the pool
         # has not filled yet, and caching "nothing specific today" from zero

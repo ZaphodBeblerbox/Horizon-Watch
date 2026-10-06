@@ -686,6 +686,15 @@ export default function App() {
        stayed until the next reload. Anything done to those tabs — editing,
        favouriting, filing — acted on rows that do not exist. */
     useEffect(() => subscribeAuth(() => { if (getCurrentUser()) refreshTheaters() }), [refreshTheaters])
+    // A theater made from Insight (insight/respond.js): load it and switch to it.
+    useEffect(() => {
+        const on = async (e) => {
+            const id = e?.detail?.id
+            await refreshTheaters(id)
+        }
+        window.addEventListener("akili:theater-created", on)
+        return () => window.removeEventListener("akili:theater-created", on)
+    }, [refreshTheaters])
     useEffect(() => {
         const open = () => openOverlay("overlay:settings")
         window.addEventListener("akili:open-settings", open)

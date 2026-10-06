@@ -76,7 +76,9 @@ SYSTEM = (
     '"resolves_by": <ISO date within the next 14 days>, "criterion": <how '
     'anybody would later decide this happened or did not: a specific, '
     'observable, checkable event>, "probability": <integer 5-95>, '
-    '"citations": [<headlines, quoted EXACTLY as given>]}]}\n\n'
+    '"citations": [<headlines, quoted EXACTLY as given>], "watch_for": '
+    '[<1-3 specific, observable indicators that this is coming true: a named '
+    'force moving, a named place hit, a named route closing>]}]}\n\n'
     "RULES.\n"
     "- NAME THINGS. 'RSF may attempt to retake Babanusa' is a forecast. "
     "'Escalation in non-state conflict' is a category and is useless.\n"
@@ -251,6 +253,11 @@ def validate(raw: list, signals: list[dict]) -> dict:
             "resolves_by": _clean_date(o.get("resolves_by")),
             "probability": _clean_probability(o.get("probability")),
             "citations": cites[:4],
+            "watch_for": [str(w).strip()[:160] for w in (o.get("watch_for") or []) if str(w).strip()][:3],
+            # Where it is: the first citation that has a position, so the
+            # console can offer a watch zone or a theater on the spot.
+            "lat": next((c.get("lat") for c in cites if c.get("lat") is not None), None),
+            "lon": next((c.get("lon") for c in cites if c.get("lon") is not None), None),
         })
     return {
         "outlook": kept[:MAX_STATEMENTS],
