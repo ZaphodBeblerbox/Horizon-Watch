@@ -1051,6 +1051,7 @@ export default function App() {
                 // it rather than guessing at one.
                 sub: [i.reason, i.region].filter(Boolean).join(" · "),
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
+                actions: i.actions || null, alertId: i.id,
                 // WHEN IT HAPPENED, in the order the fields mean it.
                 // created_at is when the ROW was written, which for a
                 // backfilled or late-ingested event is now — and an event

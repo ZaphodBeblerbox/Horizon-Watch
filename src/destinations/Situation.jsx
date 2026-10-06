@@ -401,7 +401,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(
         // News and alerts on: an alert or a fusion the map does not show is
         // one nobody sees — the Alerts group was off unless switched on.
-        LAYER_GROUPS.map((g) => [g.key, g.key === "news" || g.key === "alerts"])))
+        // Imagery on too: it no longer means "cover the map in satellite
+        // imagery" — that is its own switch (satImageOn), off by default.
+        LAYER_GROUPS.map((g) => [g.key, g.key === "news" || g.key === "alerts" || g.key === "imagery"])))
     // Default OFF. Machine-coded pins are opt-in: the reader should choose
     // to accept them, not discover them mixed in with verified events.
     // CONFIRMED AND UNCONFIRMED ARE SEPARATE SWITCHES because they are
@@ -420,6 +422,11 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // what decides where imagery gets tasked, so hiding it by default
     // conceals the system's own reasoning.
     const [firesOn, setFiresOn] = useState(false)
+    // The Imagery group's three switches, independent of each other: the
+    // signals a pass raised, the heat detections, and the full satellite
+    // base image — which used to come on with the group and hide the map.
+    const [imagerySignalsOn, setImagerySignalsOn] = useState(true)
+    const [satImageOn, setSatImageOn] = useState(false)
     // Default off: it is a specialist reading, and a globe that
     // opens with every layer lit is not a map of anything.
     const [gpsInterferenceOn, setGpsInterferenceOn] = useState(false)
@@ -1211,13 +1218,23 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     {LAYER_GROUPS.map((g) => (
                         <Fragment key={g.key}>
                             <DomainRow group={g} count={domainCounts[g.key]} on={groupsOn[g.key]} onToggle={() => setGroupsOn((p) => ({ ...p, [g.key]: !p[g.key] }))} />
-                            {g.key === "imagery" && (
+                            {g.key === "imagery" && (<>
                                 <SubLayerRow
-                                    label="Thermal Anomalies"
-                                    hint="The feed that tasks imagery. A gas flare, burning stubble and a strike look identical to the instrument."
+                                    label="Imagery signals"
+                                    hint="Passes over your watched areas that counted: a new smoke plume, tankers massing, a vessel leaving a naval base, a structure gone. Opening one shows the image."
+                                    on={imagerySignalsOn} parentOn={groupsOn.imagery}
+                                    onToggle={() => setImagerySignalsOn((v) => !v)} />
+                                <SubLayerRow
+                                    label="Heat (thermal anomalies)"
+                                    hint="NASA FIRMS fire detections. A gas flare, burning stubble and a strike look identical to the instrument."
                                     on={firesOn} parentOn={groupsOn.imagery}
                                     onToggle={() => setFiresOn((v) => !v)} />
-                            )}
+                                <SubLayerRow
+                                    label="Satellite base image"
+                                    hint="The latest Sentinel-2 picture under everything else. Heavy, and hides the map's own detail — off unless you want it."
+                                    on={satImageOn} parentOn={groupsOn.imagery}
+                                    onToggle={() => setSatImageOn((v) => !v)} />
+                            </>)}
                             {g.key === "air" && (
                                 <SubLayerRow
                                     label="Nav Interference"
@@ -1830,7 +1847,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                 })
                             : []}
                         gpsInterferenceEnabled={groupsOnV.air && (!asCanvas && gpsInterferenceOn)}
-                        satelliteEnabled={groupsOnV.imagery} infraEnabled={infraOnV.power}
+                        satelliteEnabled={groupsOnV.imagery && satImageOn} infraEnabled={infraOnV.power}
+                        imagerySignalsEnabled={groupsOnV.imagery && imagerySignalsOn}
                         nauticalEnabled={infraOnV.nautical}
                         eezEnabled={groupsOnV.zones}
                         /* Context layers — separate from event domains, per build spec v2 §4.2 */

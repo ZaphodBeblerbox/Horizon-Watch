@@ -21,6 +21,36 @@ function zulu(ts) {
     return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}Z`
 }
 
+/** Fly there and open the alert — for an imagery signal, its image. */
+function investigate(n) {
+    window.dispatchEvent(new CustomEvent("akili:open-map"))
+    if (n.ref) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: n.ref.lat, lon: n.ref.lon, altitude: 20_000 } }))
+    window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
+        entityType: "alert", entityId: n.alertId || n.id,
+        data: { alert_id: n.alertId || n.id, id: n.alertId || n.id, source: n.actions?.includes("image") ? "SAT-TASK" : "FIRMS",
+                title: n.title, lat: n.ref?.lat, lon: n.ref?.lon },
+    } }))
+}
+
+/** Task a satellite pass: a 6 km area around the heat, first pass now. */
+async function scanHere(n) {
+    const { squareAround } = await import("../insight/respond.js")
+    const { toast } = await import("../ui/toast.js")
+    const API_BASE = (await import("../apiBase.js")).default
+    const name = (n.title || "Heat").replace(/^New heat (at|[\d.]+ km from) /, "").replace(/\s*\(.*$/, "").slice(0, 60)
+    try {
+        const r = await fetch(`${API_BASE}/api/watch-zones`, {
+            method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: `Heat · ${name}`, polygon_geojson: squareAround(n.ref.lat, n.ref.lon, 3),
+                                   scan_interval_hours: 24, priority: "high", alert_threshold: "medium" }),
+        })
+        const z = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(z.detail || `HTTP ${r.status}`)
+        toast(`Scanning ${name} — the first optical and radar pass is on its way`, { icon: "i-check" })
+        window.dispatchEvent(new CustomEvent("akili:imagery-open-scene", { detail: { systemId: z.system_id } }))
+    } catch (e) { toast(`Could not task a pass — ${e.message}`, { icon: "i-alert" }) }
+}
+
 function Card({ n, onOpen, onAcknowledge, onBasket }) {
     const [shown, setShown] = useState(false)
     useEffect(() => {
@@ -47,7 +77,16 @@ function Card({ n, onOpen, onAcknowledge, onBasket }) {
                 <b>{n.title}</b>
                 {n.sub && <span className="s">{n.sub}</span>}
                 <div className="nc-acts">
-                    {n.ref && onOpen && (
+                    {n.actions?.includes("investigate") && n.ref && (
+                        <button className="btn sm primary" onClick={() => { investigate(n); dismissCard(n.id) }}>Investigate</button>
+                    )}
+                    {n.actions?.includes("scan") && n.ref && (
+                        <button className="btn sm" onClick={() => { scanHere(n); dismissCard(n.id) }}>Scan</button>
+                    )}
+                    {n.actions?.includes("image") && (
+                        <button className="btn sm primary" onClick={() => { investigate(n); dismissCard(n.id) }}>Show the image</button>
+                    )}
+                    {!n.actions && n.ref && onOpen && (
                         <button className="btn sm primary" onClick={() => { onOpen(n); dismissCard(n.id) }}>open</button>
                     )}
                     {onAcknowledge && (

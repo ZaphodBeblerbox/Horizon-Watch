@@ -11790,6 +11790,113 @@ async def api_insight_escalation(limit: int = Query(12, ge=1, le=60)):
     return await loop.run_in_executor(_executor, _esc.escalations, limit)
 
 
+async def _heat_watch_loop():
+    """New heat in the theaters, near what matters, as a question
+    (heat_watch.py). Every 30 minutes."""
+    await asyncio.sleep(90)
+    while True:
+        try:
+            n = await asyncio.get_event_loop().run_in_executor(_executor, _heat_watch_pass)
+            if n:
+                print(f"[heat] {n} new heat alert(s)", flush=True)
+        except Exception as e:
+            _loop_error("heat watch", e)
+        await asyncio.sleep(1800)
+
+
+def _heat_watch_pass() -> int:
+    import firms as _firms
+    import heat_watch as hw
+    import hashlib as _hl
+    if not _firms.available():
+        return 0
+    from database import FireDetection, WatchZone, Airport, OntologyEntity, Alert, get_db as _gdb_hw
+    now = datetime.utcnow()
+    with _gdb_hw() as db:
+        from sqlalchemy import text as _text_hw
+        views = [t[0] for t in db.execute(_text_hw("select distinct view from theaters")).fetchall()]
+    regions = []
+    for v in views:
+        try:
+            r = hw.region_for(_json.loads(v) if isinstance(v, str) else v)
+        except ValueError:
+            r = None
+        if r and r not in regions:
+            regions.append(r)
+    made = 0
+    for (w, s, e, n) in regions:
+        res = _firms.fetch_area((w, s, e, n), days=3)
+        if res.get("status") != "ok":
+            continue
+        fires = []
+        for f in res.get("fires") or []:
+            t = _firms.fire_time(f)
+            fires.append({**f, "when": t.replace(tzinfo=None) if t else None})
+        recent = [f for f in fires if f["when"] and (now - f["when"]).total_seconds() <= hw.RECENT_HOURS * 3600]
+        if not recent:
+            continue
+        with _gdb_hw() as db:
+            before = [(f["lat"], f["lon"]) for f in fires if f not in recent]
+            before += [(r.lat, r.lon) for r in db.query(FireDetection.lat, FireDetection.lon).filter(
+                FireDetection.acquired_at >= now - timedelta(days=3),
+                FireDetection.acquired_at < now - timedelta(hours=hw.RECENT_HOURS),
+                FireDetection.lat.between(s, n), FireDetection.lon.between(w, e)).all()]
+            places = []
+            for z in db.query(WatchZone).filter(WatchZone.enabled == True).all():  # noqa: E712
+                if z.bbox_min_lat is not None:
+                    places.append({"name": z.name, "kind": "watched", "system_id": z.system_id,
+                                   "lat": (z.bbox_min_lat + z.bbox_max_lat) / 2, "lon": (z.bbox_min_lon + z.bbox_max_lon) / 2,
+                                   "radius_km": hw.NEAR_KM + hw.km(z.bbox_min_lat, z.bbox_min_lon, z.bbox_max_lat, z.bbox_max_lon) / 2})
+            for a in db.query(Airport).filter(Airport.airport_type.in_(("large_airport", "medium_airport")),
+                                              Airport.latitude.between(s, n), Airport.longitude.between(w, e)).all():
+                places.append({"name": a.airport_name, "kind": "airport", "lat": a.latitude, "lon": a.longitude})
+            for o in db.query(OntologyEntity).filter(OntologyEntity.entity_type == "Military Facility").all():
+                try:
+                    md = _json.loads(o.entity_metadata or "{}")
+                    if s <= float(md["lat"]) <= n and w <= float(md["lon"]) <= e:
+                        places.append({"name": o.name, "kind": "military", "lat": float(md["lat"]), "lon": float(md["lon"])})
+                except (KeyError, TypeError, ValueError):
+                    continue
+            # Remember every recent detection, so the next pass knows it.
+            for f in recent:
+                fid = _hl.md5(f"{f['lat']:.5f}|{f['lon']:.5f}|{f.get('acq_date')}|{f.get('acq_time')}|{f.get('satellite')}".encode()).hexdigest()[:20]
+                if not db.query(FireDetection).filter(FireDetection.fire_id == fid).first():
+                    db.add(FireDetection(fire_id=fid, lat=f["lat"], lon=f["lon"], frp=f.get("frp"),
+                                         confidence=str(f.get("confidence") or ""), satellite=f.get("satellite"),
+                                         instrument=f.get("instrument"), source=res.get("source"),
+                                         acquired_at=f["when"], zone_system_id="heat-watch", triggered_scan=False))
+            db.commit()
+        for ev in hw.assess(recent, before, places):
+            key = f"HEAT-{round(ev['lat'], 2)}-{round(ev['lon'], 2)}-{ev['when'].strftime('%Y%m%d')}"
+            with _gdb_hw() as db:
+                if db.query(Alert).filter(Alert.alert_id.like(f"%{key}%")).first() or \
+                   db.query(Alert).filter(Alert.source == "FIRMS", Alert.alert_type == "Heat",
+                                          Alert.created_at >= now - timedelta(hours=12),
+                                          Alert.lat.between(ev["lat"] - 0.02, ev["lat"] + 0.02),
+                                          Alert.lon.between(ev["lon"] - 0.02, ev["lon"] + 0.02)).first():
+                    continue
+            try:
+                import geo_land
+                where = geo_land.country_at(ev["lat"], ev["lon"])
+            except Exception:                                # noqa: BLE001
+                where = None
+            write_alert({
+                "source": "FIRMS", "alert_type": "Heat",
+                "title": hw.headline(ev, where) + (f" — {where}" if where and ev.get("near") else ""),
+                "severity": hw.severity(ev), "lat": ev["lat"], "lon": ev["lon"],
+                "region": (ev.get("near") or {}).get("name") or where,
+                "tags": ["firms", "heat", key],
+                "raw_json": {"key": key, "frp_mw": ev.get("frp_total"), "pixels": ev.get("pixels"),
+                             "seen": ev["when"].isoformat() + "Z", "near": ev.get("near"), "near_km": ev.get("near_km"),
+                             "reason": ("No heat here in the three days before" +
+                                        (f"; {ev['near_km']} km from {ev['near']['name']}" if ev.get("near") else
+                                         "; strong enough to matter on its own")),
+                             "actions": ["investigate", "scan"]},
+            })
+            made += 1
+    return made
+
+
 async def _escalation_loop():
     """Fetch any missing GDELT day every six hours (yesterday's file appears
     in the morning UTC); the first pass backfills the baseline."""
@@ -14529,7 +14636,11 @@ async def _firms_trigger_pass() -> None:
             with _gdbz() as _zdb:
                 existing = _zdb.query(_WZ).filter(_WZ.enabled == True).all()  # noqa: E712
                 made = 0
-                for fire in _fa.dedupe_fires(hits):
+                # Watch areas are no longer created around fires on their own
+                # (they multiplied unasked); new heat asks instead —
+                # heat_watch.py, "Investigate? / Scan?". FIRMS_AUTO_AOI=1
+                # restores the old behaviour.
+                for fire in (_fa.dedupe_fires(hits) if os.getenv("FIRMS_AUTO_AOI") == "1" else []):
                     flat, flon = float(fire["lat"]), float(fire["lon"])
                     if not _fa.should_create(flat, flon, existing):
                         # Covered already — push its next scan forward so
@@ -15433,6 +15544,7 @@ async def _outlook_refresh_loop():
 async def startup_event():
     asyncio.create_task(_telegram_loop())
     asyncio.create_task(_escalation_loop())
+    asyncio.create_task(_heat_watch_loop())
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
     # The day's outlook — concrete, cited, resolvable forecasts for the Home
@@ -27665,8 +27777,17 @@ def api_get_notifications(
     for r, verdict, headline in judged:
         if not verdict["notify"] and not include_silent:
             continue
+        _acts = None
+        if r.alert_type in ("Heat", "Imagery signal"):
+            # What the reader can do about it, straight from the card.
+            try:
+                _raw = _json.loads(r.raw_json or "{}")
+                _acts = (_raw.get("raw_json") or _raw).get("actions") or (["image"] if r.alert_type == "Imagery signal" else None)
+            except ValueError:
+                _acts = None
         out.append({
             "id": r.alert_id,
+            "actions": _acts,
             "title": _nc.plain(headline),
             "sev": verdict["sev"],
             "reason": verdict["reason"],

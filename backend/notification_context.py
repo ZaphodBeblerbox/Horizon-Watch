@@ -1242,6 +1242,14 @@ def notification_relevance(alert: dict) -> dict:
         return {"notify": v["notify"], "sev": v["sev"],
                 "reason": v["reason"] + _coverage_note(lat, lon)}
 
+    # New heat near what matters (heat_watch.py) and imagery signals
+    # (imagery_signals.py) are already judged by their own rules — each says
+    # why it counted.
+    if k in ("heat", "imagery signal"):
+        inner = raw.get("raw_json") if isinstance(raw.get("raw_json"), dict) else raw
+        return {"notify": True, "sev": sev if sev in ("critical", "high", "moderate", "low") else "high",
+                "reason": inner.get("reason") or ("new heat" if k == "heat" else "imagery signal")}
+
     if k in _ALWAYS_NOTIFY:
         return {"notify": True,
                 "sev": sev if sev in ("critical", "high", "moderate", "low") else "moderate",

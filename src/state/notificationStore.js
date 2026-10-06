@@ -183,6 +183,10 @@ export function pushNotification(n) {
         title: n.title || "",
         sub: n.sub || "",
         ref: n.ref || null,
+        // What the reader can do from the card: "investigate" / "scan" for
+        // new heat, "image" for an imagery signal.
+        actions: Array.isArray(n.actions) ? n.actions : null,
+        alertId: n.alertId || null,
         read: !fresh,
     }
     if (state.items.some((x) => x.id === item.id)) return false   // never double-raise
