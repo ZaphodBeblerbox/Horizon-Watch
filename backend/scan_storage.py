@@ -145,7 +145,19 @@ def apply_change_detection(db, zone_id, scan_id, *, instrument="OPTICAL",
         "headline": change["headline"],
         "severity": _changes.severity_for(change),
         "match_radius_m": change["match_radius_m"],
+        # Which kinds appeared and disappeared, for imagery_signals.py.
+        "new_by_type": _by_type(change.get("new")),
+        "gone_by_type": _by_type(change.get("gone")),
+        "new_ids": [d.get("detection_id") for d in change.get("new") or []],
     }
+
+
+def _by_type(items) -> dict:
+    out: dict = {}
+    for d in items or []:
+        t = d.get("object_type") or "object"
+        out[t] = out.get(t, 0) + 1
+    return out
 
 
 def prune_scan_images(db, zone_id, *, keep=DEFAULT_KEEP_IMAGES) -> dict:

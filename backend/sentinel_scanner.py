@@ -129,6 +129,78 @@ def _decode_and_encode(image_bytes: bytes):
     return img, base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _imagery_signals(zone_dict: dict, scan_id: str, result: dict, change: dict | None) -> list:
+    """The signals this pass raises, by the area's kind (imagery_signals.py)."""
+    import imagery_signals
+    import zone_context
+    from database import SentinelScan, FireDetection, WatchZone, get_db
+
+    with get_db() as db:
+        row = db.query(WatchZone).filter(WatchZone.id == zone_dict.get("id")).first()
+        try:
+            meta = json.loads(row.zone_metadata) if row and row.zone_metadata else {}
+        except ValueError:
+            meta = {}
+    zone = {"system_id": zone_dict.get("system_id"), "metadata": meta}
+    kind, _src = zone_context.kind_for(zone)
+    inst = result.get("instrument", "OPTICAL")
+    counts = (result.get("result_summary") or {}).get("by_type") or {}
+    when = result.get("image_timestamp_utc")
+
+    # Earlier passes of the same sensor, one per acquisition, for the
+    # normal range.
+    history: dict = {}
+    with get_db() as db:
+        rows = (db.query(SentinelScan)
+                  .filter(SentinelScan.zone_id == zone_dict.get("id"), SentinelScan.status == "completed",
+                          SentinelScan.instrument == inst, SentinelScan.scan_id != scan_id)
+                  .order_by(SentinelScan.image_timestamp_utc.desc()).limit(40).all())
+        seen = set()
+        for r in rows:
+            if not r.image_timestamp_utc or (when and abs((r.image_timestamp_utc - when).total_seconds()) < 900):
+                continue
+            key = r.image_timestamp_utc.strftime("%Y-%m-%d")
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                bt = (json.loads(r.result_summary or "{}") or {}).get("by_type")
+            except ValueError:
+                bt = None
+            if bt is None:
+                continue
+            for k in set(bt) | set(counts):
+                history.setdefault(k, []).append(int(bt.get(k, 0)))
+            if len(seen) >= 8:
+                break
+
+        # New heat: fire detections in the area in the last 24 h, with none
+        # in the 48 h before — a site that keeps burning is not new.
+        new_heat = 0
+        try:
+            now = datetime.datetime.utcnow()
+            q = db.query(FireDetection).filter(
+                FireDetection.lat.between(zone_dict["bbox_min_lat"], zone_dict["bbox_max_lat"]),
+                FireDetection.lon.between(zone_dict["bbox_min_lon"], zone_dict["bbox_max_lon"]))
+            recent = q.filter(FireDetection.acquired_at >= now - datetime.timedelta(hours=24)).count()
+            before = q.filter(FireDetection.acquired_at < now - datetime.timedelta(hours=24),
+                              FireDetection.acquired_at >= now - datetime.timedelta(hours=72)).count()
+            new_heat = recent if recent and not before else 0
+        except Exception as _fe:
+            print(f"[sentinel-scanner] heat check skipped: {_fe}")
+
+    first = not change or change.get("baseline")
+    out = imagery_signals.evaluate(
+        kind=kind, place=zone_dict.get("name") or zone_dict.get("system_id"),
+        counts=counts, history=history,
+        new_by_type={} if first else (change.get("new_by_type") or {}),
+        gone_by_type={} if first else (change.get("gone_by_type") or {}),
+        new_heat=new_heat, when=str(when or ""))
+    lat = (zone_dict["bbox_min_lat"] + zone_dict["bbox_max_lat"]) / 2
+    lon = (zone_dict["bbox_min_lon"] + zone_dict["bbox_max_lon"]) / 2
+    return [{**sg, "kind": kind, "lat": lat, "lon": lon} for sg in out]
+
+
 def _tier(d: dict) -> str | None:
     try:
         return json.loads(d.get("attributes") or "{}").get("tier")
@@ -371,55 +443,25 @@ class SentinelScanner:
             # 'SAT-TASK', through the same write_alert() funnel every other
             # real alert path uses — not a parallel/fake notification.
             try:
-                # ALERT ON THE CHANGE, NOT ON THE CENSUS.
-                #
-                # This used to raise one alert per high-severity detection,
-                # which on a busy port means the same moored ships reported
-                # every cycle for ever. What an analyst needs to be told is
-                # what is DIFFERENT, and told in a sentence that carries its
-                # own relevance: never a bare count or a bare identifier.
-                zone_label = (zone_dict.get("name") or system_id)
-                if change and not change.get("baseline") and change["severity"] not in ("info",):
-                    anchor = (change["summary"].get("new") and
-                              next((d for d in detections
-                                    if (d.get("attributes") or "").find('"change_type": "new"') >= 0), None))
-                    anchor = anchor or (detections[0] if detections else {})
-                    import main as _m
-                    _m.write_alert({
-                        "source": "SAT-TASK",
-                        "alert_type": "Imagery change",
-                        # e.g. "2 vessels appeared; 1 storage tank no longer
-                        # present — Khor Fakkan". A person can act on that
-                        # without opening anything.
-                        "title": f"{change['headline']} — {zone_label}",
-                        "severity": change["severity"],
-                        "lat": anchor.get("centroid_lat"), "lon": anchor.get("centroid_lon"),
-                        "entity_type": anchor.get("object_type"), "region": None,
-                        # Carry the anchor detection so the Inbox can land the
-                        # reader ON the object rather than on a scene with
-                        # forty boxes and no indication which one is meant.
-                        "raw_json": {"scan_id": scan_id, "zone_id": system_id,
-                                     "detection_id": anchor.get("detection_id"),
-                                     "change": change, "compared_to": change.get("compared_to")},
-                    })
-                elif change is None:
-                    # No comparison was possible, so fall back to the old
-                    # per-detection behaviour rather than going silent — a
-                    # failed diff must not swallow a critical detection.
-                    qualifying = [d for d in detections
-                                  if d.get("severity") in ("critical", "high")
-                                  or d.get("alert_tier") == "immediate"]
-                    import main as _m
-                    for d in qualifying[:5]:   # one scan must not flood the Inbox
+                # SIGNALS BY WHAT THE PLACE IS (imagery_signals.py): tankers
+                # massing at an oil terminal, any movement at a naval base,
+                # new heat at an energy site, a fixed structure gone anywhere.
+                # Normal traffic in a commercial port is counted, not raised.
+                if result.get("status") == "completed":
+                    for sg in _imagery_signals(zone_dict, scan_id, result, change):
+                        import main as _m
                         _m.write_alert({
-                            "source": "SAT-TASK", "alert_type": f"Sentinel {d.get('object_type', 'detection')}",
-                            "title": f"⚠ {d.get('object_type', 'object')} detected in {zone_label} "
-                                     f"(no baseline to compare against)",
-                            "severity": d.get("severity", "medium"),
-                            "lat": d.get("centroid_lat"), "lon": d.get("centroid_lon"),
-                            "entity_type": d.get("object_type"), "region": None,
-                            "raw_json": {"scan_id": scan_id, "zone_id": system_id, "detection": d},
+                            "source": "SAT-TASK", "alert_type": "Imagery signal",
+                            "title": sg["title"], "severity": sg["severity"],
+                            "lat": sg["lat"], "lon": sg["lon"],
+                            "entity_type": sg.get("focus"), "region": zone_dict.get("name"),
+                            # Opening it loads the image with its detections.
+                            "raw_json": {"scan_id": scan_id, "zone_id": system_id, "kind": sg["kind"],
+                                         "reason": sg["reason"], "focus": sg.get("focus"),
+                                         "instrument": result.get("instrument", "OPTICAL"),
+                                         "captured": str(result.get("image_timestamp_utc") or "")},
                         })
+                        print(f"[sentinel-scanner] imagery signal: {sg['title']}")
             except Exception as e:
                 print(f"[sentinel-scanner] SAT-TASK routing failed for scan {scan_id}: {e}")
         except Exception as e:

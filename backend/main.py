@@ -22325,6 +22325,12 @@ def api_watch_zone_update(system_id: str, body: dict):
             zone.name = body["name"]
         if "description" in body:
             zone.description = body["description"]
+        if "kind" in body:
+            # What the place is decides what counts as an imagery signal
+            # (imagery_signals.py); the analyst's choice beats the model's.
+            _meta = _json_wz.loads(zone.zone_metadata) if zone.zone_metadata else {}
+            _meta["kind"] = body["kind"] or None
+            zone.zone_metadata = _json_wz.dumps(_meta)
         if "polygon_geojson" in body:
             poly = body["polygon_geojson"] if isinstance(body["polygon_geojson"], dict) else _json_wz.loads(body["polygon_geojson"])
             zone.polygon_geojson = _json_wz.dumps(poly)
@@ -22933,8 +22939,10 @@ def api_imagery_zone_context(system_id: str):
         zone_context.request(system_id, name=z["name"], aoi_class=z.get("aoi_class") or "custom",
                              lat=sur["lat"], lon=sur["lon"], surroundings=sur)
         stale = zone_context.cached(system_id)
-        return {**(stale or {"surroundings": sur}), "pending": True}
-    return {**rec, "pending": False}
+        kind, src = zone_context.kind_for(z)
+        return {**(stale or {"surroundings": sur}), "pending": True, "kind": kind, "kind_source": src}
+    kind, src = zone_context.kind_for(z)
+    return {**rec, "pending": False, "kind": kind, "kind_source": src}
 
 
 def _cache_read(name: str):

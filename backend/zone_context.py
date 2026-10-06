@@ -38,7 +38,10 @@ satellite fire detections, and vessel traffic now. Write:
 - watch_for: 3 to 6 concrete, visible things to look for in 10 m satellite imagery of THIS place given the
   situation (e.g. "fire scars or blackened tanks at the tank farm south of the port", "tankers holding
   at anchor offshore instead of berthing", "warships alongside the naval pier"). Each under 15 words.
-Answer as JSON: {"situation": "...", "watch_for": ["...", "..."]}"""
+- kind: what the place mainly is, exactly one of: naval_base, airbase, oil_terminal, energy_site,
+  commercial_port, other. An oil export terminal or tank farm port is oil_terminal; a refinery, power
+  station, gas plant or oil field is energy_site; a container or general cargo port is commercial_port.
+Answer as JSON: {"situation": "...", "watch_for": ["...", "..."], "kind": "..."}"""
 
 
 def _load() -> dict:
@@ -97,6 +100,8 @@ def write(system_id: str, *, name: str, aoi_class: str, lat: float, lon: float, 
     rec = {
         "situation": str(out.get("situation") or "").strip()[:600] or None,
         "watch_for": [str(w).strip()[:140] for w in (out.get("watch_for") or []) if str(w).strip()][:6],
+        "kind": out.get("kind") if out.get("kind") in ("naval_base", "airbase", "oil_terminal", "energy_site",
+                                                       "commercial_port", "other") else "other",
         "surroundings": surroundings, "at": time.time(), "model": model,
     }
     _store(system_id, rec)
@@ -114,6 +119,17 @@ def request(system_id: str, **kw) -> None:
         finally:
             _PENDING.discard(system_id)
     threading.Thread(target=run, daemon=True, name=f"zone-context-{system_id}").start()
+
+
+def kind_for(zone: dict) -> tuple[str, str]:
+    """(kind, where it came from): the analyst's choice, else the model's."""
+    meta = zone.get("metadata") or {}
+    if meta.get("kind"):
+        return meta["kind"], "set by you"
+    rec = cached(zone.get("system_id") or "")
+    if rec and rec.get("kind"):
+        return rec["kind"], "proposed from the area's context"
+    return "other", "not yet known"
 
 
 def pending(system_id: str) -> bool:

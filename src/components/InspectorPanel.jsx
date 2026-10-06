@@ -1,3 +1,4 @@
+import ImagerySignalSection from "./ImagerySignalSection.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
 import { toast } from "../ui/toast.js"
 import { useState, useEffect } from "react"
@@ -833,6 +834,9 @@ export default function InspectorPanel({
                 )}
 
                 {entityType === "cable" && data?.id && <CableSection id={String(data.id)} />}
+                {String(data?.source || data?.domain || "").toUpperCase() === "SAT-TASK" && (data?.alert_id || data?.id) && (
+                    <ImagerySignalSection alertId={String(data.alert_id || data.id)} />
+                )}
                 {(entityType === "airport" || entityType === "port") && (
                     <AroundSection kind={entityType}
                                    lat={Number(data?.lat ?? data?.latitude ?? data?.latitude_deg)}

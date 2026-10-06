@@ -216,6 +216,20 @@ F. Localizer workbench: place suggestions (country-restricted, OCR, satellite co
 G. Asset registry; per-user profile (Blocker below). Telegram roles for newly joined channels
    (Middle_East_Spectator, InfosAes, liil050, sh_almoqawamma).
 H. GDELT judge (gpt-4o-mini) still admits a few protests/crime as "violent unrest".
+I. **Enhance the generated briefings** (owner, 2026-10-06).
+J. Imagery signals are built (imagery_signals.py, by area kind); still missing: smoke-plume detection,
+   and the map-layer separation in B. Multi-image super-resolution (L1BSR-style) not tried yet — the
+   temporal stack (mean of six clear passes, fixed objects only) is what is in.
+
+### Detection models (not in git — `backend/models/` is ignored)
+The scanner runs `yolov8m-obb.onnx` (backend/, already present) and `backend/models/yolo26x-obb.onnx`.
+Recreate the second with:
+`python -c "from ultralytics import YOLO; YOLO('yolo26x-obb.pt').export(format='onnx', imgsz=1024, opset=17, simplify=True, end2end=False)"`
+then move the .onnx into `backend/models/`. **end2end=False matters**: the default end-to-end head fails
+on CoreML and takes 8 min a scene on CPU; the classic head runs at ~0.2 s a tile. Without the file the
+ensemble falls back to one model and marks everything "probable".
+Measured (storage tanks vs the sub-metre reference, 2026-10-06): both models agreeing = precision
+0.90–1.00; v8m alone finds most but invents aircraft; YOLO11x was no better than v8m.
 
 ### Seen but not fixed
 - Intermittent page error "the server did not respond within 30s" during

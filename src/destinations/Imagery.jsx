@@ -515,12 +515,22 @@ export default function Imagery() {
                                 {sensor !== "radar" && <span title="Found by only one of the two detection models">┄ one model only</span>}
                             </span>
                         </div>
-                        {mode !== "scene" && (
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--txt3)", flex: "none" }}>
-                                <span>{mode === "split" ? "Left" : mode === "swipe" ? "Left of the handle" : mode === "blink" ? "Alternating with" : "Over"}: <b style={{ color: "var(--txt)", fontWeight: 600 }}>this {sensor === "radar" ? "radar pass" : "pass"}</b></span>
-                                <span>{mode === "split" ? "Right" : mode === "swipe" ? "Right of the handle" : mode === "blink" ? "" : "Under"}{mode === "blink" ? "" : ": "}<b style={{ color: "var(--txt)", fontWeight: 600 }}>
-                                    {compareImg?.loading ? "loading…" : compareImg?.error ? `unavailable — ${compareImg.error}` : compareLabel || "no earlier image — choose another"}
-                                </b></span>
+                        {/* WHEN EACH IMAGE WAS TAKEN, right above it — the one fact an
+                            image cannot be read without. */}
+                        {displayScene && (
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flex: "none" }}>
+                                <Stamp align="left" dim={mode === "blink" && !blinkOn}
+                                    label={`${sensor === "radar" ? "Radar" : "Optical"}${mode === "split" ? " · left" : mode === "swipe" ? " · left of the handle" : ""}`}
+                                    when={displayScene.scan?.image_timestamp_utc} />
+                                {mode !== "scene" && (
+                                    compareImg?.loading ? <span style={{ fontSize: 12, color: "var(--txt3)" }}>Loading the comparison…</span>
+                                    : compareImg?.error ? <span style={{ fontSize: 12, color: "var(--amber)" }}>Comparison unavailable — {compareImg.error}</span>
+                                    : (against === "hires" ? compareImg?.date : displayScene.reference_date)
+                                        ? <Stamp align="right" dim={mode === "blink" && blinkOn}
+                                            label={`${against === "hires" ? "Sharp reference" : compareLabel?.split(" · ")[0] || "Comparison"}${mode === "split" ? " · right" : mode === "swipe" ? " · right of the handle" : ""}`}
+                                            when={against === "hires" ? compareImg?.date : displayScene.reference_date} />
+                                        : <span style={{ fontSize: 12, color: "var(--txt3)" }}>No earlier image — choose another to compare with</span>
+                                )}
                             </div>
                         )}
 
@@ -537,16 +547,6 @@ export default function Imagery() {
                                         clipRef={clipRef} fadeRef={fadeRef} viewerRef={viewerRef}
                                         onSelectDet={setSelectedDet} selectedDet={selectedDet}
                                     />
-                                    {/* WHEN IT WAS TAKEN, on the picture itself — the one fact
-                                        an image cannot be read without. */}
-                                    <Stamp side="left" sensor={sensor === "radar" ? "Radar" : "Optical"}
-                                        when={displayScene.scan?.image_timestamp_utc}
-                                        dim={mode === "blink" && !blinkOn} />
-                                    {mode !== "scene" && (compareImg?.date || displayScene.reference_date) && (
-                                        <Stamp side="right" sensor={against === "hires" ? "Sharp reference" : compareLabel?.split(" · ")[0] || "Compared with"}
-                                            when={against === "hires" ? compareImg?.date : displayScene.reference_date}
-                                            dim={mode === "blink" && blinkOn} />
-                                    )}
                                 </div>
                             )}
                             {liveRadar && sar.loading && <Loading size={20} inline label="Fetching the radar pass and looking for ships — up to a minute the first time" style={{ padding: 16 }} />}
@@ -585,7 +585,14 @@ export default function Imagery() {
                             {note?.quality && <span style={{ fontSize: 12, color: "var(--amber)" }}>{note.quality}</span>}
                             {note?.model && <span style={{ ...EYE, fontSize: 9 }}>read by {note.model} against what matters here</span>}
                         </div>
-                        <ContextCard context={context} />
+                        <ContextCard context={context} onKind={async (k) => {
+                            await fetch(`${API_BASE}/api/watch-zones/${zone.system_id}`, {
+                                method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ kind: k }),
+                            }).catch(() => {})
+                            setContext((c) => ({ ...c, kind: k, kind_source: "set by you" }))
+                            toast("Saved — the next pass is judged as " + (KIND_LABEL[k] || k))
+                        }} />
                         {series.length > 0 && passes.length > 1 && (
                             <div style={{ ...CARD, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
                                 <span style={EYE}>Counts across passes · shaded = normal range</span>
@@ -668,32 +675,52 @@ export default function Imagery() {
     )
 }
 
-/** The capture time, large, on the image. */
-function Stamp({ side, sensor, when, dim }) {
+/** The capture time, large, beside the image. */
+function Stamp({ align, label, when, dim }) {
     if (!when) return null
-    const s = String(when)
-    const time = s.length > 10 ? ` · ${s.slice(11, 16)} UTC` : ""
+    const t = String(when)
+    const time = t.length > 10 ? ` · ${t.slice(11, 16)} UTC` : ""
     return (
-        <div style={{
-            position: "absolute", top: 10, [side]: 10, zIndex: 3, pointerEvents: "none",
-            padding: "6px 10px", background: "rgba(10,12,16,.78)", color: "#fff",
-            border: "1px solid rgba(255,255,255,.25)", opacity: dim ? 0.35 : 1, transition: "opacity .2s",
-            display: "flex", flexDirection: "column", gap: 1, textAlign: side === "right" ? "right" : "left",
-        }}>
-            <span style={{ font: "600 9.5px var(--mz-font-mono)", letterSpacing: ".12em", textTransform: "uppercase", opacity: .75 }}>{sensor} · captured</span>
-            <span style={{ font: "600 15px var(--font, inherit)", letterSpacing: "-.01em" }}>{fmtDay(s)} {s.slice(0, 4)}{time}</span>
-            <span style={{ font: "500 11px var(--font, inherit)", opacity: .8 }}>{agoLabel(s)}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 1, textAlign: align, opacity: dim ? 0.4 : 1, transition: "opacity .2s" }}>
+            <span style={{ ...EYE, fontSize: 9.5 }}>{label} · captured</span>
+            <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-.01em" }}>
+                {fmtDay(t)} {t.slice(0, 4)}{time}
+                <span style={{ fontSize: 12, fontWeight: 400, color: "var(--txt3)" }}> · {agoLabel(t)}</span>
+            </span>
         </div>
     )
 }
 
 /** What this place is about now, and what to look for in its imagery. */
-function ContextCard({ context }) {
+const KIND_LABEL = {
+    naval_base: "naval base", airbase: "airbase", oil_terminal: "oil terminal",
+    energy_site: "energy site", commercial_port: "commercial port", other: "other",
+}
+const KIND_RULE = {
+    naval_base: "every vessel arriving or leaving is a signal",
+    airbase: "every aircraft arriving or leaving is a signal",
+    oil_terminal: "vessels above their normal range are a signal",
+    energy_site: "new heat is a signal",
+    commercial_port: "traffic is counted; only an extreme swing is a signal",
+    other: "only extreme swings are a signal",
+}
+
+function ContextCard({ context, onKind }) {
     const sur = context?.surroundings || {}
     const sigs = safeArray(sur.signals)
     return (
         <div style={{ ...CARD, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
             <span style={EYE}>What matters here</span>
+            {context?.kind && (
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, flexWrap: "wrap" }}>
+                    <span style={{ color: "var(--txt3)" }}>This is</span>
+                    <select value={context.kind} onChange={(e) => onKind?.(e.target.value)}
+                        style={{ ...FIELD, width: "auto", height: 26, fontSize: 12, fontWeight: 600 }}>
+                        {Object.entries(KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                    <span style={{ color: "var(--txt4)", fontSize: 11 }}>{context.kind_source} · {KIND_RULE[context.kind]}</span>
+                </label>
+            )}
             {!context ? <Loading size={16} inline label="Reading the area's situation" /> : (
                 <>
                     {context.situation
