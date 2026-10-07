@@ -12016,7 +12016,12 @@ async def api_telegram_statements(lat: float, lon: float, hours: int = Query(72,
 async def api_telegram_video(chan: str, msg_id: int):
     """The post's video, fetched from Telegram when opened; not kept (telegram_ingest.VIDEO_DIR)."""
     import telegram_ingest as _tg
-    if not re.fullmatch(r"[A-Za-z0-9_]{3,64}", chan):
+    # a channel without a username comes as Telegram's "-100<id>" (a URL
+    # segment cannot carry the "c/<id>" the posts table uses)
+    m_id = re.fullmatch(r"-100(\d{5,15})", chan)
+    if m_id:
+        chan = f"c/{m_id.group(1)}"
+    elif not re.fullmatch(r"[A-Za-z0-9_]{3,64}", chan):
         raise HTTPException(400, "bad channel")
     loop = asyncio.get_event_loop()
     path, why = await loop.run_in_executor(_executor, _tg.video_path, chan, msg_id)

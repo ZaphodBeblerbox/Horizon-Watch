@@ -520,7 +520,7 @@ def prefetch_videos(limit: int = 15) -> int:
     con.close()
     got = 0
     for chan, mid in rows:
-        if chan.startswith("c/") or os.path.exists(os.path.join(VIDEO_DIR, f"{chan}_{mid}.mp4")):
+        if os.path.exists(_video_file(chan, mid)):
             continue
         try:
             path, _ = video_path(chan, mid)
@@ -922,15 +922,33 @@ def run_once(hours: int = 6) -> dict:
     out = {"collected": new, **classify()}
     out["screened"] = screen_graphic()
     out.update(read_announcements())
-    # No prefetch: a video is fetched when someone opens it (VIDEO_DIR).
+    # Prefetched only where videos are kept (the server's volume), so the
+    # newest play the moment they are opened; on a laptop a video is fetched
+    # when opened and gone half an hour later (the owner, 2026-10-06).
+    if VIDEO_STORE == "volume":
+        out["videos_prefetched"] = prefetch_videos()
     out["videos_pruned"] = prune_videos()
     return out
+
+
+def _peer(chan: str):
+    """A channel as Telethon addresses it: its username, or — for a channel
+    without one ("c/<id>", as _collect names it) — its numeric id, which the
+    session knows because the account is a member."""
+    if chan.startswith("c/"):
+        from telethon.tl.types import PeerChannel
+        return PeerChannel(int(chan[2:]))
+    return chan
+
+
+def _video_file(chan: str, msg_id: int) -> str:
+    return os.path.join(VIDEO_DIR, f"{chan.replace('/', '_')}_{msg_id}.mp4")
 
 
 async def _download_video(chan: str, msg_id: int, path: str) -> str | None:
     client = await _connected()
     try:
-        m = await client.get_messages(chan, ids=msg_id)
+        m = await client.get_messages(_peer(chan), ids=msg_id)
         if not m or not m.file or not (m.file.mime_type or "").startswith("video"):
             return None
         if (m.file.size or 0) > VIDEO_MAX_MB * 1024 * 1024:
@@ -944,11 +962,9 @@ def video_path(chan: str, msg_id: int) -> tuple[str | None, str | None]:
     """The post's video as a local file, fetched once and kept. (path, None)
     or (None, reason). Telegram's embed refuses large videos ("Media is too
     big"), so the console plays its own copy instead."""
-    if chan.startswith("c/"):
-        return None, "private channel"
     os.makedirs(VIDEO_DIR, exist_ok=True)
     prune_videos()
-    path = os.path.join(VIDEO_DIR, f"{chan}_{msg_id}.mp4")
+    path = _video_file(chan, msg_id)
     if os.path.exists(path) and os.path.getsize(path) > 0:
         os.utime(path)                       # still being watched: keep it a while
         return path, None
