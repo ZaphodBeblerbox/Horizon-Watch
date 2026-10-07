@@ -414,6 +414,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const [geoConfirmedOn, setGeoConfirmedOn] = useState(true)
     const [gdeltOn, setGdeltOn] = useState(true)
     const [telegramOn, setTelegramOn] = useState(true)
+    // Riots, protests and civil unrest, and the gatherings announced for
+    // the coming days — kept apart from the fighting by their own toggle.
+    const [unrestOn, setUnrestOn] = useState(true)
     // Which CAMEO codings to draw. Starts as every kind rather than a
     // curated subset: a reader who has not chosen yet should see the whole
     // feed, not a silently narrowed one.
@@ -1097,6 +1100,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         satellite_image: [satImageOn, setSatImageOn, "imagery"],
         gdelt: [gdeltOn, setGdeltOn, "news"],
         telegram: [telegramOn, setTelegramOn, "news"],
+        unrest: [unrestOn, setUnrestOn, "news"],
         geoconfirmed: [geoConfirmedOn, setGeoConfirmedOn, "news"],
         gps_interference: [gpsInterferenceOn, setGpsInterferenceOn, "air"],
         airspace: [airspaceOn, setAirspaceOn],
@@ -1337,6 +1341,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                     hint="Channels you joined · AI-screened for relevance · pinned only where the post names a precise place · unverified"
                                     on={telegramOn} parentOn={groupsOn.news}
                                     onToggle={() => setTelegramOn((v) => !v)} />
+                            )}
+                            {g.key === "news" && (
+                                <SubLayerRow
+                                    label="Unrest & protests"
+                                    hint="Riots, protests and clashes with police filmed and posted on Telegram, and the gatherings announced for the coming days (hollow pins) · unverified"
+                                    on={unrestOn} parentOn={groupsOn.news}
+                                    onToggle={() => setUnrestOn((v) => !v)} />
                             )}
                             {g.key === "news" && gdeltOn && groupsOn.news && (
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3,
@@ -1876,6 +1887,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         geoConfirmedEnabled={groupsOnV.news && geoConfirmedOn}
                         gdeltEnabled={groupsOnV.news && gdeltOn}
                         telegramEnabled={groupsOnV.news && telegramOn}
+                        unrestEnabled={groupsOnV.news && unrestOn}
                         vesselFilter={vesselFilterOn}
                         aircraftFilter={aircraftFilterOn}
                         onTrackFacets={setTrackFacets}

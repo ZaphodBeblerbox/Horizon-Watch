@@ -137,6 +137,7 @@ export default function GlobeView({
     // on purpose, see GlobeGdeltLayer.jsx.
     gdeltEnabled = false,
     telegramEnabled = false,
+    unrestEnabled   = false,
     imagerySignalsEnabled = false,
     assetsEnabled = true,
     gdeltTypes = null,
@@ -1162,7 +1163,7 @@ export default function GlobeView({
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
-                <GlobeTelegramLayer enabled={telegramEnabled} hours={24} />
+                <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={24} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
                 <GlobeAssetsLayer enabled={assetsEnabled} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />

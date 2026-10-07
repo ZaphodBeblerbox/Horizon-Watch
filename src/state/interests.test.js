@@ -59,3 +59,11 @@ describe("your assets decide what is yours", () => {
         expect(p.mine.map((x) => x.id)).toEqual([2, 1])
     })
 })
+
+describe("a signal must be able to reach the asset", () => {
+    it("a sanctioned vessel is not for a substation, a protest is", () => {
+        const w = watched({}, [], [], [{ name: "UW Mitte", kind: "substation", kind_label: "Electric substation", lat: 52.5, lon: 13.4, radius_km: 20 }])
+        expect(relevance({ lat: 52.51, lon: 13.41, type: "Sanctioned vessel", headline: "Sanctioned vessel loitering" }, w).forYou).toBe(false)
+        expect(relevance({ lat: 52.51, lon: 13.41, headline: "Protest outside the substation" }, w).forYou).toBe(true)
+    })
+})

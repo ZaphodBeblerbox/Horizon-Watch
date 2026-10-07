@@ -128,7 +128,7 @@ def situation(asset: dict) -> dict:
     if not at:
         return {"asset": asset, "position": None, "signals": [], "exposure": "unknown",
                 "why": "No position: give a vessel's MMSI or an aircraft's ICAO code, or place it on the map."}
-    ranked = oa.rank(at, asset["radius_km"], gather(at, asset["radius_km"]))
+    ranked = oa.rank(at, asset["radius_km"], gather(at, asset["radius_km"]), kind=asset.get("kind"))
     return {"asset": asset, "position": at, "signals": ranked, "exposure": oa.exposure(ranked)}
 
 

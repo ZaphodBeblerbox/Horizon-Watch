@@ -82,7 +82,7 @@ export function watched(saved = {}, theaters = [], countries = [], assets = []) 
     const placed = (assets || []).map((a) => {
         const at = a?.position || (a?.lat != null ? { lat: a.lat, lon: a.lon } : null)
         return at && Number.isFinite(+at.lat) && Number.isFinite(+at.lon) && +a.radius_km > 0
-            ? { name: a.name, kind: a.kind_label || "asset", lat: +at.lat, lon: +at.lon, radius: +a.radius_km } : null
+            ? { name: a.name, kind: a.kind_label || "asset", key: a.kind || "", lat: +at.lat, lon: +at.lon, radius: +a.radius_km } : null
     }).filter(Boolean)
     return { countries: why, topics: new Set(saved?.topics || []), assets: placed }
 }
@@ -93,12 +93,27 @@ function km(aLat, aLon, bLat, bLon) {
     return 12742 * Math.asin(Math.sqrt(h))
 }
 
-/** The nearest of your assets this signal falls inside, or null. */
+// What can touch what (backend owned_assets.REACHES, in short): the ship
+// detectors' subjects — sanctioned vessels, dark ships, transfers at sea —
+// reach ships and things on the water, not a substation in Berlin.
+const MARITIME = /sanction\w* vessel|dark ship|ship-to-ship|sts transfer|loiter|\bais_|ais gap/i
+const AVIATION = /military aircraft|isr pattern|squawk|emergency declared/i
+const WET = /^(vessel_|port$|subsea_cable$|tank_farm$|pipeline$|refinery$)/
+const AIR = /^(aircraft_|helicopter$|airport$)/
+export function canReach(assetKey, signal) {
+    const t = [signal?.type, signal?.source_type, signal?.rule_name, signal?.headline, signal?.title].filter(Boolean).join(" ")
+    if (MARITIME.test(t)) return WET.test(assetKey || "") || !assetKey
+    if (AVIATION.test(t)) return AIR.test(assetKey || "") || !assetKey
+    return true
+}
+
+/** The nearest of your assets this signal falls inside (and can reach), or null. */
 export function nearestAsset(signal, assets) {
     const lat = +signal?.lat, lon = +signal?.lon
     if (!assets?.length || !Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) return null
     let best = null
     for (const a of assets) {
+        if (!canReach(a.key, signal)) continue
         const d = km(a.lat, a.lon, lat, lon)
         if (d <= a.radius && (!best || d < best.km)) best = { ...a, km: d }
     }

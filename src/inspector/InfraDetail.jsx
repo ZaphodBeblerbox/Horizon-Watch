@@ -76,7 +76,7 @@ export default function InfraDetail({ feature }) {
                                textTransform: "uppercase", color: "var(--txt4)" }}>{f.label} · drag to turn</span>
             </div>
 
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
                 <button style={{ ...BTN, borderColor: "var(--acchi)", background: "var(--accdim)" }} disabled={!d || adding || !!d?.error} onClick={addAsset}>
                     {adding ? "Adding…" : "Add to our assets"}
                 </button>
@@ -113,7 +113,7 @@ export default function InfraDetail({ feature }) {
                 {sig?.exposure && (
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, marginBottom: 6 }}>
                         <i style={{ width: 8, height: 8, borderRadius: "50%", background: EXPO[sig.exposure] || EXPO.unknown }} />
-                        <span style={{ color: "var(--txt2)" }}>{{ high: "Exposed — serious events close by", elevated: "Something is happening nearby", low: "Minor activity nearby", quiet: "Quiet around it" }[sig.exposure] || "Not known"}</span>
+                        <span style={{ color: "var(--txt2)", minWidth: 0, overflowWrap: "anywhere" }}>{{ high: "Exposed — serious events close by", elevated: "Something is happening nearby", low: "Minor activity nearby", quiet: "Quiet around it" }[sig.exposure] || "Not known"}</span>
                     </div>
                 )}
                 {sig?.signals?.length === 0 && <span style={{ fontSize: 12.5, color: "var(--txt3)" }}>Nothing reported within {sig.radius_km || "the"} km in the last three days.</span>}

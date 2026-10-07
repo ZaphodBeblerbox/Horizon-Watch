@@ -76,3 +76,27 @@ def test_a_story_restated_with_new_numbers_is_one_item():
     items = [_it("a", 5, 2, "high", "GPS degraded over the Gulf — 6 of 23 aircraft (26%)"),
              _it("b", 6, 3, "high", "GPS degraded over the Gulf — 4 of 16 aircraft (25%)")]
     assert len(oa.rank(AT, 30, items, now=NOW)) == 1
+
+
+def test_what_can_touch_what():
+    c = oa.category
+    assert c({"kind": "Sanctioned vessel", "title": "Sanctioned tanker EAGLE S loitering off Porvoo"}) == "maritime"
+    assert c({"kind": "news", "title": "Israeli aircraft strike Gaza City"}) == "kinetic"
+    assert c({"kind": "footage", "title": "Police fire tear gas at protesters in Paris"}) == "unrest"
+    assert c({"kind": "alert", "title": "Arson at railway signal cabinet near Berlin"}) == "sabotage"
+    assert c({"kind": "telegram_announcement", "title": "Protest march announced: Munich"}) == "unrest"
+    # a substation in Berlin: not the Baltic tanker; yes the protest and the arson
+    assert not oa.reaches("substation", "maritime")
+    assert oa.reaches("substation", "unrest") and oa.reaches("substation", "sabotage")
+    # a port and a ship take the maritime picture; an aircraft does not
+    assert oa.reaches("port", "maritime") and oa.reaches("vessel_tanker", "maritime")
+    assert not oa.reaches("aircraft_cargo", "maritime") and not oa.reaches("aircraft_cargo", "unrest")
+
+
+def test_rank_drops_what_cannot_reach_the_asset():
+    items = [
+        {"id": "a", "title": "Sanctioned vessel loitering", "kind": "Sanctioned vessel", "lat": 52.5, "lon": 13.41, "severity": "critical", "when": NOW.isoformat()},
+        {"id": "b", "title": "Protest outside the substation", "kind": "footage", "lat": 52.5, "lon": 13.41, "severity": "high", "when": NOW.isoformat()},
+    ]
+    r = oa.rank({"lat": 52.5, "lon": 13.4}, 20, items, now=NOW, kind="substation")
+    assert [x["id"] for x in r] == ["b"] and r[0]["category"] == "unrest"

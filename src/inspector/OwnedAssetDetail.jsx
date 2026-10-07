@@ -54,11 +54,12 @@ export default function OwnedAssetDetail({ asset }) {
                 <span style={{ position: "absolute", left: 10, bottom: 8, fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".12em",
                                textTransform: "uppercase", color: "var(--txt4)" }}>{a.kind_label} · drag to turn</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <i style={{ width: 9, height: 9, borderRadius: "50%", background: EXPO[expo] || EXPO.unknown }} />
-                <span style={{ fontSize: 13.5, color: "var(--txt)" }}>{EXPO_TEXT[expo] || expo}</span>
-                <div style={{ flex: 1 }} />
-                <button style={BTN} onClick={() => openAssetPage(a.id)}>Full page →</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ display: "flex", alignItems: "flex-start", gap: 8, flex: "1 1 160px", minWidth: 0 }}>
+                    <i style={{ width: 9, height: 9, borderRadius: "50%", flex: "none", marginTop: 5, background: EXPO[expo] || EXPO.unknown }} />
+                    <span style={{ fontSize: 13.5, color: "var(--txt)", lineHeight: 1.4, overflowWrap: "anywhere" }}>{EXPO_TEXT[expo] || expo}</span>
+                </span>
+                <button style={{ ...BTN, flex: "none", whiteSpace: "nowrap" }} onClick={() => openAssetPage(a.id)}>Full page →</button>
             </div>
             <div>
                 <SectionLabel>Essentials</SectionLabel>

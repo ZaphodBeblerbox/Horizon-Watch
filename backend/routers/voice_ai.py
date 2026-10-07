@@ -77,7 +77,7 @@ PAGES = {
 LAYERS = {
     "vessels": "ships (AIS)", "aircraft": "aircraft (ADS-B)", "sanctioned_only": "only sanctioned ships",
     "heat": "fires / heat (FIRMS)", "imagery_signals": "imagery signals", "satellite_image": "the satellite base image",
-    "gdelt": "news events (GDELT)", "telegram": "Telegram reports", "geoconfirmed": "GeoConfirmed (verified footage)",
+    "gdelt": "news events (GDELT)", "telegram": "Telegram reports", "unrest": "unrest, riots and protests", "geoconfirmed": "GeoConfirmed (verified footage)",
     "gps_interference": "GPS jamming", "airspace": "airspace closures", "risk": "country risk shading",
     "frontlines": "frontlines", "flows": "trade and energy flows", "aois": "areas of interest", "labels": "place labels",
     "cables": "undersea cables", "ports": "ports", "airfields": "airports and airfields", "chokepoints": "chokepoints",

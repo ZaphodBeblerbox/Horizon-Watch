@@ -294,8 +294,77 @@ def position(asset: dict, live_vessel=None, live_aircraft=None) -> dict | None:
 SEV_W = {"critical": 1.0, "high": 0.7, "significant": 0.7, "elevated": 0.5, "moderate": 0.4, "medium": 0.4, "low": 0.15, "routine": 0.15}
 
 
+# ── what can touch what ──────────────────────────────────────────────────────
+# A sanctioned tanker loitering in the Baltic is not a signal for a
+# substation in Berlin; a protest called for the street outside it is (the
+# owner, 2026-10-07). Each signal is put in a category, and each kind of
+# asset lists the categories that can reach it.
+import re as _re
+
+CATEGORY_RULES = [
+    # the detectors' own subjects first: narrow, and never anything else
+    ("maritime", _re.compile(r"\b(sanction\w* vessel|dark ship|ship-to-ship|sts transfer|loiter\w*|ais_\w*|ais gap)\b", _re.I)),
+    ("navigation", _re.compile(r"\b(gps|gnss|jamming|spoofing|navigation interference)\b", _re.I)),
+    ("aviation", _re.compile(r"\b(military aircraft|isr pattern|squawk\w*|emergency declared|awacs)\b", _re.I)),
+    # then what happened, whoever did it
+    ("unrest", _re.compile(r"\b(protest\w*|demonstrat\w*|riot\w*|unrest|rally|march|blockade|clashes with police|"
+                           r"tear gas|lbd|police charge|looting|strike action|walkout|manif\w*|kundgebung)\b", _re.I)),
+    ("sabotage", _re.compile(r"\b(sabotag\w*|arson|cable cut|cut cable|cyber\w*|hack\w*|outage|blackout|drone sighting|"
+                             r"drones? over|suspicious|tamper\w*|vandal\w*|explosive device|derail\w*)\b", _re.I)),
+    ("kinetic", _re.compile(r"\b(strike|struck|attack\w*|explosion|blast|missile|drone|shelling|bomb\w*|clash\w*|"
+                            r"killed|casualt\w*|interception|intercept\w*|raid|assault|shot|shooting|firing)\b", _re.I)),
+    ("fire", _re.compile(r"\b(fire|blaze|heat|thermal|burning|wildfire)\b", _re.I)),
+    # then the general subjects, when nothing above was said
+    ("maritime", _re.compile(r"\b(vessel|tanker|freighter|cargo ship|naval|warship|frigate|port call|anchorage|ais)\b", _re.I)),
+    ("aviation", _re.compile(r"\b(aircraft|flight|airspace|air force|fighter jet|bomber)\b", _re.I)),
+    ("crime", _re.compile(r"\b(stabbing|robbery|murder|arrest\w*|police|gang|kidnap\w*)\b", _re.I)),
+]
+KIND_CATEGORY = {"footage": None, "verified footage": "kinetic", "news": "kinetic", "fusion": "kinetic",
+                 "Heat": "fire", "thermal_anomaly": "fire", "telegram_announcement": "unrest"}
+LAND = {"kinetic", "unrest", "sabotage", "fire", "crime"}
+REACHES = {
+    "Vessels": {"maritime", "kinetic", "sabotage", "navigation"},
+    "Aircraft": {"aviation", "kinetic", "navigation"},
+    "Vehicles": LAND,
+    "Sites": LAND,
+    "Energy": LAND,
+    "Telecoms": LAND,
+    "Transport": LAND | {"maritime", "aviation", "navigation"},
+    "People": LAND,
+}
+# kinds that sit at or on the water take maritime signals too
+WET = {"port", "subsea_cable", "vessel_offshore", "tank_farm", "pipeline", "refinery"}
+AIRSIDE = {"airport"}
+
+
+def category(item: dict) -> str:
+    """What kind of threat a signal is (CATEGORY_RULES; first match on its kind, then its words)."""
+    k = str(item.get("kind") or "")
+    if k in KIND_CATEGORY and KIND_CATEGORY[k]:
+        hint = KIND_CATEGORY[k]
+    else:
+        hint = None
+    text = f"{k} {item.get('title') or ''}"
+    for cat, rx in CATEGORY_RULES:
+        if rx.search(text):
+            # a named act beats the source's default (a GDELT protest is unrest, not kinetic)
+            return cat
+    return hint or "other"
+
+
+def reaches(asset_kind: str | None, cat: str) -> bool:
+    if not asset_kind or asset_kind not in KINDS:
+        return True
+    cats = set(REACHES.get(KINDS[asset_kind]["group"], LAND))
+    if asset_kind in WET:
+        cats |= {"maritime", "navigation"}
+    if asset_kind in AIRSIDE:
+        cats |= {"aviation", "navigation"}
+    return cat in cats or cat == "other"
+
+
 def rank(at: dict, radius_km: float, items: list[dict], now: _dt.datetime | None = None,
-         hours: float = 72, limit: int = 25) -> list[dict]:
+         hours: float = 72, limit: int = 25, kind: str | None = None) -> list[dict]:
     """Signals within the radius, most important first: severity, then
     closeness (linear to zero at the edge), then age (half weight at 24 h).
     Each item: {id, title, lat, lon, severity, when, source, kind}."""
@@ -316,6 +385,10 @@ def rank(at: dict, radius_km: float, items: list[dict], now: _dt.datetime | None
             age_h = hours / 2
         if age_h > hours:
             continue
+        cat = category(it)
+        if not reaches(kind, cat):
+            continue
+        it = {**it, "category": cat}
         w = SEV_W.get(str(it.get("severity") or "").lower(), 0.3)
         score = w * (0.35 + 0.65 * (1 - d / radius_km)) * (0.5 ** (age_h / 24))
         out.append({**it, "km": round(d, 1), "age_h": round(age_h, 1), "score": round(score, 4)})

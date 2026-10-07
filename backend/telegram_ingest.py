@@ -339,12 +339,19 @@ def classify(limit: int = 120) -> dict:
             # Aggregators repost everything; what makes one of their posts
             # worth a pin is footage of the thing. Without a photo or video
             # it is a sentence someone else wrote first.
-            kinetic = (x.get("event_type") or "other") in KINETIC
+            # Unrest is published too, as its own category the map can show
+            # or hide (the owner, 2026-10-07: riots and civil unrest belong in
+            # the system, separable by a toggle). Same rules as fighting:
+            # a precise place, and footage first-hand from reposting channels.
+            kinetic = (x.get("event_type") or "other") in KINETIC or x.get("event_type") == "unrest"
             if rel and not kinetic:
                 hit, why = None, f"not a kinetic event ({x.get('event_type') or 'other'})"
             elif rel and role in ("aggregator", "partisan", "outlet") and (r[6] or "none") == "none":
                 hit, why = None, "no photo or video from a reposting channel"
-            elif rel and role in ("aggregator", "partisan") and not x.get("first_hand"):
+            # Unrest relays (a protest filmed and reposted) are kept with their
+            # footage even when the channel did not film it: the footage is
+            # the evidence, and protest channels are reposting by nature.
+            elif rel and role in ("aggregator", "partisan") and not x.get("first_hand") and x.get("event_type") != "unrest":
                 hit, why = None, "recap, not a first-hand account"
             elif not rel:
                 hit, why = None, "not relevant"
@@ -712,6 +719,45 @@ def upcoming(days_ahead: int = 30) -> list[dict]:
     return out
 
 
+# What makes a post UNREST rather than police news: it names the act. The
+# model's own "unrest" label also takes arrests, accidents and air-raid
+# alerts, which are not what the unrest layer is for.
+UNREST_WORDS = re.compile(
+    r"\b(protest\w*|demonstrat\w*|riot\w*|unrest|rall(y|ies)|march(es|ed)?|blockade\w*|block(ed|ing) (the )?road|"
+    r"clash\w* with (police|security)|tear ?gas|lbd|water cannon|police charge\w*|tumult|looting|uprising|"
+    r"strike action|general strike|walkout|occupation of|sit-in|manif\w*|émeute\w*|kundgebung|krawall\w*|ausschreitung\w*)\b", re.I)
+
+
+def is_unrest(r) -> bool:
+    if r["event_type"] != "unrest":
+        return False
+    if r["announce_at"] and is_announcement(r["announce_what"], r["announce_at"], r["posted_at"]):
+        return False            # shown as an announcement (upcoming), not as an event
+    return bool(UNREST_WORDS.search(f"{r['headline'] or ''} {r['summary_en'] or ''}"))
+
+
+def publish_unrest_backlog(days: int = 7) -> int:
+    """Posts screened before unrest was published: placed now, by the same rule."""
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
+    con = _con()
+    rows = con.execute("SELECT channel, msg_id, place, precision, country_code, role, media, first_hand FROM telegram_posts"
+                       " WHERE event_type='unrest' AND relevant=1 AND lat IS NULL AND posted_at >= ?"
+                       " AND (unpublished_reason LIKE 'not a kinetic event%' OR unpublished_reason LIKE 'recap,%')", (cutoff,)).fetchall()
+    n = 0
+    for chan, mid, place, prec, cc, role, media, first_hand in rows:
+        role = role or "aggregator"
+        if role in ("aggregator", "partisan", "outlet") and (media or "none") == "none":
+            why, hit = "no photo or video from a reposting channel", None
+        else:
+            hit, why = locate(place, prec, cc)
+        con.execute("UPDATE telegram_posts SET lat=?, lon=?, geocoded_as=?, unpublished_reason=? WHERE channel=? AND msg_id=?",
+                    (hit and hit["lat"], hit and hit["lon"], hit and hit.get("display_name"), why, chan, mid))
+        n += int(hit is not None)
+    con.commit()
+    con.close()
+    return n
+
+
 def _is_graphic(r) -> bool:
     """Screened: what the screen said. Not yet: the words alone, so nothing
     is shown unwarned while it waits for its turn."""
@@ -734,6 +780,8 @@ def published(hours: int = 72) -> list[dict]:
     for r in rows:
         chan = r["channel"]
         lat, lon = r["lat"], r["lon"]
+        if r["event_type"] == "unrest" and not is_unrest(r):
+            continue
         # ONE EVENT, ONE PIN. Channels post a claim as several messages and
         # others repost it; the same headline at the same place on the same
         # day is one event, shown once, with who else carried it.
@@ -759,6 +807,7 @@ def published(hours: int = 72) -> list[dict]:
             "first_hand": bool(r["first_hand"]), "msg_id": r["msg_id"],
             "severity_tier": severity_of(r),
             "graphic": _is_graphic(r),
+            "category": "unrest" if r["event_type"] == "unrest" else "conflict",
             "verification": (f"{r['party']} — " if r["party"] and r["role"] == "official" else "")
                             + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
         })

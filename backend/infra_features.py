@@ -504,10 +504,11 @@ def detail(fid: str, kind: str, lat: float, lon: float, props: dict, osm_type: s
 
 
 def signals_near(kind: str, lat: float, lon: float) -> dict:
-    """The signals near it, ranked as an asset's are (slower: its own request)."""
+    """The signals near it that can reach it, ranked as an asset's are (slower: its own request)."""
     import owned_assets as oa
     from routers.my_assets import gather
     radius = RADIUS.get(kind, 25)
     at = {"lat": lat, "lon": lon}
-    ranked = oa.rank(at, radius, gather(at, radius), limit=12)
+    as_asset = {"pylon": "power_line", "wind_turbine": "wind_farm"}.get(model_for(kind, {}), model_for(kind, {}))
+    ranked = oa.rank(at, radius, gather(at, radius), limit=12, kind=as_asset)
     return {"radius_km": radius, "signals": ranked, "exposure": oa.exposure(ranked)}
