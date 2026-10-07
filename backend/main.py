@@ -27732,6 +27732,7 @@ async def api_backfill_geoconfirmed_titles(
 
 @app.get("/api/notifications")
 def api_get_notifications(
+    request: Request,
     limit: int = 60,
     hours: int = 48,
     include_silent: bool = False,
@@ -27885,6 +27886,27 @@ def api_get_notifications(
         # down with it.
         print(f"[notifications] live sources: {type(ex).__name__}: {ex}")
     _timings["live_sources"] = round(time.monotonic() - _t_live, 2)
+
+    # ── what is near YOUR assets (asset_watch.py) ─────────────────────────
+    # Per user, so it comes last and from a cache: a card for a signal the
+    # tray already carries takes over that card and says which asset it is
+    # near, rather than appearing twice.
+    try:
+        import asset_watch as _aw
+        _u = _get_current_user(request)
+        _uid = str(_u.get("id") or _u.get("email")) if _u else None
+        by_id = {o["id"]: o for o in out}
+        mine = []
+        for c in _aw.notifications_for(_uid):
+            hit = by_id.get(c.get("signal_id"))
+            if hit:
+                hit.update({"title": _nc.plain(c["title"]), "reason": c["reason"], "asset_id": c["asset_id"],
+                            "sev": hit.get("sev") if hit.get("sev") == "critical" else c["sev"]})
+            else:
+                mine.append({**c, "title": _nc.plain(c["title"])})
+        out = mine + out
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] asset watch: {type(ex).__name__}: {ex}", flush=True)
 
     # SAY WHERE THE TIME WENT. This endpoint has now had four separate
     # causes of slowness — a missing index, an N+1 on AIS coverage, a

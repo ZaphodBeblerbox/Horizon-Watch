@@ -195,7 +195,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     useEffect(() => { loadPlaces().then((ps) => setCountryPlaces(ps.filter((p) => p.kind === "country"))).catch(() => {}) }, [])
     const [interests, setInterests] = useState(() => getSettings()?.interests || null)
     useEffect(() => subscribeSettings((st) => setInterests(st?.interests || null)), [])
-    const w = useMemo(() => watched(interests || {}, userTheaters, countryPlaces), [interests, userTheaters, countryPlaces])
+    const w = useMemo(() => watched(interests || {}, userTheaters, countryPlaces, myAssets || []), [interests, userTheaters, countryPlaces, myAssets])
     const split = useMemo(() => partition(surface, w), [surface, w])
 
     /* FROM THE GROUND. The one Telegram video worth playing at launch: a

@@ -27,6 +27,8 @@ export const KIND = {
     surge:    { icon: "i-surge",   name: "Surge" },
     fusion:   { icon: "i-fusion",  name: "Fusion point" },
     detector: { icon: "i-scan",    name: "Detector" },
+    // Near something of yours (asset_watch.py): the card names the asset.
+    asset:    { icon: "i-register", name: "Your asset" },
     feed:     { icon: "i-feed",    name: "Feed health" },
     system:   { icon: "i-gear",    name: "System" },
     // A CONNECTION THE SYSTEM FOUND, not an event that happened. Every
@@ -187,6 +189,7 @@ export function pushNotification(n) {
         // new heat, "image" for an imagery signal.
         actions: Array.isArray(n.actions) ? n.actions : null,
         alertId: n.alertId || null,
+        assetId: n.assetId || null,
         read: !fresh,
     }
     if (state.items.some((x) => x.id === item.id)) return false   // never double-raise

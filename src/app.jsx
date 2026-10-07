@@ -1054,7 +1054,7 @@ export default function App() {
                 // it rather than guessing at one.
                 sub: [i.reason, i.region].filter(Boolean).join(" · "),
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
-                actions: i.actions || null, alertId: i.id,
+                actions: i.actions || null, alertId: i.id, assetId: i.asset_id || null,
                 // WHEN IT HAPPENED, in the order the fields mean it.
                 // created_at is when the ROW was written, which for a
                 // backfilled or late-ingested event is now — and an event
@@ -1636,6 +1636,13 @@ export default function App() {
        if the map is not drawing it, the notification itself is shown. */
     const openNotificationItem = useCallback((n) => {
         if (!n) return
+        // Near one of your assets: its page says what the signal means for it.
+        if (n.assetId) {
+            window.__plxAssetSel = n.assetId
+            openTab("assets")
+            setTimeout(() => window.dispatchEvent(new CustomEvent("akili:open-asset", { detail: { id: n.assetId } })), 200)
+            return
+        }
         const at = n.ref?.lat != null && n.ref?.lon != null ? n.ref : null
         openTab("situation")
         if (at) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: at.lat, lon: at.lon, altitude: 250000 } }))

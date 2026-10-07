@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { countriesInView, partition, relevance, watched } from "./interests.js"
+import { countriesInView, partition, relevance, watched, nearestAsset } from "./interests.js"
 
 const C = [
     { name: "Yemen", lat: 15.6, lon: 47.6 }, { name: "Eritrea", lat: 15.4, lon: 38.9 },
@@ -32,5 +32,30 @@ describe("interests", () => {
         expect(p.mine[0]._why).toBe("Yemen · Red Sea watch")
         expect(p.hasInterests).toBe(true)
         expect(partition([], watched({}, [], C)).hasInterests).toBe(false)
+    })
+})
+
+describe("your assets decide what is yours", () => {
+    const assets = [{ name: "MT Aurora", kind_label: "Tanker", lat: 25.0, lon: 55.06, radius_km: 50 },
+                    { name: "Unplaced", kind_label: "Team", radius_km: 30 }]
+    it("a signal inside an asset's radius is for you, naming the asset", () => {
+        const w = watched({}, [], [], assets)
+        const r = relevance({ lat: 25.1, lon: 55.1, location_country: "Oman" }, w)
+        expect(r.forYou).toBe(true)
+        expect(r.reason).toMatch(/km from MT Aurora/)
+    })
+    it("outside every radius it is not, and unplaced assets are ignored", () => {
+        const w = watched({}, [], [], assets)
+        expect(relevance({ lat: 30, lon: 50 }, w).forYou).toBe(false)
+        expect(w.assets).toHaveLength(1)
+    })
+    it("a live position wins over the registered one", () => {
+        const w = watched({}, [], [], [{ name: "V", lat: 0, lon: 0, position: { lat: 10, lon: 10 }, radius_km: 20 }])
+        expect(nearestAsset({ lat: 10.05, lon: 10 }, w.assets)?.name).toBe("V")
+    })
+    it("what touches an asset leads the list", () => {
+        const w = watched({ countries: ["Oman"] }, [], [], assets)
+        const p = partition([{ id: 1, location_country: "Oman", lat: 20, lon: 57 }, { id: 2, lat: 25.02, lon: 55.07 }], w)
+        expect(p.mine.map((x) => x.id)).toEqual([2, 1])
     })
 })

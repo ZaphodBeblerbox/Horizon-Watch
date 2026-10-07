@@ -159,11 +159,35 @@ async def list_assets(request: Request):
     return {"assets": await loop.run_in_executor(None, run)}
 
 
+def _locate_address(body: dict) -> dict:
+    """An address with no pin is located here: typing "12 Rue de Rivoli,
+    Paris" is enough to register something. The address stays as typed."""
+    if not isinstance(body, dict) or body.get("lat") is not None or not (body.get("address") or "").strip():
+        return body
+    from geocode_utils import geocode_place
+    try:
+        hits = geocode_place(body["address"].strip())
+    except Exception:
+        hits = []
+    if not hits:
+        raise ValueError(f"could not find '{body['address'].strip()}' — try adding the town or country, or click the map")
+    h = hits[0]
+    out = {**body, "lat": float(h["lat"]), "lon": float(h["lon"])}
+    if not out.get("country"):
+        try:
+            from location_extract import country_name_from_code
+            out["country"] = country_name_from_code(h.get("country_code") or "") or None
+        except Exception:
+            pass
+    return out
+
+
 @router.post("")
 async def create_asset(request: Request):
     user = _me(request)
     try:
-        return oa.create(_uid(user), await request.json())
+        body = await asyncio.get_event_loop().run_in_executor(None, _locate_address, await request.json())
+        return oa.create(_uid(user), body)
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
 
@@ -172,7 +196,8 @@ async def create_asset(request: Request):
 async def update_asset(asset_id: str, request: Request):
     user = _me(request)
     try:
-        a = oa.update(asset_id, _uid(user), await request.json())
+        body = await asyncio.get_event_loop().run_in_executor(None, _locate_address, await request.json())
+        a = oa.update(asset_id, _uid(user), body)
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
     if not a:

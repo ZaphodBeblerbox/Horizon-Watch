@@ -71,19 +71,46 @@ export function countriesInView(view, countries) {
  * @param theaters  [{name, view}]
  * @param countries [{name, lat, lon}] — the gazetteer's countries
  */
-export function watched(saved = {}, theaters = [], countries = []) {
+export function watched(saved = {}, theaters = [], countries = [], assets = []) {
     const why = new Map()
     const add = (c, reason) => { if (c && !why.has(c)) why.set(c, reason) }
     for (const c of saved?.countries || []) add(c, "a country you watch")
     for (const r of saved?.regions || []) for (const c of REGIONS[r] || []) add(c, r)
     for (const t of theaters || []) for (const c of countriesInView(t.view, countries)) add(c, t.name)
-    return { countries: why, topics: new Set(saved?.topics || []) }
+    // YOUR ASSETS. What happens inside an asset's watch radius is yours
+    // before anything else is — a vessel's live position when it has one.
+    const placed = (assets || []).map((a) => {
+        const at = a?.position || (a?.lat != null ? { lat: a.lat, lon: a.lon } : null)
+        return at && Number.isFinite(+at.lat) && Number.isFinite(+at.lon) && +a.radius_km > 0
+            ? { name: a.name, kind: a.kind_label || "asset", lat: +at.lat, lon: +at.lon, radius: +a.radius_km } : null
+    }).filter(Boolean)
+    return { countries: why, topics: new Set(saved?.topics || []), assets: placed }
+}
+
+function km(aLat, aLon, bLat, bLon) {
+    const r = Math.PI / 180
+    const h = Math.sin((bLat - aLat) * r / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin((bLon - aLon) * r / 2) ** 2
+    return 12742 * Math.asin(Math.sqrt(h))
+}
+
+/** The nearest of your assets this signal falls inside, or null. */
+export function nearestAsset(signal, assets) {
+    const lat = +signal?.lat, lon = +signal?.lon
+    if (!assets?.length || !Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) return null
+    let best = null
+    for (const a of assets) {
+        const d = km(a.lat, a.lon, lat, lon)
+        if (d <= a.radius && (!best || d < best.km)) best = { ...a, km: d }
+    }
+    return best
 }
 
 const text = (s) => [s?.headline, s?.title, s?.type, s?.source_type, s?.rule_name].filter(Boolean).join(" ")
 
 /** {forYou, reason} for one signal. */
 export function relevance(signal, w) {
+    const near = nearestAsset(signal, w?.assets)
+    if (near) return { forYou: true, asset: near.name, reason: `${near.km < 1 ? "<1" : Math.round(near.km)} km from ${near.name}` }
     const c = signal?.location_country
     if (c && w?.countries?.has(c)) return { forYou: true, reason: `${c} · ${w.countries.get(c)}` }
     const t = text(signal)
@@ -102,5 +129,7 @@ export function partition(surface, w) {
         const r = relevance(s, w)
         ;(r.forYou ? mine : elsewhere).push(r.forYou ? { ...s, _why: r.reason } : s)
     }
-    return { mine, elsewhere, hasInterests: !!(w && (w.countries.size || w.topics.size)) }
+    // what touches an asset leads "mine"
+    mine.sort((a, b) => (nearestAsset(b, w?.assets) ? 1 : 0) - (nearestAsset(a, w?.assets) ? 1 : 0))
+    return { mine, elsewhere, hasInterests: !!(w && (w.countries.size || w.topics.size || w.assets?.length)) }
 }

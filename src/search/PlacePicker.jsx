@@ -6,7 +6,7 @@
  * own suggestions — local countries and cities instantly, the geocoder for
  * the rest — and the camera height that suits the place.
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { places as loadPlaces } from "../voice/gazetteer.js"
 import { buildSuggestions } from "./searchModel.js"
@@ -29,7 +29,7 @@ export default function PlacePicker({ onPick, placeholder = "Type a place — Ba
     // of a pin dropped on a map.
     const [q, setQ] = useState(value || "")
     const [open, setOpen] = useState(false)
-    useEffect(() => { if (value != null) { setQ(value); setOpen(false) } }, [value])
+    useEffect(() => { if (value != null) { setQ(value); setOpen(false); chosen.current = value } }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
     const [places, setPlaces] = useState([])
     const [remote, setRemote] = useState([])
     useEffect(() => { loadPlaces().then(setPlaces).catch(() => {}) }, [])
@@ -55,23 +55,37 @@ export default function PlacePicker({ onPick, placeholder = "Type a place — Ba
     // the place as an address: its name and where it is, without the
     // suggestion's category tag ("· place", "· port")
     const asAddress = (it) => [it.label, String(it.sub || "").split(" · ")[0]].filter(Boolean).join(", ")
-    const choose = (it) => { onPick({ ...it, address: asAddress(it) }); setOpen(false); setQ(keep ? asAddress(it) : "") }
+    const chosen = useRef(value || "")
+    const choose = (it) => { onPick({ ...it, address: asAddress(it) }); setOpen(false); chosen.current = keep ? asAddress(it) : ""; setQ(chosen.current) }
+    // Typed and never picked: look it up and take the best match — Enter,
+    // or (for an address being set) simply leaving the field.
+    const lookUp = (t) => {
+        if (t.length < 2) return
+        fetch(`${API_BASE}/api/search?q=${encodeURIComponent(t)}&limit=3`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : [])).then((d) => {
+                const hit = (Array.isArray(d) ? d : []).find((x) => Number.isFinite(Number(x.lat)) && Number.isFinite(Number(x.lon)))
+                if (hit) {
+                    // keep what was typed as the address: it is what the user means by it
+                    onPick({ ...hit, lat: Number(hit.lat), lon: Number(hit.lon), label: hit.label || hit.name || t, sub: hit.sub || "", address: keep ? t : undefined })
+                    setOpen(false); chosen.current = keep ? t : ""; setQ(chosen.current)
+                }
+            }).catch(() => {})
+    }
     return (
         <div style={{ position: "relative" }}>
             <input value={q} onChange={(e) => { setQ(e.target.value); setOpen(true) }} placeholder={placeholder}
-                   onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+                   onFocus={() => setOpen(true)}
+                   onBlur={() => setTimeout(() => {
+                       setOpen(false)
+                       const t = q.trim()
+                       if (keep && t.length >= 4 && t !== chosen.current) lookUp(t)
+                   }, 180)}
                    onKeyDown={(e) => {
                        if (e.key !== "Enter") return
                        e.preventDefault()
                        if (items[0]) { choose(items[0]); return }
                        // Enter before the suggestions arrive: look it up now, take the best
-                       const t = q.trim()
-                       if (t.length < 2) return
-                       fetch(`${API_BASE}/api/search?q=${encodeURIComponent(t)}&limit=3`, { credentials: "include" })
-                           .then((r) => (r.ok ? r.json() : [])).then((d) => {
-                               const hit = (Array.isArray(d) ? d : []).find((x) => Number.isFinite(Number(x.lat)) && Number.isFinite(Number(x.lon)))
-                               if (hit) choose({ ...hit, lat: Number(hit.lat), lon: Number(hit.lon), label: hit.label || hit.name || t, sub: hit.sub || "" })
-                           }).catch(() => {})
+                       lookUp(q.trim())
                    }}
                    style={{ ...INPUT, ...(keep ? { height: 34, fontSize: 13.5 } : null) }} aria-label={label} />
             {open && q.trim().length >= 2 && items.length > 0 && (
