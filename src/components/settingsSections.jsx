@@ -206,6 +206,11 @@ export function GeneralSection({ settings }) {
                     onChange={(v) => updateSetting("general.density", v)}
                 />
             </Row>
+            <SectionTitle>Footage</SectionTitle>
+            <Row label="Warn before graphic footage"
+                 hint="Footage that may show dead or injured people opens blurred, behind a warning, until you choose to see it.">
+                <Toggle value={getAtPath(settings, "media.warnGraphic") !== false} onChange={(v) => updateSetting("media.warnGraphic", v)} />
+            </Row>
             <SectionTitle>Launch</SectionTitle>
             <Row label="Guided walkthrough"
                  hint="Opens each part of the console and shows you the controls that matter. Changes nothing you have set.">

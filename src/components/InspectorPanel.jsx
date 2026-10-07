@@ -1008,7 +1008,7 @@ export default function InspectorPanel({
                             shareToDesk(entityType === "telegram"
                                 ? { kind: "telegram", id: data?.id ?? entityId, channel: data?.channel, msg_id: data?.msg_id, channel_title: data?.channel_title,
                                     headline, place: data?.place || data?.location || null, lat, lon, media: data?.media, thumb_url: data?.thumb_url,
-                                    verification: data?.verification || null, posted_at: data?.posted_at || null }
+                                    verification: data?.verification || null, posted_at: data?.posted_at || null, graphic: !!data?.graphic }
                                 : { kind: "signal", id: `${entityType || "sig"}:${entityId}`, headline, lat, lon,
                                     meta: [data?.location || data?.location_name || data?.region, data?.source || data?.source_type].filter(Boolean).join(" · ") || null,
                                     urgency: String(data?.severity_tier || data?.severity || "routine").toLowerCase(), sector: entityType || null })

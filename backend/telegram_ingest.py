@@ -30,6 +30,7 @@ import asyncio
 import datetime as _dt
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -100,7 +101,7 @@ CREATE TABLE IF NOT EXISTS telegram_posts (
     PRIMARY KEY (channel, msg_id)
 )"""
 EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": "TEXT", "claim": "INTEGER",
-                 "first_hand": "INTEGER"}
+                 "first_hand": "INTEGER", "graphic": "INTEGER", "graphic_score": "REAL"}
 
 # What each channel is (telegram_channels.json). Unlisted = aggregator.
 CHANNELS_FILE = os.path.join(HERE, "telegram_channels.json")
@@ -364,6 +365,68 @@ def classify(limit: int = 120) -> dict:
 HARD = {"strike", "attack", "explosion", "clash", "interception"}
 
 
+# ── Sensitive content ───────────────────────────────────────────────────────
+# Footage of dead or injured people is shown behind a warning (the owner,
+# 2026-10-06). Two readings, either is enough — a warning shown in error
+# costs a click, one missed shows someone a body:
+#   what the post SAYS: killed, bodies, massacre, injured …
+#   what the picture SHOWS: OpenAI's moderation model (free, not counted
+#     against the cap) scoring text and thumbnail together for graphic
+#     violence. It sees one frame, not the video, and scores a wrapped
+#     child's body at 0.2 — so the bar is low.
+GRAPHIC_WORDS = re.compile(
+    r"\b(dead|death|deaths|died|kill(?:ed|ing|s)?|bod(?:y|ies)|corpses?|remains|martyr\w*|massacre\w*|"
+    r"exterminat\w*|execut(?:ed|ion|ions)|behead\w*|slaughter\w*|wounded|injur(?:ed|ies|es)|"
+    r"casualt(?:y|ies)|assassinat\w*|blood\w*|mutilat\w*|charred)\b", re.I)
+GRAPHIC_SCORE = 0.10
+
+
+def graphic_by_words(*texts: str | None) -> bool:
+    return bool(GRAPHIC_WORDS.search(" ".join(t or "" for t in texts)))
+
+
+def _moderation_score(client, text: str, thumb_path: str | None) -> float | None:
+    import base64
+    parts = [{"type": "text", "text": text[:2000] or "-"}]
+    if thumb_path and os.path.exists(thumb_path):
+        with open(thumb_path, "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode()
+        parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+    try:
+        r = client.moderations.create(model="omni-moderation-latest", input=parts)
+        return float(r.results[0].category_scores.violence_graphic or 0.0)
+    except Exception as e:
+        print(f"[telegram] moderation failed: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+def screen_graphic(limit: int = 80, days: int = 7) -> int:
+    """Set `graphic` on recent posts with media that have not been screened."""
+    import openai_gate
+    client = openai_gate.get_client(openai_gate.ENRICH)
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
+    con = _con()
+    rows = con.execute("SELECT channel, msg_id, headline, summary_en, text, thumb FROM telegram_posts"
+                       " WHERE graphic IS NULL AND classified=1 AND media IN ('photo','video') AND posted_at >= ?"
+                       " ORDER BY posted_at DESC LIMIT ?", (cutoff, limit)).fetchall()
+    n = 0
+    for chan, mid, head, summ, text, thumb in rows:
+        words = graphic_by_words(head, summ)
+        score = None
+        if client is not None:
+            score = _moderation_score(client, f"{head or ''}\n{summ or ''}\n{(text or '')[:1200]}",
+                                      os.path.join(MEDIA_DIR, thumb) if thumb else None)
+        if score is None and client is not None and not words:
+            continue        # try again next pass rather than call it safe
+        flag = words or (score is not None and score >= GRAPHIC_SCORE)
+        con.execute("UPDATE telegram_posts SET graphic=?, graphic_score=? WHERE channel=? AND msg_id=?",
+                    (int(flag), score, chan, mid))
+        n += 1
+    con.commit()
+    con.close()
+    return n
+
+
 def severity_of(r) -> str:
     """Critical: violence with video that is first-hand or a party's own
     claim — the footage the owner wants to see first. Everything else that
@@ -449,6 +512,13 @@ def prefetch_videos(limit: int = 15) -> int:
     return got
 
 
+def _is_graphic(r) -> bool:
+    """Screened: what the screen said. Not yet: the words alone, so nothing
+    is shown unwarned while it waits for its turn."""
+    g = r["graphic"]
+    return bool(g) if g is not None else graphic_by_words(r["headline"], r["summary_en"])
+
+
 def published(hours: int = 72) -> list[dict]:
     cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
     con = _con()
@@ -488,6 +558,7 @@ def published(hours: int = 72) -> list[dict]:
             "role": r["role"], "party": r["party"], "claim": bool(r["claim"]),
             "first_hand": bool(r["first_hand"]), "msg_id": r["msg_id"],
             "severity_tier": severity_of(r),
+            "graphic": _is_graphic(r),
             "verification": (f"{r['party']} — " if r["party"] and r["role"] == "official" else "")
                             + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
         })
@@ -526,7 +597,7 @@ def statements(hours: int = 72) -> list[dict]:
             "channel": chan, "channel_title": r["channel_title"], "party": r["party"],
             "posted_at": r["posted_at"], "event_type": r["event_type"], "place": r["place"],
             "country_code": r["country_code"], "cite_lat": r["lat"], "cite_lon": r["lon"],
-            "media": r["media"], "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
+            "graphic": _is_graphic(r), "media": r["media"], "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
             "url": None if chan.startswith("c/") else f"https://t.me/{chan}/{r['msg_id']}",
             "important": (r["event_type"] or "") in IMPORTANT, "msg_id": r["msg_id"], "lang": r["lang"],
             "verification": f"{r['party'] or r['channel_title']} — official statement, the party's own claim",
@@ -600,6 +671,7 @@ def run_once(hours: int = 6) -> dict:
     with _SESSION_LOCK:
         new = asyncio.run(_collect(hours))
     out = {"collected": new, **classify()}
+    out["screened"] = screen_graphic()
     # No prefetch: a video is fetched when someone opens it (VIDEO_DIR).
     out["videos_pruned"] = prune_videos()
     return out

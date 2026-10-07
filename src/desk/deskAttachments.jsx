@@ -21,7 +21,7 @@ import { listReports } from "../reports/reportApi.js"
 import { useSaved, savedLabel, savedMeta } from "../state/savedForBriefing.js"
 import { SAVED_READ } from "../state/signalPicker.js"
 import { deskFileUrl } from "../lib/deskApi.js"
-import TelegramMedia from "../components/TelegramMedia.jsx"
+import TelegramMedia, { SafeThumb } from "../components/TelegramMedia.jsx"
 import AssetThumb from "../assets/AssetThumb.jsx"
 import PlacePicker from "../search/PlacePicker.jsx"
 import PinMap from "../ui/PinMap.jsx"
@@ -125,6 +125,13 @@ export function Attachment({ att, postId, compact = false }) {
 /* ── choosing one ─────────────────────────────────────────────────────── */
 
 function Shell({ title, onClose, children, search, onSearch }) {
+    // Escape closes the picker and nothing else: caught on the way down,
+    // before the app's own Escape (which leaves the page) can see it.
+    useEffect(() => {
+        const k = (e) => { if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); onClose() } }
+        window.addEventListener("keydown", k, true)
+        return () => window.removeEventListener("keydown", k, true)
+    }, [onClose])
     return (
         <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 9000, display: "grid", placeItems: "center", background: "rgba(10,14,31,.5)", padding: 20 }}>
             <div onClick={(e) => e.stopPropagation()} style={{
@@ -211,8 +218,8 @@ export function TelegramPicker({ onPick, onClose }) {
             {rows === null && <Empty>Reading the footage…</Empty>}
             {rows && !shown.length && <Empty>No footage matches.</Empty>}
             {shown.map((p) => (
-                <Row key={p.id} onClick={() => onPick({ kind: "telegram", id: p.id, channel: p.channel, msg_id: p.msg_id, channel_title: p.channel_title, headline: p.headline, place: p.place, lat: p.lat, lon: p.lon, media: p.media, thumb_url: p.thumb_url, verification: p.verification, posted_at: p.posted_at })}>
-                    {p.thumb_url ? <img src={abs(p.thumb_url)} alt="" style={{ width: 84, height: 52, objectFit: "cover", borderRadius: 6, flex: "none" }} /> : <span style={{ width: 84, height: 52, background: "#000", borderRadius: 6, flex: "none" }} />}
+                <Row key={p.id} onClick={() => onPick({ kind: "telegram", id: p.id, channel: p.channel, msg_id: p.msg_id, channel_title: p.channel_title, headline: p.headline, place: p.place, lat: p.lat, lon: p.lon, media: p.media, thumb_url: p.thumb_url, verification: p.verification, posted_at: p.posted_at, graphic: !!p.graphic })}>
+                    <SafeThumb post={p} src={abs(p.thumb_url)} style={{ width: 84, height: 52, borderRadius: 6 }} />
                     <span style={{ minWidth: 0 }}>
                         <span style={{ display: "block", fontSize: 13.5 }}>{p.headline}</span>
                         <span style={{ fontSize: 12, color: "var(--txt3)" }}><Dots text={[p.place, p.channel_title || p.channel, agoLabel(p.posted_at)].filter(Boolean).join(" · ")} /></span>

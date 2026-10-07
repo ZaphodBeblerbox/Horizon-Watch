@@ -200,11 +200,14 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
 
     /* FROM THE GROUND. The one Telegram video worth playing at launch: a
        first-hand or official report with footage from the last 12 hours,
-       in the user's areas if there is one, critical first, then newest. */
+       in the user's areas if there is one, critical first, then newest.
+       Footage behind the sensitive-content warning comes last: the first
+       thing on the screen should not be a warning box when something else
+       would do. */
     const groundVideo = useMemo(() => {
         const cutoff = Date.now() - 12 * 3600 * 1000
         const mineIds = new Set(split.mine.map((m) => m.id))
-        const rank = (x) => (mineIds.has(x.id) ? 0 : 2) + (x.severity_tier === "critical" ? 0 : 1)
+        const rank = (x) => (x.graphic ? 4 : 0) + (mineIds.has(x.id) ? 0 : 2) + (x.severity_tier === "critical" ? 0 : 1)
         return surface
             .filter((x) => x.source_type === "telegram" && x.media === "video" && Date.parse(x.published_at) >= cutoff)
             .sort((a, b) => rank(a) - rank(b) || String(b.published_at).localeCompare(String(a.published_at)))[0] || null

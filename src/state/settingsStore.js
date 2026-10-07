@@ -51,6 +51,9 @@ export const DEFAULTS = {
     // means "all theatres" (never resets to some other implied default).
     mapLayers: { geoConfirmedTheatres: [] },
 
+    // Graphic footage (dead or injured people) opens behind a warning.
+    media: { warnGraphic: true },
+
     // Which chrome is collapsed. Persisted per user for the same reason
     // every other view preference here is: an analyst who works with the
     // left pane shut should not have to shut it again every morning.
