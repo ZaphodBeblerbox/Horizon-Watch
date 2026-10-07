@@ -21,6 +21,7 @@ import TradeRouteSection from "./TradeRouteSection.jsx"
 import { AroundSection, CableSection } from "./InfrastructureContext.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
+import { shareToDesk } from "../desk/shareToDesk.js"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -997,6 +998,22 @@ export default function InspectorPanel({
                                           { icon: ok ? "i-check" : "i-info" })
                                 }}>
                             Save for briefing
+                        </Button>
+                    )}
+                    {entityId && (
+                        <Button variant="ghost" size="sm" style={{ flex: 1 }} onClick={() => {
+                            const lat = data?.lat ?? data?.latitude ?? data?.centroid_lat ?? null
+                            const lon = data?.lon ?? data?.longitude ?? data?.centroid_lon ?? null
+                            const headline = data?.headline || data?.title || data?.name || data?.label || String(entityId)
+                            shareToDesk(entityType === "telegram"
+                                ? { kind: "telegram", id: data?.id ?? entityId, channel: data?.channel, msg_id: data?.msg_id, channel_title: data?.channel_title,
+                                    headline, place: data?.place || data?.location || null, lat, lon, media: data?.media, thumb_url: data?.thumb_url,
+                                    verification: data?.verification || null, posted_at: data?.posted_at || null }
+                                : { kind: "signal", id: `${entityType || "sig"}:${entityId}`, headline, lat, lon,
+                                    meta: [data?.location || data?.location_name || data?.region, data?.source || data?.source_type].filter(Boolean).join(" · ") || null,
+                                    urgency: String(data?.severity_tier || data?.severity || "routine").toLowerCase(), sector: entityType || null })
+                        }}>
+                            Share to the desk
                         </Button>
                     )}
                     {canWatch(entityType, data) && <WatchWithSatellites data={data} />}

@@ -20,6 +20,7 @@ import PinMap from "../ui/PinMap.jsx"
 import AssetModel from "../assets/AssetModel.jsx"
 import AssetThumb from "../assets/AssetThumb.jsx"
 import Dots from "../ui/Dots.jsx"
+import { shareToDesk } from "../desk/shareToDesk.js"
 import { agoLabel } from "../utils/formatTime.js"
 
 const EYE = { fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }
@@ -305,6 +306,7 @@ function Detail({ asset, onEdit, onDeleted }) {
                     {asset.notes && <p style={{ margin: 0, fontSize: 13, color: "var(--txt2)", lineHeight: 1.55, borderTop: "1px solid var(--gline)", paddingTop: 12 }}>{asset.notes}</p>}
                     <div style={{ display: "flex", gap: 6, marginTop: "auto", flexWrap: "wrap" }}>
                         {pos && <button onClick={() => flyTo(pos.lat, pos.lon)} style={PRIMARY}>Show on the map</button>}
+                        <button onClick={() => shareToDesk({ kind: "asset", id: asset.id, name: asset.name, asset_kind: asset.kind, kind_label: asset.kind_label, group: asset.group, exposure: s?.exposure || null })} style={BTN}>Share to the desk</button>
                         {asset.mine && <button onClick={onEdit} style={BTN}>Edit</button>}
                         {asset.mine && <button onClick={remove} style={BTN}>Remove</button>}
                     </div>

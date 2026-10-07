@@ -20,7 +20,7 @@
  * This screen composes those components rather than re-rendering their
  * chrome, so the deck and the printed page keep the identity they had.
  */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Generate from "./Generate.jsx"
 import Briefings from "./Briefings.jsx"
 import DeckBuilder from "./DeckBuilder.jsx"
@@ -59,6 +59,15 @@ export default function BriefingStudio({
     const [tab, setTab] = useState("generate")
     const [deckId, setDeckId] = useState(null)
     const [reportId, setReportId] = useState(initialReportId)
+
+    // A briefing shared on the desk (or anywhere) opens here, in the reader.
+    useEffect(() => {
+        const open = (id) => { if (id) { setReportId(id); setTab("reader") } }
+        if (window.__plxOpenReport) { open(window.__plxOpenReport); window.__plxOpenReport = null }
+        const h = (e) => { open(e.detail?.id); window.__plxOpenReport = null }
+        window.addEventListener("akili:open-report", h)
+        return () => window.removeEventListener("akili:open-report", h)
+    }, [])
 
     const saved = useSaved()
     const { signals, notes } = useMemo(() => ({

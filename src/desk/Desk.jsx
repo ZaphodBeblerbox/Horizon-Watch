@@ -17,20 +17,19 @@
  * second person saying "I have the ADS-B for that window"; the fourth
  * nested reply is a conversation, and there is a chat for that.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
     listPosts, createPost, deletePost, toggleAck, whoAcked, listReplies,
     postedTheaters, uploadDeskFile, deskFileUrl,
 } from "../lib/deskApi.js"
 import { getCurrentUser } from "../state/authStore.js"
 import { getActiveTheater, URGENCY } from "../state/filing.js"
-import { useSaved, savedLabel, savedMeta } from "../state/savedForBriefing.js"
-import { SAVED_READ } from "../state/signalPicker.js"
 import PersonCard, { Face } from "../chat/PersonCard.jsx"
 import { toast } from "../ui/toast.js"
 import Loading from "../ui/Loading.jsx"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import { fmtWhen } from "../utils/formatTime.js"
+import { Attachment, SignalPicker as SignalPicker2, BriefingPicker, TelegramPicker, AssetPicker, PlacePick } from "./deskAttachments.jsx"
 
 const EYE = {
     font: "500 10px var(--mono)", letterSpacing: ".14em",
@@ -143,75 +142,138 @@ export default function Desk() {
         const n = new Set(p); n.has(u) ? n.delete(u) : n.add(u); return n
     })
 
+    // "Share to the desk" from the reader, the inspector or an asset's page:
+    // the desk opens with the thing already in the composer.
+    const [prefill, setPrefill] = useState(() => window.__plxDeskShare || null)
+    useEffect(() => {
+        const h = (e) => { setPrefill(e.detail || null) }
+        window.addEventListener("akili:share-to-desk", h)
+        return () => window.removeEventListener("akili:share-to-desk", h)
+    }, [])
+
+    const [carries, setCarries] = useState(null)       // filter by what a post carries
+    const [author, setAuthor] = useState(null)         // filter by who wrote it
+    const shown = (posts || []).filter((p) =>
+        (!carries || (carries === "text" ? !p.attachment : p.attachment?.kind === carries)) &&
+        (!author || p.author_user_id === author))
+
     // BOOLEAN, NOT A COUNT. `urg.size` is 0 when nothing is selected, and
     // {0 && <x/>} renders the zero — a stray "0" sat beside the urgency
     // chips on every unfiltered view.
-    const filtered = !!theater || urg.size > 0
+    const filtered = !!theater || urg.size > 0 || !!carries || !!author
+
+    // The right column: who is writing, and what the desk has confirmed most.
+    const week = Date.now() - 7 * 864e5
+    const people = Object.values((posts || []).reduce((m, p) => {
+        if (!p.author || p.deleted) return m
+        const k = p.author_user_id
+        m[k] = m[k] || { person: p.author, id: k, n: 0, last: p.created_at }
+        m[k].n += 1
+        return m
+    }, {})).sort((x, y) => y.n - x.n).slice(0, 8)
+    const top = (posts || []).filter((p) => !p.deleted && p.acks > 0 && new Date(p.created_at).getTime() > week)
+        .sort((x, y) => y.acks - x.acks).slice(0, 5)
+    const CARRIES = [["text", "Words only"], ["signal", "Signals"], ["briefing", "Briefings"], ["telegram", "Footage"], ["file", "Images & files"], ["place", "Places"], ["asset", "Our assets"]]
+    const SIDE = { display: "flex", flexDirection: "column", gap: 18, padding: "18px 16px 40px", minWidth: 0, overflow: "auto" }
+    const OPT = (on) => ({
+        display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", padding: "7px 10px", borderRadius: 8,
+        border: 0, background: on ? "var(--accdim)" : "transparent", color: on ? "var(--txt)" : "var(--txt2)", font: "inherit", fontSize: 13.5, cursor: "pointer",
+    })
 
     return (
         <div style={MODE_SURFACE} data-testid="view-root-desk">
-            <div style={{
-                display: "flex", alignItems: "center", gap: 12, height: 44, flexShrink: 0,
-                padding: "0 16px", borderBottom: "1px solid var(--gline)",
-            }}>
-                <b style={{ font: "600 13px var(--font)", color: "var(--txt)" }}>Desk</b>
-                <span style={EYE}>what the desk has seen</span>
-                <div style={{ flex: 1 }} />
-                <button style={BTN} onClick={load}>Refresh</button>
-            </div>
-
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-                <div style={{ maxWidth: 760, margin: "0 auto", padding: "18px 20px 60px" }}>
-                    <Composer onPublish={publish} />
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "20px 0 14px" }}>
-                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
-                            <span style={{ ...EYE, marginRight: 4 }}>Theater</span>
-                            {theaters.map((t) => (
-                                <Chip key={t.name} on={theater === t.name} count={t.count}
-                                      onClick={() => setTheater(theater === t.name ? null : t.name)}>
-                                    {t.name}
-                                </Chip>
-                            ))}
-                            {!theaters.length && (
-                                <span style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>
-                                    nothing posted to a theater yet
-                                </span>
-                            )}
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
-                            <span style={{ ...EYE, marginRight: 4 }}>Urgency</span>
-                            {URGENCY.map((u) => (
-                                <Chip key={u} on={urg.has(u)} tint={SEV[u]} onClick={() => toggleUrg(u)}>{u}</Chip>
-                            ))}
-                            {filtered && (
-                                <button onClick={() => { setTheater(null); setUrg(new Set()) }} style={{
-                                    marginLeft: "auto", border: 0, background: "transparent",
-                                    color: "var(--txt-3)", font: "400 11px var(--font)", cursor: "pointer",
-                                }}>show everything</button>
-                            )}
+            <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(200px, 260px) minmax(0, 1fr) minmax(260px, 340px)" }}>
+                {/* LEFT: what to show */}
+                <aside style={{ ...SIDE, borderRight: "1px solid var(--gline)" }}>
+                    <div>
+                        <div style={{ fontSize: 22, fontWeight: 600 }}>Desk</div>
+                        <div style={{ fontSize: 12.5, color: "var(--txt3)", marginTop: 2 }}>what the team has seen</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <span style={{ ...EYE, marginBottom: 6 }}>Carrying</span>
+                        <button style={OPT(!carries)} onClick={() => setCarries(null)}>Everything</button>
+                        {CARRIES.map(([k, l]) => <button key={k} style={OPT(carries === k)} onClick={() => setCarries(carries === k ? null : k)}>{l}</button>)}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={EYE}>Urgency</span>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {URGENCY.map((u) => <Chip key={u} on={urg.has(u)} tint={SEV[u]} onClick={() => toggleUrg(u)}>{u}</Chip>)}
                         </div>
                     </div>
-
-                    {posts === null && <Loading size={20} inline label="Reading the desk" />}
-
-                    {posts !== null && !posts.length && (
-                        <p style={{ font: "400 12.5px/1.75 var(--font)", color: "var(--txt-3)", textWrap: "pretty" }}>
-                            {filtered
-                                ? "Nothing posted matches that filter."
-                                : "Nothing on the desk yet. Publish what you have seen — it goes to everyone, and it can carry the signal it is about."}
-                        </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={EYE}>Theater</span>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {theaters.map((t) => (
+                                <Chip key={t.name} on={theater === t.name} count={t.count} onClick={() => setTheater(theater === t.name ? null : t.name)}>{t.name}</Chip>
+                            ))}
+                            {!theaters.length && <span style={{ fontSize: 12, color: "var(--txt3)" }}>nothing posted to a theater yet</span>}
+                        </div>
+                    </div>
+                    {filtered && (
+                        <button onClick={() => { setTheater(null); setUrg(new Set()); setCarries(null); setAuthor(null) }} style={{ ...BTN, alignSelf: "flex-start" }}>Show everything</button>
                     )}
+                </aside>
 
-                    {(posts || []).map((p) => (
-                        <Post
-                            key={p.id} post={p} meId={me?.id} busy={busy === p.id}
-                            canDelete={p.author_user_id === me?.id || me?.is_super_admin}
-                            onAck={() => ack(p)} onDelete={() => remove(p)}
-                            onPerson={setCard}
-                        />
-                    ))}
-                </div>
+                {/* MIDDLE: the feed */}
+                <main style={{ minWidth: 0, overflow: "auto" }}>
+                    <div style={{ maxWidth: 760, margin: "0 auto", padding: "18px 20px 60px" }}>
+                        <Composer onPublish={publish} prefill={prefill} onPrefillUsed={() => { setPrefill(null); window.__plxDeskShare = null }} />
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 0" }}>
+                            <span style={EYE}>{filtered ? `${shown.length} matching` : "Latest"}</span>
+                            <div style={{ flex: 1 }} />
+                            <button style={{ ...BTN, border: 0 }} onClick={load}>Refresh</button>
+                        </div>
+
+                        {posts === null && <Loading size={20} inline label="Reading the desk" />}
+
+                        {posts !== null && !shown.length && (
+                            <p style={{ font: "400 13.5px/1.75 var(--font)", color: "var(--txt3)", textWrap: "pretty" }}>
+                                {filtered
+                                    ? "Nothing posted matches that filter."
+                                    : "Nothing on the desk yet. Post what you have seen — a signal, footage, a briefing, a place — and the team can comment and confirm it."}
+                            </p>
+                        )}
+
+                        {shown.map((p) => (
+                            <Post
+                                key={p.id} post={p} meId={me?.id} busy={busy === p.id}
+                                canDelete={p.author_user_id === me?.id || me?.is_super_admin}
+                                onAck={() => ack(p)} onDelete={() => remove(p)}
+                                onPerson={setCard}
+                            />
+                        ))}
+                    </div>
+                </main>
+
+                {/* RIGHT: who, and what was confirmed */}
+                <aside style={{ ...SIDE, borderLeft: "1px solid var(--gline)" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span style={{ ...EYE, marginBottom: 6 }}>On the desk</span>
+                        {!people.length && <span style={{ fontSize: 12.5, color: "var(--txt3)" }}>Nobody has posted yet.</span>}
+                        {people.map((x) => (
+                            <button key={x.id} style={OPT(author === x.id)} onClick={() => setAuthor(author === x.id ? null : x.id)} title="Show only their posts">
+                                <Face person={x.person} size={30} />
+                                <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                                    <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.person.name || x.person.email}</span>
+                                    <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>{x.n} {x.n === 1 ? "post" : "posts"} · last {fmtWhen(x.last)}</span>
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <span style={EYE}>Most confirmed this week</span>
+                        {!top.length && <span style={{ fontSize: 12.5, color: "var(--txt3)", lineHeight: 1.5 }}>Nothing confirmed yet. The ✓ under a post says “seen, and in hand”.</span>}
+                        {top.map((p) => (
+                            <button key={p.id} onClick={() => document.getElementById(`desk-post-${p.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                                style={{ display: "flex", gap: 10, alignItems: "flex-start", textAlign: "left", border: "1px solid var(--gline)", background: "var(--glass2)", borderRadius: 10, padding: "9px 11px", color: "var(--txt)", font: "inherit", cursor: "pointer" }}>
+                                <span style={{ color: "#4CAF7A", fontFamily: "var(--mz-font-mono)", fontSize: 12.5, whiteSpace: "nowrap" }}>✓ {p.acks}</span>
+                                <span style={{ fontSize: 13, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                    {p.body || p.attachment?.headline || p.attachment?.title || p.attachment?.name || "—"}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                </aside>
             </div>
 
             {card && (
@@ -223,210 +285,87 @@ export default function Desk() {
 
 /* ── writing one ─────────────────────────────────────────────────────── */
 
-function Composer({ onPublish }) {
+function Composer({ onPublish, prefill = null, onPrefillUsed = () => {} }) {
+    const me = getCurrentUser()
     const [body, setBody] = useState("")
     const [urgency, setUrgency] = useState("routine")
     const [theater, setTheater] = useState(() => getActiveTheater() || "")
-    const [signal, setSignal] = useState(null)
-    const [file, setFile] = useState(null)
-    const [picking, setPicking] = useState(false)
+    const [att, setAtt] = useState(null)              // one thing the post carries
+    const [picking, setPicking] = useState(null)      // which picker is open
     const [busy, setBusy] = useState(false)
     const fileRef = useRef(null)
+    const boxRef = useRef(null)
+
+    // "Share to the desk" from anywhere lands here with the thing attached.
+    useEffect(() => {
+        if (!prefill) return
+        setAtt(prefill.attachment || null)
+        if (prefill.body) setBody(prefill.body)
+        onPrefillUsed()
+        setTimeout(() => boxRef.current?.focus(), 50)
+    }, [prefill]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const go = async () => {
-        if (!body.trim() && !signal && !file) return
+        if (!body.trim() && !att) return
         setBusy(true)
         try {
-            await onPublish({
-                body: body.trim(),
-                theater: theater.trim() || null,
-                urgency,
-                attachment: signal || file || null,
-            })
-            setBody(""); setSignal(null); setFile(null)
+            await onPublish({ body: body.trim(), theater: theater.trim() || null, urgency, attachment: att || null })
+            setBody(""); setAtt(null)
         } catch (e) {
             toast(e.message || "That did not publish", { icon: "i-alert" })
         } finally { setBusy(false) }
     }
+    const pickBtn = (k, label) => (
+        <button key={k} onClick={() => (k === "file" ? fileRef.current?.click() : setPicking(k))} disabled={!!att}
+            style={{ ...BTN, height: 30, borderRadius: 15, padding: "0 12px", opacity: att ? 0.45 : 1 }}>{label}</button>
+    )
 
     return (
-        <div style={{
-            border: "1px solid var(--gline)", background: "var(--glass2)", padding: 12,
-            display: "flex", flexDirection: "column", gap: 10,
-        }}>
-            <textarea
-                value={body} onChange={(e) => setBody(e.target.value)}
-                placeholder="What have you seen? This goes to everyone on the desk."
-                rows={3}
-                onKeyDown={(e) => {
-                    // ⌘/Ctrl+Enter publishes. Plain Enter is a new line —
-                    // an observation is a paragraph, not a chat line.
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go() }
-                }}
-                style={{
-                    resize: "vertical", minHeight: 62, padding: "9px 11px",
-                    background: "var(--glass2)", border: "1px solid var(--gline)",
-                    color: "var(--txt)", font: "400 13.5px/1.6 var(--font)",
-                    outline: "none", borderRadius: 0,
-                }}
-            />
-
-            {signal && (
-                <AttachedSignal signal={signal} onRemove={() => setSignal(null)} />
-            )}
-            {file && (
-                <div style={{
-                    display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
-                    border: "1px solid var(--gline)", font: "400 11.5px var(--font)", color: "var(--txt-2)",
-                }}>
-                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {file.name}
-                    </span>
-                    <button onClick={() => setFile(null)} style={{ ...BTN, height: 20, border: 0 }}>✕</button>
+        <div style={{ border: "1px solid var(--gline)", background: "var(--glass2)", padding: 14, borderRadius: 12, display: "flex", gap: 12 }}>
+            <Face person={me} size={40} />
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+                <textarea
+                    ref={boxRef} value={body} onChange={(e) => setBody(e.target.value)}
+                    placeholder="What did you see? It goes to everyone on the desk."
+                    rows={2}
+                    onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go() } }}
+                    style={{ resize: "vertical", minHeight: 52, padding: "4px 0", background: "transparent", border: 0, color: "var(--txt)", font: "400 16px/1.55 var(--font)", outline: "none" }}
+                />
+                {att && (
+                    <div style={{ position: "relative" }}>
+                        <Attachment att={att} compact />
+                        <button onClick={() => setAtt(null)} title="Remove" style={{ position: "absolute", right: 8, top: 8, width: 26, height: 26, borderRadius: 13, border: 0, background: "rgba(0,0,0,.6)", color: "#fff", cursor: "pointer" }}>✕</button>
+                    </div>
+                )}
+                <div data-desk-attach style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", borderTop: "1px solid var(--gline)", paddingTop: 10 }}>
+                    {pickBtn("signal", "Signal")}{pickBtn("briefing", "Briefing")}{pickBtn("telegram", "Footage")}
+                    {pickBtn("file", "Image or file")}{pickBtn("place", "Place")}{pickBtn("asset", "Asset")}
                 </div>
-            )}
-
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <input
-                    value={theater} onChange={(e) => setTheater(e.target.value)}
-                    placeholder="Theater"
-                    style={{
-                        width: 150, height: 24, padding: "0 8px", background: "transparent",
-                        border: "1px solid var(--gline)", color: "var(--txt-2)",
-                        font: "400 11.5px var(--font)", outline: "none", borderRadius: 0,
-                    }}
-                />
-                {URGENCY.map((u) => (
-                    <Chip key={u} on={urgency === u} tint={SEV[u]} onClick={() => setUrgency(u)}>{u}</Chip>
-                ))}
-                <button style={BTN} onClick={() => setPicking(true)} disabled={!!signal}>Attach a signal</button>
-                <button style={BTN} onClick={() => fileRef.current?.click()} disabled={!!file}>Attach a file</button>
-                <input
-                    ref={fileRef} type="file" style={{ display: "none" }}
-                    accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.tif,.tiff,.csv,.txt,.json,.geojson"
-                    onChange={async (e) => {
-                        const f = e.target.files?.[0]; e.target.value = ""
-                        if (!f) return
-                        try { setFile(await uploadDeskFile(f)) }
-                        catch (err) { toast(err.message || "Could not attach that", { icon: "i-alert" }) }
-                    }}
-                />
-                <div style={{ flex: 1 }} />
-                <button style={PRIMARY} disabled={busy || (!body.trim() && !signal && !file)} onClick={go}>
-                    {busy ? "Publishing…" : "Publish"}
-                </button>
+                <div data-desk-compose-row style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input ref={fileRef} type="file" style={{ display: "none" }} accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.tif,.tiff,.csv,.txt,.json,.geojson"
+                        onChange={async (e) => {
+                            const f = e.target.files?.[0]; e.target.value = ""
+                            if (!f) return
+                            try { setAtt(await uploadDeskFile(f)) } catch (err) { toast(err.message || "Could not attach that", { icon: "i-alert" }) }
+                        }} />
+                    <select value={urgency} onChange={(e) => setUrgency(e.target.value)} style={{ height: 30, background: "transparent", border: "1px solid var(--gline2)", color: SEV[urgency] || "var(--txt2)", font: "inherit", fontSize: 12.5, borderRadius: 15, padding: "0 8px" }}>
+                        {URGENCY.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                    <input value={theater} onChange={(e) => setTheater(e.target.value)} placeholder="Theater"
+                        style={{ width: 160, height: 30, padding: "0 10px", background: "transparent", border: "1px solid var(--gline2)", color: "var(--txt2)", font: "inherit", fontSize: 12.5, outline: "none", borderRadius: 15 }} />
+                    <div style={{ flex: 1 }} />
+                    <button style={{ ...PRIMARY, height: 32, borderRadius: 16, padding: "0 18px" }} disabled={busy || (!body.trim() && !att)} onClick={go}>{busy ? "Posting…" : "Post"}</button>
+                </div>
             </div>
-
-            {picking && (
-                <SignalPicker
-                    onPick={(s) => { setSignal(s); setPicking(false) }}
-                    onClose={() => setPicking(false)}
-                />
-            )}
+            {picking === "signal" && <SignalPicker2 onPick={(a) => { setAtt(a); setPicking(null) }} onClose={() => setPicking(null)} />}
+            {picking === "briefing" && <BriefingPicker onPick={(a) => { setAtt(a); setPicking(null) }} onClose={() => setPicking(null)} />}
+            {picking === "telegram" && <TelegramPicker onPick={(a) => { setAtt(a); setPicking(null) }} onClose={() => setPicking(null)} />}
+            {picking === "asset" && <AssetPicker onPick={(a) => { setAtt(a); setPicking(null) }} onClose={() => setPicking(null)} />}
+            {picking === "place" && <PlacePick onPick={(a) => { setAtt(a); setPicking(null) }} onClose={() => setPicking(null)} />}
         </div>
     )
 }
 
-/**
- * Choosing a signal to publish with.
- *
- * It reads what you have already SAVED, rather than the whole corpus:
- * publishing an observation about something is a thing you do after you
- * have noticed it, and noticing it is what saving means here.
- */
-function SignalPicker({ onPick, onClose }) {
-    const saved = useSaved()
-    const [q, setQ] = useState("")
-    const items = useMemo(() => {
-        const text = q.trim().toLowerCase()
-        return saved
-            .filter((s) => s.kind !== "note")
-            .filter((s) => !text || SAVED_READ.text(s).toLowerCase().includes(text))
-    }, [saved, q])
-
-    return (
-        <div onClick={onClose} style={{
-            position: "fixed", inset: 0, zIndex: 9000, display: "grid", placeItems: "center",
-            background: "rgba(10,14,31,.5)", padding: 20,
-        }}>
-            <div onClick={(e) => e.stopPropagation()} data-testid="desk-signal-picker" style={{
-                width: 460, maxWidth: "100%", maxHeight: "80vh", display: "flex", flexDirection: "column",
-                background: "var(--glass)", backdropFilter: "blur(22px) saturate(1.15)",
-                WebkitBackdropFilter: "blur(22px) saturate(1.15)",
-                border: "1px solid var(--gline2)", boxShadow: "var(--gshadow)",
-            }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderBottom: "1px solid var(--gline)" }}>
-                    <b style={{ flex: 1, font: "600 13px var(--font)", color: "var(--txt)" }}>Publish a signal with it</b>
-                    <button onClick={onClose} style={{ ...BTN, border: 0, padding: "0 6px" }}>✕</button>
-                </div>
-                <div style={{ padding: "10px 14px" }}>
-                    <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search what you have saved"
-                           style={{
-                               width: "100%", height: 28, padding: "0 9px", background: "var(--glass2)",
-                               border: "1px solid var(--gline)", color: "var(--txt)",
-                               font: "400 12.5px var(--font)", outline: "none", borderRadius: 0,
-                           }} />
-                </div>
-                <div style={{ flex: 1, minHeight: 0, overflow: "auto", borderTop: "1px solid var(--gline)" }}>
-                    {!items.length && (
-                        <p style={{ padding: 14, font: "400 12px/1.65 var(--font)", color: "var(--txt-3)" }}>
-                            {q.trim() ? "Nothing saved matches that."
-                                : "You have not saved anything yet. Use + briefing on a map card, an object view or an inbox message."}
-                        </p>
-                    )}
-                    {items.map((s) => (
-                        <div key={s.id} onClick={() => onPick({
-                            kind: "signal", id: s.id, headline: savedLabel(s), meta: savedMeta(s) || null,
-                            lat: s.lat ?? null, lon: s.lon ?? null,
-                            urgency: SAVED_READ.urgency(s), sector: SAVED_READ.sector(s),
-                        })} style={{
-                            display: "flex", alignItems: "center", gap: 9, padding: "9px 14px",
-                            borderBottom: "1px solid var(--gline)", cursor: "pointer",
-                        }}>
-                            <i style={{ width: 7, height: 7, flexShrink: 0, background: SEV[SAVED_READ.urgency(s)] || "var(--steel)" }} />
-                            <div style={{ minWidth: 0 }}>
-                                <div style={{ font: "500 12.5px var(--font)", color: "var(--txt)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                    {savedLabel(s)}
-                                </div>
-                                <div style={{ font: "400 10.5px var(--mono)", color: "var(--txt-3)" }}>
-                                    {SAVED_READ.sector(s)}{savedMeta(s) ? ` · ${savedMeta(s)}` : ""}
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        </div>
-    )
-}
-
-function AttachedSignal({ signal, onRemove = null }) {
-    return (
-        <div style={{
-            display: "flex", alignItems: "center", gap: 9, padding: "8px 11px",
-            border: "1px solid var(--gline)", background: "var(--glass2)",
-        }}>
-            <i style={{ width: 7, height: 7, flexShrink: 0, background: SEV[signal.urgency] || "var(--steel)" }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                    font: "500 12.5px var(--font)", color: "var(--txt)",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}>{signal.headline}</div>
-                <div style={{ font: "400 10.5px var(--mono)", color: "var(--txt-3)" }}>
-                    {[signal.sector, signal.meta].filter(Boolean).join(" · ")}
-                </div>
-            </div>
-            {signal.lat != null && (
-                <button onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", {
-                    detail: { lat: signal.lat, lon: signal.lon },
-                }))} style={{
-                    ...BTN, height: 22, border: 0, color: "var(--acc-hi)", flexShrink: 0,
-                }}>on the map →</button>
-            )}
-            {onRemove && <button onClick={onRemove} style={{ ...BTN, height: 20, border: 0 }}>✕</button>}
-        </div>
-    )
-}
 
 /* ── one post ────────────────────────────────────────────────────────── */
 
@@ -457,16 +396,15 @@ function Post({ post, meId, busy, canDelete, onAck, onDelete, onPerson }) {
     const att = post.attachment
 
     return (
-        <article style={{
-            border: "1px solid var(--gline)", marginBottom: 10, padding: 13,
-            background: "var(--glass2)",
+        <article id={`desk-post-${post.id}`} style={{
+            borderBottom: "1px solid var(--gline)", padding: "16px 4px 12px",
         }}>
             <div style={{ display: "flex", gap: 10 }}>
-                <Face person={post.author} size={34} onClick={() => post.author && onPerson(post.author)} />
+                <Face person={post.author} size={42} onClick={() => post.author && onPerson(post.author)} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
                         <b onClick={() => post.author && onPerson(post.author)} style={{
-                            font: "600 12.5px var(--font)", color: "var(--txt)", cursor: "pointer",
+                            font: "600 14px var(--font)", color: "var(--txt)", cursor: "pointer",
                         }}>{post.author?.name || "Someone"}</b>
                         {post.author?.title && (
                             <span style={{ font: "400 11px var(--font)", color: "var(--txt-3)" }}>{post.author.title}</span>
@@ -492,47 +430,39 @@ function Post({ post, meId, busy, canDelete, onAck, onDelete, onPerson }) {
                         <>
                             {post.body && (
                                 <p style={{
-                                    margin: "6px 0 0", font: "400 13.5px/1.65 var(--font)", color: "var(--txt)",
+                                    margin: "4px 0 0", font: "400 15px/1.6 var(--font)", color: "var(--txt)",
                                     whiteSpace: "pre-wrap", textWrap: "pretty",
                                 }}>{post.body}</p>
                             )}
 
-                            {att?.kind === "signal" && (
-                                <div style={{ marginTop: 9 }}><AttachedSignal signal={att} /></div>
-                            )}
-                            {att?.kind === "file" && (
-                                (att.mime || "").startsWith("image/")
-                                    ? <a href={deskFileUrl(post.id)} download={att.name} style={{ display: "block", marginTop: 9 }}>
-                                        <img src={deskFileUrl(post.id)} alt={att.name} style={{
-                                            display: "block", maxWidth: "100%", maxHeight: 360,
-                                            objectFit: "contain", border: "1px solid var(--gline)",
-                                        }} />
-                                      </a>
-                                    : <a href={deskFileUrl(post.id)} download={att.name} style={{
-                                        display: "inline-block", marginTop: 9, padding: "7px 10px",
-                                        border: "1px solid var(--gline)", color: "var(--txt)",
-                                        font: "400 12px var(--font)", textDecoration: "none",
-                                      }}>{att.name} · download</a>
-                            )}
+                            {att && <div style={{ marginTop: 10 }}><Attachment att={att} postId={post.id} /></div>}
 
                             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 11 }}>
-                                <button onClick={onAck} disabled={busy} style={{
-                                    ...BTN, height: 24,
-                                    border: `1px solid ${post.acked ? "var(--acc-line)" : "var(--gline2)"}`,
-                                    background: post.acked ? "var(--acc-dim)" : "transparent",
-                                    color: post.acked ? "var(--txt)" : "var(--txt-2)",
+                                <button onClick={openReplies} title="Comment" style={{ ...BTN, height: 30, border: 0, borderRadius: 15, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 5h16v11H9l-5 4z" /></svg>
+                                    {post.replies || ""}
+                                </button>
+                                {/* THE CHECK MARK: "I have seen this and it is in hand". */}
+                                <button onClick={onAck} disabled={busy} title={post.acked ? "You confirmed this — click to take it back" : "Confirm: seen, and in hand"} style={{
+                                    ...BTN, height: 30, borderRadius: 15, display: "inline-flex", alignItems: "center", gap: 6,
+                                    border: `1px solid ${post.acked ? "#4CAF7A" : "transparent"}`,
+                                    background: post.acked ? "rgba(76,175,122,.16)" : "transparent",
+                                    color: post.acked ? "#4CAF7A" : "var(--txt2)",
                                 }}>
-                                    {post.acked ? "Picked up" : "Pick up"}{post.acks ? ` · ${post.acks}` : ""}
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M4 12.5l5 5L20 6.5" /></svg>
+                                    {post.acks || ""}
                                 </button>
                                 {post.acks > 0 && (
                                     <button onClick={async () => {
                                         // WHO, not just how many. "Three people
                                         // have seen this" is half an answer.
                                         try { setAckers(await whoAcked(post.id)) } catch { /* ignore */ }
-                                    }} style={{ ...BTN, height: 24, border: 0, color: "var(--txt-3)" }}>who</button>
+                                    }} style={{ ...BTN, height: 24, border: 0, color: "var(--txt-3)" }}>who confirmed</button>
                                 )}
-                                <button onClick={openReplies} style={{ ...BTN, height: 24, border: 0 }}>
-                                    {post.replies ? `${post.replies} ${post.replies === 1 ? "reply" : "replies"}` : "Reply"}
+                                <button onClick={() => {
+                                    navigator.clipboard?.writeText(`${location.origin}/#desk=${post.id}`).then(() => toast("Link copied", { icon: "i-check" })).catch(() => {})
+                                }} title="Copy a link to this post" style={{ ...BTN, height: 30, border: 0, borderRadius: 15 }}>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 14a5 5 0 007 0l3-3a5 5 0 00-7-7l-1 1M14 10a5 5 0 00-7 0l-3 3a5 5 0 007 7l1-1" /></svg>
                                 </button>
                                 <div style={{ flex: 1 }} />
                                 {canDelete && (
@@ -548,7 +478,7 @@ function Post({ post, meId, busy, canDelete, onAck, onDelete, onPerson }) {
                                     font: "400 11px var(--font)", color: "var(--txt-2)",
                                     display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
                                 }}>
-                                    <span style={EYE}>Picked up by</span>
+                                    <span style={EYE}>Confirmed by</span>
                                     {ackers.map((a) => (
                                         <span key={a.id} onClick={() => onPerson(a)} style={{ cursor: "pointer" }}>{a.name}</span>
                                     ))}

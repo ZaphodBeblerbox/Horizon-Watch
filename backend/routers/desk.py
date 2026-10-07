@@ -31,6 +31,7 @@ router = APIRouter(prefix="/api/desk", tags=["desk"])
 MAX_BODY = 4000
 MAX_FILE_BYTES = 32 * 1024 * 1024
 URGENCIES = ("critical", "significant", "high", "elevated", "routine")
+ATTACHMENT_KINDS = ("signal", "file", "briefing", "telegram", "place", "asset")
 
 from routers.case_workspace import ALLOWED_MIME as _ALLOWED_MIME
 
@@ -159,6 +160,13 @@ async def create_post(request: Request):
     att = body.get("attachment")
     if not text and not att:
         raise HTTPException(status_code=400, detail="an empty post is not an observation")
+    if att is not None:
+        # One thing a post carries — what it is, not a copy of it: the card
+        # reads the rest from where the thing lives.
+        if not isinstance(att, dict) or att.get("kind") not in ATTACHMENT_KINDS:
+            raise HTTPException(status_code=400, detail=f"an attachment is one of {', '.join(ATTACHMENT_KINDS)}")
+        if len(json.dumps(att)) > 8000:
+            raise HTTPException(status_code=400, detail="that attachment is too large to post")
 
     urgency = (body.get("urgency") or "").strip().lower() or None
     if urgency and urgency not in URGENCIES:

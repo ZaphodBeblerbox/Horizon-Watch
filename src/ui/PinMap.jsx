@@ -99,7 +99,7 @@ export default function PinMap({ center, zoom = 15, pin, onPin, radiusKm = null,
     return (
         <div ref={box} onPointerDown={down} onPointerMove={move} onPointerUp={up} onWheel={wheel}
             style={{ position: "relative", height, overflow: "hidden", background: "#0d1117", touchAction: "none",
-                     cursor: drag?.moved ? "grabbing" : "crosshair", border: "1px solid var(--gline)" }}>
+                     cursor: drag?.moved ? "grabbing" : onPin ? "crosshair" : "grab", border: "1px solid var(--gline)" }}>
             {tiles}
             <svg width={w} height={height} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                 {P && rPx > 4 && <circle cx={P.x} cy={P.y} r={rPx} fill="rgba(122,167,255,.08)" stroke="rgba(122,167,255,.7)" strokeDasharray="5 4" strokeWidth={1.5} />}
@@ -126,7 +126,7 @@ export default function PinMap({ center, zoom = 15, pin, onPin, radiusKm = null,
                 ))}
             </div>
             <span style={{ position: "absolute", left: 8, bottom: 6, font: "10px var(--mz-font-mono, monospace)", color: "#fff", textShadow: "0 1px 3px #000", pointerEvents: "none" }}>
-                {pin ? "Click elsewhere to move the pin" : "Click where it is"} · Esri · z{z}
+                {onPin ? `${pin ? "Click elsewhere to move the pin" : "Click where it is"} · ` : ""}Esri · z{z}
             </span>
         </div>
     )

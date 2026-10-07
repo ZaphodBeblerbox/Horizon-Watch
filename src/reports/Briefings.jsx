@@ -4,6 +4,7 @@ import DocumentRenderer, { allEvidenceClaims, buildRegionDistribution } from "./
 import Minimap from "../components/Minimap.jsx"
 import { replayOnMap } from "../services/replayOnMap.js"
 import { safeArray } from "../utils/safeArray.js"
+import { shareToDesk } from "../desk/shareToDesk.js"
 
 const WALKTHROUGH_INTERVAL_MS = 3600
 
@@ -379,6 +380,7 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpen
                                 <button disabled={!editable} onClick={() => setMode("edit")} title={!editable ? `Only drafts can be edited (this one is ${report.status})` : ""} style={{ ...SEGB, ...(mode === "edit" ? BT_ON : null), opacity: editable ? 1 : 0.45 }}>Edit</button>
                             </div>
                             {mode === "edit" && <button onClick={saveNow} style={BT}>{dirty ? "Save draft •" : "Saved"}</button>}
+                            <button onClick={() => shareToDesk({ kind: "briefing", report_id: reportId, title: report.title, status: report.status, created_at: report.created_at, summary: (report.key_judgments || "").slice(0, 220) || null })} style={BT}>Share to the desk</button>
                             <button onClick={() => onPrint?.(reportId)} style={BT}>Print / PDF</button>
                             <button onClick={() => onOpenDeck?.(reportId)} style={{ ...BT, ...BT_ON }}>Present as a deck</button>
                         </div>
