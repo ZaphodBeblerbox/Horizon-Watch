@@ -1162,8 +1162,8 @@ export default function GlobeView({
                     endDate={geoConfirmedEndDate}
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
-                <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} />
-                <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={24} />
+                <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} limit={1500} />
+                <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={Math.max(48, signalWindowHours || 48)} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
                 <GlobeAssetsLayer enabled={assetsEnabled} />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />

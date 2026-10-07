@@ -106,6 +106,20 @@ export default function PlxTabBar({
                 minWidth: 0, flex: 1, overflow: "hidden",
                 borderLeft: "1px solid var(--gline)",
             }}>
+                {/* GLOBAL: always first, never stored — the whole world, with
+                    whatever layers are on (the owner, 2026-10-07: a theater
+                    mode that is not stuck to one region). */}
+                <div onClick={() => onTab("global")} title="Global — the whole world" data-tour="global-theater"
+                    style={{
+                        display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flex: "none",
+                        boxSizing: "border-box", margin: "5px 2px", borderRadius: 0,
+                        background: activeTab === "global" ? ON : OFF,
+                        color: activeTab === "global" ? "var(--txt)" : "var(--txt3)", cursor: "pointer",
+                    }}
+                    {...hoverable(activeTab === "global" ? ON : OFF)}>
+                    <PlxIcon href="#g-globe" size={13} />
+                    <span style={{ whiteSpace: "nowrap", fontSize: 13 }}>Global</span>
+                </div>
                 {tabs.map((t) => {
                     const on = t.id === activeTab
                     return (

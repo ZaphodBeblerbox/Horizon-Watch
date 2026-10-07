@@ -346,13 +346,12 @@ def classify(limit: int = 120) -> dict:
             kinetic = (x.get("event_type") or "other") in KINETIC or x.get("event_type") == "unrest"
             if rel and not kinetic:
                 hit, why = None, f"not a kinetic event ({x.get('event_type') or 'other'})"
-            elif rel and role in ("aggregator", "partisan", "outlet") and (r[6] or "none") == "none":
-                hit, why = None, "no photo or video from a reposting channel"
-            # Unrest relays (a protest filmed and reposted) are kept with their
-            # footage even when the channel did not film it: the footage is
-            # the evidence, and protest channels are reposting by nature.
-            elif rel and role in ("aggregator", "partisan") and not x.get("first_hand") and x.get("event_type") != "unrest":
-                hit, why = None, "recap, not a first-hand account"
+            # TEXT REPORTS AND RECAPS COUNT TOO (the owner, 2026-10-07: "as many
+            # interesting Telegram signals as possible"). A reposting channel's
+            # text-only post or a recap was dropped; 287 of 524 such posts in
+            # two days named a precise place. They are published when the
+            # place is precise — the same rule as everything else — and say
+            # what they are (no footage; a relay, not first-hand).
             elif not rel:
                 hit, why = None, "not relevant"
             else:
@@ -736,6 +735,27 @@ def is_unrest(r) -> bool:
     return bool(UNREST_WORDS.search(f"{r['headline'] or ''} {r['summary_en'] or ''}"))
 
 
+def republish_dropped(hours: int = LOOKBACK_HOURS, limit: int = 60) -> int:
+    """Posts dropped by the old footage and recap rules (before 2026-10-07)
+    are placed now by the current rule: a precise place. A batch per pass —
+    the geocoder takes one request a second."""
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
+    con = _con()
+    rows = con.execute("SELECT channel, msg_id, place, precision, country_code FROM telegram_posts"
+                       " WHERE relevant=1 AND lat IS NULL AND posted_at >= ?"
+                       " AND unpublished_reason IN ('no photo or video from a reposting channel', 'recap, not a first-hand account')"
+                       " ORDER BY posted_at DESC LIMIT ?", (cutoff, limit)).fetchall()
+    n = 0
+    for chan, mid, place, prec, cc in rows:
+        hit, why = locate(place, prec, cc)
+        con.execute("UPDATE telegram_posts SET lat=?, lon=?, geocoded_as=?, unpublished_reason=? WHERE channel=? AND msg_id=?",
+                    (hit and hit["lat"], hit and hit["lon"], hit and hit.get("display_name"), why, chan, mid))
+        n += int(hit is not None)
+    con.commit()
+    con.close()
+    return n
+
+
 def publish_unrest_backlog(days: int = 7) -> int:
     """Posts screened before unrest was published: placed now, by the same rule."""
     cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
@@ -914,12 +934,23 @@ import threading
 _SESSION_LOCK = threading.Lock()
 
 
+_LAST_FULL = {"at": 0.0}
+FULL_EVERY_S = 30 * 60
+
+
 def run_once(hours: int = 6) -> dict:
+    """One pass. Every minute the last six hours; every half hour, and on
+    the first pass, the whole LOOKBACK_HOURS (48) — a server that starts
+    empty, or misses an hour, would otherwise never have the day before."""
     if not (configured() and logged_in()):
         return {"skipped": "not configured or not logged in"}
+    full = time.time() - _LAST_FULL["at"] > FULL_EVERY_S
     with _SESSION_LOCK:
-        new = asyncio.run(_collect(hours))
-    out = {"collected": new, **classify()}
+        new = asyncio.run(_collect(LOOKBACK_HOURS if full else hours))
+    if full:
+        _LAST_FULL["at"] = time.time()
+    out = {"collected": new, "full_pass": full, **classify()}
+    out["republished"] = republish_dropped()
     out["screened"] = screen_graphic()
     out.update(read_announcements())
     # Prefetched only where videos are kept (the server's volume), so the

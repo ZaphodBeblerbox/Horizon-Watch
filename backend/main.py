@@ -8858,6 +8858,9 @@ def _country_from_location(location):
         return None
 
 
+SURFACE_POOL_MAX = int(os.getenv("SURFACE_POOL_MAX", "300"))
+
+
 def _build_surface_pool() -> list:
     """
     Build ranked surface pool (top 50 items) from real GeoConfirmed
@@ -9145,7 +9148,10 @@ def _build_surface_pool() -> list:
     if dropped or contested:
         print(f"[surface] deduped {dropped} repeated headline(s); "
               f"{contested} survivor(s) have a contested geocode", flush=True)
-    return deduped[:50]
+    # 300, not 50 (the owner, 2026-10-07: as many interesting signals as
+    # possible on the map). The map filters by its own time window; Home
+    # and the lists take their own top slices.
+    return deduped[:SURFACE_POOL_MAX]
 
 
 # ── Auto-brief helpers ────────────────────────────────────────────────────────

@@ -78,6 +78,7 @@ const SEVERITY_FLOORS = [
 ]
 const TIME_WINDOWS = [
     { key: "24h", label: "24h", hours: 24 },
+    { key: "48h", label: "48h", hours: 48 },
     { key: "72h", label: "72h", hours: 72 },
     { key: "7d",  label: "7d",  hours: 24 * 7 },
     { key: "30d", label: "30d", hours: 24 * 30 },
@@ -388,7 +389,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const inspectorExtensions = useInspectorExtensions()
     const selectedRef = selected && selected.kind !== "fusion" ? `sig:${selected.id}` : null
     const [severityFloor, setSeverityFloor] = useState("low")
-    const [timeWindow, setTimeWindow] = useState("72h")
+    // 48 hours by default (the owner, 2026-10-07): the last two days on the map
+    const [timeWindow, setTimeWindow] = useState("48h")
     // Fidelity pass §1 — the app's base/default state is ALL LAYERS OFF (a
     // bare map until the analyst turns something on). Was defaulting every
     // group to true; severity floor/time window are filter settings, not
@@ -799,7 +801,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     useEffect(() => {
         let cancelled = false
         const loadSurface = () => fetch(`${API}/api/surface`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && d) { setSurfaceItems(d.items || []); setSurfaceUpdatedAt(d.updated_at || null) } }).catch(() => {})
-        const loadFusions = () => fetch(`${API}/api/fusions?status=active&limit=50`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && Array.isArray(d)) setFusionEvents(d) }).catch(() => {})
+        const loadFusions = () => fetch(`${API}/api/fusions?status=active&limit=200`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled && Array.isArray(d)) setFusionEvents(d) }).catch(() => {})
         const loadHealth = () => fetch(`${API}/api/health/detailed`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!cancelled) setHealth(d) }).catch(() => {})
         const loadAll = () => { loadSurface(); loadFusions(); loadHealth() }
         loadAll()

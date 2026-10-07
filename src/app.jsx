@@ -660,7 +660,7 @@ export default function App() {
     // one (the owner, 2026-10-07), and showing three it does not own for
     // the second before the list arrives would say otherwise.
     const [theaters, setTheaters] = useState([])
-    const [theaterId, setTheaterId] = useState(null)
+    const [theaterId, setTheaterId] = useState("global")
     const [editingTheater, setEditingTheater] = useState(null)   // row | "new" | null
 
     const refreshTheaters = useCallback(async (selectId) => {
@@ -669,7 +669,8 @@ export default function App() {
             if (!Array.isArray(rows)) return
             setTheaters(rows)
             setTheaterId((cur) => {
-                if (!rows.length) return null
+                if (cur === "global") return cur
+                if (!rows.length) return "global"
                 if (selectId) return selectId
                 // The id the fallback used ("redsea") is not a real row id,
                 // so the first load has to re-point at a real one.
@@ -2037,6 +2038,14 @@ export default function App() {
                         activeTab={theaterId}
                         onTab={(id) => {
                             setTheaterId(id)
+                            // GLOBAL: the whole world, layers as they are.
+                            if (id === "global") {
+                                setActiveTheater(null)
+                                window.dispatchEvent(new CustomEvent("akili:theater-select", {
+                                    detail: { id: "global", name: "Global", view: { lat: 20, lon: 15, height: 22_000_000 }, layers: {} },
+                                }))
+                                return
+                            }
                             // Filing needs to know where you are standing.
                             setActiveTheater((theaters.find((x) => x.id === id) || {}).name || null)
                             const t = theaters.find((x) => x.id === id)
@@ -2057,7 +2066,7 @@ export default function App() {
                             const gone = theaters.find((t) => t.id === id)
                             if (!confirm(`Remove “${gone?.name || "this theater"}” from the strip? Anything you filed while watching it stays where it is.`)) return
                             setTheaters(rest)
-                            if (theaterId === id) setTheaterId(rest[0]?.id ?? null)
+                            if (theaterId === id) setTheaterId(rest[0]?.id ?? "global")
                             // The strip is a view of rows now, so closing a
                             // tab has to remove the row or it comes back on
                             // the next load.
