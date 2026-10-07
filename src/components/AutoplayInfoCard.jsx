@@ -31,7 +31,6 @@ export default function AutoplayInfoCard({ segment, index, total }) {
             width:         300,
             background:    'rgb(5, 10, 20)',
             border:        `1px solid ${color}22`,
-            borderLeft:    `3px solid ${color}`,
             borderRadius:  4,
             padding:       '12px 14px',
             fontFamily:    'var(--font-mono)',

@@ -705,7 +705,6 @@ function NavTree({ nodes, cwd, rootLabel, expanded, setExpanded, onGo, dropOn, d
                         display: "flex", alignItems: "center", gap: 4, height: 24,
                         padding: `0 6px 0 ${6 + depth * 13}px`, cursor: "pointer",
                         background: here ? "var(--acc-dim)" : "transparent",
-                        borderLeft: here ? "2px solid var(--acc-hi)" : "2px solid transparent",
                         ...(dropHighlight(n.id) || {}),
                     }}
                 >
@@ -739,7 +738,6 @@ function NavTree({ nodes, cwd, rootLabel, expanded, setExpanded, onGo, dropOn, d
                 style={{
                     display: "flex", alignItems: "center", gap: 5, height: 25, padding: "0 8px",
                     cursor: "pointer", background: cwd == null ? "var(--acc-dim)" : "transparent",
-                    borderLeft: cwd == null ? "2px solid var(--acc-hi)" : "2px solid transparent",
                     ...(dropHighlight(null) || {}),
                 }}
             >

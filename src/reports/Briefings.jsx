@@ -334,7 +334,7 @@ export default function Briefings({ initialReportId, onPrint, onOpenDeck, onOpen
                 )}
                 {reports.filter((r) => !find.trim() || `${r.title} ${r.report_id}`.toLowerCase().includes(find.trim().toLowerCase())).map((r) => (
                     <div key={r.report_id} role="button" onClick={() => setReportId(r.report_id)}
-                        style={{ padding: "10px 10px", margin: "0 -10px", borderLeft: `2px solid ${r.report_id === reportId ? "var(--acchi)" : "transparent"}`, cursor: "pointer", background: r.report_id === reportId ? "var(--accdim)" : "transparent" }}>
+                        style={{ padding: "10px 10px", margin: "0 -10px", borderRadius: 6, cursor: "pointer", background: r.report_id === reportId ? "var(--accdim)" : "transparent" }}>
                         <div style={{ fontSize: 13.5, color: "var(--txt)", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{r.title}</div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, fontSize: 11.5, color: "var(--txt3)" }}>
                             <StatusDot status={r.status} />{({ draft: "Draft", in_review: "In review", published: "Published", rejected: "Rejected" })[r.status] || r.status}

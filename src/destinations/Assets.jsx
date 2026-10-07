@@ -175,21 +175,31 @@ function AssetForm({ kinds, initial, onSaved, onCancel }) {
     )
 }
 
+// What kind of threat a signal is (backend owned_assets.category): only what
+// can reach this kind of asset is listed at all.
+const CAT_LABEL = { kinetic: "violence", unrest: "unrest", sabotage: "sabotage", fire: "fire", crime: "crime",
+                    maritime: "maritime", aviation: "air", navigation: "navigation", other: "signal" }
+const CATCHIP = { display: "inline-block", padding: "0 6px", borderRadius: 8, fontSize: 10.5, letterSpacing: ".04em", textTransform: "uppercase",
+                  background: "var(--glass2)", border: "1px solid var(--gline)", color: "var(--txt2)" }
+const CAT_TINT = { kinetic: { color: "#E5484D" }, sabotage: { color: "#F5A524" }, unrest: { color: "#F5A524" }, fire: { color: "#E58A3A" } }
+
 /** The model's reading: impact, what could come next, measures — each citing the signals. */
-function Brief({ assetId, signals, onCite }) {
+function Brief({ assetId, signals, analogues, onCite }) {
     const [b, setB] = useState(null)
     const load = useCallback((force = false) => {
         setB({ loading: true })
         api(`/${assetId}/brief${force ? "?force=true" : ""}`, { method: "POST" })
             .then(setB).catch((e) => setB({ error: e.message }))
     }, [assetId])
-    useEffect(() => { if (signals?.length) load(false); else setB(null) }, [assetId, signals?.length]) // eslint-disable-line react-hooks/exhaustive-deps
-    if (!signals?.length) return null
-    const cite = (text) => String(text || "").split(/(\[a\d+\])/g).map((part, i) => {
-        const m = part.match(/^\[(a\d+)\]$/)
+    const any = (signals?.length || 0) + (analogues?.length || 0)
+    useEffect(() => { if (any) load(false); else setB(null) }, [assetId, any]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!any) return null
+    // [a3] is the third signal near it, [e1] the first precedent elsewhere
+    const cite = (text) => String(text || "").split(/(\[[ae]\d+\])/g).map((part, i) => {
+        const m = part.match(/^\[([ae]\d+)\]$/)
         if (!m || !b?.cites?.[m[1]]) return <span key={i}>{part}</span>
-        return <button key={i} onClick={() => onCite(b.cites[m[1]])} title="Show this signal"
-            style={{ border: 0, background: "var(--accdim)", color: "var(--txt)", font: "inherit", fontSize: 11, padding: "0 4px", cursor: "pointer", borderRadius: 3 }}>{m[1].slice(1)}</button>
+        return <button key={i} onClick={() => onCite(b.cites[m[1]])} title={m[1][0] === "e" ? "Show this precedent" : "Show this signal"}
+            style={{ border: 0, background: m[1][0] === "e" ? "rgba(245,165,36,.18)" : "var(--accdim)", color: "var(--txt)", font: "inherit", fontSize: 11, padding: "0 4px", cursor: "pointer", borderRadius: 3 }}>{m[1][0] === "e" ? `E${m[1].slice(1)}` : m[1].slice(1)}</button>
     })
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -205,7 +215,7 @@ function Brief({ assetId, signals, onCite }) {
                 <>
                     <span style={EYE}>What could affect it next</span>
                     {b.could_affect.map((c, i) => (
-                        <div key={i} style={{ borderLeft: "2px solid #F5A524", padding: "2px 0 2px 12px", display: "flex", flexDirection: "column", gap: 3 }}>
+                        <div key={i} style={{ border: "1px solid var(--gline)", borderRadius: 8, background: "var(--glass2)", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 3 }}>
                             <span style={{ fontSize: 13.5, color: "var(--txt)" }}>{c.what}{c.by ? <span style={{ color: "var(--txt3)" }}> · by {c.by}</span> : null}</span>
                             <span style={{ fontSize: 12.5, color: "var(--txt2)" }}>{cite(c.why)}</span>
                             {c.watch_for && <span style={{ fontSize: 12, color: "var(--txt3)" }}>Watch for: {c.watch_for}</span>}
@@ -263,7 +273,7 @@ function Detail({ asset, onEdit, onDeleted }) {
     const pos = s?.position
     const vf = useVesselFacts(asset.identifiers?.mmsi)
     const openSignal = (id) => {
-        const it = s?.signals?.find((x) => x.id === id)
+        const it = [...(s?.signals || []), ...(s?.analogues || [])].find((x) => x.id === id)
         if (it) flyTo(it.lat, it.lon, 40_000)
     }
     const remove = async () => {
@@ -315,7 +325,7 @@ function Detail({ asset, onEdit, onDeleted }) {
             {/* WHAT IT MEANS, beside WHAT IS HAPPENING */}
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr)", gap: 20, alignItems: "start" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
-                    <div style={CARD}><Brief assetId={asset.id} signals={s?.signals} onCite={openSignal} />
+                    <div style={CARD}><Brief assetId={asset.id} signals={s?.signals} analogues={s?.analogues} onCite={openSignal} />
                         {s?.signals?.length === 0 && <span style={{ fontSize: 13, color: "var(--txt3)" }}>Nothing within range in the last 72 hours — nothing to read yet.</span>}
                     </div>
                     {pos && (
@@ -335,9 +345,13 @@ function Detail({ asset, onEdit, onDeleted }) {
                             font: "inherit", padding: "9px 0", cursor: "pointer",
                         }}>
                             <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt4)" }}>{i + 1}</span>
-                            <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                            <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
                                 <span style={{ fontSize: 13.5 }}>{it.title}</span>
-                                <span style={{ fontSize: 11.5, color: "var(--txt3)" }}><Dots text={[it.source, it.kind].filter(Boolean).join(" · ")} /></span>
+                                {it.detail && it.detail !== it.title && <span style={{ fontSize: 12.5, color: "var(--txt2)", lineHeight: 1.45 }}>{it.detail}</span>}
+                                <span style={{ fontSize: 11.5, color: "var(--txt3)", lineHeight: 1.4 }}>
+                                    <span style={{ ...CATCHIP, ...(CAT_TINT[it.category] || {}) }}>{CAT_LABEL[it.category] || it.category || "signal"}</span>
+                                    {" "}raised by {it.trigger || it.source || it.kind}{it.place ? ` · ${it.place}` : ""}
+                                </span>
                             </span>
                             <span style={{ fontSize: 12, color: "var(--txt2)", whiteSpace: "nowrap", display: "flex", gap: 8, alignItems: "center" }}>
                                 <i style={{ width: 7, height: 7, borderRadius: "50%", background: SEV[String(it.severity).toLowerCase()] || "#9AA9BC", display: "inline-block" }} />
@@ -346,6 +360,25 @@ function Detail({ asset, onEdit, onDeleted }) {
                         </button>
                     ))}
                 </div>
+                {s?.analogues?.length > 0 && (
+                    <div style={CARD}>
+                        <span style={EYE}>The same kind of target elsewhere in {asset.country} · last 30 days</span>
+                        <span style={{ fontSize: 12, color: "var(--txt3)", lineHeight: 1.45 }}>Not near it, but the same kind of thing attacked or sabotaged — a precedent for this one.</span>
+                        {s.analogues.map((it, i) => (
+                            <button key={it.id} onClick={() => flyTo(it.lat, it.lon, 40_000)} style={{
+                                display: "flex", flexDirection: "column", gap: 3, textAlign: "left", border: 0, borderTop: i ? "1px solid var(--gline)" : 0,
+                                background: "transparent", color: "var(--txt)", font: "inherit", padding: "9px 0", cursor: "pointer",
+                            }}>
+                                <span style={{ fontSize: 13.5 }}>{it.title}</span>
+                                {it.detail && <span style={{ fontSize: 12.5, color: "var(--txt2)", lineHeight: 1.45 }}>{it.detail}</span>}
+                                <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>
+                                    <span style={{ ...CATCHIP, ...(CAT_TINT[it.category] || {}) }}>{CAT_LABEL[it.category] || it.category}</span>
+                                    {" "}{[it.place, it.km != null ? `${it.km} km away` : null, it.when ? agoLabel(it.when) : null, it.trigger].filter(Boolean).join(" · ")}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     )
@@ -403,7 +436,7 @@ export default function Assets() {
                     {(assets || []).map((a) => (
                         <button key={a.id} onClick={() => { setSel(a.id); setMode("view") }} style={{
                             display: "grid", gridTemplateColumns: "84px minmax(0,1fr)", gap: 12, width: "100%", textAlign: "left", alignItems: "center",
-                            padding: "10px 16px", border: 0, borderLeft: `2px solid ${sel === a.id && mode === "view" ? "var(--acchi)" : "transparent"}`,
+                            padding: "10px 16px", border: 0,
                             background: sel === a.id && mode === "view" ? "var(--accdim)" : "transparent", color: "var(--txt)", font: "inherit", cursor: "pointer",
                         }}>
                             <AssetThumb kind={a.kind} group={a.group} width={84} height={54} />

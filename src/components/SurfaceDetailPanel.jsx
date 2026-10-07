@@ -243,8 +243,8 @@ export default function SurfaceDetailPanel({
             )}
             {!enrichmentLoading && enrichment?.prose && (
                 <div style={{
-                    borderLeft: "3px solid var(--akili-accent)",
-                    paddingLeft: 10,
+                    background: "var(--bg-2)", borderRadius: 6,
+                    padding: "8px 10px",
                     color: "var(--akili-text-primary)",
                     fontSize: 12,
                     lineHeight: 1.55,

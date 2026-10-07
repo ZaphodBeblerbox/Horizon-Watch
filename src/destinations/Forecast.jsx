@@ -358,7 +358,7 @@ function Detail({ s, board }) {
             </div>
 
             {/* F6.4 */}
-            <div style={{ borderLeft: "2px solid var(--line-strong)", padding: "2px 0 2px 12px",
+            <div style={{ border: "1px solid var(--line)", borderRadius: 6, padding: "8px 12px",
                           margin: "12px 0" }}>
                 <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)" }}>
                     What would prove this wrong

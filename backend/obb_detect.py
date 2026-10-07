@@ -39,10 +39,44 @@ _SESSIONS: dict = {}
 _LOCK = threading.Lock()
 
 
+def clear_coreml_leftovers() -> int:
+    """Remove CoreML's compiled copies of the model left by earlier processes.
+
+    The CoreML provider compiles the model into the system temp dir
+    (onnxruntime-<uuid>-<pid>-….mlmodel/.mlmodelc, ~200 MB per load) and
+    never deletes it. Every backend start left another: 140 of them filled
+    the owner's disk on 2026-10-07. A copy whose process is gone is garbage."""
+    import re
+    import shutil
+    import tempfile
+    n = 0
+    tmp = tempfile.gettempdir()
+    for name in os.listdir(tmp):
+        m = re.match(r"onnxruntime-[0-9A-F-]{36}-(\d+)-", name)
+        if not m:
+            continue
+        pid = int(m.group(1))
+        try:
+            os.kill(pid, 0)
+            continue                                         # still running: its copy is in use
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            continue
+        p = os.path.join(tmp, name)
+        try:
+            shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def session(model: str = "yolov8m-obb"):
     import onnxruntime as ort
     with _LOCK:
         if model not in _SESSIONS:
+            clear_coreml_leftovers()
             path = model if model.endswith(".onnx") else os.path.join(_DIR, "models", f"{model}.onnx")
             if not os.path.exists(path):
                 path = os.path.join(_DIR, f"{model}.onnx")

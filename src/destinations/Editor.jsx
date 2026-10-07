@@ -293,7 +293,6 @@ function Item({ title, sub, active, onClick }) {
         <div role="button" onClick={onClick} style={{
             padding: "5px 12px", cursor: "pointer",
             background: active ? "var(--bg-3, #2a2e34)" : "transparent",
-            borderLeft: active ? "2px solid var(--acc-hi)" : "2px solid transparent",
         }}>
             <div style={{ font: "400 12px var(--font)", color: active ? "var(--txt)" : "var(--txt-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
             {sub && <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)" }}>{sub}</div>}

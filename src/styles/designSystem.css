@@ -1235,7 +1235,7 @@ table.grid .dim { color: var(--txt-4); }
 .fcbar.res{border-style:dashed;cursor:default}
 .fcbar.res .p{color:var(--amber)}
 .fcbar.res .b>i{background:var(--amber);opacity:.75}
-.fcbar.mine{border-left:3px solid var(--acc-hi)}
+.fcbar.mine{background:var(--acc-dim,var(--bg-2))}
 .mtag{display:inline-block;font-style:normal;font-family:var(--mono);font-size:9px;letter-spacing:.08em;
   text-transform:uppercase;color:var(--acc-hi);border:1px solid var(--acc-line,var(--line-strong));
   padding:0 4px;margin-left:6px;vertical-align:1px}

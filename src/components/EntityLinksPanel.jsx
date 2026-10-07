@@ -50,8 +50,7 @@ function Row({ children, dim = false, dashed = false }) {
         <div style={{
             padding: "5px 0",
             borderBottom: "1px solid var(--line)",
-            borderLeft: dashed ? "2px dashed var(--line-2, var(--line))" : "none",
-            paddingLeft: dashed ? 8 : 0,
+            fontStyle: dashed ? "italic" : "normal",
             opacity: dim ? 0.75 : 1,
         }}>{children}</div>
     )

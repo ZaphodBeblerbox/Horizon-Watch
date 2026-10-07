@@ -61,8 +61,7 @@ export function Attachment({ att, postId, compact = false }) {
                 window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "briefings" } }))
                 window.dispatchEvent(new CustomEvent("akili:open-report", { detail: { id: att.report_id } }))
             }} style={{ ...BOX, display: "flex", gap: 14, alignItems: "stretch", padding: 0, width: "100%", textAlign: "left", cursor: "pointer", color: "var(--txt)", font: "inherit" }}>
-                <span style={{ width: 6, background: "var(--acchi)", flex: "none" }} />
-                <span style={{ padding: "12px 14px 12px 0", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                <span style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
                     <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }}>Briefing · {att.status || "draft"}</span>
                     <span style={{ fontSize: 15, fontWeight: 600 }}>{att.title}</span>
                     {att.summary && <span style={{ fontSize: 13, color: "var(--txt2)", lineHeight: 1.45 }}>{att.summary}</span>}

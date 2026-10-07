@@ -267,7 +267,7 @@ export default function DocumentRenderer({ report, sections, mode = "read", xref
                     ))}
                     {sec.implication && (
                         <div style={{
-                            borderLeft: "2px solid var(--amber)", padding: "7px 0 7px 11px",
+                            border: "1px solid var(--line)", borderRadius: 6, padding: "7px 11px",
                             background: "var(--bg-2)", marginTop: 4,
                         }}>
                             <div style={{ font: "600 9.5px var(--font)", color: "var(--txt-3)",
@@ -301,7 +301,7 @@ export default function DocumentRenderer({ report, sections, mode = "read", xref
                 </section>
             )}
             {narrative.bottom_line && (
-                <div style={{ background: "var(--bg-2)", borderLeft: "3px solid var(--acc-hi)", padding: "8px 12px", margin: "10px 0 20px", fontWeight: 600 }}>
+                <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 6, padding: "8px 12px", margin: "10px 0 20px", fontWeight: 600 }}>
                     Bottom line. <XrefText as="span" text={narrative.bottom_line} candidates={candidates} />
                 </div>
             )}

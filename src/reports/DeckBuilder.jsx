@@ -98,7 +98,7 @@ function Slide({ s, n, total, editable = false, onPatch = () => {}, scale = 1 })
             {s.signal && (
                 <div style={{
                     marginTop: `${1 * scale}cqw`, padding: `${0.6 * scale}cqw ${1 * scale}cqw`,
-                    background: "#f4f2ee", borderLeft: "2px solid #2f5c90",
+                    background: "#f4f2ee", border: "1px solid #dcd8cf", borderRadius: `${0.3 * scale}cqw`,
                     font: `400 ${1.15 * scale}cqw/1.4 var(--mz-font-mono)`, color: "#4a4a44",
                     overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
                 }}>{s.signal.label}</div>

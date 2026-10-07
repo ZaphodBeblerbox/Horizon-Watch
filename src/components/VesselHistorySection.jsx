@@ -65,7 +65,7 @@ export default function VesselHistorySection({ mmsi }) {
             <SectionLabel meta={h.lag_days != null ? `GFW, ${h.lag_days} days behind` : "GFW"}>Last 90 days</SectionLabel>
             {h.warnings.map((w) => (
                 <div key={w} role="note" style={{
-                    margin: "0 0 6px", padding: "6px 9px", borderLeft: "2px solid var(--amber)",
+                    margin: "0 0 6px", padding: "6px 9px", border: "1px solid color-mix(in srgb, var(--amber) 45%, transparent)", borderRadius: 6,
                     background: "var(--accdim)", font: "500 12px var(--font)", color: "var(--txt)",
                 }}>{w}</div>
             ))}

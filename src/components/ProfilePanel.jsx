@@ -53,8 +53,6 @@ function SectionHeader({ children }) {
             letterSpacing: "0.14em",
             textTransform: "uppercase",
             color:         "var(--akili-accent)",
-            borderLeft:    "2px solid var(--akili-accent)",
-            paddingLeft:   8,
             marginTop:     20,
             marginBottom:  10,
         }}>

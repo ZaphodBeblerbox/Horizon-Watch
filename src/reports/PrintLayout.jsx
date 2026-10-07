@@ -50,7 +50,7 @@ const PRINT_CSS = `
 
 const PAGE_H2 = { font: "700 12px var(--font)", textTransform: "uppercase", letterSpacing: "0.05em", color: "#33383f", borderBottom: "1px solid #b9b5ac", paddingBottom: 4, margin: "24px 0 8px" }
 const PAGE_H3 = { fontSize: 13.5, margin: "15px 0 4px", fontWeight: 700 }
-const CALLOUT = { borderLeft: "2px solid #1b1f24", padding: "2px 0 2px 12px", margin: "11px 0", fontSize: 13, lineHeight: 1.58 }
+const CALLOUT = { border: "1px solid #c9c5bc", borderRadius: 4, padding: "8px 12px", margin: "11px 0", fontSize: 13, lineHeight: 1.58 }
 
 /* Top-left of every page, on screen and in the PDF alike — it is real
    document content, not print-only chrome. */

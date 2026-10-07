@@ -337,9 +337,22 @@ WET = {"port", "subsea_cable", "vessel_offshore", "tank_farm", "pipeline", "refi
 AIRSIDE = {"airport"}
 
 
+# A fusion is what its feeds saw: AIS and GPS together is a ship and jamming
+# at sea, not violence, whatever the fusion is called.
+FEED_CATEGORY = {"AIS": "maritime", "SAR": "maritime", "ADSB": "aviation", "ADS-B": "aviation", "GPS": "navigation", "GNSS": "navigation"}
+
+
 def category(item: dict) -> str:
     """What kind of threat a signal is (CATEGORY_RULES; first match on its kind, then its words)."""
     k = str(item.get("kind") or "")
+    if k == "fusion":
+        feeds = set(_re.findall(r"[A-Z][A-Z\-]+", str(item.get("source") or "")))
+        mapped = {FEED_CATEGORY[f] for f in feeds if f in FEED_CATEGORY}
+        if feeds and len(mapped) == len(feeds & set(FEED_CATEGORY)) and feeds <= set(FEED_CATEGORY) | {"FUSION"}:
+            # only sensor feeds about ships, aircraft and navigation: the most specific of them
+            for c in ("maritime", "aviation", "navigation"):
+                if c in mapped:
+                    return c
     if k in KIND_CATEGORY and KIND_CATEGORY[k]:
         hint = KIND_CATEGORY[k]
     else:
@@ -418,12 +431,20 @@ def exposure(ranked: list[dict]) -> str:
 # ── how it affects us ────────────────────────────────────────────────────
 
 SYSTEM = """You advise a security and operations desk about ONE of its own assets, using ONLY the signals given.
-Each signal has an id like a1, its distance from the asset, its age and source. The asset's notes say what depends on it.
+Each nearby signal has an id like a1: what happened, what raised it (the detector, channel or analyst), its category,
+its distance and age. Signals e1, e2 … are not nearby: they are attacks or sabotage on the SAME KIND of target
+elsewhere in the asset's country — precedents, which can matter more than an unrelated event next door.
+The asset's notes say what depends on it.
+
+RELEVANCE FIRST. A signal only belongs in your answer if it can plausibly touch THIS kind of asset: a protest or
+sabotage near a substation can; a sanctioned tanker or a military aircraft over the sea cannot, however close.
+Leave out what cannot touch it — do not mention it at all.
 
 Write JSON:
-- impact: 2-4 sentences: what these specific events mean for THIS asset — name the events (who did what, where, how
-  far away) and the concrete consequence for the asset as its notes describe it (its staff, cargo, route, power,
-  customers). Cite ids in square brackets, e.g. [a1].
+- impact: 2-5 sentences. For each event you keep: WHAT happened (who did what, where, when, how far from the asset),
+  WHAT RAISED IT (the detector, channel or analyst named in the signal) and WHY it bears on this asset (its kind,
+  its staff, power, cargo, route, customers as the notes say). Precedents (e-ids): say what was hit and how, and what
+  that implies for this asset. Cite ids in square brackets, e.g. [a1], [e2].
 - could_affect: up to 3 developments that could hit the asset next, each
   {"what": "<actor> <act> <named place>", "why": "the signals behind it, with [ids]",
    "watch_for": "the observable sign it is starting — specific enough to be checked",
@@ -461,19 +482,20 @@ def cited_only(raw: dict, ids: set[str]) -> dict:
     measures = [m for m in (raw.get("measures") or []) if isinstance(m, dict) and m.get("action") and cites(m.get("why"))
                 and not generic(m.get("action"))]
     return {
-        "impact": str(raw.get("impact") or "").strip()[:1200] or None,
+        "impact": str(raw.get("impact") or "").strip()[:1800] or None,
         "could_affect": [{k: str(c.get(k) or "")[:300] for k in ("what", "why", "watch_for", "by")} for c in could[:3]],
         "measures": [{"action": str(m["action"])[:300], "why": str(m.get("why") or "")[:200]} for m in measures[:5]],
         "one_line": str(raw.get("one_line") or "").strip()[:240] or None,
     }
 
 
-def brief(asset: dict, at: dict | None, ranked: list[dict], force: bool = False) -> dict:
+def brief(asset: dict, at: dict | None, ranked: list[dict], force: bool = False, analogues: list[dict] | None = None) -> dict:
     """The model's reading of the asset's situation, cached per set of signals."""
-    if not ranked:
+    analogues = analogues or []
+    if not ranked and not analogues:
         return {"impact": None, "could_affect": [], "measures": [], "one_line": "Nothing within range in the last 72 hours.",
                 "signals_key": None, "cached": False}
-    key = _signals_key(ranked)
+    key = _signals_key(ranked + analogues) + "-v2"
     con = _con()
     if not force:
         r = con.execute("SELECT brief, created_at FROM owned_asset_briefs WHERE asset_id=? AND signals_key=?", (asset["id"], key)).fetchone()
@@ -491,7 +513,17 @@ def brief(asset: dict, at: dict | None, ranked: list[dict], force: bool = False)
         sid = f"a{i + 1}"
         short[sid] = s.get("id")
         lines.append(f"[{sid}] {s.get('title')} — {s['km']} km away, {s['age_h']} h ago, {s.get('severity') or 'unrated'}, "
-                     f"{s.get('source') or s.get('kind') or ''}")
+                     f"category {s.get('category') or category(s)}. Raised by {s.get('trigger') or s.get('source') or s.get('kind')}."
+                     + (f" What happened: {s['detail']}" if s.get("detail") else "")
+                     + (f" Place: {s['place']}." if s.get("place") else ""))
+    if analogues:
+        lines.append("\nThe same kind of target elsewhere in the country (precedents):")
+        for i, s in enumerate(analogues[:6]):
+            sid = f"e{i + 1}"
+            short[sid] = s.get("id")
+            lines.append(f"[{sid}] {s.get('title')} — {s.get('place') or ''}, {s.get('km') if s.get('km') is not None else '?'} km away, "
+                         f"{str(s.get('when') or '')[:10]}, category {s.get('category')}. Raised by {s.get('trigger') or s.get('source')}."
+                         + (f" What happened: {s['detail']}" if s.get("detail") else ""))
     k = KINDS.get(asset["kind"], {})
     where = f"{at['lat']:.3f}, {at['lon']:.3f} ({at.get('source')})" if at else "unknown"
     prompt = (f"Asset: {asset['name']} — {k.get('label', asset['kind'])}, importance {asset.get('importance')}, "
@@ -503,7 +535,7 @@ def brief(asset: dict, at: dict | None, ranked: list[dict], force: bool = False)
     model = ASSET_MODEL
     try:
         resp = client.chat.completions.create(
-            model=model, temperature=0.2, max_tokens=900, response_format={"type": "json_object"},
+            model=model, temperature=0.2, max_tokens=1300, response_format={"type": "json_object"},
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}])
     except Exception as e:                                   # noqa: BLE001
         return {"error": f"{type(e).__name__}: {str(e)[:200]}"}

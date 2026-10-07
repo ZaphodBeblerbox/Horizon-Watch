@@ -75,7 +75,6 @@ function RailButton({ label, icon, active, badge, onClick, hue = null }) {
                 // Coloured always; brighter and barred when active.
                 color: active ? ink : (hue || "var(--txt3)"),
                 opacity: active || !hue ? 1 : 0.78,
-                boxShadow: active ? `inset 2px 0 0 ${ink}` : "none",
                 cursor: "pointer", borderRadius: 0,
             }}
             onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = "var(--hov)"; e.currentTarget.style.opacity = "1" } }}
