@@ -12063,6 +12063,83 @@ async def api_insight_changes(range: str = "7d"):
     return out
 
 
+def _require_super_admin(request: Request) -> dict:
+    user = _require_current_user(request)
+    if not user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="only a super admin can do this")
+    return user
+
+
+@app.get("/api/telegram/login")
+async def api_telegram_login_status(request: Request):
+    """Whether the server's Telegram account is signed in (super admins)."""
+    _require_super_admin(request)
+    import telegram_ingest as _tg
+    return await asyncio.get_event_loop().run_in_executor(_executor, _tg.login_status)
+
+
+@app.post("/api/telegram/login/start")
+async def api_telegram_login_start(request: Request):
+    """Send a sign-in code to the Telegram account behind this phone number."""
+    _require_super_admin(request)
+    import telegram_ingest as _tg
+    body = await request.json()
+    return await asyncio.get_event_loop().run_in_executor(_executor, _tg.login_start, str(body.get("phone") or ""))
+
+
+@app.post("/api/telegram/login/code")
+async def api_telegram_login_code(request: Request):
+    """Finish signing in: the code, and the two-step password if Telegram asks."""
+    _require_super_admin(request)
+    import telegram_ingest as _tg
+    body = await request.json()
+    return await asyncio.get_event_loop().run_in_executor(
+        _executor, _tg.login_code, str(body.get("code") or ""), body.get("password") or None)
+
+
+@app.get("/api/x/post/{post_id}")
+async def api_x_post(post_id: str):
+    """An X post's author, text, photos and video, for our own frame (x_posts.py)."""
+    import x_posts as _xp
+    post = await asyncio.get_event_loop().run_in_executor(_executor, _xp.fetch, post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="X does not give this post (deleted, protected, or not a post)")
+    return post
+
+
+@app.get("/api/x/video")
+def api_x_video(u: str, request: Request):
+    """An X video, passed through. video.twimg.com refuses a request that
+    comes from another site (403 with any Referer, 206 without), so the
+    player cannot load it directly; the server fetches it without one and
+    streams it on, Range and all, so seeking works. Only X's video host."""
+    import requests as _rq
+    from fastapi.responses import StreamingResponse
+    if not re.match(r"^https://video\.twimg\.com/[\w./%-]+(\?[\w=&%.-]*)?$", u or ""):
+        raise HTTPException(status_code=400, detail="not an X video")
+    headers = {"User-Agent": "Mozilla/5.0 (Parallax)"}
+    rng = request.headers.get("range")
+    if rng:
+        headers["Range"] = rng
+    up = _rq.get(u, headers=headers, stream=True, timeout=20)
+    if up.status_code not in (200, 206):
+        up.close()
+        raise HTTPException(status_code=up.status_code, detail="X refused the video")
+    out_headers = {"Accept-Ranges": "bytes", "Cache-Control": "max-age=3600"}
+    for h in ("Content-Length", "Content-Range"):
+        if up.headers.get(h):
+            out_headers[h] = up.headers[h]
+
+    def body():
+        try:
+            for chunk in up.iter_content(64 * 1024):
+                yield chunk
+        finally:
+            up.close()
+    return StreamingResponse(body(), status_code=up.status_code, media_type=up.headers.get("Content-Type", "video/mp4"),
+                             headers=out_headers)
+
+
 @app.get("/api/telegram/status")
 def api_telegram_status():
     import telegram_ingest as _tg

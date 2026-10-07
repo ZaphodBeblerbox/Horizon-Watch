@@ -973,6 +973,104 @@ def video_path(chan: str, msg_id: int) -> tuple[str | None, str | None]:
     return (got, None) if got else (None, f"no video, or larger than {VIDEO_MAX_MB} MB")
 
 
+# ── signing in from the console ────────────────────────────────────────────
+# The server has no terminal to answer Telegram's prompts, so a super admin
+# signs the account in from Settings: a phone number, then the code Telegram
+# sends to that account's app (and its password, if two-step verification is
+# on). The session lands in SESSION on the data volume, like a terminal
+# login's; collection picks it up on its next pass.
+_PENDING: dict = {}          # {"phone": str, "hash": str, "at": float}
+
+
+def _run(coro):
+    with _SESSION_LOCK:
+        return asyncio.run(coro)
+
+
+async def _authorised_name() -> str | None:
+    client = _client()
+    await client.connect()
+    try:
+        if not await client.is_user_authorized():
+            return None
+        me = await client.get_me()
+        return " ".join(x for x in (me.first_name, me.last_name) if x) or me.username or "signed in"
+    finally:
+        await client.disconnect()
+
+
+def login_status() -> dict:
+    if not configured():
+        return {"configured": False, "signed_in": False}
+    try:
+        name = _run(_authorised_name()) if logged_in() else None
+    except Exception as e:                                   # noqa: BLE001
+        return {"configured": True, "signed_in": False, "error": f"{type(e).__name__}: {e}"}
+    return {"configured": True, "signed_in": bool(name), "account": name,
+            "awaiting_code": bool(_PENDING) and time.time() - _PENDING.get("at", 0) < 600}
+
+
+def login_start(phone: str) -> dict:
+    """Ask Telegram to send a sign-in code to the account's app."""
+    if not configured():
+        return {"ok": False, "error": "TELEGRAM_API_ID and TELEGRAM_API_HASH are not set on this server"}
+    phone = re.sub(r"[^\d+]", "", phone or "")
+    if len(phone) < 8:
+        return {"ok": False, "error": "a phone number in international form, e.g. +4917612345678"}
+
+    async def go():
+        client = _client()
+        await client.connect()
+        try:
+            sent = await client.send_code_request(phone)
+            return sent.phone_code_hash
+        finally:
+            await client.disconnect()
+    try:
+        h = _run(go())
+    except Exception as e:                                   # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    _PENDING.clear()
+    _PENDING.update({"phone": phone, "hash": h, "at": time.time()})
+    return {"ok": True, "sent": True}
+
+
+def login_code(code: str, password: str | None = None) -> dict:
+    """Finish signing in with the code (and the two-step password, if asked)."""
+    if not _PENDING or time.time() - _PENDING.get("at", 0) > 600:
+        return {"ok": False, "error": "no code was requested in the last ten minutes — start again"}
+    from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, PhoneCodeExpiredError, PasswordHashInvalidError
+
+    async def go():
+        client = _client()
+        await client.connect()
+        try:
+            try:
+                await client.sign_in(_PENDING["phone"], (code or "").strip(), phone_code_hash=_PENDING["hash"])
+            except SessionPasswordNeededError:
+                if not password:
+                    return {"ok": False, "need_password": True}
+                await client.sign_in(password=password)
+            me = await client.get_me()
+            return {"ok": True, "account": " ".join(x for x in (me.first_name, me.last_name) if x) or me.username}
+        finally:
+            await client.disconnect()
+    try:
+        out = _run(go())
+    except PhoneCodeInvalidError:
+        return {"ok": False, "error": "that code is not right"}
+    except PhoneCodeExpiredError:
+        _PENDING.clear()
+        return {"ok": False, "error": "the code expired — start again"}
+    except PasswordHashInvalidError:
+        return {"ok": False, "need_password": True, "error": "that password is not right"}
+    except Exception as e:                                   # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    if out.get("ok"):
+        _PENDING.clear()
+    return out
+
+
 async def _login():
     async with _client() as client:          # interactive on purpose: a person is at the terminal          # prompts for phone and code on first run
         me = await client.get_me()

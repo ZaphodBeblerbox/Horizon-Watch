@@ -17,6 +17,7 @@ import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 import VesselHistorySection from "./VesselHistorySection.jsx"
 import TelegramMedia from "./TelegramMedia.jsx"
+import XPost, { xPostId } from "./XPost.jsx"
 import TradeRouteSection from "./TradeRouteSection.jsx"
 import { AroundSection, CableSection } from "./InfrastructureContext.jsx"
 import InfraDetail from "../inspector/InfraDetail.jsx"
@@ -777,6 +778,12 @@ export default function InspectorPanel({
                 {entityType === "telegram" && (data?.thumb_url || data?.media === "video") && (
                     <div style={{ marginBottom: "var(--space-4)" }}><TelegramMedia post={data} /></div>
                 )}
+                {/* The X posts this record cites, in our own frame: author, text,
+                    photos and video (XPost.jsx) — GeoConfirmed cites one for
+                    nearly every placemark. */}
+                {sources.filter((src) => xPostId(src.url)).slice(0, 2).map((src) => (
+                    <XPost key={`x:${src.url}`} url={src.url} />
+                ))}
                 {media?.photoUrl && entityType !== "telegram" && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
                         <PhotoFrame src={media.photoUrl} alt={identity.title} />

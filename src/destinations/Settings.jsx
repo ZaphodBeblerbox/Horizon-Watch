@@ -13,6 +13,7 @@
  * Voice and AI is new: the model behind spoken commands and the cheap
  * readers, what it has cost this month against the cap.
  */
+import TelegramSignIn from "../components/TelegramSignIn.jsx"
 import { useEffect, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
@@ -161,7 +162,7 @@ export default function Settings({ section = null, onClose = null, onAccount = n
                             {sec === "alerts" && <AlertsSection settings={settings} onOpenSources={onOpenSources} />}
                             {sec === "ai" && <AiSection settings={settings} />}
                             {sec === "sessions" && <SessionsSection />}
-                            {sec === "sources" && <SourcesSection />}
+                            {sec === "sources" && <><TelegramSignIn /><SourcesSection /></>}
                             {sec === "fusion" && <Crucible embedded onOpenModule={onOpenModule || (() => {})} />}
                             {sec === "briefing" && <BriefingSection settings={settings} />}
                             {sec === "keyboard" && <KeyboardSection />}
