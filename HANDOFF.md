@@ -162,6 +162,17 @@ T. ~~**Prepare for server integration**~~ — done (no deploy): `backend/paths.p
    `TELEGRAM_VIDEO_STORE=volume` for footage on the server, `deploy_check.py`, `.env.example`, `DEPLOY.md`.
 U. Then **rework the whole frontend UI**. — **not started: needs the owner's direction** (what is wrong with
    the current look, which screens first). Assets, Insight, Generate/reader, Desk and Settings already have the new look.
+W. **Hybrid warfare: criticality and dependency** (owner, 2026-10-07) — say reliably "this piece of infrastructure
+   is at higher risk, these kinds of hybrid action are plausible, do these things". Needs: what depends on a piece of
+   infrastructure (a substation next to an airport, rail hub, base or police station matters more than one in a
+   field), what is SINGULAR (Wunstorf: Germany's only A400M cargo base; the one NATO-gauge rail link Germany–Poland;
+   Rotterdam as the US forces' port of entry) — ingested as facts with sources and connected in the ontology; plus a
+   hybrid-incident record (sabotage, arson, cable cuts, drones over sites, GPS jamming) to learn patterns from.
+   First step taken: precedents (same kind of target attacked elsewhere in the country) feed the asset brief.
+X. **GeoConfirmed media in the inspector**, as Telegram's: their records carry the source posts (x.com and t.me links
+   in original_source). t.me links can play through the existing Telegram client; X needs a fetcher.
+Y. **Open question:** the owner saw the Berlin test asset "located in Indonesia" in the ontology — not reproduced
+   (the asset is not in the graph; its sidebar says Germany). Ask where it was seen.
 V2. ~~Telegram: new channels + sensitive content~~ — done: 7 channels registered (2 read for announcements);
    announced gatherings → `/api/telegram/upcoming`, the surface and Home's "Today may bring"; graphic footage
    behind a warning. **Open question for the owner:** French unrest footage (police beatings, LBD) is still
