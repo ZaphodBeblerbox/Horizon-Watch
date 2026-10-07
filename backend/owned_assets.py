@@ -303,6 +303,7 @@ import re as _re
 
 CATEGORY_RULES = [
     # the detectors' own subjects first: narrow, and never anything else
+    ("maritime", _re.compile(r"sanctioned:\s", _re.I)),      # the fusion's "⚠ SANCTIONED: Dignity detected"
     ("maritime", _re.compile(r"\b(sanction\w* vessel|dark ship|ship-to-ship|sts transfer|loiter\w*|ais_\w*|ais gap)\b", _re.I)),
     ("navigation", _re.compile(r"\b(gps|gnss|jamming|spoofing|navigation interference)\b", _re.I)),
     ("aviation", _re.compile(r"\b(military aircraft|isr pattern|squawk\w*|emergency declared|awacs)\b", _re.I)),

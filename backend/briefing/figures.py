@@ -100,7 +100,8 @@ def place_map(points: list[dict], bbox: tuple[float, float, float, float] | None
     fig, ax = plt.subplots(figsize=(width_in, height_in))
     ax.set_facecolor(WATER)
     for f in _countries():
-        iso = (f.get("properties") or {}).get("ISO_A2") or (f.get("properties") or {}).get("iso_a2")
+        props = f.get("properties") or {}
+        iso = props.get("ISO3166-1-Alpha-2") or props.get("ISO_A2")
         for ring in _rings(f["geometry"]):
             xs = [c[0] * k for c in ring]
             ys = [c[1] for c in ring]
