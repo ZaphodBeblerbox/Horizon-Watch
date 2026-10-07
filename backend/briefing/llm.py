@@ -53,9 +53,18 @@ class Ledger:
                 "calls": self.calls, "log": self.log[-60:]}
 
 
+_REFUSED: dict = {}          # {"at": epoch, "why": str} — the API said no; believed for 15 minutes
+
+
+def refused(why: str) -> None:
+    _REFUSED.update({"at": time.time(), "why": why})
+
+
 def client():
     """The Anthropic client for briefings (llm_gate), or raise Unavailable with the reason."""
     import os
+    if _REFUSED and time.time() - _REFUSED["at"] < 900:
+        raise Unavailable(_REFUSED["why"])
     try:
         import llm_gate
     except Exception as e:                                   # noqa: BLE001
@@ -86,8 +95,19 @@ def call(ledger: Ledger, label: str, system: list[dict] | str, user: str, max_to
             tool["allowed_domains"] = allowed_domains
         kw["tools"] = [tool]
     t0 = time.time()
-    with cli.messages.stream(**kw) as stream:
-        resp = stream.get_final_message()
+    try:
+        with cli.messages.stream(**kw) as stream:
+            resp = stream.get_final_message()
+    except Exception as e:                                   # noqa: BLE001
+        status = getattr(e, "status_code", None)
+        msg = str(e)
+        if status == 401:
+            refused("the Anthropic API key was refused (401: invalid, revoked or for another account)")
+            raise Unavailable(_REFUSED["why"]) from e
+        if status in (400, 402, 403) and re.search(r"credit|billing|balance|payment", msg, re.I):
+            refused("the Anthropic account has no credit left (add credit in the Console)")
+            raise Unavailable(_REFUSED["why"]) from e
+        raise
     parts, sources = [], []
     for block in resp.content or []:
         bt = getattr(block, "type", None)

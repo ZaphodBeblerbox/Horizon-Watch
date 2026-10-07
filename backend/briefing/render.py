@@ -110,15 +110,28 @@ def contents_entries(doc: dict, L: dict) -> list[dict]:
             continue
         if p == "imagery" and not (doc.get("imagery") or {}).get("items"):
             continue
-        if doc.get(p):
+        if has_content(p, doc.get(p)):
             out.append({"id": p, "title": L[PART_TITLE[p]], "level": 1})
     return out
+
+
+# what a part must hold to be printed at all; a heading over nothing is left out
+_CONTENT = {"exposure": ("vectors",), "decisions": ("items",), "chronology": ("rows",), "imagery": ("items",), "scenarios": ("items",),
+            "indicators": ("rows",), "calendar": ("rows", "wildcards"), "gaps": ("rows", "excluded"), "analyst_desk": ("question", "hypotheses"),
+            "method": ("procedure",)}
+
+
+def has_content(key: str, v) -> bool:
+    if not v:
+        return False
+    need = _CONTENT.get(key)
+    return not need or not isinstance(v, dict) or any(v.get(k) for k in need)
 
 
 def render_html(doc: dict, pages: dict | None = None) -> str:
     L = labels(doc["meta"].get("language", "en"))
     parts = set(spec.parts_for(doc["meta"]["cadence"]))
-    ctx = {k: (doc.get(k) if k in parts else None) for k in
+    ctx = {k: (doc.get(k) if k in parts and has_content(k, doc.get(k)) else None) for k in
            ("key_judgments", "sites", "exposure", "decisions", "how_to_read", "chronology", "imagery", "analyst_desk", "scenarios",
             "indicators", "calendar", "gaps", "exposure_cards", "sources", "method", "glossary")}
     ctx["sections"] = doc.get("sections") if "sections" in parts else []

@@ -390,6 +390,15 @@ import routers.graph as _graph_router
 app.include_router(_graph_router.router)
 app.include_router(_tile_proxy_router.router)
 app.include_router(_my_assets_router.router)
+from routers import briefing_engine as _briefing_engine_router  # the briefing engine (briefing/): profile → evidence → research → Opus → PDF
+app.include_router(_briefing_engine_router.router)
+try:
+    import briefing.job as _briefing_job
+    _n = _briefing_job.recover_interrupted()
+    if _n:
+        print(f"[briefing] {_n} run(s) interrupted by the restart marked failed")
+except Exception as _e:                                       # noqa: BLE001
+    print(f"[briefing] could not check interrupted runs: {_e}")
 app.include_router(_analytics_router.router)
 app.include_router(_forge_router.router)
 app.include_router(_signals_export_router.router)

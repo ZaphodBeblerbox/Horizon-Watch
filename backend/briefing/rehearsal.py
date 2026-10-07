@@ -130,6 +130,14 @@ def sentence(e: dict, lang: str, total_days: int = 1) -> str:
                              detail=detail, src=", ".join(e["sources"][:3]), corr=corr) + f" [{e['sid']}]"
 
 
+EMPTY = {
+    "de": ("Profil unvollständig", "Das Empfängerprofil nennt weder Standorte noch Länder, deshalb konnte kein Signal zugeordnet werden.",
+           "Objekte im Register anlegen oder Länder und Regionen unter Einstellungen › Interessen wählen; die nächste Ausgabe ordnet die Lage dann zu."),
+    "en": ("Profile incomplete", "The recipient profile names no sites and no countries, so no signal could be attributed.",
+           "Register assets, or choose countries and regions under Settings › Your interests; the next issue will then sort the picture to them."),
+    "fr": ("Profil incomplet", "Le profil du destinataire ne nomme ni site ni pays ; aucun signal n'a donc pu être attribué.",
+           "Enregistrer des actifs, ou choisir des pays et régions dans Paramètres › Vos centres d'intérêt ; le prochain numéro s'y rapportera."),
+}
 SITE_TEXT = {
     "de": "Nächster Vorgang: {t} ({km} km) [{sid}].", "en": "Nearest event: {t} ({km} km) [{sid}].", "fr": "Événement le plus proche : {t} ({km} km) [{sid}].",
 }
@@ -199,6 +207,9 @@ def build(profile: dict, evidence: dict, cadence: str, lang: str, start, end, ru
                                                reports=sum(e["reports"] for e in evs)),
                    "band": "even", "low": 45, "high": 55, "confidence": "low", "change": W["change"]})
 
+    if not vectors:
+        sections = [{"id": "s1", "number": "1", "kicker": "", "title": EMPTY[lang][0], "lead": "", "subsections": [],
+                     "blocks": [{"type": "p", "tag": "GAP", "text": EMPTY[lang][1]}, {"type": "meaning", "text": EMPTY[lang][2]}]}]
     doc = {"meta": m, "key_judgments": kj, "sections": sections, "figures": figs, "sites": site_rows(evidence, lang)}
     if "exposure" in parts:
         rows = []
