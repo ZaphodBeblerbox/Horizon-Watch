@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="{{ L.lang }}">
+<head>
+<meta charset="utf-8">
+<title>{{ meta.title }}</title>
+<style>{{ css|safe }}</style>
+</head>
+<body class="cad-{{ meta.cadence }}">
+{#- ── helpers ─────────────────────────────────────────────────────────── -#}
+{%- macro tag(t) -%}{% if t %}<span class="tag">[{{ L.tags[t] }}]</span> {% endif %}{%- endmacro -%}
+{%- macro mark(id) -%}<span class="toc-mark">§§{{ id }}§§</span>{%- endmacro -%}
+{%- macro meaning(text) -%}
+<div class="meaning"><div class="meaning-h">{{ L.meaning_for|upper }} {{ meta.org|upper }}</div><p>{{ text|fmt }}</p></div>
+{%- endmacro -%}
+{%- macro band(k) -%}{{ L.bands[k.band] }} ({{ k.low }}–{{ k.high }} %){%- endmacro -%}
+{%- macro wordmark(color) -%}
+<svg class="wordmark" viewBox="0 0 145 20" aria-label="PARALLAX"><g fill="none" stroke-width="2.6"><g stroke="{{ color }}">
+<path d="M1.3 21.3 V1.3 H8 C11.6 1.3 12.7 3.5 12.7 6.2 C12.7 8.9 11.6 11 8 11 H1.3"/>
+<path d="M37.3 21.3 V1.3 H44 C47.6 1.3 48.7 3.5 48.7 6.2 C48.7 8.9 47.6 11 44 11 H37.3 M43.5 11 L49.8 21.3 M73.3 -1.3 V18.7 H83 M88.8 -1.3 V18.7 H98.5"/>
+<path d="M17.74 21.3 L23.3 1.3 H25.7 L31.26 21.3"/><path d="M53.74 21.3 L59.3 1.3 H61.7 L67.26 21.3 M103.24 21.3 L108.8 1.3 H111.2 L116.76 21.3"/>
+<path d="M121.2 -1.3 L134.8 21.3 M134.8 -1.3 L121.2 21.3"/></g>
+<path d="M138.98 -1.3 L131.6 11" stroke="#2f5c90"/><path d="M143.18 -1.3 L139.4 5" stroke="#2f5c90"/></g></svg>
+{%- endmacro -%}
+{%- macro blocks(bs) -%}
+{%- for b in bs -%}
+  {%- if b.type == "p" -%}<p>{{ tag(b.tag) }}{{ b.text|fmt }}</p>
+  {%- elif b.type == "h3" -%}<h3>{{ b.text }}</h3>
+  {%- elif b.type == "meaning" -%}{{ meaning(b.text) }}
+  {%- elif b.type == "list" -%}<ul class="list">{% for it in b["items"] %}<li>{{ it|fmt }}</li>{% endfor %}</ul>
+  {%- elif b.type == "table" -%}
+    <table class="grid"><thead><tr>{% for c in b.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for r in b.rows %}<tr>{% for c in r %}<td>{{ c|fmt }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+    {%- if b.caption %}<div class="caption">{{ b.caption }}</div>{% endif -%}
+  {%- elif b.type == "figure" and figures.get(b.figure) -%}
+    {%- set f = figures[b.figure] -%}
+    <figure class="fig fig-{{ f.size or 'full' }}">{{ f.html|safe }}<figcaption>{{ L.figure }} {{ f.number }} — {{ f.caption }}</figcaption></figure>
+  {%- elif b.type == "org_card" -%}
+    <div class="orgcard"><div class="orgcard-head"><div class="badge">{{ b.code }}</div><div><div class="orgcard-name">{{ b.name }}</div><div class="orgcard-sub">{{ b.subtitle }}</div></div>{% if b.tag %}<div class="orgcard-tag">[{{ b.tag }}]</div>{% endif %}</div>
+    <table class="kv">{% for k, v in b.rows %}<tr><th>{{ k|upper }}</th><td>{{ v|fmt }}</td></tr>{% endfor %}</table></div>
+  {%- elif b.type == "signal" -%}
+    <div class="signal"><span class="sig-id">{{ b.id }}</span><span class="sig-text">{{ b.text|fmt }}</span><span class="sig-meta">{{ b.meta }}</span></div>
+  {%- endif -%}
+{%- endfor -%}
+{%- endmacro -%}
+
+{#- ── COVER ─────────────────────────────────────────────────────────────── -#}
+{% if meta.cadence == "daily" %}
+<header class="dailyhead">
+  <div class="dh-band">{{ wordmark("#1b1f24") }}<span class="dh-kind">{{ L[meta.cadence]|upper }} · {{ meta.period_label }}</span></div>
+  <h1 class="dh-title">{{ meta.title }}</h1>
+  <div class="dh-meta">{{ L.for }} {{ meta.org }} · {{ L.serial }} {{ meta.serial }} · {{ L.cutoff }} {{ meta.cutoff_label }}{% if meta.rehearsal %} · <b class="rehearsal">{{ L.rehearsal }}</b>{% endif %}</div>
+</header>
+{% else %}
+<section class="cover">
+  <div class="cover-band">
+    <div class="cover-brand">{{ wordmark("#1b1f24") }}<div class="cover-sub">{{ meta.publisher_line|upper }}</div></div>
+  </div>
+  <div class="cover-body">
+    <div class="cover-issue">{{ L.issue|upper }} {{ meta.issue_no }} · {{ meta.month_label|upper }}</div>
+    <h1 class="cover-title">{{ L[meta.cadence] }}</h1>
+    <div class="cover-for">{{ L.for }} {{ meta.org }}</div>
+    <div class="cover-period">{{ L.period }} {{ meta.period_label }} · {{ L.context }} {{ meta.context_label }}</div>
+    {% if meta.rehearsal %}<div class="rehearsal cover-rehearsal">{{ L.rehearsal }}</div>{% endif %}
+    <table class="cover-meta">
+      <tr><td><b>{{ L.serial }}</b><br>{{ meta.serial }}</td><td><b>{{ L.addressee }}</b><br>{{ meta.addressee }}</td></tr>
+      <tr><td><b>{{ L.cutoff }}</b><br>{{ meta.cutoff_label }}</td><td><b>{{ L.publisher }}</b><br>{{ meta.publisher }}</td></tr>
+      <tr><td><b>{{ L.domains }}</b><br>{{ meta.domains }}</td><td><b>{{ L.template }}</b><br>{{ meta.template_version }}</td></tr>
+    </table>
+    <div class="cover-foot">
+      <div><b>Parallax</b><br>Geopolitical Intelligence<br>{{ meta.publisher }}</div>
+      {% if meta.contact %}<div><b class="small">{{ L.contact|upper }}</b><br>{{ meta.contact.name }}<br>{{ meta.contact.email }}{% if meta.contact.phone %}<br>{{ meta.contact.phone }}{% endif %}</div>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{#- ── KEY JUDGMENTS ──────────────────────────────────────────────────────── -#}
+{% if key_judgments %}
+<section class="part{% if meta.cadence == 'daily' %} nobreak{% endif %}" id="key_judgments">
+  <h1>{{ mark("key_judgments") }}{{ L.key_judgments }}</h1>
+  <p class="lead">{{ L.kj_lead }}</p>
+  {% for k in key_judgments %}
+  <div class="kj">
+    <div class="kj-id">{{ k.id }}</div>
+    <div class="kj-body">
+      <div class="kj-title">{{ k.title }}</div>
+      <p>{{ k.body|fmt }}</p>
+      <div class="kj-foot">
+        <div><span class="lbl">{{ L.probability|upper }}</span><br>{{ band(k) }}{% if k.band_note %} {{ k.band_note }}{% endif %}</div>
+        <div><span class="lbl">{{ L.confidence|upper }}</span><br>{{ L.conf[k.confidence] }}</div>
+        <div><span class="lbl">{{ L.change|upper }}</span><br>{{ k.change }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  <p class="note">{{ L.conf_note }}</p>
+</section>
+{% endif %}
+
+{#- ── EXPOSURE REGISTER ──────────────────────────────────────────────────── -#}
+{% if exposure %}
+<section class="part" id="exposure">
+  <h1>{{ mark("exposure") }}{{ L.exposure }}</h1>
+  {% if exposure.lead %}<p class="lead">{{ exposure.lead }}</p>{% endif %}
+  <table class="grid register">
+    <thead><tr><th></th><th>{{ L.vector }}</th><th>{{ L.level }}</th><th>{{ L.prev }}</th><th>Δ</th><th>{{ L.drivers }}</th><th>{{ L.decision_touched }}</th></tr></thead>
+    <tbody>{% for v in exposure.vectors %}<tr><td>{{ v.id }}</td><td>{{ v.name }}</td><td class="lvl lvl{{ v.level }}">{{ v.level }}</td><td>{{ v.prev }}</td><td class="delta">{{ v.delta }}</td><td>{{ v.drivers|fmt }}</td><td>{{ v.decision|fmt }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <div class="scale">{% for i in range(5) %}<div class="lvl lvl{{ i+1 }}">{{ i+1 }} {{ L.levels[i] }}</div>{% endfor %}</div>
+  <p class="small"><b>{{ L.levels_title }}</b> {% for i in range(5) %}{{ i+1 }} — {{ L.level_meaning[i] }} {% endfor %}</p>
+  {% if exposure.movement %}<p>{{ exposure.movement|fmt }}</p>{% endif %}
+</section>
+{% endif %}
+
+{#- ── DECISIONS ─────────────────────────────────────────────────────────── -#}
+{% if decisions %}
+<section class="part" id="decisions">
+  <h1>{{ mark("decisions") }}{{ L.decisions }}</h1>
+  {% if decisions.lead %}<p class="lead">{{ decisions.lead }}</p>{% endif %}
+  <table class="grid"><thead><tr><th></th><th>{{ L.decide }}</th><th>{{ L.vector }}</th><th>{{ L.owner }}</th><th>{{ L.due }}</th><th>{{ L.urgency }}</th></tr></thead>
+  <tbody>{% for d in decisions["items"] %}<tr><td>{{ d.id }}</td><td>{{ d.what }}</td><td>{{ d.vector }}</td><td>{{ d.owner }}</td><td>{{ d.due }}</td><td>{{ d.urgency }}</td></tr>{% endfor %}</tbody></table>
+  <h3>{{ L.rationale }}</h3>
+  {% for d in decisions["items"] %}<div class="keep"><h4>{{ d.id }} {{ d.what }}</h4><p>{{ d.rationale|fmt }}</p></div>{% endfor %}
+  {% if decisions.footnote %}<p class="note">{{ decisions.footnote }}</p>{% endif %}
+</section>
+{% endif %}
+
+{#- ── CONTENTS ──────────────────────────────────────────────────────────── -#}
+{% if contents %}
+<section class="part" id="contents">
+  <h1>{{ L.contents }}</h1>
+  <div class="toc">{% for e in contents %}<div class="toc-row toc-l{{ e.level }}"><span class="toc-t">{{ e.title }}</span><span class="toc-dots"></span><span class="toc-p">{{ e.page or "" }}</span></div>{% endfor %}</div>
+</section>
+{% endif %}
+
+{#- ── HOW TO READ ───────────────────────────────────────────────────────── -#}
+{% if how_to_read %}
+<section class="part" id="how_to_read">
+  <h1>{{ mark("how_to_read") }}{{ L.how_to_read }}</h1>
+  <table class="grid"><thead><tr><th>{{ L.mark_head }}</th><th>{{ L.meaning_head }}</th></tr></thead>
+  <tbody>{% for t in L.tag_order %}<tr><td>[{{ L.tags[t] }}]</td><td>{{ L.tag_meaning[t] }}</td></tr>{% endfor %}</tbody></table>
+  <h3>{{ L.probability }} / {{ L.confidence }}</h3><p>{{ how_to_read.bands }}</p><p>{{ how_to_read.confidence }}</p>
+  <h3>{{ how_to_read.layout_title }}</h3><p>{{ how_to_read.layout }}</p>
+  <h3>{{ how_to_read.provenance_title }}</h3><p>{{ how_to_read.provenance }}</p>
+</section>
+{% endif %}
+
+{#- ── CHRONOLOGY ────────────────────────────────────────────────────────── -#}
+{% if chronology %}
+<section class="part{% if meta.cadence == 'daily' %} nobreak{% endif %}" id="chronology">
+  <div class="kicker">{{ chronology.kicker }}</div>
+  <h1>{{ mark("chronology") }}{{ L.chronology }}</h1>
+  {% if chronology.lead %}<p class="lead">{{ chronology.lead }}</p>{% endif %}
+  <table class="grid"><thead><tr><th>{{ L.date }}</th><th>{{ L.event }}</th>{% if meta.cadence != 'daily' %}<th>{{ L.vector }}</th>{% endif %}<th>{{ L.class }}</th></tr></thead>
+  <tbody>{% for r in chronology.rows %}<tr><td class="nowrap">{{ r.date }}</td><td>{{ r.event|fmt }}</td>{% if meta.cadence != 'daily' %}<td>{{ r.vector }}</td>{% endif %}<td class="nowrap">[{{ L.tags[r.tag] }}]</td></tr>{% endfor %}</tbody></table>
+  {% if chronology.note %}<p>{{ chronology.note|fmt }}</p>{% endif %}
+  {% if chronology.meaning %}{{ meaning(chronology.meaning) }}{% endif %}
+</section>
+{% endif %}
+
+{#- ── SECTIONS ──────────────────────────────────────────────────────────── -#}
+{% for s in sections %}
+<section class="part{% if meta.cadence == 'daily' %} nobreak{% endif %}" id="{{ s.id }}">
+  {% if s.kicker %}<div class="kicker">{{ s.kicker }}</div>{% endif %}
+  <h1>{{ mark(s.id) }}{{ s.title }}</h1>
+  {% if s.lead %}<p class="lead">{{ s.lead }}</p>{% endif %}
+  {% for sub in s.subsections or [] %}
+    <h2>{{ mark(sub.id) }}{{ sub.title }}</h2>
+    {{ blocks(sub.blocks) }}
+  {% endfor %}
+  {{ blocks(s.blocks or []) }}
+</section>
+{% endfor %}
+
+{#- ── IMAGERY ───────────────────────────────────────────────────────────── -#}
+{% if imagery and imagery["items"] %}
+<section class="part" id="imagery">
+  <h1>{{ mark("imagery") }}{{ L.imagery }}</h1>
+  {% if imagery.lead %}<p class="lead">{{ imagery.lead }}</p>{% endif %}
+  {% for im in imagery["items"] %}
+  <figure class="fig imgfig"><img src="{{ im.src }}" alt=""><figcaption>{{ L.figure }} {{ im.number }} — {{ im.caption }}</figcaption></figure>
+  {% if im.text %}<p>{{ tag(im.tag) }}{{ im.text|fmt }}</p>{% endif %}
+  {% endfor %}
+  {% if imagery.meaning %}{{ meaning(imagery.meaning) }}{% endif %}
+</section>
+{% endif %}
+
+{#- ── ANALYST DESK ──────────────────────────────────────────────────────── -#}
+{% if analyst_desk %}
+{% set a = analyst_desk %}
+<section class="part" id="analyst_desk">
+  <div class="kicker">{{ a.kicker }}</div>
+  <h1>{{ mark("analyst_desk") }}{{ L.analyst_desk }}</h1>
+  <h2>{{ L.question }}</h2><p><b>{{ a.question }}</b></p>{% if a.why %}<p>{{ a.why|fmt }}</p>{% endif %}
+  <h2>{{ L.hypotheses }}</h2>
+  <table class="grid"><tbody>{% for h in a.hypotheses %}<tr><td>{{ h.id }}</td><td>{{ h.text }}</td><td>{{ h.consequence }}</td></tr>{% endfor %}</tbody></table>
+  {% if a.matrix %}
+  <table class="ach"><thead><tr><th></th>{% for h in a.hypotheses %}<th>{{ h.id }}</th>{% endfor %}</tr></thead>
+  <tbody>{% for e in a.matrix %}<tr><td class="ach-ev">{{ e.label }}{% if e.diagnostic %} ◆{% endif %}</td>{% for s in e.scores %}<td class="ach-c ach-{{ s|achclass }}">{{ s }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+  <div class="caption">◆ {{ L.diagnostic }} · ++ / + / o / − / −− </div>
+  {% endif %}
+  {% if a.evaluation %}<p>{{ a.evaluation|fmt }}</p>{% endif %}
+  {% if a.assessment %}<p>{{ tag("ASSESSMENT") }}{{ a.assessment|fmt }}</p>{% endif %}
+  <h2>{{ L.assumptions }}</h2>
+  <table class="grid"><tbody>{% for x in a.assumptions %}<tr><td>{{ x.id }}</td><td>{{ x.text }}</td><td>{{ L.conf[x.confidence] }}</td><td>{{ x.breaks }}</td></tr>{% endfor %}</tbody></table>
+  <h2>{{ L.counter }}</h2><p>{{ a.counter|fmt }}</p>{% if a.counter_reply %}<p>{{ a.counter_reply|fmt }}</p>{% endif %}
+  <h2>{{ L.would_change }}</h2>
+  <table class="grid"><tbody>{% for w in a.would_change %}<tr><td>{{ w.id }}</td><td>{{ w.event }}</td><td class="nowrap">{{ w.deadline }}</td><td>{{ w.effect }}</td></tr>{% endfor %}</tbody></table>
+  {% if a.analogues %}<h2>{{ L.analogues }}</h2>{% for x in a.analogues %}<p><b>{{ x.title }}.</b> {{ x.text|fmt }}</p>{% endfor %}{% endif %}
+</section>
+{% endif %}
+
+{#- ── SCENARIOS ─────────────────────────────────────────────────────────── -#}
+{% if scenarios %}
+<section class="part" id="scenarios">
+  <h1>{{ mark("scenarios") }}{{ L.scenarios }}</h1>
+  {% if scenarios.lead %}<p class="lead">{{ scenarios.lead }}</p>{% endif %}
+  <div class="scenbar">{% for s in scenarios["items"] %}<div class="scen scen{{ loop.index }}" style="flex: {{ s.p }}">{{ s.key }} {{ s.p }} %</div>{% endfor %}</div>
+  {% for s in scenarios["items"] %}
+  <div class="keep scenario"><h3>{{ s.key }} {{ s.title }} <span class="muted">— {{ s.p }} %</span></h3><p>{{ s.text|fmt }}</p>
+  <p class="kv1"><b>{{ L.trigger|upper }}</b> {{ s.trigger }}</p><p class="kv1"><b>{{ L.measure|upper }}</b> {{ s.measure }}</p></div>
+  {% endfor %}
+  {% if scenarios.note %}<p><b>{{ scenarios.note_title }}</b> {{ scenarios.note|fmt }}</p>{% endif %}
+</section>
+{% endif %}
+
+{#- ── INDICATORS ────────────────────────────────────────────────────────── -#}
+{% if indicators %}
+<section class="part{% if meta.cadence == 'daily' %} nobreak{% endif %}" id="indicators">
+  <h1>{{ mark("indicators") }}{{ L.indicators if meta.cadence != 'daily' else L.watch }}</h1>
+  {% if indicators.lead %}<p class="lead">{{ indicators.lead }}</p>{% endif %}
+  <table class="grid"><thead><tr><th></th><th>{{ L.indicators_col }}</th><th>{{ L.threshold }}</th><th>{{ L.current }}</th><th>{{ L.trend }}</th><th>{{ L.lead_time }}</th></tr></thead>
+  <tbody>{% for r in indicators.rows %}<tr><td>{{ r.id }}</td><td>{{ r.name }}</td><td>{{ r.threshold }}</td><td>{{ r.current }}</td><td>{{ r.trend }}</td><td>{{ r.lead }}</td></tr>{% endfor %}</tbody></table>
+  {% if indicators.note %}<p>{{ indicators.note|fmt }}</p>{% endif %}
+</section>
+{% endif %}
+
+{#- ── CALENDAR ──────────────────────────────────────────────────────────── -#}
+{% if calendar %}
+<section class="part" id="calendar">
+  <h1>{{ mark("calendar") }}{{ L.calendar }}</h1>
+  <table class="grid"><thead><tr><th>{{ L.date }}</th><th>{{ L.event }}</th><th>{{ L.vector }}</th><th>{{ L.why_matters }}</th></tr></thead>
+  <tbody>{% for r in calendar.rows %}<tr><td class="nowrap">{{ r.when }}</td><td>{{ r.what }}</td><td>{{ r.vector }}</td><td>{{ r.why }}</td></tr>{% endfor %}</tbody></table>
+  {% if calendar.wildcards %}<h2>{{ L.wildcards }}</h2>
+  {% for w in calendar.wildcards %}<div class="keep"><h4>{{ w.title }} <span class="muted">— {{ w.p }}</span></h4><p>{{ w.text|fmt }}</p><p class="kv1"><b>{{ L.precaution|upper }}</b> {{ w.precaution }}</p></div>{% endfor %}{% endif %}
+</section>
+{% endif %}
+
+{#- ── GAPS ──────────────────────────────────────────────────────────────── -#}
+{% if gaps %}
+<section class="part" id="gaps">
+  <h1>{{ mark("gaps") }}{{ L.gaps }}</h1>
+  <table class="grid"><tbody>{% for g in gaps.rows %}<tr><td>{{ g.id }}</td><td>{{ g.what }}</td><td>{{ g.why }}</td><td>{{ g.clarify }}</td></tr>{% endfor %}</tbody></table>
+  {% if gaps.excluded %}<h2>{{ L.excluded }}</h2>{% for x in gaps.excluded %}<p><b>{{ x.title }}</b> — {{ x.text|fmt }}</p>{% endfor %}{% endif %}
+</section>
+{% endif %}
+
+{#- ── EXPOSURE CARDS ────────────────────────────────────────────────────── -#}
+{% if exposure_cards %}
+<section class="part" id="exposure_cards">
+  <h1>{{ mark("exposure_cards") }}{{ L.exposure_cards }}</h1>
+  {% for c in exposure_cards %}
+  <div class="orgcard"><div class="orgcard-head"><div class="badge">{{ c.id }}</div><div><div class="orgcard-name">{{ c.title }}</div><div class="orgcard-sub">{{ c.sub }}</div></div><div class="orgcard-tag">[{{ c.tag }}]</div></div>
+  <table class="kv">{% for k, v in c.rows %}<tr><th>{{ k|upper }}</th><td>{{ v|fmt }}</td></tr>{% endfor %}</table></div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{#- ── SOURCES ───────────────────────────────────────────────────────────── -#}
+{% if sources %}
+<section class="part{% if meta.cadence == 'daily' %} nobreak{% endif %}" id="sources">
+  <h1>{{ mark("sources") }}{{ L.sources }}</h1>
+  <p class="small">{{ L.tiers_note }}</p>
+  <table class="grid src"><thead><tr><th></th><th>{{ L.source }}</th><th>{{ L.tier }}</th><th>{{ L.reliability }}</th><th>{{ L.note }}</th></tr></thead>
+  <tbody>{% for s in sources %}<tr id="{{ s.id }}"><td>{{ s.id }}</td><td>{{ s.title }}{% if s.url %}<br><span class="url">{{ s.url|shorturl }}</span>{% endif %}</td><td>{{ s.tier }}</td><td>{{ L.conf[s.reliability] if s.reliability in L.conf else s.reliability }}</td><td>{{ s.note or "—" }}</td></tr>{% endfor %}</tbody></table>
+</section>
+{% endif %}
+
+{#- ── METHOD ────────────────────────────────────────────────────────────── -#}
+{% if method %}
+<section class="part" id="method">
+  <h1>{{ mark("method") }}{{ L.method }}</h1>
+  <h2>{{ L.procedure }}</h2><p>{{ method.procedure|fmt }}</p>
+  <h2>{{ L.checks }}</h2><table class="grid"><tbody>{% for c, r in method.checks %}<tr><td>{{ c }}</td><td>{{ r }}</td></tr>{% endfor %}</tbody></table>
+  <h2>{{ L.weakest }}</h2><p>{{ method.weakest|fmt }}</p>
+  {% if method.internal %}<h2>{{ L.internal }}</h2><p>{{ method.internal|fmt }}</p>{% endif %}
+  <h2>{{ L.limits }}</h2><p>{{ method.limits|fmt }}</p>
+</section>
+{% endif %}
+
+{#- ── GLOSSARY ──────────────────────────────────────────────────────────── -#}
+{% if glossary %}
+<section class="part{% if meta.cadence == 'daily' %} nobreak{% endif %}" id="glossary">
+  <h1>{{ mark("glossary") }}{{ L.glossary }}</h1>
+  <table class="grid gloss"><thead><tr><th>{{ L.term }}</th><th>{{ L.meaning }}</th></tr></thead>
+  <tbody>{% for g in glossary %}<tr><td>{{ g.term }}</td><td>{{ g.meaning }}</td></tr>{% endfor %}</tbody></table>
+  <p class="endline">{{ meta.serial }} · {{ L[meta.cadence] }} · {{ meta.org }} · {{ meta.period_label }} · Parallax</p>
+</section>
+{% endif %}
+</body>
+</html>
