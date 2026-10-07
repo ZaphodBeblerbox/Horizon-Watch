@@ -411,8 +411,14 @@ import routers.graph as _graph_router
 app.include_router(_graph_router.router)
 app.include_router(_tile_proxy_router.router)
 app.include_router(_my_assets_router.router)
-from routers import briefing_engine as _briefing_engine_router  # the briefing engine (briefing/): profile → evidence → research → Opus → PDF
-app.include_router(_briefing_engine_router.router)
+try:
+    # the briefing engine (briefing/): profile → evidence → research → Opus → PDF.
+    # Optional at start: a missing dependency (matplotlib, PyMuPDF) turns
+    # briefings off instead of keeping the whole server from starting.
+    from routers import briefing_engine as _briefing_engine_router
+    app.include_router(_briefing_engine_router.router)
+except Exception as _be:                                      # noqa: BLE001
+    print(f"[briefing] engine unavailable, situation reports are off: {type(_be).__name__}: {_be}")
 try:
     import briefing.job as _briefing_job
     _n = _briefing_job.recover_interrupted()

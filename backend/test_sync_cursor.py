@@ -1,6 +1,11 @@
 """The cursor a local-first client resumes from."""
+import datetime as _dt
 import sqlite3
 import sync_cursor as sc
+
+# rows an hour old: a cursor-less first page only reaches back COLD_START_HOURS,
+# and fixed dates aged out of that window (the test was written 2026-09-24)
+BASE = (_dt.datetime.utcnow() - _dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
 
 
 def _db(rows):
@@ -34,7 +39,7 @@ def test_a_corrupt_cursor_is_a_cold_start_not_an_error():
 
 
 def test_it_pages_forward_without_repeating_or_skipping():
-    c = _db([(i, f"2026-09-24T10:00:0{i}", f"v{i}") for i in range(1, 6)])
+    c = _db([(i, f"{BASE}:0{i}", f"v{i}") for i in range(1, 6)])
     seen, cur = [], None
     for _ in range(5):
         p = _page(c, cur, limit=2)
@@ -50,7 +55,7 @@ def test_rows_sharing_a_timestamp_are_not_lost_or_repeated():
     # A scan writes hundreds of detections in the same second. A bare
     # timestamp cursor either re-sends the whole second every time or
     # drops its tail.
-    c = _db([(i, "2026-09-24T10:00:00", f"v{i}") for i in range(1, 6)])
+    c = _db([(i, f"{BASE}:00", f"v{i}") for i in range(1, 6)])
     seen, cur = [], None
     for _ in range(5):
         p = _page(c, cur, limit=2)
@@ -63,7 +68,7 @@ def test_rows_sharing_a_timestamp_are_not_lost_or_repeated():
 
 
 def test_more_is_honest_so_a_client_can_stop_polling():
-    c = _db([(i, f"2026-09-24T10:00:0{i}", "v") for i in range(1, 4)])
+    c = _db([(i, f"{BASE}:0{i}", "v") for i in range(1, 4)])
     assert _page(c, None, limit=2)["more"] is True
     p = _page(c, _page(c, None, limit=2)["cursor"], limit=2)
     assert p["more"] is False
@@ -71,7 +76,7 @@ def test_more_is_honest_so_a_client_can_stop_polling():
 
 
 def test_a_page_is_capped_however_it_is_asked_for():
-    c = _db([(i, f"2026-09-24T10:00:{i:02d}", "v") for i in range(1, 30)])
+    c = _db([(i, f"{BASE}:{i:02d}", "v") for i in range(1, 30)])
     assert len(_page(c, None, limit=99999)["rows"]) <= sc.MAX_PAGE
     assert len(_page(c, None, limit=0)["rows"]) >= 1
     c.close()

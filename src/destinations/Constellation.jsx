@@ -377,7 +377,9 @@ export default function Constellation({ theater = "", onOpenModule = () => {} })
     const gridCols = view === "sem"
         ? "minmax(0,1fr)"
         : `${L ? (vw < 1440 ? "260px " : "300px ") : ""}minmax(0,1fr)${R ? (vw < 1440 ? " 320px" : " 360px") : ""}`
-    const narrow = vw < 1240 ? "none" : "inline"
+    // the screen sits inside the shell (rail, margins), so its own width is
+    // well under the window's: labels go before the buttons are pushed out
+    const narrow = vw < 1360 ? "none" : "inline"
 
     /* The counters name the WHOLE graph, not the slice on screen. Showing
        "43 entities" while standing on a corner of 87,599 reads as the graph
@@ -985,9 +987,10 @@ export default function Constellation({ theater = "", onOpenModule = () => {} })
                         }}><I href={icon} />{k}</button>
                     ))}
                 </nav>
-                <span style={{
+                <span title={corpusMeta} style={{
                     display: narrow, fontFamily: "var(--mz-font-mono)", fontSize: 10,
                     letterSpacing: ".08em", color: "var(--txt4)", whiteSpace: "nowrap",
+                    flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
                 }}>{corpusMeta}</span>
                 <div style={{ flex: 1, minWidth: 0 }} />
                 {(view === "trace" || view === "map") && (
