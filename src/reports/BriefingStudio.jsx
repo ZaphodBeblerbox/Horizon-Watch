@@ -22,6 +22,7 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import Generate from "./Generate.jsx"
+import IssueStudio from "./IssueStudio.jsx"
 import Briefings from "./Briefings.jsx"
 import DeckBuilder from "./DeckBuilder.jsx"
 import DocWriter from "./DocWriter.jsx"
@@ -56,7 +57,7 @@ function Act({ children, onClick, primary = false }) {
 export default function BriefingStudio({
     initialReportId = null, onPrint = () => {}, onOpenTab = () => {}, isVisible = true,
 }) {
-    const [tab, setTab] = useState("generate")
+    const [tab, setTab] = useState("issue")
     const [deckId, setDeckId] = useState(null)
     const [reportId, setReportId] = useState(initialReportId)
 
@@ -83,11 +84,14 @@ export default function BriefingStudio({
        derived from a generated report — a second place to go for something
        the builder already does, with its own Present button. The reader's
        "Present as deck" now opens the builder with that report's slides. */
-    const TABS = [["Generate", "generate"], ["Notes", "notes"], ["Write", "write"],
+    /* SITUATION REPORT first: the fixed-structure issue (daily, weekly,
+       monthly) written for this user's profile — backend/briefing/. */
+    const TABS = [["Situation report", "issue"], ["Generate", "generate"], ["Notes", "notes"], ["Write", "write"],
                   ["Build deck", "build"], ["Reader", "reader"]]
 
     const meta = tab === "notes"
         ? `${notes.length} ${notes.length === 1 ? "note" : "notes"}`
+        : tab === "issue" ? ""
         : tab === "generate"
         ? `${signals.length} ${signals.length === 1 ? "signal" : "signals"} · ${notes.length} ${notes.length === 1 ? "note" : "notes"}`
         : tab === "deck" && deckId ? deckId
@@ -190,6 +194,12 @@ export default function BriefingStudio({
                             onOpenTab(rid, title, kind)
                         }} />
                     </div>
+                </div>
+            )}
+
+            {tab === "issue" && (
+                <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                    <IssueStudio />
                 </div>
             )}
 

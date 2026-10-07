@@ -82,3 +82,13 @@ Other fixes in the same change:
   is the switch where that would go.
 - **Postgres.** `backend/postgres_prototype/` exists; SQLite on the volume
   is what runs.
+
+## Situation reports (backend/briefing/)
+
+- **PDF printing** runs `tools/render_pdf.mjs` with Node and Playwright's Chromium. The server image needs Node ≥ 18,
+  `npm install playwright`, and `npx playwright install --with-deps chromium`. Without them a run fails at the print stage.
+- **Model:** `BRIEFING_MODEL` (default `claude-opus-5-5`) through `ANTHROPIC_API_KEY`, with the `briefing` purpose enabled
+  (the default). `HW_LLM_BUDGET_USD` (default $10/month) must cover the cadences in use: a monthly issue estimates $4–8.
+- **Cost cap per run:** `BRIEFING_CAP_USD`, or per cadence `BRIEFING_CAP_USD_DAILY` / `_WEEKLY` / `_MONTHLY`
+  (default 1.5 × the high estimate). A run that reaches it, or has no usable key, finishes as a labelled rehearsal.
+- **Storage:** each run's evidence, research, document and PDF go under `DATA_DIR/briefings/<run id>/` (on the volume).

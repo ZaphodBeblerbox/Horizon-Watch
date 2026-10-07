@@ -9,6 +9,7 @@ routers/briefing_engine.py — the briefing engine over HTTP (briefing/ package)
   GET  /api/briefings2/runs              the caller's runs
   GET  /api/briefings2/runs/{id}         one run's state (the stepper polls this)
   GET  /api/briefings2/runs/{id}/doc     the document, for the interactive reader
+  GET  /api/briefings2/runs/{id}/evidence  what the S- and Q-ids point to
   GET  /api/briefings2/runs/{id}/pdf     the PDF
   GET  /api/briefings2/runs/{id}/deck    the deck (.pptx), built from the document
 """
@@ -99,7 +100,24 @@ def get_doc(request: Request, run_id: str):
     p = job.run_dir(run_id) / "doc.json"
     if not p.exists():
         raise HTTPException(404, "the document is not written yet")
-    return JSONResponse(json.loads(p.read_text()))
+    from briefing import render
+    doc = json.loads(p.read_text())
+    doc["labels"] = render.labels(doc["meta"].get("language", "de"))      # the reader's fixed words, as the PDF has them
+    doc["parts"] = spec.parts_for(doc["meta"]["cadence"])
+    return JSONResponse(doc)
+
+
+@router.get("/runs/{run_id}/evidence")
+def get_evidence(request: Request, run_id: str):
+    """What the S-ids in the document point to (without image data) and the web findings behind the Q-ids."""
+    _mine(request, run_id)
+    d = job.run_dir(run_id)
+    if not (d / "evidence.json").exists():
+        raise HTTPException(404, "no evidence for this run")
+    ev = json.loads((d / "evidence.json").read_text())
+    events = [{k: v for k, v in e.items() if k != "image"} | {"has_image": bool(e.get("image"))} for e in ev.get("events") or []]
+    res = json.loads((d / "research.json").read_text()) if (d / "research.json").exists() else {}
+    return {"events": events, "funnel": ev.get("funnel"), "findings": res.get("findings") or [], "sites": ev.get("sites") or []}
 
 
 @router.get("/runs/{run_id}/pdf")
