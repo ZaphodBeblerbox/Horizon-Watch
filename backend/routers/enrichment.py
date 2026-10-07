@@ -25,8 +25,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter(prefix="/api/enrich", tags=["enrichment"])
 
-_CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                           "data", "enrichment_cache.json")
+from paths import data_path as _data_path
+_CACHE_PATH = str(_data_path("enrichment_cache.json"))
 _lock = threading.Lock()
 _cache: dict | None = None
 CACHE_MAX = 20_000

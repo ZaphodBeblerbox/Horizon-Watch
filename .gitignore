@@ -85,3 +85,19 @@ backend/data/telegram/
 *.session
 *.session-journal
 backend/data/retired_name_only_sanction_alerts_*.txt
+
+# Runtime state in DATA_DIR (backend/paths.py): written by the app, never committed.
+# Seed data that ships with the code lives in backend/seed/.
+backend/data/briefings.json
+backend/data/documents/
+backend/data/annotations.json
+backend/data/situations.json
+backend/data/profile.json
+backend/data/usage_log.json
+backend/data/article_preview_cache.json
+backend/data/.jwt_secret
+backend/data/desk_files/
+backend/data/pipelines.json
+backend/data/deployments.json
+backend/data/military_enrichment.json
+backend/data/shipping_routes.json

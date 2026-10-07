@@ -17,7 +17,8 @@ router = APIRouter(tags=["graph"])
 
 
 def _db():
-    path = os.path.join(os.getenv("DATA_DIR", "./data"), "akili.db")
+    from paths import DB_PATH
+    path = str(DB_PATH)
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn

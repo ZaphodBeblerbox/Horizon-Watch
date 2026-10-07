@@ -60,7 +60,8 @@ import torch
 logger = logging.getLogger("sar_detector")
 
 BASE_DIR = Path(__file__).resolve().parent
-WEIGHTS_ROOT = BASE_DIR / "data" / "model_weights" / "sentinel1"
+from paths import DATA_DIR as _DATA_DIR
+WEIGHTS_ROOT = _DATA_DIR / "model_weights" / "sentinel1"
 DETECTOR_DIR = WEIGHTS_ROOT / "frcnn_cmp2"
 ATTR_DIR = WEIGHTS_ROOT / "attr"
 

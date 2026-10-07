@@ -38,7 +38,7 @@ from pathlib import Path
 # meaningfully conflictual before it interrupts anyone.
 GDELT_NOTIFY_GOLDSTEIN = float(os.getenv("GDELT_NOTIFY_GOLDSTEIN", "-5.0"))
 
-_STATE_DIR = Path(os.getenv("DATA_DIR", Path(__file__).parent / "data"))
+from paths import DATA_DIR as _STATE_DIR
 _RISK_STATE = _STATE_DIR / "risk_band_state.json"
 
 

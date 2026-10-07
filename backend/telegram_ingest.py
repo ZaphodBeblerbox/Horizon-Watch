@@ -35,16 +35,27 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TG_DIR = os.path.join(HERE, "data", "telegram")
+from paths import DATA_DIR as _DATA_DIR
+TG_DIR = os.path.join(str(_DATA_DIR), "telegram")  # the login session: losing it means logging in again
 MEDIA_DIR = os.path.join(TG_DIR, "media")
 VIDEO_MAX_MB = 80
 # Videos are not kept on this machine (the owner, 2026-10-06: long-term
 # media belongs on the server). One is fetched from Telegram when opened,
 # into the system temp dir, and gone half an hour later — long enough for
 # the player's range requests and a replay, not an archive.
-VIDEO_DIR = os.path.join(__import__("tempfile").gettempdir(), "parallax-telegram-video")
-VIDEO_KEEP_DAYS = 30 / (24 * 60)
-VIDEO_KEEP_MB = 300
+#
+# On the server, TELEGRAM_VIDEO_STORE=volume keeps them on the data volume
+# instead — the long-term archive — pruned by age and total size
+# (TELEGRAM_VIDEO_KEEP_DAYS, default 90; TELEGRAM_VIDEO_KEEP_MB, default 20 GB).
+VIDEO_STORE = os.getenv("TELEGRAM_VIDEO_STORE", "temp").strip().lower()
+if VIDEO_STORE == "volume":
+    VIDEO_DIR = os.path.join(TG_DIR, "video")
+    VIDEO_KEEP_DAYS = float(os.getenv("TELEGRAM_VIDEO_KEEP_DAYS", "90"))
+    VIDEO_KEEP_MB = float(os.getenv("TELEGRAM_VIDEO_KEEP_MB", "20000"))
+else:
+    VIDEO_DIR = os.path.join(__import__("tempfile").gettempdir(), "parallax-telegram-video")
+    VIDEO_KEEP_DAYS = 30 / (24 * 60)
+    VIDEO_KEEP_MB = 300
 SESSION = os.path.join(TG_DIR, "parallax")
 LOOKBACK_HOURS = 48
 PER_CHANNEL = 150

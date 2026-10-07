@@ -37,7 +37,8 @@ import unicodedata
 
 BATCH = 25
 BUDGET_PER_PASS = 200
-_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "gdelt_judgements.json")
+from paths import data_path as _data_path
+_PATH = str(_data_path("gdelt_judgements.json"))
 _LOCK = threading.Lock()
 _RUNNING = threading.Event()
 _CACHE: dict | None = None

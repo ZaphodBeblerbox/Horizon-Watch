@@ -73,7 +73,8 @@ ALLIANCE_ORGS = {
     "Q458":  {"name": "European Union", "edge_type": "allied_with"},
 }
 
-_CACHE_PATH = Path(__file__).parent / "data" / "forge" / "wikidata_alliance_cache.json"
+from paths import data_path as _data_path
+_CACHE_PATH = _data_path("forge", "wikidata_alliance_cache.json")
 _CACHE_TTL_SECONDS = 30 * 24 * 3600  # alliances don't change membership often — 30-day cache
 
 

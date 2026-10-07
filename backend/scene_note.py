@@ -20,7 +20,8 @@ import json
 import os
 import threading
 
-_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "scene_notes.json")
+from paths import data_path as _data_path
+_PATH = str(_data_path("scene_notes.json"))
 _LOCK = threading.Lock()
 _PENDING: set[str] = set()
 

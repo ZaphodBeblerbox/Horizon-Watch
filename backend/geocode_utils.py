@@ -16,7 +16,8 @@ _http_calls = 0
 _cache_hits = 0
 
 # ── 30-day disk cache for Nominatim results ───────────────────────────────────
-_DISK_CACHE_DIR = os.path.join(os.getenv("DATA_DIR", "/var/lib/railway"), "geocode_cache")
+from paths import DATA_DIR as _DATA_DIR
+_DISK_CACHE_DIR = os.path.join(str(_DATA_DIR), "geocode_cache")
 _disk_cache = None
 _disk_cache_init = False
 

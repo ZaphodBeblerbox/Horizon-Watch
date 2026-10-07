@@ -39,7 +39,8 @@ WIKIPEDIA_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{titl
 FLAGCDN_URL = "https://flagcdn.com/{iso2}.svg"
 USER_AGENT = "HorizonWatch/1.0 (real entity enrichment; contact: local deployment)"
 
-_CACHE_PATH = Path(__file__).parent / "data" / "forge" / "entity_enrichment_cache.json"
+from paths import data_path as _data_path
+_CACHE_PATH = _data_path("forge", "entity_enrichment_cache.json")
 _CACHE_TTL_SECONDS = 30 * 24 * 3600  # real identities/summaries don't change often
 
 

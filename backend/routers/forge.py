@@ -429,7 +429,8 @@ async def forge_upload(
     upload_dir = _m._FORGE_DIR / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
     ts       = int(datetime.utcnow().timestamp())
-    filename = f"{ts}_{file.filename}"
+    from paths import safe_filename
+    filename = f"{ts}_{safe_filename(file.filename)}"
     filepath = str(upload_dir / filename)
     with open(filepath, "wb") as fout:
         _shutil.copyfileobj(file.file, fout)

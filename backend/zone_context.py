@@ -24,7 +24,8 @@ import os
 import threading
 import time
 
-_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "zone_context.json")
+from paths import data_path as _data_path
+_PATH = str(_data_path("zone_context.json"))
 _LOCK = threading.Lock()
 _PENDING: set[str] = set()
 TTL_S = 12 * 3600

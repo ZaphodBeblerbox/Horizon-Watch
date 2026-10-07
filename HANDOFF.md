@@ -155,9 +155,11 @@ O. **3D illustrations of asset types**, high detail, slowly turning (vessel type
 P. **Insight "what changed"** does not answer "what changed" — rework.
 Q. **Generate and the interactive reader** — new UI in the current look.
 R. **Crucible** — the owner asks what it does; decide keep/fold/remove.
-S. **Desk as a social feed** ("like a Twitter brief"): share briefings, signals, posts, Telegram videos,
-   images; see the author, post, comment, like with a check mark.
-T. **Prepare for server integration** (no deploy — local commits only): config, storage, media on server (M).
+S. ~~**Desk as a social feed**~~ — done `a9b2b52`: posts carry a signal, briefing, footage, image,
+   place or asset; ✓ confirm with who; comments; filters; "Share to the desk" from reader, inspector, asset.
+T. ~~**Prepare for server integration**~~ — done (no deploy): `backend/paths.py` (one DATA_DIR rule;
+   user state moved out of the code dir; seed data in `backend/seed/`), JWT secret kept on the volume,
+   `TELEGRAM_VIDEO_STORE=volume` for footage on the server, `deploy_check.py`, `.env.example`, `DEPLOY.md`.
 U. Then **rework the whole frontend UI**.
 V. Telegram video object detection — parked by the owner 2026-10-06 ("not for now").
 

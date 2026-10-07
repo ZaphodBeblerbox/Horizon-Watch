@@ -37,7 +37,8 @@ LIST_TIMEOUT_SECONDS = 20.0
 FILE_TIMEOUT_SECONDS = 30.0
 LIST_RETRY_BACKOFFS = (0.5, 1.0, 2.0)
 _USER_AGENT = "AkiliDashboard/1.0 (gdelt-ingestor)"
-_PERSIST_PATH = Path(__file__).resolve().parent / "data" / "gdelt_events_cache.json"
+from paths import data_path as _data_path
+_PERSIST_PATH = _data_path("gdelt_events_cache.json")
 
 # ── GDELT relevance filter ─────────────────────────────────────────────────────
 # Kinetic events: protest, force posture, coerce, assault, fight, mass violence.

@@ -10,7 +10,8 @@ import httpx
 
 _CACHE_TTL_SECONDS = 24 * 3600
 _MAX_CACHE_ENTRIES = 2000
-_CACHE_PATH = Path(__file__).resolve().parent / "article_preview_cache.json"
+from paths import state_path as _state_path
+_CACHE_PATH = _state_path("article_preview_cache.json")
 _USER_AGENT = "AkiliDashboard/1.0 (article-preview)"
 
 _CACHE_LOCK = Lock()

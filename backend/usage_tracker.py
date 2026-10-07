@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Any
 
 BASE_DIR       = Path(__file__).resolve().parent
-USAGE_LOG_PATH = BASE_DIR / "usage_log.json"
+from paths import state_path as _state_path
+USAGE_LOG_PATH = _state_path("usage_log.json")  # the LLM spend record: must survive a deploy
 
 # ── Per-model pricing ──────────────────────────────────────────────────────────
 # Previously this module hardcoded ONE flat rate (Sonnet's) for every call type.

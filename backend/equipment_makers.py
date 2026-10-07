@@ -43,7 +43,8 @@ USER_AGENT = ("HorizonWatch/1.0 (equipment manufacturer sync; "
               "contact: local deployment)")
 API = "https://www.wikidata.org/w/api.php"
 
-_CACHE = Path(__file__).parent / "data" / "forge" / "wikidata_equipment_cache.json"
+from paths import data_path as _data_path
+_CACHE = _data_path("forge", "wikidata_equipment_cache.json")
 #: Manufacturer and country of origin change on the scale of years.
 CACHE_TTL_S = 30 * 24 * 3600
 

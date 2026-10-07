@@ -4,7 +4,8 @@ from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
 import uuid, datetime, os
 
-DATABASE_URL = f"sqlite:///{os.getenv('DATA_DIR', './data')}/akili.db"
+from paths import DB_PATH as _DB_PATH
+DATABASE_URL = f"sqlite:///{_DB_PATH}"
 # timeout is the DBAPI's own lock wait. Its default is 5 seconds, which is
 # what produced the "database is locked" storms in production: this process
 # writes from a dozen background loops at once (alerts, AIS history, fusion,
@@ -2035,7 +2036,7 @@ def migrate_db():
         pass
     # FusionEvent is defined in this module — already registered with Base
     import sqlite3, os
-    db_path = os.getenv('DATA_DIR', './data') + '/akili.db'
+    db_path = str(_DB_PATH)
     if not os.path.exists(db_path):
         return
     conn = sqlite3.connect(db_path)

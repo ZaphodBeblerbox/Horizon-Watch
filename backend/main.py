@@ -116,12 +116,9 @@ load_dotenv()
 # app ran against a non-volume path, came up with an empty DB, re-seeded users
 # from SEED_TEMP_PASSWORD (every existing login then 401'd), served no live
 # data, and lost the healthcheck race while re-seeding.
-DATA_DIR = (
-    os.getenv("DATA_DIR")
-    or os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
-    or os.path.join(os.path.dirname(__file__), "data")
-)
-os.makedirs(DATA_DIR, exist_ok=True)
+# The rule itself now lives in paths.py, which every module shares.
+import paths as _paths
+DATA_DIR = str(_paths.DATA_DIR)
 
 # Set global socket timeout so feedparser (urllib) and other stdlib HTTP calls
 # never hang indefinitely — critical for Railway where some RSS feeds time out.
@@ -883,7 +880,7 @@ _DS_STATUS_LOCK = threading.Lock()
 _IMB_INCIDENTS: list = []
 
 # ── Daily intelligence briefing ───────────────────────────────────────────────
-_BRIEFING_FILE          = BASE_DIR / "briefings.json"
+_BRIEFING_FILE          = _paths.state_path("briefings.json")
 _BRIEFING_LOCK          = threading.Lock()
 _BRIEFING_STORE: list   = []      # list of briefing dicts, newest last
 _BRIEFING_RATE_LIMIT_S  = 7200    # 2 hours between manual regenerates
@@ -9738,7 +9735,7 @@ def _generate_briefing_sync(manual: bool = False) -> dict | None:
 
 # ── Document management ───────────────────────────────────────────────────────
 
-_DOCS_DIR   = BASE_DIR / "documents"
+_DOCS_DIR   = _paths.state_path("documents")
 _STD_FOLDERS = ["claude-briefings", "my-documents", "saved-analysis", "archived"]
 _FOLDER_LABELS = {
     "claude-briefings": "Claude Briefings",
@@ -18968,7 +18965,7 @@ async def sentinel_dates(request: Request):
 
 # ── /annotations/save & /annotations/load ────────────────────────────────────
 
-ANNOTATIONS_FILE = BASE_DIR / "annotations.json"
+ANNOTATIONS_FILE = _paths.state_path("annotations.json")
 
 @app.post("/annotations/save")
 async def save_annotations(request: Request):
@@ -19073,7 +19070,7 @@ async def get_satellite_tles():
 
 # ── /situations/save & /situations/load ──────────────────────────────────────
 
-SITUATIONS_FILE = BASE_DIR / "situations.json"
+SITUATIONS_FILE = _paths.state_path("situations.json")
 
 @app.post("/situations/save")
 async def save_situations(request: Request):
@@ -19090,7 +19087,7 @@ async def load_situations():
 
 # ── /profile — Mission Profile persistence ────────────────────────────────────
 
-PROFILE_FILE = BASE_DIR / "profile.json"
+PROFILE_FILE = _paths.state_path("profile.json")
 
 # In-memory cache of the active profile — loaded on startup, updated on save.
 _ACTIVE_PROFILE: dict | None = None
@@ -20370,7 +20367,7 @@ async def api_airports_nearby(lat: float, lon: float, radius_km: float = 150, li
 
 @app.get("/api/annotations")
 async def api_get_annotations():
-    p = BASE_DIR / "annotations.json"
+    p = ANNOTATIONS_FILE
     if not p.exists():
         return {"points": [], "zones": [], "links": []}
     try:
@@ -20383,7 +20380,7 @@ async def api_get_annotations():
 @app.post("/api/annotations")
 async def api_post_annotations(request: Request):
     data = await request.json()
-    _atomic_write_text(BASE_DIR / "annotations.json", _json.dumps(data, indent=2))
+    _atomic_write_text(ANNOTATIONS_FILE, _json.dumps(data, indent=2))
     return {"ok": True}
 
 
@@ -20467,11 +20464,13 @@ async def detail_analyse_surface_item(payload: dict):
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Dataset paths ─────────────────────────────────────────────────────────────
-_PIPELINES_PATH          = BASE_DIR / "data" / "pipelines.json"
-_SHIPPING_ROUTES_PATH    = BASE_DIR / "data" / "shipping_routes.json"
-_DEPLOYMENTS_PATH        = BASE_DIR / "data" / "deployments.json"
+# Seed data ships in backend/seed/ (the volume is mounted over data/ and
+# would hide it); an edited copy in DATA_DIR wins once one is written.
+_PIPELINES_PATH          = _paths.seeded("pipelines.json")
+_SHIPPING_ROUTES_PATH    = _paths.seeded("shipping_routes.json")
+_DEPLOYMENTS_PATH        = _paths.seeded("deployments.json")
 print(f"[init] BASE_DIR={BASE_DIR} DATA_DIR={DATA_DIR} deployments_exists={_DEPLOYMENTS_PATH.exists()}")
-_MIL_ENRICHMENT_PATH     = BASE_DIR / "data" / "military_enrichment.json"
+_MIL_ENRICHMENT_PATH     = _paths.seeded("military_enrichment.json")
 _CABLE_GEO_PATH          = BASE_DIR.parent / "public" / "data" / "cable-geo.json"
 _LANDING_GEO_PATH        = BASE_DIR.parent / "public" / "data" / "landing-point-geo.json"
 
@@ -20594,7 +20593,7 @@ def _refresh_pipelines_from_remote() -> None:
             "source": "Global Energy Monitor GOPIT",
             "pipelines": pipelines,
         }
-        _PIPELINES_PATH.write_text(_json.dumps(out, ensure_ascii=False))
+        _paths.data_path("pipelines.json").write_text(_json.dumps(out, ensure_ascii=False))
         with _PIPELINES_LOCK:
             global _PIPELINES_DATA
             _PIPELINES_DATA = out
@@ -20665,9 +20664,9 @@ def _get_cable_data() -> dict:
 
 # ── Deployments dataset ────────────────────────────────────────────────────────
 def _load_deployments() -> dict:
-    print(f"[deployments] reading from {_DEPLOYMENTS_PATH} (exists={_DEPLOYMENTS_PATH.exists()})")
+    path = _paths.seeded("deployments.json")   # per read: a PUT's edited copy wins at once
     try:
-        return _json.loads(_DEPLOYMENTS_PATH.read_text())
+        return _json.loads(path.read_text())
     except Exception as ex:
         logger.exception("load_deployments: read/parse failed")
         print(f"[deployments] load failed: {ex}")
@@ -22989,7 +22988,7 @@ def _on_water(water, lat, lon, bbox) -> bool:
     return land_water.on_water(water, lat, lon, bbox)
 
 
-_IMAGERY_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "imagery_cache")
+_IMAGERY_CACHE_DIR = os.path.join(DATA_DIR, "imagery_cache")
 
 
 def _zone_by_system_id(system_id: str):
@@ -24007,7 +24006,7 @@ async def debug_feed_freshness(current_user=None):
 def api_debug_paths():
     """Debug: return resolved filesystem paths and file existence."""
     import os as _os
-    dep = _DEPLOYMENTS_PATH
+    dep = _paths.seeded("deployments.json")
     data_dir = Path(DATA_DIR)
     event_store_path = data_dir / "event_store.json"
     return {
@@ -24035,7 +24034,7 @@ def api_deployments_get():
 def api_deployments_put(payload: dict = Body(...)):
     """Replace the deployments file with the provided payload."""
     try:
-        _DEPLOYMENTS_PATH.write_text(_json.dumps(payload, indent=2, ensure_ascii=False))
+        _paths.data_path("deployments.json").write_text(_json.dumps(payload, indent=2, ensure_ascii=False))
         return {"ok": True, "last_updated": payload.get("last_updated")}
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
@@ -28839,7 +28838,33 @@ def api_session_views_delete(session_id: str, view_id: str):
 # dev ONLY, disclosed here rather than silently defaulting to a fixed
 # committed value — the real, honest cost is that sessions don't survive a
 # local dev backend restart, not a security hole in a real deployment.
-JWT_SECRET = os.getenv("JWT_SECRET") or secrets.token_hex(32)
+def _jwt_secret() -> str:
+    """JWT_SECRET from the environment; failing that, one generated once and
+    kept on the data volume. A per-process random value logged everyone out
+    on every restart, and start.sh runs two processes that must agree."""
+    if os.getenv("JWT_SECRET"):
+        return os.environ["JWT_SECRET"]
+    p = _paths.data_path(".jwt_secret")
+    try:
+        v = p.read_text().strip()
+        if len(v) >= 32:
+            return v
+    except OSError:
+        pass
+    v = secrets.token_hex(32)
+    try:
+        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(v)
+    except FileExistsError:  # the other process wrote it first: use theirs
+        return p.read_text().strip()
+    except OSError as exc:
+        print(f"[auth] could not keep a JWT secret on disk ({exc}); sessions end at restart")
+    print("[auth] JWT_SECRET not set — using the one kept in DATA_DIR/.jwt_secret")
+    return v
+
+
+JWT_SECRET = _jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_SESSION_HOURS = 24 * 7  # one real week
 

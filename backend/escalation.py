@@ -47,7 +47,8 @@ DDL = """CREATE TABLE IF NOT EXISTS conflict_daily (
 
 
 def _db_path() -> str:
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "akili.db")
+    from paths import DB_PATH
+    return str(DB_PATH)
 
 
 def _con():
