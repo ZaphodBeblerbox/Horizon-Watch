@@ -2413,7 +2413,7 @@ export default function App() {
 
                 {tabs.some(t => t.type === "generate") && (
                     <div style={modeLayer(activeTabType === "generate")}>
-                        <Generate onOpenTab={(reportId, title, kind) => {
+                        <Generate isVisible={activeTabType === "generate"} onOpenTab={(reportId, title, kind) => {
                             setBriefingsInitialId(reportId)
                             setPrintReportId(kind === "print" ? reportId : null)
                             setDeckReportId(kind === "deck" ? reportId : null)

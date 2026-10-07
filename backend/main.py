@@ -193,6 +193,14 @@ import threat_matrix
 import gdelt_events
 from alert_writer import write_alert as _write_alert_base, write_news_article
 
+async def _write_alert_off_loop(alert_dict: dict):
+    """write_alert() from a coroutine, in a worker thread. Inline, its entity
+    linking and fusion feed held the event loop for 15 s at a time
+    (loop-lag blame: _gps_interference_alert_loop → link_alert, 2026-10-07).
+    The fusion engine guards itself with its own lock."""
+    return await asyncio.get_event_loop().run_in_executor(_executor, write_alert, alert_dict)
+
+
 def write_alert(alert_dict: dict):
     """Write alert to DB, feed to fusion engine, and link entities.
 
@@ -320,6 +328,15 @@ except ImportError:
 
 app = FastAPI()
 
+# `kill -USR1 <pid>` writes every thread's stack to stderr. When requests
+# that take milliseconds alone take minutes under load, the loop watchdog
+# sees nothing — the time is spent in threads — and py-spy needs root.
+try:
+    import faulthandler as _fh, signal as _sig
+    _fh.register(_sig.SIGUSR1, all_threads=True)
+except Exception:                                           # noqa: BLE001
+    pass
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -348,6 +365,10 @@ app.add_middleware(
 
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+from slow_requests import SlowRequestLog as _SlowRequestLog
+app.add_middleware(_SlowRequestLog)
 
 # ── Static response cache (ETag + Cache-Control for heavy GeoJSON endpoints) ──
 import hashlib as _hashlib
@@ -10533,8 +10554,14 @@ async def _on_threat_dirty(payload: dict):
         return
     try:
         from database import get_db as _gdb_td
-        with _gdb_td() as _td_db:
-            score = threat_matrix.compute_threat_score(region, _td_db, list(_forge_alerts))
+        alerts = list(_forge_alerts)
+
+        def _score():
+            with _gdb_td() as _td_db:
+                return threat_matrix.compute_threat_score(region, _td_db, alerts)
+        # scoring a region reads the database and loops over every alert: in
+        # a worker, not on the loop (loop-lag blame, 2026-10-07)
+        score = await asyncio.get_event_loop().run_in_executor(_maintenance_executor, _score)
         _graph_sse_push({"event": "score_updated", "payload": {"region": region, **score}})
     except Exception as _td_e:
         print(f"[event-bus] threat_dirty handler error: {_td_e}")
@@ -11012,7 +11039,7 @@ async def _run_sts_detection() -> None:
             },
         }
 
-        write_alert(alert_dict)
+        await _write_alert_off_loop(alert_dict)
         global _forge_alerts
         _forge_alerts.append(alert_dict)
         candidate["alerted"] = True
@@ -12492,7 +12519,12 @@ def _build_live_notification_sources(key, hours: int) -> list:
             print(f"[notifications] source {name}: {type(e).__name__}: {e}")
     try:
         from routers import risk_index as _ri
-        built += _ln.risk_change_items(_ri.get_all_country_risk().get("countries") or [])
+        # the cached index only: computing it here made every notification
+        # request wait up to a minute after startup (slow-request log,
+        # 2026-10-07); the warm loop fills it and the next pass picks it up
+        _hit = _ri._RISK_CACHE.get(30)
+        if _hit:
+            built += _ln.risk_change_items(_hit[1].get("countries") or [])
     except Exception as e:                                  # noqa: BLE001
         print(f"[notifications] risk: {type(e).__name__}: {e}")
 
@@ -12775,6 +12807,28 @@ async def _forecast_publish_loop():
         await asyncio.sleep(86400)
 
 
+async def _analytics_overview_warm_loop():
+    """Build Analytics' default overview before anyone asks for it.
+
+    Its cache already refreshes stale results behind the answer; only the
+    first build after a start landed on a person — 123 s under startup load
+    (slow-request log, 2026-10-07). Rebuilt just inside the cache lifetime
+    so the default view is always served from memory.
+    """
+    await asyncio.sleep(120)
+    while True:
+        try:
+            from routers import analytics as _an
+
+            def _warm():
+                _an._overview_cache.pop(("30d", "all", "all"), None)
+                return _an.get_overview(range="30d", region="all", domain="all")
+            await asyncio.get_event_loop().run_in_executor(_maintenance_executor, _warm)
+        except Exception as e:                              # noqa: BLE001
+            _loop_error("analytics-overview-warm", e, every=10)
+        await asyncio.sleep(9 * 60)
+
+
 async def _risk_index_warm_loop():
     """Keep the notification tray's whole derived path warm.
 
@@ -12956,7 +13010,7 @@ async def _gps_interference_alert_loop():
                     # interference on the map and in the tables while leaving
                     # it out of every piece of analysis the product actually
                     # runs on its signals.
-                    write_alert({
+                    await _write_alert_off_loop({
                         "id": f"GPS-{c['cell'].replace(':', '_')}-{int(time.time())}",
                         "source": payload["source"],
                         "alert_type": payload["alert_type"],
@@ -14591,7 +14645,7 @@ async def _corroboration_trigger_pass() -> None:
         del _CORROBORATION_ACTED[:-_CORROBORATION_ACTED_MAX]
 
         try:
-            write_alert({
+            await _write_alert_off_loop({
                 "source": "CORROBORATED",
                 "alert_type": "Multi-source agreement",
                 # The headline already names what agreed and how far apart,
@@ -14759,7 +14813,7 @@ async def _firms_trigger_pass() -> None:
                     # rule here: a notification carries why it is
                     # relevant, never just that something happened.
                     try:
-                        write_alert({
+                        await _write_alert_off_loop({
                             "title": f"Fire detected — {zd['name']}",
                             "source": "imagery",
                             "alert_type": "firms_fire_aoi",
@@ -15044,8 +15098,9 @@ async def _loop_lag_watchdog():
             print(f"[loop-lag] event loop blocked {lag:.2f}s "
                   f"(worst so far {worst:.2f}s)\n"
                   f"[loop-lag] blame: {_blame.blame(t0, t1)}")
-            # A stall measured in minutes needs the path, not the leaf.
-            if lag >= 20:
+            # A long stall needs the path, not the leaf (a leaf like
+            # jsonable_encoder says nothing about which endpoint).
+            if lag >= 5:
                 chain = _blame.deep_blame(t0, t1)
                 if chain:
                     print(f"[loop-lag] path:  {chain}")
@@ -15458,12 +15513,15 @@ async def _threat_snapshot_loop():
 
 async def _threat_matrix_loop():
     """Hourly threat-matrix cache refresh + midnight daily snapshot."""
-    # Immediate first run — don't wait an hour for data
+    # Immediate first run — don't wait an hour for data.
+    # OFF THE LOOP, like the dirty-region refresh: a full refresh scores
+    # every region and took 30 s inline (loop-lag blame, 2026-10-07), during
+    # which no request — not even /api/health/live — was answered.
     await asyncio.sleep(15)
-    _tm_refresh_once()
+    await asyncio.get_event_loop().run_in_executor(_maintenance_executor, _tm_refresh_once)
     while True:
         await asyncio.sleep(3600)
-        _tm_refresh_once()
+        await asyncio.get_event_loop().run_in_executor(_maintenance_executor, _tm_refresh_once)
 
 
 async def _dirty_region_refresh_loop():
@@ -15828,6 +15886,7 @@ async def startup_event():
     # ever produced the 1,014 rows somebody once made by hand.
     _spawn(_vessel_resolution_loop)
     _spawn(_risk_index_warm_loop)
+    _spawn(_analytics_overview_warm_loop)
     _spawn(_graph_bootstrap_loop)
     _spawn(_forecast_tail_loop)
     _spawn(_forecast_publish_loop)
@@ -16156,9 +16215,11 @@ async def _gdacs_loop():
             def _fetch_gdacs():
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(req, timeout=20) as r:
-                    return r.read().decode("utf-8", errors="replace")
-            raw  = await loop.run_in_executor(_executor, _fetch_gdacs)
-            feed = feedparser.parse(raw)
+                    raw = r.read().decode("utf-8", errors="replace")
+                # parsed here, in the worker: feedparser over the whole feed
+                # held the event loop for 5 s (loop-lag blame, 2026-10-07)
+                return feedparser.parse(raw)
+            feed = await loop.run_in_executor(_executor, _fetch_gdacs)
             for entry in feed.entries:
                 guid = (entry.get("id") or entry.get("guid") or
                         entry.get("link") or entry.get("title") or "")
@@ -24498,7 +24559,9 @@ async def _freeze_task_snapshot(row, db, region=None, bbox=None, period_start=No
     # shared freeze step both snapshot-creation entry points use — rather
     # than duplicating this at each caller.
     geoconfirmed_forge_alerts = []
-    try:
+    def _gc_alerts():
+        # in a worker thread: on the loop this query held every request
+        # for seconds (loop-lag blame, 2026-10-07)
         from database import Alert as _AlertGC
         _gcdb = next(_db_gen())
         _gc_rows = (
@@ -24508,7 +24571,7 @@ async def _freeze_task_snapshot(row, db, region=None, bbox=None, period_start=No
             .limit(150)
             .all()
         )
-        geoconfirmed_forge_alerts = [
+        return [
             {
                 "id": r.alert_id, "source": r.source, "title": r.title,
                 "severity": r.severity, "lat": r.lat, "lon": r.lon,
@@ -24517,6 +24580,8 @@ async def _freeze_task_snapshot(row, db, region=None, bbox=None, period_start=No
             }
             for r in _gc_rows
         ]
+    try:
+        geoconfirmed_forge_alerts = await loop.run_in_executor(_executor, _gc_alerts)
     except Exception as _gc_e:
         print(f"[snapshot-freeze] real geoconfirmed-alert merge failed (non-fatal, snapshot proceeds without them): {_gc_e}")
     try:
@@ -24541,20 +24606,24 @@ async def _freeze_task_snapshot(row, db, region=None, bbox=None, period_start=No
             return obj.isoformat()
         return str(obj)
 
-    snap_id = _snapshot_id()
-    snap = ReportSnapshot(
-        snapshot_id=snap_id, label=row.focus or f"Task {row.task_id}",
-        source="report_task", period_start=period_start, period_end=period_end,
-        stats_json=_json.dumps(pic.get("statistics", {}), default=_json_default),
-        content_json=_json.dumps(pic, ensure_ascii=False, default=_json_default),
-        created_by=row.created_by,
-    )
-    db.add(snap)
-    row.snapshot_id = snap_id
-    row.status = "ready_to_draft"
-    row.updated_at = datetime.utcnow()
-    db.commit()
-    return _task_to_dict(row, db)
+    def _store():
+        # serialising the picture (megabytes) and the commit run in a worker:
+        # inline they blocked the loop for 36 s (loop-lag blame, 2026-10-07)
+        snap_id = _snapshot_id()
+        snap = ReportSnapshot(
+            snapshot_id=snap_id, label=row.focus or f"Task {row.task_id}",
+            source="report_task", period_start=period_start, period_end=period_end,
+            stats_json=_json.dumps(pic.get("statistics", {}), default=_json_default),
+            content_json=_json.dumps(pic, ensure_ascii=False, default=_json_default),
+            created_by=row.created_by,
+        )
+        db.add(snap)
+        row.snapshot_id = snap_id
+        row.status = "ready_to_draft"
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _task_to_dict(row, db)
+    return await loop.run_in_executor(_executor, _store)
 
 
 @app.post("/api/reports/tasks/{task_id}/finish-collection")
@@ -24608,9 +24677,9 @@ async def create_snapshot_report_task(request: Request):
         bbox = None
         zone_label = None
         if watch_zone_id:
-            zone = db.query(WatchZone).filter(
+            zone = await asyncio.get_event_loop().run_in_executor(_executor, lambda: db.query(WatchZone).filter(
                 WatchZone.system_id == watch_zone_id, WatchZone.enabled == True,
-            ).first()
+            ).first())
             if not zone:
                 raise HTTPException(404, f"watch zone {watch_zone_id} not found or not enabled")
             bbox = (zone.bbox_min_lat, zone.bbox_max_lat, zone.bbox_min_lon, zone.bbox_max_lon)
@@ -24632,7 +24701,8 @@ async def create_snapshot_report_task(request: Request):
             created_by=body.get("created_by") or "operator",
         )
         db.add(row)
-        db.commit()
+        # the commit waits on SQLite's write lock: in a worker, not on the loop
+        await asyncio.get_event_loop().run_in_executor(_executor, db.commit)
         # period_start/period_end intentionally both None here (not "now") —
         # matches POST /api/reports/snapshots' existing precedent: no window
         # was ever requested, so prepare_intelligence_picture() applies its
@@ -28805,6 +28875,13 @@ async def api_sessions_update(session_id: str, request: Request):
     one commit, so a captured session can never be left half-written."""
     from database import DeskSession, get_db as _gdb_ses
     body = await request.json()
+    # in a worker thread: the commit waits on SQLite's write lock, and on the
+    # loop that wait (up to 30 s) stalled every request (loop-lag, 2026-10-07)
+    return await asyncio.get_event_loop().run_in_executor(_executor, _sessions_update_sync, session_id, body)
+
+
+def _sessions_update_sync(session_id: str, body: dict):
+    from database import DeskSession, get_db as _gdb_ses
     with _gdb_ses() as db:
         s = db.query(DeskSession).filter(DeskSession.session_id == session_id).first()
         if not s:

@@ -156,7 +156,7 @@ const SEV_COLOR = { critical: "#E5484D", significant: "#F5A524", high: "#F5A524"
 
 function logLine(html) { return { id: Math.random().toString(36).slice(2), html } }
 
-export default function Generate({ onOpenTab }) {
+export default function Generate({ onOpenTab, isVisible = true }) {
     const [title, setTitle] = useState("")
     const [scope, setScope] = useState("")
     const [audience, setAudience] = useState("Duty analyst")
@@ -303,8 +303,14 @@ export default function Generate({ onOpenTab }) {
     // Assembled on open, and again whenever the scope or the watch area
     // changes (after a pause in typing) — it was assembled once and never
     // again, so choosing a watch area changed nothing you could see.
+    // Not before the screen is shown: kept open in a background tab it
+    // assembled the whole world's picture at every app start, a minute of
+    // server work nobody looked at (slow-request log, 2026-10-07).
     const firstScope = useRef(true)
+    const [opened, setOpened] = useState(isVisible)
+    useEffect(() => { if (isVisible) setOpened(true) }, [isVisible])
     useEffect(() => {
+        if (!opened) return undefined
         const delay = firstScope.current ? 0 : 900
         firstScope.current = false
         const t = setTimeout(() => {
@@ -312,7 +318,7 @@ export default function Generate({ onOpenTab }) {
             assembleCorpus().catch((e) => appendLog(logLine(`<u>error assembling evidence</u> — ${e?.message}`)))
         }, delay)
         return () => clearTimeout(t)
-    }, [scope, watchZoneId]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [scope, watchZoneId, opened]) // eslint-disable-line react-hooks/exhaustive-deps
 
     function setStepStatus(i, status, ms) {
         setSteps((prev) => prev.map((s, idx) => (idx === i ? { ...s, status, ms: ms != null ? Math.round(ms) : s.ms } : s)))

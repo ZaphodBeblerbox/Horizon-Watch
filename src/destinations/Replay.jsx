@@ -71,14 +71,21 @@ export default function Replay({ isVisible = true }) {
     const [deviceLoc, setDeviceLoc] = useState(null)
     const scrubbingRef = useRef(false)
 
+    // Loaded when Replay is first shown, not when the app starts (it is kept
+    // mounted), and capped: the whole week was ~100,000 signals and 34 MB,
+    // which stalled the server for everyone each time the app opened.
+    const [total, setTotal] = useState(null)
+    const loadedRef = useRef(false)
     useEffect(() => {
+        if (!isVisible || loadedRef.current) return undefined
+        loadedRef.current = true
         let cancelled = false
-        fetch(`${API}/api/analytics/timeline?hours=${WINDOW_HOURS}`)
+        fetch(`${API}/api/analytics/timeline?hours=${WINDOW_HOURS}&limit=4000`)
             .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (!cancelled) setSignals(Array.isArray(d?.signals) ? d.signals : []) })
+            .then((d) => { if (!cancelled) { setSignals(Array.isArray(d?.signals) ? d.signals : []); setTotal(d?.capped ? d.total : null) } })
             .catch(() => { if (!cancelled) setSignals([]) })
         return () => { cancelled = true }
-    }, [])
+    }, [isVisible])
 
     // Real device geolocation — first tier of the minimap's honest fallback
     // order when nothing is selected. There is no real stored analyst
@@ -254,6 +261,7 @@ export default function Replay({ isVisible = true }) {
                 <p className="replaynote">
                     Replay shows <b>when you learned things</b>. The archive strip on Situation
                     shows <b>when they happened</b>. A gap between the two is the finding.
+                    {total != null && signals && <> Showing the {signals.length.toLocaleString()} most severe of {total.toLocaleString()} signals this week.</>}
                 </p>
 
                 {/* Ruler + lanes */}

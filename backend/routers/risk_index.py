@@ -95,13 +95,35 @@ _RISK_CACHE: dict = {}
 _RISK_TTL_S = 900
 
 
+import threading as _threading
+
+_RISK_LOCK = _threading.Lock()
+
+
 @router.get("/countries")
 def get_all_country_risk(window_days: int = 30, force: bool = False):
+    """Every country's risk. One computation at a time (cold requests used
+    to compute 121 countries each, side by side: 22–118 s apiece under load),
+    and an expired result is served while one request refreshes it."""
     import time as _time
     hit = _RISK_CACHE.get(window_days)
     if hit and not force and _time.time() - hit[0] < _RISK_TTL_S:
         return hit[1]
+    if hit and not force and not _RISK_LOCK.acquire(blocking=False):
+        return hit[1]                  # someone is refreshing it: the last answer, now
+    if not (hit and not force):
+        _RISK_LOCK.acquire()
+        fresh = _RISK_CACHE.get(window_days)
+        if fresh and not force and _time.time() - fresh[0] < _RISK_TTL_S:
+            _RISK_LOCK.release()
+            return fresh[1]            # computed by the request we waited for
+    try:
+        return _compute_all(window_days)
+    finally:
+        _RISK_LOCK.release()
 
+
+def _compute_all(window_days: int) -> dict:
     events = get_all_events()
     geo_counts = _real_geoconfirmed_counts_by_iso(window_days)
     hist_days = real_history_days(events)

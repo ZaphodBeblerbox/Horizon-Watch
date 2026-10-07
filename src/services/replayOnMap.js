@@ -52,7 +52,9 @@ export async function replayOnMap(target) {
         try {
             const hoursSinceTarget = Math.ceil((Date.now() - targetMs) / 3600000)
             const hours = Math.min(24 * 90, Math.max(CONTEXT_HOURS, hoursSinceTarget + CONTEXT_HOURS))
-            const r = await fetch(`${API}/api/analytics/timeline?hours=${hours}`)
+            // the server keeps only what is near the target and before it
+            const until = new Date(targetMs).toISOString()
+            const r = await fetch(`${API}/api/analytics/timeline?hours=${hours}&lat=${target.lat}&lon=${target.lon}&km=${CONTEXT_KM}&until=${encodeURIComponent(until)}&limit=2000`)
             const d = r.ok ? await r.json() : null
             if (Array.isArray(d?.signals)) {
                 context = d.signals

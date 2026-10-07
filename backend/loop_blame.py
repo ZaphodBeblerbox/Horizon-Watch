@@ -90,7 +90,7 @@ def _interesting(stack) -> str | None:
         label = f"{f.rsplit('/', 1)[-1]}:{fr.lineno} in {fr.name}()"
         if fallback is None:
             fallback = label
-        if f.startswith(_OURS) and "loop_blame.py" not in f:
+        if f.startswith(_OURS) and "loop_blame.py" not in f and "slow_requests.py" not in f:
             return label
     return fallback
 
@@ -108,7 +108,7 @@ def deep_blame(since: float, until: float) -> str:
     stack = window[len(window) // 2]
     ours = [f"{fr.filename.rsplit('/', 1)[-1]}:{fr.lineno} {fr.name}()"
             for fr in stack
-            if fr.filename.startswith(_OURS) and "loop_blame.py" not in fr.filename]
+            if fr.filename.startswith(_OURS) and "loop_blame.py" not in fr.filename and "slow_requests.py" not in fr.filename]
     return " -> ".join(ours[-8:]) if ours else ""
 
 

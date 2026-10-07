@@ -565,8 +565,16 @@ def get_overview(
     return out
 
 
+_TIMELINE_CACHE: dict = {}
+_SEV_RANK = {"critical": 0, "high": 1, "significant": 1, "elevated": 2, "medium": 2, "moderate": 2, "low": 3, "info": 4}
+
+
 @router.get("/timeline")
-def get_timeline(hours: int = Query(168, ge=1, le=24 * 90)):
+def get_timeline(hours: int = Query(168, ge=1, le=24 * 90),
+                 lat: Optional[float] = Query(None), lon: Optional[float] = Query(None),
+                 km: Optional[float] = Query(None, gt=0, le=5000),
+                 until: Optional[str] = Query(None),
+                 limit: int = Query(4000, ge=1, le=20000)):
     """Real, bounded-window signal feed for the Replay page's ruler/lanes —
     every real Alert/NewsArticle/SentinelDetection row from the last `hours`
     hours that has a real lat/lon (Replay's minimap/replay-on-map need a real
@@ -579,10 +587,45 @@ def get_timeline(hours: int = Query(168, ge=1, le=24 * 90)):
     lane contents."""
     now = datetime.datetime.utcnow()
     since = now - datetime.timedelta(hours=hours)
-    with get_db() as db:
-        signals, _ = _fetch_and_normalize_signals(db, since)
+    # the window's rows, read once per two minutes: every Replay open and every
+    # replay-on-map asked the database for the same 100,000 rows again
+    import time as _time
+    hit = _TIMELINE_CACHE.get(hours)
+    if hit and _time.monotonic() - hit[0] < 120:
+        signals = hit[1]
+    else:
+        with get_db() as db:
+            signals, _ = _fetch_and_normalize_signals(db, since)
+        signals = [s for s in signals if s["lat"] is not None and s["lon"] is not None and s["created_at"]]
+        _TIMELINE_CACHE.clear()
+        _TIMELINE_CACHE[hours] = (_time.monotonic(), signals)
+    signals = list(signals)
+    # BOUNDED. A week is ~100,000 signals (34 MB of JSON); serialising it
+    # stalled the whole server for seconds every time Replay mounted, and
+    # replay-on-map fetched all of it to keep the few near one point
+    # (slow-request log, 2026-10-07). The place, the end time and the cap
+    # are applied here; the cap keeps the most severe, then the newest.
+    if until:
+        try:
+            u = datetime.datetime.fromisoformat(until.replace("Z", "+00:00")).replace(tzinfo=None)
+            signals = [s for s in signals if s["created_at"] <= u]
+        except ValueError:
+            pass
+    if lat is not None and lon is not None and km:
+        import math as _m
+        dlat = km / 111.0
+        dlon = km / (111.0 * max(0.05, _m.cos(_m.radians(lat))))
+        box = [s for s in signals if abs(s["lat"] - lat) <= dlat and abs(((s["lon"] - lon + 180) % 360) - 180) <= dlon]
 
-    signals = [s for s in signals if s["lat"] is not None and s["lon"] is not None and s["created_at"]]
+        def _km(s):
+            p1, p2 = _m.radians(lat), _m.radians(s["lat"])
+            h = _m.sin((p2 - p1) / 2) ** 2 + _m.cos(p1) * _m.cos(p2) * _m.sin(_m.radians(s["lon"] - lon) / 2) ** 2
+            return 12742 * _m.asin(min(1.0, _m.sqrt(h)))
+        signals = [s for s in box if _km(s) <= km]
+    total = len(signals)
+    if total > limit:
+        signals.sort(key=lambda s: (_SEV_RANK.get(str(s["severity"] or "").lower(), 3), -s["created_at"].timestamp()))
+        signals = signals[:limit]
     signals.sort(key=lambda s: s["created_at"])
 
     out = [
@@ -601,6 +644,8 @@ def get_timeline(hours: int = Query(168, ge=1, le=24 * 90)):
         "generated_at": now.isoformat(),
         "signals": out,
         "count": len(out),
+        "total": total,
+        "capped": total > len(out),
     }
 
 
