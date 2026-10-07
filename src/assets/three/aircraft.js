@@ -10,7 +10,7 @@
  * Gear down: they stand on their wheels.
  */
 import * as THREE from "three"
-import { PAL, mat, mesh, cyl, sphere, rod, block, GLASS } from "./kit.js"
+import { PAL, mat, mesh, cyl, sphere, rod, block, lathe, GLASS, det } from "./kit.js"
 
 const paint = { white: 0xf2f4f6, belly: 0xb9c0c7, metal: 0x9aa3ab }
 
@@ -36,7 +36,7 @@ function patch(r, x0, x1, a0, a1, material, { lift = 0.025, nx = 6, na = 6, yOff
 const GLASS2 = () => mat(PAL.glass, { metal: 0.6, rough: 0.12, side: THREE.DoubleSide })
 
 /** NACA 00xx-style section, closed polygon of [x, y] for chord 1. */
-function airfoil(t = 0.12, n = 14, camber = 0.02) {
+function airfoil(t = 0.12, n = det(14, 6), camber = 0.02) {
     const up = [], lo = []
     for (let i = 0; i <= n; i++) {
         const x = (1 - Math.cos((Math.PI * i) / n)) / 2           // cosine spacing: more points at the nose
@@ -132,8 +132,9 @@ function fuselage(g, { L, R, nose = 2.2, tail = 3.2, tailUp = 0.55, hump = 0, ch
         const t = (s - c) / (d - c); return 1 - t * t * (3 - 2 * t)
     }
     const pts = []
-    for (let i = 0; i <= 96; i++) { const s = (i / 96) * L; pts.push(new THREE.Vector2(radius(s), s)) }
-    const geo = new THREE.LatheGeometry(pts, 56)
+    const NS = det(96, 32)
+    for (let i = 0; i <= NS; i++) { const s = (i / NS) * L; pts.push(new THREE.Vector2(radius(s), s)) }
+    const geo = new THREE.LatheGeometry(pts, det(56, 12))
     geo.rotateZ(-Math.PI / 2)                                // lathe axis Y → +X (s increases with x)
     const p = geo.attributes.position
     const col = new Float32Array(p.count * 3)
@@ -198,7 +199,7 @@ function fuselage(g, { L, R, nose = 2.2, tail = 3.2, tailUp = 0.55, hump = 0, ch
 function engine(g, { x, y, z, len, dia, pylonTo, color = paint.white }) {
     const r = dia / 2
     const prof = [[r * 0.82, 0], [r * 0.98, len * 0.03], [r, len * 0.12], [r * 0.97, len * 0.55], [r * 0.78, len * 0.92], [r * 0.7, len]]
-    const geo = new THREE.LatheGeometry(prof.map(([a, b]) => new THREE.Vector2(a, b)), 36)
+    const geo = new THREE.LatheGeometry(prof.map(([a, b]) => new THREE.Vector2(a, b)), det(36, 10))
     geo.rotateZ(Math.PI / 2)
     const n = mesh(geo, mat(color, { metal: 0.35, rough: 0.3, side: THREE.DoubleSide }), { x: x + len / 2, y, z })
     g.add(n)
@@ -221,7 +222,7 @@ function gear(g, { x, z, h, wheels = 2, r = 0.55, spread = 0.7 }) {
     g.add(rod([x, h, z], [x, r, z], r * 0.18, strut))
     for (let i = 0; i < wheels; i++) {
         const dz = (i - (wheels - 1) / 2) * spread
-        const tyre = new THREE.Mesh(new THREE.TorusGeometry(r * 0.7, r * 0.3, 10, 24), mat(PAL.black, { rough: 0.9 }))
+        const tyre = new THREE.Mesh(new THREE.TorusGeometry(r * 0.7, r * 0.3, det(10, 4), det(24, 8)), mat(PAL.black, { rough: 0.9 }))
         tyre.position.set(x, r, z + dz); tyre.castShadow = true
         g.add(tyre)
         g.add(cyl(r * 0.45, r * 0.45, r * 0.5, mat(paint.metal, { metal: 0.6 }), { x, y: r, z: z + dz, axis: "z" }))
@@ -239,7 +240,7 @@ function tail(g, { x, y, finH, finRoot, finTip, finSweep, stabSpan, stabRoot, st
     }
 }
 
-export function airliner() {
+export function airliner({ gearUp = false } = {}) {
     const g = new THREE.Group()
     const L = 37.6, R = 1.98, gearH = 2.1
     const lift = (o) => { o.position.y += gearH + R; return o }
@@ -250,12 +251,12 @@ export function airliner() {
     tail(body, { x: -L / 2 + 6.4, y: R * 0.75, finH: 6.0, finRoot: 5.6, finTip: 2.2, finSweep: 0.62, stabSpan: 12.5, stabRoot: 3.6, stabTip: 1.4, stabSweep: 0.55, stabY: R * 0.35, tColor: PAL.blue })
     g.add(lift(body))
     // gear: nose, and two mains under the wing roots
-    gear(g, { x: L / 2 - 5.3, z: 0, h: gearH + 0.4, wheels: 2, r: 0.38, spread: 0.6 })
-    for (const sgn of [1, -1]) gear(g, { x: -0.5, z: sgn * 3.8, h: gearH + R * 0.4, wheels: 2, r: 0.58, spread: 0.9 })
+    if (!gearUp) gear(g, { x: L / 2 - 5.3, z: 0, h: gearH + 0.4, wheels: 2, r: 0.38, spread: 0.6 })
+    if (!gearUp) for (const sgn of [1, -1]) gear(g, { x: -0.5, z: sgn * 3.8, h: gearH + R * 0.4, wheels: 2, r: 0.58, spread: 0.9 })
     return { group: g, setting: "land" }
 }
 
-export function freighter() {
+export function freighter({ gearUp = false } = {}) {
     const g = new THREE.Group()
     const L = 76.3, R = 3.25, gearH = 3.4
     const body = new THREE.Group()
@@ -268,12 +269,12 @@ export function freighter() {
     tail(body, { x: -L / 2 + 12.5, y: R * 0.7, finH: 12.5, finRoot: 11, finTip: 4.2, finSweep: 0.7, stabSpan: 22, stabRoot: 7.5, stabTip: 2.6, stabSweep: 0.62, stabY: R * 0.3, tColor: PAL.orange })
     body.position.y = gearH + R
     g.add(body)
-    gear(g, { x: L / 2 - 8, z: 0, h: gearH + 0.6, wheels: 2, r: 0.6, spread: 0.9 })
-    for (const sgn of [1, -1]) for (const [x, z] of [[0, 3.6], [-3.2, 6.2]]) gear(g, { x, z: sgn * z, h: gearH + R * 0.5, wheels: 2, r: 0.62, spread: 1.0 })
+    if (!gearUp) gear(g, { x: L / 2 - 8, z: 0, h: gearH + 0.6, wheels: 2, r: 0.6, spread: 0.9 })
+    if (!gearUp) for (const sgn of [1, -1]) for (const [x, z] of [[0, 3.6], [-3.2, 6.2]]) gear(g, { x, z: sgn * z, h: gearH + R * 0.5, wheels: 2, r: 0.62, spread: 1.0 })
     return { group: g, setting: "land" }
 }
 
-export function bizjet() {
+export function bizjet({ gearUp = false } = {}) {
     const g = new THREE.Group()
     const L = 30.4, R = 1.3, gearH = 1.35
     const body = new THREE.Group()
@@ -288,8 +289,8 @@ export function bizjet() {
     // the business jet's oval windows: larger, fewer
     body.position.y = gearH + R
     g.add(body)
-    gear(g, { x: L / 2 - 4.5, z: 0, h: gearH + 0.3, wheels: 2, r: 0.28, spread: 0.4 })
-    for (const sgn of [1, -1]) gear(g, { x: -0.4, z: sgn * 2.2, h: gearH + R * 0.4, wheels: 2, r: 0.38, spread: 0.5 })
+    if (!gearUp) gear(g, { x: L / 2 - 4.5, z: 0, h: gearH + 0.3, wheels: 2, r: 0.28, spread: 0.4 })
+    if (!gearUp) for (const sgn of [1, -1]) gear(g, { x: -0.4, z: sgn * 2.2, h: gearH + R * 0.4, wheels: 2, r: 0.38, spread: 0.5 })
     return { group: g, setting: "land" }
 }
 
@@ -306,7 +307,7 @@ export function helicopter() {
     }
     const pp = []
     for (let i = 0; i <= 48; i++) { const s = (i / 48) * 4.5; pp.push(new THREE.Vector2(prof(s), s)) }
-    const pg = new THREE.LatheGeometry(pp, 40)
+    const pg = new THREE.LatheGeometry(pp, det(40, 10))
     pg.rotateZ(-Math.PI / 2)
     const pa = pg.attributes.position
     for (let v = 0; v < pa.count; v++) pa.setX(v, 4.5 - pa.getX(v))
@@ -360,6 +361,137 @@ export function helicopter() {
     for (let i = 0; i < 8; i++) { const b = block(0.5, 0.05, 0.12, dark, { x: 0.25 }); const a = new THREE.Group(); a.add(b); a.rotation.z = (i * Math.PI) / 4; tr.add(a) }
     tr.userData.tick = (t) => { tr.rotation.z = t * 6 }
     g.add(tr)
+    return { group: g, setting: "land" }
+}
+
+/** A propeller: spinner and blades, turning about X; nose toward +X. */
+function propeller(g, { x, y, z, r, blades = 4, color = PAL.darkgrey }) {
+    const p = new THREE.Group()
+    p.add(mesh(new THREE.ConeGeometry(r * 0.16, r * 0.45, 20).rotateZ(-Math.PI / 2), mat(paint.white, { metal: 0.4 }), { x: r * 0.18 }))
+    for (let i = 0; i < blades; i++) {
+        const b = new THREE.Group()
+        const blade = mesh(new THREE.BoxGeometry(0.06, r, r * 0.13), mat(color, { metal: 0.3, rough: 0.5 }), { y: r / 2, rx: 0.35 })
+        b.add(blade)
+        b.rotation.x = (i / blades) * Math.PI * 2
+        p.add(b)
+    }
+    p.position.set(x, y, z)
+    p.userData.tick = (t) => { p.rotation.x = t * 9 }
+    g.add(p)
+}
+
+/** A wide-body twin (a 787/A350 class). */
+export function widebody({ gearUp = false } = {}) {
+    const g = new THREE.Group()
+    const L = 63.7, R = 2.95, gearH = 2.9
+    const body = new THREE.Group()
+    fuselage(body, { L, R, cheat: 0x1f4e79, nose: 1.8, tail: 3.6 })
+    wings(body, { rootX: 6, rootY: -R * 0.55, rootZ: R * 0.85, span: 60, rootChord: 10.5, tipChord: 2.2, sweep: 0.56, dihedral: 0.1, t: 0.12, winglet: 3.2 })
+    for (const sgn of [1, -1]) engine(body, { x: 10, y: -R * 1.4, z: sgn * 9.8, len: 6.8, dia: 3.4, pylonTo: [7.4, -R * 0.55, sgn * 9.8] })
+    tail(body, { x: -L / 2 + 10.5, y: R * 0.75, finH: 9.6, finRoot: 9.2, finTip: 3.4, finSweep: 0.68, stabSpan: 20, stabRoot: 6, stabTip: 2.2, stabSweep: 0.6, stabY: R * 0.3, tColor: 0x1f4e79 })
+    body.position.y = gearH + R
+    g.add(body)
+    if (!gearUp) {
+        gear(g, { x: L / 2 - 8, z: 0, h: gearH + 0.5, wheels: 2, r: 0.5, spread: 0.8 })
+        for (const sgn of [1, -1]) for (const x of [0.6, -1.4]) gear(g, { x, z: sgn * 5.2, h: gearH + R * 0.45, wheels: 2, r: 0.62, spread: 1.0 })
+    }
+    return { group: g, setting: "land" }
+}
+
+/** A regional jet (an E175 class): twin engines under a low wing. */
+export function regionalJet({ gearUp = false } = {}) {
+    const g = new THREE.Group()
+    const L = 31.7, R = 1.5, gearH = 1.6
+    const body = new THREE.Group()
+    fuselage(body, { L, R, cheat: 0x3c7d4b, nose: 2.0, tail: 3.8, winSpacing: 0.62 })
+    wings(body, { rootX: 2.4, rootY: -R * 0.55, rootZ: R * 0.85, span: 26, rootChord: 4.8, tipChord: 1.2, sweep: 0.44, dihedral: 0.09, winglet: 1.4 })
+    for (const sgn of [1, -1]) engine(body, { x: 4.4, y: -R * 1.45, z: sgn * 4.6, len: 3.4, dia: 1.65, pylonTo: [3.2, -R * 0.55, sgn * 4.6] })
+    tail(body, { x: -L / 2 + 5.8, y: R * 0.75, finH: 5.2, finRoot: 4.8, finTip: 2.0, finSweep: 0.66, stabSpan: 9.6, stabRoot: 2.8, stabTip: 1.1, stabSweep: 0.55, stabY: R * 0.35, tColor: 0x3c7d4b })
+    body.position.y = gearH + R
+    g.add(body)
+    if (!gearUp) {
+        gear(g, { x: L / 2 - 4.2, z: 0, h: gearH + 0.3, wheels: 2, r: 0.3, spread: 0.45 })
+        for (const sgn of [1, -1]) gear(g, { x: -0.2, z: sgn * 2.8, h: gearH + R * 0.4, wheels: 2, r: 0.45, spread: 0.6 })
+    }
+    return { group: g, setting: "land" }
+}
+
+/** A twin turboprop (an ATR 72 class): high wing, T-tail, six-bladed props. */
+export function turboprop({ gearUp = false } = {}) {
+    const g = new THREE.Group()
+    const L = 27.2, R = 1.38, gearH = 1.1
+    const body = new THREE.Group()
+    fuselage(body, { L, R, cheat: 0xb5412f, nose: 1.7, tail: 4.2, tailUp: 0.5, winSpacing: 0.76 })
+    wings(body, { rootX: 1.4, rootY: R * 0.92, rootZ: R * 0.5, span: 27, rootChord: 2.7, tipChord: 1.45, sweep: 0.02, dihedral: 0.0, t: 0.15 })
+    for (const sgn of [1, -1]) {
+        const z = sgn * 4.1
+        const nac = lathe([[0, 0], [0.42, 0.3], [0.55, 1.2], [0.52, 3.6], [0.2, 5]], mat(paint.white, { metal: 0.3, rough: 0.35 }), { x: 2.6, y: R * 0.75, z, rz: Math.PI / 2 }, 24)
+        body.add(nac)
+        propeller(body, { x: 2.75, y: R * 0.75, z, r: 1.95, blades: 6 })
+    }
+    tail(body, { x: -L / 2 + 5.4, y: R * 0.8, finH: 4.6, finRoot: 4.4, finTip: 2.4, finSweep: 0.62, stabSpan: 7.4, stabRoot: 2.0, stabTip: 1.1, stabSweep: 0.2, stabY: 0, tColor: 0xb5412f, tTail: true })
+    // main gear fairings on the lower fuselage
+    for (const sgn of [1, -1]) body.add(mesh(new THREE.CapsuleGeometry(0.55, 3.2, 6, 14).rotateZ(Math.PI / 2), mat(paint.white, { metal: 0.25 }), { x: -0.6, y: -R * 0.75, z: sgn * R * 0.85 }))
+    body.position.y = gearH + R
+    g.add(body)
+    if (!gearUp) {
+        gear(g, { x: L / 2 - 3.6, z: 0, h: gearH + 0.3, wheels: 2, r: 0.3, spread: 0.4 })
+        for (const sgn of [1, -1]) gear(g, { x: -0.6, z: sgn * 1.6, h: gearH + 0.4, wheels: 2, r: 0.42, spread: 0.5 })
+    }
+    return { group: g, setting: "land" }
+}
+
+/** A single-engined light aircraft (a Cessna 172 class): strut-braced high wing, fixed gear. */
+export function lightProp() {
+    const g = new THREE.Group()
+    const L = 8.3, R = 0.62
+    const body = new THREE.Group()
+    fuselage(body, { L, R, cheat: 0xb5412f, nose: 1.4, tail: 6.2, tailUp: 0.9, windows: false })
+    // cabin glazing, the high wing on top of the cabin, struts to the lower fuselage
+    body.add(mesh(new THREE.SphereGeometry(R * 0.92, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), GLASS(), { x: 1.5, y: R * 0.3, sx: 1.25, sy: 0.8 }))
+    wings(body, { rootX: 1.6, rootY: R * 1.0, rootZ: 0.2, span: 11, rootChord: 1.62, tipChord: 1.1, sweep: 0.0, dihedral: 0.03, t: 0.13 })
+    for (const sgn of [1, -1]) body.add(rod([1.0, -R * 0.6, sgn * R * 0.7], [0.9, R * 0.95, sgn * 2.6], 0.04, mat(paint.white, { metal: 0.3 })))
+    tail(body, { x: -L / 2 + 1.5, y: R * 0.6, finH: 1.6, finRoot: 1.5, finTip: 0.8, finSweep: 0.55, stabSpan: 3.4, stabRoot: 1.0, stabTip: 0.7, stabSweep: 0.1, stabY: R * 0.4, tColor: 0xb5412f })
+    propeller(body, { x: L / 2 + 0.05, y: 0, z: 0, r: 0.95, blades: 2 })
+    body.position.y = 1.0 + R
+    g.add(body)
+    gear(g, { x: L / 2 - 1.1, z: 0, h: 1.0, wheels: 1, r: 0.22 })
+    for (const sgn of [1, -1]) g.add(rod([0.6, 1.0, sgn * 0.35], [0.4, 0.28, sgn * 1.25], 0.04, mat(paint.metal, { metal: 0.6 })))
+    for (const sgn of [1, -1]) gear(g, { x: 0.4, z: sgn * 1.25, h: 0.3, wheels: 1, r: 0.28 })
+    return { group: g, setting: "land" }
+}
+
+/** A fast jet: a sharp nose, a bubble canopy, a cropped delta, one fin, the nozzle. */
+export function fighter({ gearUp = false } = {}) {
+    const g = new THREE.Group()
+    const L = 15.1, R = 0.82, gearH = 1.5
+    const grey = mat(0x8a939b, { metal: 0.35, rough: 0.45 })
+    const body = new THREE.Group()
+    const prof = []
+    for (let i = 0; i <= 40; i++) {
+        const s = (i / 40) * L
+        const r = s < 4.6 ? R * Math.pow(s / 4.6, 0.6) : s > L - 1.2 ? R * (0.95 - 0.15 * (s - (L - 1.2)) / 1.2) : R
+        prof.push(new THREE.Vector2(Math.max(0.01, r), s))
+    }
+    const fg = new THREE.LatheGeometry(prof, det(32, 10))
+    fg.rotateZ(Math.PI / 2)                 // s along -X: the nose (s = 0) ends up at +L/2
+    fg.translate(L / 2, 0, 0)
+    fg.scale(1, 1, 1.15)
+    body.add(mesh(fg, grey))
+    body.add(mesh(new THREE.SphereGeometry(0.62, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x3a4a56, { metal: 0.7, rough: 0.08, opacity: 0.85 }), { x: L / 2 - 4.6, y: R * 0.55, sx: 2.6, sz: 0.9 }))
+    // the intake under the cockpit, the wing and its leading-edge extension
+    body.add(block(3.6, 0.9, 1.2, grey, { x: L / 2 - 7.2, y: -R * 1.45 }))
+    body.add(block(0.08, 0.86, 1.18, mat(PAL.black), { x: L / 2 - 5.4, y: -R * 1.43 }))
+    wings(body, { rootX: -0.4, rootY: -R * 0.15, rootZ: R * 0.8, span: 9.9, rootChord: 5.6, tipChord: 1.2, sweep: 0.7, dihedral: -0.02, t: 0.05, material: grey })
+    for (const sgn of [1, -1]) body.add(loft([{ x: 3.4, y: -R * 0.1, z: sgn * R * 0.8, chord: 3.6, t: 0.04 }, { x: 1.2, y: -R * 0.1, z: sgn * 1.6, chord: 1.0, t: 0.04 }], grey))
+    tail(body, { x: -L / 2 + 2.8, y: R * 0.6, finH: 3.6, finRoot: 3.4, finTip: 1.2, finSweep: 0.8, stabSpan: 5.6, stabRoot: 2.4, stabTip: 0.8, stabSweep: 0.7, stabY: -R * 0.1, tColor: 0x8a939b })
+    body.add(cyl(R * 0.82, R * 0.72, 1.0, mat(0x3b3f44, { metal: 0.8, rough: 0.4 }), { x: -L / 2 - 0.3, axis: "x" }, 24))
+    body.position.y = gearH + R
+    g.add(body)
+    if (!gearUp) {
+        gear(g, { x: L / 2 - 4, z: 0, h: gearH + 0.2, wheels: 1, r: 0.3 })
+        for (const sgn of [1, -1]) gear(g, { x: -1.4, z: sgn * 1.2, h: gearH + 0.1, wheels: 1, r: 0.4 })
+    }
     return { group: g, setting: "land" }
 }
 

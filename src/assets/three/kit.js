@@ -10,6 +10,13 @@ import * as THREE from "three"
 
 const cache = new Map()
 
+/** How finely curved parts are cut: 1 for the inspector and the register,
+ *  lower for the globe, where hundreds of models are drawn at a few dozen
+ *  pixels (dev/export-globe.html). */
+let DETAIL = 1
+export function setDetail(d) { DETAIL = d }
+export const det = (n, min = 6) => Math.max(min, Math.round(n * DETAIL))
+
 /** A shared standard material. opts: metal, rough, emissive, emissiveIntensity, opacity, side, flat */
 export function mat(color, opts = {}) {
     const key = JSON.stringify([color, opts])
@@ -64,28 +71,28 @@ export function rblock(w, h, d, r, material, opts = {}) {
     shape.lineTo(x0 + w, y0 + h - r); shape.quadraticCurveTo(x0 + w, y0 + h, x0 + w - r, y0 + h)
     shape.lineTo(x0 + r, y0 + h); shape.quadraticCurveTo(x0, y0 + h, x0, y0 + h - r)
     shape.lineTo(x0, y0 + r); shape.quadraticCurveTo(x0, y0, x0 + r, y0)
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: true, bevelSize: Math.min(r, d / 4) * 0.6, bevelThickness: Math.min(r, d / 4) * 0.6, bevelSegments: 3, curveSegments: 6 })
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: true, bevelSize: Math.min(r, d / 4) * 0.6, bevelThickness: Math.min(r, d / 4) * 0.6, bevelSegments: det(3, 1), curveSegments: det(6, 2) })
     geo.translate(0, 0, -d / 2)
     return mesh(geo, material, opts)
 }
 
 export function cyl(rTop, rBot, h, material, opts = {}, seg = 28) {
     const { axis = "y", ...rest } = opts
-    const geo = new THREE.CylinderGeometry(rTop, rBot, h, seg, 1)
+    const geo = new THREE.CylinderGeometry(rTop, rBot, h, det(seg), 1)
     if (axis === "x") geo.rotateZ(Math.PI / 2)
     if (axis === "z") geo.rotateX(Math.PI / 2)
     return mesh(geo, material, rest)
 }
 
 export function sphere(r, material, opts = {}, seg = 32) {
-    return mesh(new THREE.SphereGeometry(r, seg, Math.round(seg * 0.75)), material, opts)
+    return mesh(new THREE.SphereGeometry(r, det(seg), det(seg * 0.75, 4)), material, opts)
 }
 
 /** A pipe/rod between two points. */
 export function rod(a, b, r, material, seg = 10) {
     const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b)
     const len = A.distanceTo(B)
-    const geo = new THREE.CylinderGeometry(r, r, len, seg, 1)
+    const geo = new THREE.CylinderGeometry(r, r, len, det(seg, 4), 1)
     const m = mesh(geo, material)
     m.position.copy(A).add(B).multiplyScalar(0.5)
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize())
@@ -94,7 +101,7 @@ export function rod(a, b, r, material, seg = 10) {
 
 /** Lathe a profile [[r, y], …] around Y (towers, tanks, fuselages before turning). */
 export function lathe(points, material, opts = {}, seg = 48) {
-    const geo = new THREE.LatheGeometry(points.map(([r, y]) => new THREE.Vector2(Math.max(0, r), y)), seg)
+    const geo = new THREE.LatheGeometry(points.map(([r, y]) => new THREE.Vector2(Math.max(0, r), y)), det(seg, 8))
     return mesh(geo, material, opts)
 }
 
@@ -150,7 +157,7 @@ export function windows(group, { cx = 0, cz = 0, y0 = 0, w, h, d }, {
  * Returns a group with the hull and its deck (deck top at y = D).
  */
 export function hull({ L, B, D, T, color = PAL.navy, deck = PAL.deckred, entry = 0.22, run = 0.12, transom = 0.8, rake = 0.35, sheer = 0.06 }) {
-    const N = 72
+    const N = det(72, 24)
     const halfW = (u) => {                   // u: 0 stern … 1 bow
         if (u > 1 - entry) { const t = (u - (1 - entry)) / entry; return Math.max(0.004, Math.sqrt(Math.max(0, 1 - t * t)) * (1 - t * 0.1)) }
         if (u < run) { const t = 1 - u / run; return transom + (1 - transom) * Math.sqrt(1 - t * t) }

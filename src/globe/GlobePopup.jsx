@@ -37,6 +37,8 @@ export const INSPECTOR_TYPES = new Set([
     // are both corridors but nothing else about them is alike, and the
     // inspector shows different fields for each.
     "trade_route",
+    // Infrastructure from OpenInfraMap's vector tiles (GlobeInfraLayer).
+    "infra_feature",
     // Our own assets (GlobeAssetsLayer): a click opens the asset's page in
     // the register rather than a popup — handled before setPopup.
     "owned_asset",
@@ -249,13 +251,6 @@ export default function GlobePopup({
                     const y   = sp ? sp.y : click.position.y
 
                     const stored = getEntity(entityId)
-                    if (stored?.type === "owned_asset") {
-                        // our own asset: its page in the register, not a popup
-                        window.__plxAssetSel = stored.data.id
-                        window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "assets" } }))
-                        window.dispatchEvent(new CustomEvent("akili:open-asset", { detail: { id: stored.data.id } }))
-                        return
-                    }
                     if (stored) {
                         setPopup({ type: stored.type, data: stored.data, x, y, entityId })
                         return

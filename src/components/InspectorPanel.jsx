@@ -19,6 +19,8 @@ import VesselHistorySection from "./VesselHistorySection.jsx"
 import TelegramMedia from "./TelegramMedia.jsx"
 import TradeRouteSection from "./TradeRouteSection.jsx"
 import { AroundSection, CableSection } from "./InfrastructureContext.jsx"
+import InfraDetail from "../inspector/InfraDetail.jsx"
+import OwnedAssetDetail from "../inspector/OwnedAssetDetail.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 import { shareToDesk } from "../desk/shareToDesk.js"
@@ -767,6 +769,9 @@ export default function InspectorPanel({
                         </div>
                     </div>
                 )}
+                {entityType === "infra_feature" && <InfraDetail feature={data} />}
+                {entityType === "owned_asset" && <OwnedAssetDetail asset={data} />}
+
                 {/* A Telegram post's picture or video, in our own frame:
                     autoplaying, paused by a click (TelegramMedia.jsx). */}
                 {entityType === "telegram" && (data?.thumb_url || data?.media === "video") && (

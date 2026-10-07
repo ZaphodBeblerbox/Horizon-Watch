@@ -26,7 +26,7 @@ export const FAMILIES = [
  * has already loaded the page — which looks exactly like the fix not
  * working, and is indistinguishable from it without clearing the cache.
  */
-export const MODEL_VERSION = 5
+export const MODEL_VERSION = 6
 
 export const modelUrl = (family) =>
     FAMILIES.includes(family)

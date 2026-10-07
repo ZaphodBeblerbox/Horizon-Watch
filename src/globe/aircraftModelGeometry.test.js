@@ -18,11 +18,12 @@ import { Axis, Matrix4, Cartesian3 } from "cesium"
 const FAMILIES = ["narrowbody", "widebody", "heavy4", "regional",
                   "turboprop", "lightprop", "fighter", "helicopter"]
 
-/** Real length and wingspan in metres, from make_aircraft_models.py. */
+/** Length and wingspan in metres of the published models (src/assets/three/aircraft.js,
+ *  exported by tools/export_globe_models.mjs). */
 const DIMS = {
     narrowbody: [37.6, 35.8], widebody: [63.7, 64.8], heavy4: [72.7, 79.8],
-    regional: [36.2, 28.7], turboprop: [27.2, 27.1], lightprop: [14.4, 16.3],
-    fighter: [19.4, 13.1], helicopter: [16.0, 14.6],
+    regional: [31.7, 26.6], turboprop: [27.2, 27.1], lightprop: [8.3, 11.0],
+    fighter: [15.1, 9.9], helicopter: [14.8, 10.9],
 }
 
 /** Read a .glb's POSITION accessor bounds without decoding the buffer. */
@@ -82,8 +83,10 @@ describe("published aircraft models, as Cesium will orient them", () => {
             // The aircraft must be THIN vertically. When the axes were
             // wrong this was the largest extent, which is what "flipped
             // 90 degrees on the roll axis" looks like from the cockpit.
+            // flat: much lower than it is long or wide (a fighter's fin
+            // makes it taller than half its short span, so the larger one)
             expect(vertical).toBeLessThan(along / 2)
-            expect(vertical).toBeLessThan(across / 2)
+            expect(vertical).toBeLessThan(Math.max(along, across) / 2)
 
             // +X is the direction of travel and must match the real
             // length; +Y is the span. Swapping them is a 90° yaw error.

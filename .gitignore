@@ -101,3 +101,5 @@ backend/data/pipelines.json
 backend/data/deployments.json
 backend/data/military_enrichment.json
 backend/data/shipping_routes.json
+backend/data/oim_tiles/
+backend/data/infra_detail/

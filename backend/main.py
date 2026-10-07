@@ -11924,6 +11924,39 @@ async def api_telegram_posts(hours: int = Query(72, ge=1, le=720), statements: b
     return out
 
 
+@app.get("/api/infra/features")
+async def api_infra_features(west: float, south: float, east: float, north: float, zoom: int = Query(8, ge=1, le=20)):
+    """Infrastructure in view, from OpenInfraMap's vector tiles, at the
+    detail the zoom deserves (infra_features.py)."""
+    import infra_features as _if
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _if.features, west, south, east, north, zoom)
+
+
+@app.post("/api/infra/detail")
+async def api_infra_detail(body: dict = Body(...)):
+    """Everything about one object: all its OSM tags, its Wikidata entry,
+    the facts that matter for its kind, the signals near it and its model."""
+    import infra_features as _if
+    try:
+        fid, kind = str(body["id"]), str(body["kind"])
+        lat, lon = float(body["lat"]), float(body["lon"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="id, kind, lat and lon are needed")
+    props = body.get("props") if isinstance(body.get("props"), dict) else {}
+    osm_type = body.get("osm_type") if body.get("osm_type") in ("node", "way", "relation") else "way"
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _if.detail, fid, kind, lat, lon, props, osm_type)
+
+
+@app.get("/api/infra/signals")
+async def api_infra_signals(kind: str, lat: float, lon: float):
+    """What is happening near one piece of infrastructure, ranked."""
+    import infra_features as _if
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _if.signals_near, kind, lat, lon)
+
+
 @app.get("/api/telegram/upcoming")
 async def api_telegram_upcoming(days: int = Query(30, ge=1, le=120)):
     """Gatherings and collective actions announced on Telegram that have not

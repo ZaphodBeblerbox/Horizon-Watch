@@ -14,7 +14,7 @@ import { containerShip } from "./ships.js"
 
 let _cloud = null
 /** A soft round cloud: white in the middle, nothing at the edge. */
-function cloudTexture() {
+export function cloudTexture() {
     if (_cloud) return _cloud
     const c = document.createElement("canvas")
     c.width = c.height = 128
@@ -28,7 +28,7 @@ function cloudTexture() {
 }
 
 /** The plinth: a rounded slab of ground, top at y = 0. */
-function plinth(g, w, d, color = PAL.concrete, { r = 4, h = 1.6, edge = 0x2a2f36 } = {}) {
+export function plinth(g, w, d, color = PAL.concrete, { r = 4, h = 1.6, edge = 0x2a2f36 } = {}) {
     const sh = new THREE.Shape()
     const x0 = -w / 2, y0 = -d / 2
     sh.moveTo(x0 + r, y0); sh.lineTo(x0 + w - r, y0); sh.quadraticCurveTo(x0 + w, y0, x0 + w, y0 + r)
@@ -47,13 +47,13 @@ function plinth(g, w, d, color = PAL.concrete, { r = 4, h = 1.6, edge = 0x2a2f36
 const strip = (g, w, d, color, x, z, ry = 0) => g.add(block(w, 0.03, d, mat(color, { rough: 0.9 }), { x, y: 0.01, z, ry }))
 
 /** A tree: a trunk and a rounded crown. */
-function tree(g, x, z, s = 1) {
+export function tree(g, x, z, s = 1) {
     g.add(cyl(0.18 * s, 0.25 * s, 2.2 * s, mat(0x5a4632, { rough: 0.9 }), { x, y: 1.1 * s, z }))
     g.add(sphere(1.5 * s, mat(0x4d6e45, { rough: 0.85, flat: true }), { x, y: 3.2 * s, z }, 8))
 }
 
 /** A chimney with red and white bands and a platform near the top. */
-function chimney(g, x, z, h, r) {
+export function chimney(g, x, z, h, r) {
     const bands = 7
     for (let i = 0; i < bands; i++) {
         const y0 = (h * i) / bands, rr0 = r * (1 - 0.25 * (i / bands)), rr1 = r * (1 - 0.25 * ((i + 1) / bands))

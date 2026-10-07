@@ -352,3 +352,134 @@ export function yacht() {
     rails(g, h, -L / 2 + 2, L / 2 - 6, { step: 1.8, height: 1.0 })
     return { group: g, setting: "water" }
 }
+
+/** A ro-pax ferry: a tall white block of passenger decks on a short, full
+ *  hull, lifeboats along both sides, the funnel aft and the bow visor. */
+export function passengerShip() {
+    const g = new THREE.Group()
+    const L = 186, B = 28, D = 14, T = 6.5
+    const h = hull({ L, B, D, T, color: PAL.white, deck: PAL.darkgrey, entry: 0.26, run: 0.08, transom: 0.92, rake: 0.5, sheer: 0.04 })
+    g.add(h)
+    anchors(g, h)
+    // a blue hull band below the sheer, and the vehicle-deck doors in it
+    for (const sgn of [1, -1]) {
+        g.add(block(L * 0.86, 2.2, 0.14, mat(PAL.blue, { rough: 0.4 }), { x: -L * 0.02, y: D * 0.55, z: sgn * (B / 2 + 0.03) }))
+        for (const x of [-60, 40]) g.add(block(10, 5, 0.12, mat(0xb9bdc2), { x, y: D * 0.62, z: sgn * (B / 2 + 0.05) }))
+    }
+    // passenger decks: each a white slab with a window band, stepping back toward the bow
+    const m = mat(PAL.white, { rough: 0.45 })
+    const decks = 6, dh = 2.9, y0 = deckY(h, 0)
+    for (let i = 0; i < decks; i++) {
+        const x0 = -L / 2 + 14 + i * 1.5, x1 = L / 2 - 30 - i * 2.4, w = B * (0.98 - i * 0.015)
+        const cx = (x0 + x1) / 2, len = x1 - x0
+        g.add(rblock(len, dh, w, 0.4, m, { x: cx, y: y0 + i * dh }))
+        windows(g, { cx, cz: 0, y0: y0 + i * dh, w: len, h: dh, d: w }, { faces: ["+z", "-z", "+x"], rowH: dh, colW: 2.0, paneW: 1.5, paneH: 1.2, sill: 1.1, top: 0.4, lit: 0.3, seed: i * 5 + 2 })
+        g.add(block(len + 0.3, 0.18, w + 0.3, mat(PAL.offwhite), { x: cx, y: y0 + (i + 1) * dh - 0.1 }))
+    }
+    const top = y0 + decks * dh
+    // the bridge forward with its glass front and wings
+    const bx = L / 2 - 38
+    g.add(rblock(14, 3.2, B * 0.9, 0.4, m, { x: bx, y: top }))
+    g.add(block(0.2, 1.6, B * 0.86, GLASS(), { x: bx + 7.05, y: top + 1.2 }))
+    for (const sgn of [1, -1]) g.add(block(6, 0.3, 3, m, { x: bx + 3, y: top + 1, z: sgn * (B * 0.45 + 1.5) }))
+    // lifeboats in their davits along both sides, orange
+    for (const sgn of [1, -1]) for (let i = 0; i < 6; i++) {
+        const x = -40 + i * 13
+        const boat = hull({ L: 9.5, B: 3.2, D: 1.6, T: 0.4, color: PAL.orange, deck: PAL.orange, entry: 0.4, run: 0.2, transom: 0.6 })
+        boat.position.set(x, y0 + 3 * dh + 0.4, sgn * (B / 2 + 1.4))
+        g.add(boat)
+        g.add(block(0.3, 1.8, 0.3, mat(PAL.grey, { metal: 0.6 }), { x: x - 3.5, y: y0 + 3 * dh + 1.4, z: sgn * (B / 2 + 0.6) }))
+        g.add(block(0.3, 1.8, 0.3, mat(PAL.grey, { metal: 0.6 }), { x: x + 3.5, y: y0 + 3 * dh + 1.4, z: sgn * (B / 2 + 0.6) }))
+    }
+    // the funnel aft, in the line's colours, and the radar mast
+    const fx = -L / 2 + 30
+    g.add(rblock(14, 12, 9, 1.2, mat(PAL.blue, { rough: 0.4 }), { x: fx, y: top }))
+    g.add(block(14.4, 2.2, 9.4, mat(PAL.white), { x: fx, y: top + 6 }))
+    for (const dz of [-2, 2]) g.add(cyl(0.9, 0.9, 2.5, mat(PAL.black), { x: fx - 2, y: top + 13.2, z: dz }))
+    g.add(rod([bx - 4, top + 3.2, 0], [bx - 4, top + 13, 0], 0.3, mat(PAL.offwhite, { metal: 0.5 })))
+    g.add(block(4, 0.25, 0.5, mat(PAL.white), { x: bx - 4, y: top + 10 }))
+    rails(g, h, -L / 2 + 4, L / 2 - 20, { step: 3 })
+    return { group: g, setting: "water" }
+}
+
+/** A frigate: a fine grey hull, a faceted stealthy superstructure, the gun
+ *  forward, vertical launch cells, the integrated mast, a hangar and helideck. */
+export function warship() {
+    const g = new THREE.Group()
+    const L = 135, B = 16.5, D = 10, T = 5
+    const grey = 0x7d858c
+    const h = hull({ L, B, D, T, color: grey, deck: 0x5c636a, entry: 0.34, run: 0.1, transom: 0.86, rake: 0.9, sheer: 0.08 })
+    g.add(h)
+    const m = mat(grey, { rough: 0.55, metal: 0.25 })
+    const dk = mat(0x6c747b, { rough: 0.6, metal: 0.25 })
+    // the hull number on the bow
+    const nx = L / 2 - 18
+    for (const sgn of [1, -1]) g.add(block(4.6, 2, 0.06, mat(PAL.white), { x: nx, y: D * 0.62, z: sgn * (h.userData.halfW(nx / L + 0.5) + 0.04) }))
+    // the superstructure: a faceted block, its sides leaning inward
+    const ss = (x0, x1, w0, w1, y, ht) => {
+        const geo = new THREE.BufferGeometry()
+        const v = [[x0, 0, -w0], [x1, 0, -w0], [x1, 0, w0], [x0, 0, w0], [x0, ht, -w1], [x1, ht, -w1], [x1, ht, w1], [x0, ht, w1]]
+        const f = [[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7], [4, 5, 6, 7]]
+        const pos = []
+        for (const q of f) { const [a, b, c, d] = q.map((i) => v[i]); pos.push(...a, ...b, ...c, ...a, ...c, ...d) }
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3))
+        geo.computeVertexNormals()
+        g.add(mesh(geo, mat(grey, { rough: 0.55, metal: 0.25, side: THREE.DoubleSide }), { y }))
+    }
+    const y0 = deckY(h, 0)
+    ss(-L / 2 + 22, 30, B * 0.46, B * 0.38, y0, 7)          // the main block with the hangar aft
+    ss(4, 28, B * 0.36, B * 0.28, y0 + 7, 5)                // the bridge level
+    g.add(block(0.2, 1.2, B * 0.5, GLASS(), { x: 28.1, y: y0 + 9.2 }))
+    // the integrated mast: a tapering faceted tower with the flat radar faces
+    ss(10, 20, 3.4, 2, y0 + 12, 12)
+    for (const [dx, dz, ry] of [[4.9, 0, 0], [-4.9, 0, Math.PI], [0, 2.8, Math.PI / 2], [0, -2.8, -Math.PI / 2]]) g.add(block(0.3, 3.2, 3.2, mat(0x5c636a), { x: 15 + dx, y: y0 + 16, z: dz, ry }))
+    g.add(rod([15, y0 + 24, 0], [15, y0 + 31, 0], 0.25, dk))
+    g.add(cyl(1.2, 1.2, 1.4, mat(0xdfe2e4), { x: 15, y: y0 + 25.2 }))
+    // the gun forward: a faceted turret and a long barrel
+    const gx = L / 2 - 30
+    ss(gx - 3, gx + 3, 2.4, 1.7, deckY(h, gx), 2.6)
+    g.add(rod([gx + 2.5, deckY(h, gx) + 1.4, 0], [gx + 11, deckY(h, gx) + 2.6, 0], 0.22, dk))
+    // vertical launch cells between the gun and the bridge
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) g.add(block(1.4, 0.2, 1.4, mat(0x50575d), { x: 34 + i * 1.6, y: deckY(h, 36) + 0.05, z: -2.4 + j * 1.6 }))
+    // close-in weapon on the hangar roof, the helideck markings, boats in their recesses
+    g.add(cyl(1.1, 1.3, 2, mat(0xdfe2e4), { x: -L / 2 + 30, y: y0 + 8 }))
+    g.add(block(4, 0.05, 0.4, mat(PAL.white), { x: -L / 2 + 10, y: deckY(h, -L / 2 + 10) + 0.02 }))
+    g.add(mesh(new THREE.TorusGeometry(4.5, 0.15, 4, 40), mat(PAL.white), { x: -L / 2 + 11, y: deckY(h, -L / 2 + 11) + 0.03, rx: Math.PI / 2 }))
+    for (const sgn of [1, -1]) g.add(rblock(7, 1.4, 2.4, 0.5, mat(PAL.orange), { x: -6, y: y0 + 3, z: sgn * (B * 0.42) }))
+    rails(g, h, -L / 2 + 4, L / 2 - 8, { step: 2.8 })
+    return { group: g, setting: "water" }
+}
+
+/** A stern trawler: a short deep hull, the wheelhouse forward, the gantry
+ *  and net drum aft, and the warps running down the ramp. */
+export function fishingVessel() {
+    const g = new THREE.Group()
+    const L = 42, B = 10, D = 6, T = 4.2
+    const h = hull({ L, B, D, T, color: 0x2f5f8a, deck: 0x6a5a48, entry: 0.34, run: 0.16, transom: 0.84, rake: 0.8, sheer: 0.22 })
+    g.add(h)
+    anchors(g, h)
+    // the wheelhouse: a white house forward with a wide band of glass
+    const x = L / 2 - 14, y = deckY(h, x)
+    g.add(rblock(8, 3, B * 0.8, 0.3, mat(PAL.white), { x, y }))
+    g.add(rblock(6, 2.6, B * 0.7, 0.3, mat(PAL.white), { x: x + 0.8, y: y + 3 }))
+    g.add(block(0.15, 1.2, B * 0.66, GLASS(), { x: x + 3.85, y: y + 4.2 }))
+    for (const sgn of [1, -1]) g.add(block(5, 1.2, 0.12, GLASS(), { x: x + 0.8, y: y + 4.2, z: sgn * (B * 0.35 + 0.02) }))
+    g.add(rod([x - 1, y + 5.6, 0], [x - 1, y + 12, 0], 0.15, mat(PAL.offwhite, { metal: 0.5 })))
+    g.add(block(2.6, 0.18, 0.3, mat(PAL.white), { x: x - 1, y: y + 9 }))
+    g.add(sphere(0.25, mat(0xffd9a0, { emissive: 0xffc070 }), { x: x - 1, y: y + 12.2 }, 10))
+    // the aft gantry (an A-frame) and the net drum with its net
+    const gy = deckY(h, -L / 2 + 3)
+    const ora = mat(PAL.orange, { metal: 0.3, rough: 0.5 })
+    for (const sgn of [1, -1]) g.add(rod([-L / 2 + 2, gy, sgn * (B / 2 - 0.6)], [-L / 2 + 1, gy + 7, sgn * 2.5], 0.28, ora))
+    g.add(rod([-L / 2 + 1, gy + 7, -2.5], [-L / 2 + 1, gy + 7, 2.5], 0.28, ora))
+    g.add(cyl(1.6, 1.6, 5, mat(0x2a6b4a, { rough: 0.9 }), { x: -L / 2 + 8, y: gy + 1.8, axis: "z" }))
+    for (const dz of [-2.6, 2.6]) g.add(cyl(1.9, 1.9, 0.2, ora, { x: -L / 2 + 8, y: gy + 1.8, z: dz, axis: "z" }))
+    // the trawl winches, the stern ramp, the warps down into the water
+    for (const dz of [-2.8, 2.8]) g.add(cyl(0.9, 0.9, 1.6, mat(PAL.grey, { metal: 0.5 }), { x: -2, y: deckY(h, -2) + 1, z: dz, axis: "z" }))
+    g.add(block(4, 0.2, 3.5, mat(0x5a4c3e), { x: -L / 2 + 1.5, y: deckY(h, -L / 2 + 1) - 0.6 }))
+    for (const dz of [-1.5, 1.5]) g.add(rod([-L / 2 + 1, gy + 6.8, dz], [-L / 2 - 14, T * 0.2, dz * 3], 0.05, mat(PAL.black)))
+    // floats strung along the bulwark
+    for (let i = 0; i < 8; i++) g.add(sphere(0.35, ora, { x: -6 + i * 1.2, y: deckY(h, 0) + 1.1, z: B / 2 - 0.4 }, 10))
+    rails(g, h, -L / 2 + 3, L / 2 - 4, { step: 1.6, height: 1.0 })
+    return { group: g, setting: "water" }
+}

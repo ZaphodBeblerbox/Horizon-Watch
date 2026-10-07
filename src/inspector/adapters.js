@@ -732,6 +732,42 @@ function adaptPipeline(data = {}) {
     }
 }
 
+// ── infrastructure (OpenInfraMap vector tiles) ─────────────────────────────────
+// The header only: InfraDetail (inspector/InfraDetail.jsx) reads the rest —
+// all OSM tags, Wikidata, the signals near it, its model.
+function adaptInfraFeature(data = {}) {
+    const p = data.props || {}
+    const kv = [p.voltage, p.voltage_2].map(Number).filter((v) => v > 0)
+    const key = data.kind === "power_plant" && Number(p.output) > 0 ? `${Math.round(Number(p.output)).toLocaleString()} MW`
+        : kv.length ? kv.map((v) => `${v} kV`).join(" / ")
+        : p.substance ? String(p.substance).replace("_", " ") : null
+    return {
+        identity: {
+            title: data.title || data.label || "Infrastructure",
+            subtitle: [data.label, key, p.operator].filter(Boolean).join(" · "),
+            entityType: "infra_feature", subtype: data.kind || null, sanctionsStatus: null,
+        },
+        attributes: [],
+        provenance: { feed: "OpenStreetMap via OpenInfraMap", ingestedAt: null },
+        actions: { canJumpToLocation: Number.isFinite(Number(data.lat)) },
+    }
+}
+
+// ── one of our assets (GlobeAssetsLayer) ─────────────────────────────────────────
+// The header; OwnedAssetDetail draws the model, the essentials and the signals.
+function adaptOwnedAsset(data = {}) {
+    return {
+        identity: {
+            title: data.name || "Our asset",
+            subtitle: ["Our asset", data.kind_label, data.importance && data.importance !== "normal" ? `${data.importance} importance` : null].filter(Boolean).join(" · "),
+            entityType: "owned_asset", subtype: data.kind || null, sanctionsStatus: null,
+        },
+        attributes: [],
+        provenance: { feed: "Asset register", ingestedAt: data.updated_at || null },
+        actions: { canJumpToLocation: !!data.position },
+    }
+}
+
 // ── dispatch ───────────────────────────────────────────────────────────────────
 
 
@@ -1228,6 +1264,8 @@ const ADAPTERS = {
     chokepoint: adaptChokepoint,
     telegram: adaptTelegram,
     pipeline: adaptPipeline,
+    infra_feature: adaptInfraFeature,
+    owned_asset: adaptOwnedAsset,
 }
 
 /**

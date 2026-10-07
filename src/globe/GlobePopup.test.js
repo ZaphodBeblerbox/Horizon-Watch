@@ -21,6 +21,8 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "gps_interference",
             // Our own assets: routed to their page in the register.
             "owned_asset",
+            // OpenInfraMap objects (GlobeInfraLayer).
+            "infra_feature",
         ].sort())
     })
 

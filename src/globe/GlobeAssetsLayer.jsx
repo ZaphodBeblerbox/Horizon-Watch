@@ -21,6 +21,7 @@ const GLYPH = {
     Energy: "M13 2L5 13h6l-1 9 8-11h-6z",
     Transport: "M4 20h16M6 20V12h12v8M9 12V7h6v5M12 7V3",
     People: "M12 4a3.2 3.2 0 100 6.4A3.2 3.2 0 0012 4zM5 20c.8-4 3.6-6 7-6s6.2 2 7 6",
+    Telecoms: "M12 4v16M8.5 20l3.5-8 3.5 8M7 8a7 7 0 0 1 10 0M5 5a10 10 0 0 1 14 0",
 }
 const RING = { high: "#E5484D", elevated: "#F5A524", low: "#8FB4E8", quiet: "#4CAF7A", unknown: "#9AA9BC" }
 const _icons = {}

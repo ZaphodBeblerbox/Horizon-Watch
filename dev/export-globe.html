@@ -1,0 +1,132 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Globe models — export</title></head>
+<body>
+<pre id="out">exporting…</pre>
+<script type="module">
+// Builds the globe's vessel and aircraft models from the asset models
+// (src/assets/three) and exports them as GLB for Cesium. Run by
+// tools/export_globe_models.mjs, which writes public/models/{vessel,aircraft}.
+//
+// FRAME. Cesium reads a glTF as (gz, gx, gy) = (forward, left, up). The asset
+// models face +X with +Y up, so a quarter turn about Y (-90°) puts forward on
+// +Z — a rotation, not a mirror, so normals and winding stay right. The
+// heading offsets in vesselModels.js / aircraftModels.js were measured for
+// this frame and stay valid.
+//
+// FOR THE MAP. Ships sit with their waterline at 0; aircraft fly gear up
+// with the origin mid-fuselage. Meshes are merged by material so a model is
+// a handful of draw calls, and parts too small to see from the globe go.
+import * as THREE from "three"
+import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js"
+import { mergeGeometries, mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js"
+import * as ships from "/src/assets/three/ships.js"
+import { setDetail } from "/src/assets/three/kit.js"
+import * as aircraft from "/src/assets/three/aircraft.js"
+
+const VESSELS = {
+  container: () => ships.containerShip(), cargo: () => ships.bulkCarrier(), tanker: () => ships.tanker(),
+  passenger: () => ships.passengerShip(), military: () => ships.warship(), fishing: () => ships.fishingVessel(),
+  other: () => ships.generalCargo(),
+}
+const AIRCRAFT = {
+  narrowbody: () => aircraft.airliner({ gearUp: true }), widebody: () => aircraft.widebody({ gearUp: true }),
+  heavy4: () => aircraft.freighter({ gearUp: true }), regional: () => aircraft.regionalJet({ gearUp: true }),
+  turboprop: () => aircraft.turboprop({ gearUp: true }), lightprop: () => aircraft.lightProp(),
+  fighter: () => aircraft.fighter({ gearUp: true }), helicopter: () => aircraft.helicopter(),
+}
+
+function flatten(root, minSize) {
+  root.updateMatrixWorld(true)
+  const byMat = new Map()
+  const box = new THREE.Box3(), sz = new THREE.Vector3()
+  const push = (geo, material) => {
+    if (Array.isArray(material)) material = material[0]
+    if (!material || material.opacity === 0) return
+    geo.computeBoundingBox(); geo.boundingBox.getSize(sz)
+    if (Math.max(sz.x, sz.y, sz.z) < minSize) return
+    let g = geo.index ? geo.toNonIndexed() : geo
+    const keep = ["position", "normal", ...(material.vertexColors ? ["color"] : []), ...(material.map ? ["uv"] : [])]
+    for (const k of Object.keys(g.attributes)) if (!keep.includes(k)) g.deleteAttribute(k)
+    if (!g.attributes.normal) g.computeVertexNormals()
+    const key = material.uuid
+    if (!byMat.has(key)) byMat.set(key, { material, geos: [] })
+    byMat.get(key).geos.push(g)
+  }
+  root.traverse((o) => {
+    if (o.isSprite || !o.visible) return
+    if (o.isInstancedMesh) {
+      const m = new THREE.Matrix4()
+      for (let i = 0; i < o.count; i++) {
+        o.getMatrixAt(i, m)
+        push(o.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(o.matrixWorld, m)), o.material)
+      }
+    } else if (o.isMesh) {
+      push(o.geometry.clone().applyMatrix4(o.matrixWorld), o.material)
+    }
+  })
+  // ONE MESH, ONE DRAW CALL: each material's colour baked into the vertices,
+  // everything merged. Hundreds of these are drawn at once; per-material
+  // meshes made a dozen draw calls each.
+  const all = []
+  const c = new THREE.Color()
+  for (const { material, geos } of byMat.values()) {
+    for (const g0 of geos) {
+      const g = g0.clone()
+      const n = g.attributes.position.count
+      const col = new Float32Array(n * 3)
+      const base = material.color || new THREE.Color(1, 1, 1)
+      const vc = material.vertexColors && g.attributes.color
+      for (let i = 0; i < n; i++) {
+        c.copy(base)
+        if (vc) c.multiply(new THREE.Color(vc.getX(i), vc.getY(i), vc.getZ(i)))
+        if (material.emissive && material.emissiveIntensity > 0.5) c.lerp(material.emissive, 0.5)
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b
+      }
+      for (const k of Object.keys(g.attributes)) if (k !== "position" && k !== "normal") g.deleteAttribute(k)
+      g.setAttribute("color", new THREE.BufferAttribute(col, 3))
+      all.push(g)
+    }
+  }
+  let merged = mergeGeometries(all, false)
+  merged = mergeVertices(merged, 1e-3)
+  const out = new THREE.Group()
+  out.add(new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.25, roughness: 0.55, side: THREE.DoubleSide })))
+  box.setFromObject(out)
+  return { group: out, box }
+}
+
+async function exportOne(build, kind) {
+  const built = build()
+  const src = built.group
+  const tmp = new THREE.Box3().setFromObject(src), s = new THREE.Vector3()
+  tmp.getSize(s)
+  const { group, box } = flatten(src, Math.max(s.x, s.y, s.z) * (kind === "vessel" ? 0.012 : 0.012))
+  // origin: the waterline for a ship, the middle of the airframe for an aircraft
+  if (kind === "vessel") {
+    const hull = src.children.find((c) => c.userData?.T != null)
+    group.position.y = -(built.waterline ?? hull?.userData.T ?? 0)
+  } else {
+    const c = new THREE.Vector3(); box.getCenter(c)
+    group.position.set(-c.x, -c.y, -c.z)
+  }
+  // bake the origin shift and the quarter turn into the vertices: no node
+  // transforms, so the file's own bounds are the bounds Cesium draws
+  const turn = new THREE.Matrix4().makeRotationY(-Math.PI / 2).multiply(new THREE.Matrix4().makeTranslation(group.position.x, group.position.y, group.position.z))
+  const mesh0 = group.children[0]
+  mesh0.geometry.applyMatrix4(turn)
+  mesh0.geometry.computeVertexNormals()
+  const scene = new THREE.Scene(); scene.add(new THREE.Mesh(mesh0.geometry, mesh0.material))
+  const glb = await new GLTFExporter().parseAsync(scene, { binary: true })
+  const bytes = new Uint8Array(glb)
+  let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return { b64: btoa(bin), size: bytes.length, meshes: group.children.length, tris: group.children.reduce((n, m) => n + (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3, 0) }
+}
+
+setDetail(0.3)
+const result = { vessel: {}, aircraft: {} }
+for (const [fam, b] of Object.entries(VESSELS)) result.vessel[fam] = await exportOne(b, "vessel")
+for (const [fam, b] of Object.entries(AIRCRAFT)) result.aircraft[fam] = await exportOne(b, "aircraft")
+window.__exported = result
+document.getElementById("out").textContent = Object.entries(result).map(([k, v]) => k + ": " + Object.entries(v).map(([f, r]) => `${f} ${Math.round(r.size / 1024)} KB ${r.meshes} meshes ${Math.round(r.tris)} tris`).join("; ")).join("\n")
+document.body.dataset.done = "1"
+</script></body></html>

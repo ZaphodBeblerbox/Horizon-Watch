@@ -39,6 +39,7 @@ import GlobeGpsInterferenceLayer from "../globe/GlobeGpsInterferenceLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
 import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
+import GlobeInfraLayer          from "../globe/GlobeInfraLayer.jsx"
 import GlobeAnnotationLayer     from "../globe/GlobeAnnotationLayer.jsx"
 import GlobeReplayLayer         from "../globe/GlobeReplayLayer.jsx"
 import GlobeAutoMode            from "../globe/GlobeAutoMode.jsx"
@@ -1141,9 +1142,8 @@ export default function GlobeView({
                 {nauticalEnabled && (
                     <ImageryLayer imageryProvider={openSeaMapProvider} alpha={0.8} maximumTerrainLevel={18} />
                 )}
-                {infraEnabled && (
-                    <ImageryLayer imageryProvider={openInfraRasterProvider} alpha={0.85} maximumTerrainLevel={18} />
-                )}
+                {/* Infrastructure as objects, not a picture (GlobeInfraLayer). */}
+                <GlobeInfraLayer enabled={infraEnabled} />
 
                 {/* ── GeoJSON line layers ─────────────────────────────────────── */}
                 {/* Country risk, filled by severity — see riskChoropleth.js */}
@@ -1251,7 +1251,7 @@ export default function GlobeView({
             </Viewer>
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
-            <GlobePopup viewerRef={viewerRef} infraEnabled={infraEnabled} isVisible={isVisible} onInspectorOpenChange={onInspectorOpenChange}
+            <GlobePopup viewerRef={viewerRef} infraEnabled={false} isVisible={isVisible} onInspectorOpenChange={onInspectorOpenChange}
                 dockExternally={dockExternally} onInspectorPopupChange={onInspectorPopupChange}
                 onSelectionChange={setSelectedContact} />
 
