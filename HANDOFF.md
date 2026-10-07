@@ -160,7 +160,12 @@ S. ~~**Desk as a social feed**~~ — done `a9b2b52`: posts carry a signal, brief
 T. ~~**Prepare for server integration**~~ — done (no deploy): `backend/paths.py` (one DATA_DIR rule;
    user state moved out of the code dir; seed data in `backend/seed/`), JWT secret kept on the volume,
    `TELEGRAM_VIDEO_STORE=volume` for footage on the server, `deploy_check.py`, `.env.example`, `DEPLOY.md`.
-U. Then **rework the whole frontend UI**.
+U. Then **rework the whole frontend UI**. — **not started: needs the owner's direction** (what is wrong with
+   the current look, which screens first). Assets, Insight, Generate/reader, Desk and Settings already have the new look.
+V2. ~~Telegram: new channels + sensitive content~~ — done: 7 channels registered (2 read for announcements);
+   announced gatherings → `/api/telegram/upcoming`, the surface and Home's "Today may bring"; graphic footage
+   behind a warning. **Open question for the owner:** French unrest footage (police beatings, LBD) is still
+   dropped by the 2026-10-05 rule "the map wants the front line, not civil unrest" — keep the rule or lift it?
 V. Telegram video object detection — parked by the owner 2026-10-06 ("not for now").
 
 Owner's decisions (2026-10-06): 3D models DRAWN IN CODE (three.js), as detailed as possible; Crucible

@@ -1,5 +1,5 @@
 {
-  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator. ignore = joined but not read (quotes, tributes, no events). Official channels are statements: never map pins; in the Inbox, cited on events, and notified when they claim an attack.",
+  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator. ignore = joined but not read (quotes, tributes, no events). Official channels are statements: never map pins; in the Inbox, cited on events, and notified when they claim an attack. read_for: announcements = read mainly for what it says WILL happen (dated gatherings and actions → /api/telegram/upcoming); every channel's posts are read for announcements too.",
   "YemenWrath": {
     "role": "official",
     "party": "Houthi forces (Ansar Allah)",
@@ -114,5 +114,46 @@
     "role": "ignore",
     "party": "Iran-aligned 'resistance' propaganda",
     "lang": "fa"
+  },
+  "giletsjaunes2026": {
+    "role": "local",
+    "party": null,
+    "lang": "fr",
+    "read_for": "announcements",
+    "note": "gilets jaunes / French protest movement: calls to demonstrate, and footage from them"
+  },
+  "Demotermine": {
+    "role": "local",
+    "party": null,
+    "lang": "de",
+    "read_for": "announcements",
+    "note": "German protest calendar: dated demonstrations, vigils, marches"
+  },
+  "AlertesInfos": {
+    "role": "aggregator",
+    "party": null,
+    "lang": "fr",
+    "note": "French FLASH relay of other outlets"
+  },
+  "policeetrealites": {
+    "role": "outlet",
+    "party": null,
+    "lang": "fr",
+    "note": "French police and court news"
+  },
+  "fdesoucheofficiel": {
+    "role": "partisan",
+    "party": "French far right",
+    "lang": "fr"
+  },
+  "AESalerte": {
+    "role": "partisan",
+    "party": "pro-AES (Sahel juntas)",
+    "lang": "fr"
+  },
+  "Senegal24": {
+    "role": "outlet",
+    "party": null,
+    "lang": "fr"
   }
 }

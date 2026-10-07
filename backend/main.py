@@ -11924,6 +11924,15 @@ async def api_telegram_posts(hours: int = Query(72, ge=1, le=720), statements: b
     return out
 
 
+@app.get("/api/telegram/upcoming")
+async def api_telegram_upcoming(days: int = Query(30, ge=1, le=120)):
+    """Gatherings and collective actions announced on Telegram that have not
+    happened yet — where, when, what about, and who announced them."""
+    import telegram_ingest as _tg
+    loop = asyncio.get_event_loop()
+    return {"upcoming": await loop.run_in_executor(_executor, _tg.upcoming, days)}
+
+
 @app.get("/api/telegram/statements")
 async def api_telegram_statements(lat: float, lon: float, hours: int = Query(72, ge=1, le=720),
                                   km: float = 75, country: str | None = None):

@@ -101,7 +101,10 @@ CREATE TABLE IF NOT EXISTS telegram_posts (
     PRIMARY KEY (channel, msg_id)
 )"""
 EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": "TEXT", "claim": "INTEGER",
-                 "first_hand": "INTEGER", "graphic": "INTEGER", "graphic_score": "REAL"}
+                 "first_hand": "INTEGER", "graphic": "INTEGER", "graphic_score": "REAL",
+                 "announce_checked": "INTEGER", "announce_what": "TEXT", "announce_cause": "TEXT",
+                 "announce_at": "TEXT", "announce_place": "TEXT", "announce_lat": "REAL", "announce_lon": "REAL",
+                 "announce_country": "TEXT"}
 
 # What each channel is (telegram_channels.json). Unlisted = aggregator.
 CHANNELS_FILE = os.path.join(HERE, "telegram_channels.json")
@@ -455,6 +458,16 @@ def as_surface_items(hours: int = 24) -> list[dict]:
             "published_at": st["posted_at"], "confidence": 0.6, "lat": None, "lon": None,
             "severity_tier": "critical" if st["important"] else "moderate",
         })
+    # Announced gatherings are forward signals: at the place, dated by when
+    # they were announced, saying when they start.
+    for a in upcoming():
+        out.append({
+            **a, "type": "telegram", "source_type": "telegram_announcement",
+            "source": a["channel_title"] or a["channel"],
+            "context": " · ".join(x for x in (a["cause"], a.get("summary_en")) if x),
+            "location": a["place"], "location_country": country_name_from_code(a["country_code"] or "") or None,
+            "published_at": a["posted_at"], "confidence": 0.5, "severity_tier": "moderate",
+        })
     for p in published(hours):
         out.append({
             **p,
@@ -510,6 +523,193 @@ def prefetch_videos(limit: int = 15) -> int:
         if got >= limit:
             break
     return got
+
+
+# ── Announced: what a post says WILL happen ─────────────────────────────────
+# Some channels are read for what is coming, not what happened (the owner,
+# 2026-10-06: a gilets jaunes channel saying "tomorrow 11:00, demonstration
+# at République" is a signal). A second, cheap pass reads posts that name a
+# day or a time and keeps those announcing a public gathering or collective
+# action at a place — with when (resolved against the post's own date) and
+# where (geocoded by the same rule as every pin).
+ANNOUNCE_CUES = re.compile(
+    r"(demain|ce soir|aujourd.hui|samedi|dimanche|lundi|mardi|mercredi|jeudi|vendredi|rdv|rendez.vous|rassemblement|"
+    r"manif|appel|grève|blocage|cortège|tomorrow|tonight|saturday|sunday|monday|tuesday|wednesday|thursday|friday|"
+    r"rally|march|protest|strike|blockade|vigil|morgen|heute|samstag|sonntag|montag|dienstag|mittwoch|donnerstag|"
+    r"freitag|uhr|kundgebung|demo|mahnwache|aufzug|streik|📅|🕓|📍|\b\d{1,2}[:h]\d{2}\b|\b\d{1,2}\.\d{1,2}\.)", re.I)
+
+ANNOUNCE_SYSTEM = """You read Telegram posts for announcements of FUTURE public gatherings or
+collective actions: demonstrations, marches, rallies, vigils, strikes, blockades, occupations.
+Each post is prefixed with the date it was posted.
+An announcement names something that has NOT happened yet when posted, with a place and a day.
+NOT announcements: reports of something happening or that happened, livestreams or videos of past
+events, commentary, calls with no place or no day. A post whose date is the posting day and that
+describes the crowd, the clashes or the turnout is a REPORT, not an announcement. Meetings,
+speeches, trainings and construction works are not gatherings.
+For each numbered post return an object in "results" (same order):
+  announced: true or false
+  what: 2-5 English words, e.g. "protest march", "student strike", "road blockade"
+  cause: what it is about, under 10 English words, or ""
+  starts_at: when it starts, local time at the place, "YYYY-MM-DDTHH:MM", or "YYYY-MM-DD" if no hour
+    is given. Resolve "tomorrow", "Saturday", "demain", "morgen" against the posting date.
+  place: the most precise place named, "Place, City, Country" in English; "" if none
+  precision: site | street | district | city | region | country | none
+  country_code: ISO 3166-1 alpha-2, lowercase, or ""
+Return JSON {"results": [...]}."""
+
+
+def _announce_pass(client, model, rows):
+    numbered = "\n\n".join(f"{i+1}. [posted {r[2][:10]} ({_weekday(r[2])}) | {r[1] or r[0]}] {(r[3] or '')[:900]}"
+                             for i, r in enumerate(rows))
+    resp = client.chat.completions.create(
+        model=model, temperature=0, max_tokens=2000, response_format={"type": "json_object"},
+        messages=[{"role": "system", "content": ANNOUNCE_SYSTEM}, {"role": "user", "content": numbered}])
+    u = getattr(resp, "usage", None)
+    if u:
+        try:
+            import usage_tracker
+            usage_tracker.record_call(input_tokens=u.prompt_tokens, output_tokens=u.completion_tokens,
+                                      call_type="telegram", model=model, headline=f"announcements · {len(rows)} posts")
+        except Exception:
+            pass
+    return json.loads(resp.choices[0].message.content or "{}").get("results") or []
+
+
+def _weekday(iso: str) -> str:
+    try:
+        return _dt.date.fromisoformat(iso[:10]).strftime("%A")
+    except ValueError:
+        return "?"
+
+
+def parse_start(s: str | None, posted_at: str) -> str | None:
+    """A model's start time, kept only if it is a real date not before the
+    post's own day (an announcement is of something to come)."""
+    s = (s or "").strip()
+    try:
+        when = _dt.datetime.fromisoformat(s) if "T" in s else _dt.datetime.fromisoformat(s + "T00:00")
+    except ValueError:
+        return None
+    try:
+        posted = _dt.date.fromisoformat(posted_at[:10])
+    except ValueError:
+        return None
+    if when.date() < posted or when.date() > posted + _dt.timedelta(days=120):
+        return None
+    return when.strftime("%Y-%m-%dT%H:%M") if "T" in s else when.strftime("%Y-%m-%d")
+
+
+GATHERING = re.compile(r"(protest|demonstrat|march|rally|vigil|strike|blockade|occupation|gathering|sit-in|"
+                       r"walkout|boycott|procession|commemorat|riot|mahnwache|kundgebung|manif|rassemblement)", re.I)
+
+
+def is_announcement(what: str | None, start: str | None, posted_at: str) -> bool:
+    """The model proposes; this decides. A gathering or collective action,
+    starting after the post was written — the model reads "thousands rally
+    in Paris" posted that day, or a livestream of last night's vigil, as an
+    announcement often enough that the date has to be checked in code."""
+    if not start or not GATHERING.search(what or ""):
+        return False
+    try:
+        posted = _dt.datetime.fromisoformat(posted_at.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return False
+    if "T" in start:
+        # Local time at the place against UTC posting time: 90 minutes' slack.
+        return _dt.datetime.fromisoformat(start) > posted - _dt.timedelta(minutes=90)
+    return _dt.date.fromisoformat(start) > posted.date()
+
+
+def read_announcements(limit: int = 90, days: int = 7) -> dict:
+    import openai_gate
+    client = openai_gate.get_client(openai_gate.ENRICH)
+    if client is None:
+        return {"announcements": "no model"}
+    model = openai_gate.model_for(openai_gate.ENRICH)
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
+    con = _con()
+    cand = con.execute("SELECT channel, channel_title, posted_at, text, msg_id FROM telegram_posts"
+                       " WHERE announce_checked IS NULL AND posted_at >= ? AND text IS NOT NULL AND length(text) > 40"
+                       " ORDER BY posted_at DESC LIMIT ?", (cutoff, limit * 4)).fetchall()
+    skip = [r for r in cand if not ANNOUNCE_CUES.search(r[3] or "")]
+    con.executemany("UPDATE telegram_posts SET announce_checked=1 WHERE channel=? AND msg_id=?", [(r[0], r[4]) for r in skip])
+    rows = [r for r in cand if ANNOUNCE_CUES.search(r[3] or "")][:limit]
+    found = 0
+    for i in range(0, len(rows), BATCH):
+        chunk = rows[i:i + BATCH]
+        try:
+            res = _announce_pass(client, model, chunk)
+        except Exception as e:
+            print(f"[telegram] announcement pass failed: {type(e).__name__}: {e}", flush=True)
+            continue
+        for r, x in zip(chunk, res):
+            x = x or {}
+            start = parse_start(x.get("starts_at"), r[2]) if x.get("announced") else None
+            if start and not is_announcement(x.get("what"), start, r[2]):
+                start = None
+            hit = None
+            if start:
+                hit, _why = locate(x.get("place"), x.get("precision"), x.get("country_code"))
+            con.execute("UPDATE telegram_posts SET announce_checked=1, announce_what=?, announce_cause=?, announce_at=?,"
+                        " announce_place=?, announce_lat=?, announce_lon=?, announce_country=? WHERE channel=? AND msg_id=?",
+                        ((x.get("what") or "")[:60] if hit else None, (x.get("cause") or "")[:120] if hit else None,
+                         start if hit else None, x.get("place") if hit else None,
+                         hit and hit["lat"], hit and hit["lon"], (x.get("country_code") or "").lower() if hit else None,
+                         r[0], r[4]))
+            found += int(bool(hit))
+        con.commit()
+    con.commit()
+    con.close()
+    return {"announcements_read": len(rows), "announced": found}
+
+
+def _when_label(start: str) -> str:
+    try:
+        d = _dt.datetime.fromisoformat(start if "T" in start else start + "T00:00")
+    except ValueError:
+        return start
+    day = d.strftime("%a %-d %b")
+    return f"{day}, {d.strftime('%H:%M')}" if "T" in start else day
+
+
+def upcoming(days_ahead: int = 30) -> list[dict]:
+    """Announced gatherings that have not happened yet, soonest first; one
+    per what, place and day however many channels carried it."""
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    con = _con()
+    con.row_factory = sqlite3.Row
+    rows = con.execute("SELECT * FROM telegram_posts WHERE announce_at IS NOT NULL AND announce_lat IS NOT NULL"
+                       " AND substr(announce_at,1,10) >= ? ORDER BY announce_at, posted_at", (today,)).fetchall()
+    con.close()
+    out, seen = [], {}
+    horizon = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+    for r in rows:
+        if r["announce_at"][:10] > horizon or not is_announcement(r["announce_what"], r["announce_at"], r["posted_at"]):
+            continue
+        key = ((r["announce_what"] or "").lower(), round(r["announce_lat"], 2), round(r["announce_lon"], 2), r["announce_at"][:10])
+        label = r["channel_title"] or r["channel"]
+        if key in seen:
+            if label not in seen[key]["also_reported_by"] and label != seen[key]["channel_title"]:
+                seen[key]["also_reported_by"].append(label)
+            continue
+        place = (r["announce_place"] or "").split(",")
+        short = ", ".join(p.strip() for p in place[:2] if p.strip())
+        what = (r["announce_what"] or "gathering").strip()
+        out.append({
+            "id": f"tga-{r['channel']}-{r['msg_id']}", "announcement": True,
+            "headline": f"{what[:1].upper()}{what[1:]} announced: {short} — {_when_label(r['announce_at'])}",
+            "what": what, "cause": r["announce_cause"] or "", "starts_at": r["announce_at"],
+            "when_label": _when_label(r["announce_at"]),
+            "place": r["announce_place"], "country_code": r["announce_country"],
+            "lat": r["announce_lat"], "lon": r["announce_lon"],
+            "channel": r["channel"], "channel_title": r["channel_title"], "msg_id": r["msg_id"],
+            "posted_at": r["posted_at"], "text": r["text"], "summary_en": r["summary_en"], "lang": r["lang"],
+            "url": None if r["channel"].startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}",
+            "role": r["role"], "party": r["party"], "also_reported_by": [],
+            "verification": "announced in advance — " + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
+        })
+        seen[key] = out[-1]
+    return out
 
 
 def _is_graphic(r) -> bool:
@@ -672,6 +872,7 @@ def run_once(hours: int = 6) -> dict:
         new = asyncio.run(_collect(hours))
     out = {"collected": new, **classify()}
     out["screened"] = screen_graphic()
+    out.update(read_announcements())
     # No prefetch: a video is fetched when someone opens it (VIDEO_DIR).
     out["videos_pruned"] = prune_videos()
     return out

@@ -274,6 +274,18 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
         return () => { live = false; clearInterval(t) }
     }, [])
 
+    /* ANNOUNCED. Gatherings and actions announced on Telegram for the next
+       week (telegram_ingest.upcoming) — a demonstration called for tomorrow
+       at République is something today may bring, by the organisers' own
+       word rather than by a model's probability, so it carries no percent. */
+    const announced = useMemo(() => {
+        const until = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)
+        return surface
+            .filter((x) => x.source_type === "telegram_announcement" && x.starts_at && x.starts_at.slice(0, 10) <= until)
+            .sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at)))
+            .slice(0, 4)
+    }, [surface])
+
     const critical = surface.filter((s) => s.severity_tier === "critical").length
     const stats = [
         [String(critical), "Critical signals", "var(--red)"],
@@ -321,7 +333,16 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
             score: outlook?.outlook?.length
                 ? `${outlook.outlook.length} from ${outlook.count} signals`
                 : (outlook && outlook.ok === false ? "unavailable" : ""),
-            items: (outlook?.outlook?.length
+            items: [...announced.map((a) => ({
+                c: "var(--amber)",
+                t: `${a.what ? a.what[0].toUpperCase() + a.what.slice(1) : "Gathering"} · ${String(a.place || "").split(",").slice(0, 2).join(",")}`,
+                sub: [a.when_label, a.cause, `announced on ${a.channel_title || a.channel}`].filter(Boolean).join(" · "),
+                go: () => {
+                    onOpenModule("map")
+                    window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: a.lat, lon: a.lon, altitude: 30000 } }))
+                    window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "telegram", entityId: a.id, data: a } }))
+                },
+            })), ...(outlook?.outlook?.length
                 ? outlook.outlook.map((o) => ({
                     p: o.probability,
                     // Who and where, in front, because that is what makes it
@@ -343,7 +364,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                         sub: `${b.window} · ${dir} its own base rate of ${base}% · category rate, not a forecast`,
                         go: () => onOpenModule("forecast"),
                     }
-                })),
+                }))],
         },
         {
             k: "Last night's forecast",
