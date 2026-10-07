@@ -37,6 +37,32 @@ import TelegramMedia from "../components/TelegramMedia.jsx"
 import { THEATER_SCOPE } from "../data/theaterScope.js"
 import { whenLabel } from "../utils/formatTime.js"
 
+/** The part of the day and how the brief speaks of it (turns at 05, 12, 18). */
+export function slotOf(now) {
+    const h = now.getHours()
+    const d = new Date(now)
+    const at = (hh) => { const x = new Date(d); x.setHours(hh, 0, 0, 0); return x.getTime() }
+    if (h >= 5 && h < 12) return { key: `${d.toDateString()}:m`, part: "morning", since: at(5) - 11 * 3600_000,
+        happened: "What happened overnight", ahead: "What today may bring", record: "How yesterday's forecast did" }
+    if (h >= 12 && h < 18) return { key: `${d.toDateString()}:a`, part: "afternoon", since: at(5),
+        happened: "What happened this morning", ahead: "What this afternoon may bring", record: "How this morning's forecast did" }
+    const base = h < 5 ? new Date(d.getTime() - 86400_000) : d
+    return { key: `${base.toDateString()}:n`, part: "night", since: at(12) - (h < 5 ? 86400_000 : 0),
+        happened: "What happened this afternoon", ahead: "What may follow tonight", record: "How this afternoon's forecast did" }
+}
+
+/** A value chosen once per key (a part of the day) and kept until the key
+ * turns — refreshed three times a day rather than on every poll. It waits
+ * for a value that is ready (`ready`) before it settles. */
+function useFrozen(key, value, ready) {
+    const ref = useRef({ key: null, value: [] })
+    if (ref.current.key !== key || !ready(ref.current.value)) {
+        if (ready(value)) ref.current = { key, value }
+        else if (ref.current.key !== key) ref.current = { key: null, value }
+    }
+    return ref.current.key === key ? ref.current.value : value
+}
+
 /* A null resolution overwrites a default; .catch never fires on one. */
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 
@@ -255,25 +281,64 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     }
     const hasOwn = (userTheaters || []).length > 0 || (myAssets || []).length > 0 || split.hasInterests
 
-    /* FROM THE GROUND. The one Telegram video worth playing at launch: a
-       first-hand or official report with footage from the last 12 hours,
-       in the user's areas if there is one, critical first, then newest.
-       Footage behind the sensitive-content warning comes last: the first
-       thing on the screen should not be a warning box when something else
-       would do. */
-    const groundVideo = useMemo(() => {
-        const cutoff = Date.now() - 12 * 3600 * 1000
-        const mineIds = new Set(split.mine.map((m) => m.id))
-        const rank = (x) => (x.graphic ? 4 : 0) + (mineIds.has(x.id) ? 0 : 2) + (x.severity_tier === "critical" ? 0 : 1)
-        return surface
-            .filter((x) => x.source_type === "telegram" && x.media === "video" && Date.parse(x.published_at) >= cutoff)
-            .sort((a, b) => rank(a) - rank(b) || String(b.published_at).localeCompare(String(a.published_at)))[0] || null
-    }, [surface, split])
+    /* THREE TIMES A DAY. The brief and the footage turn over at the start of
+       the morning (05:00), the afternoon (12:00) and the night (18:00), in
+       the user's own time — what happened since the last turn, what the
+       next part of the day may bring (the owner, 2026-10-07). The urgent
+       list above them refreshes every 30 s; these hold still for a part of
+       the day, so they can be read rather than chased. */
+    const slot = useMemo(() => slotOf(new Date()), [dayPart, Math.floor(Date.now() / 600_000)]) // eslint-disable-line react-hooks/exhaustive-deps
+    const iso2Name = useMemo(() => new Map(countryPlaces.filter((p) => p.iso2).map((p) => [String(p.iso2).toLowerCase(), p.name])), [countryPlaces])
+
+    // Telegram's own feed (the pool holds news): the last 48 hours of posts.
+    const [tgPosts, setTgPosts] = useState([])
+    useEffect(() => {
+        let live = true
+        const load = () => fetch(`${API_BASE}/api/telegram/posts?hours=48`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d) setTgPosts(safeArray(d.posts)) }).catch(() => {})
+        load()
+        const t = setInterval(load, 10 * 60_000)
+        return () => { live = false; clearInterval(t) }
+    }, [])
+
+    /* THE THREE MOST BREAKING POINTS, ON VIDEO. Footage from the last two
+       days, yours first (near your assets, in your theaters and interests),
+       then the hardest events, then the newest — one per place, so three
+       videos are three stories. Chosen once per part of the day. */
+    const groundPick = useMemo(() => {
+        const HARD = { strike: 0, attack: 0, explosion: 0, clash: 1, interception: 1, unrest: 2 }
+        const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, low: 3 }
+        const vids = tgPosts.filter((x) => x.media === "video" && Number.isFinite(+x.lat))
+            .map((x) => ({ ...x, location_country: iso2Name.get(String(x.country_code || "").toLowerCase()) || x.location_country }))
+        const mine = new Set(partition(vids, w).mine.map((m) => m.id))
+        const ranked = vids.sort((a, b) => (mine.has(b.id) - mine.has(a.id))
+            || ((a.graphic ? 1 : 0) - (b.graphic ? 1 : 0))
+            || ((SEVR[a.severity_tier] ?? 4) - (SEVR[b.severity_tier] ?? 4))
+            || ((HARD[a.event_type] ?? 3) - (HARD[b.event_type] ?? 3))
+            || String(b.posted_at || "").localeCompare(String(a.posted_at || "")))
+        // one per place: a story within 30 km of one already chosen is the
+        // same place told twice ("Obolon, Kyiv" and "Kyiv, Ukraine")
+        const kmTo = (a, b) => {
+            const r = Math.PI / 180
+            const h = Math.sin((b.lat - a.lat) * r / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin((b.lon - a.lon) * r / 2) ** 2
+            return 12742 * Math.asin(Math.sqrt(h))
+        }
+        const out = []
+        for (const v of ranked) {
+            const at = { lat: +v.lat, lon: +v.lon }
+            if (out.some((o) => kmTo(at, { lat: +o.lat, lon: +o.lon }) < 30)) continue
+            out.push({ ...v, _mine: mine.has(v.id) })
+            if (out.length === 3) break
+        }
+        return out
+    }, [tgPosts, w, iso2Name])
+    const knowsYou = myAssets !== null && countryPlaces.length > 0
+    const groundVideos = useFrozen(`ground:${slot.key}`, groundPick, (a) => knowsYou && a.length > 0 && a.length >= Math.min(3, groundPick.length))
 
     /* Overnight — our own surface, newest first. Deliberately NOT sorted on
        relevance_score: that field is a lookup on severity_tier (main.py
        ~8635), so ranking by it would just restate the dot colour. */
-    const overnight = useMemo(() => {
+    const overnightNow = useMemo(() => {
         const rank = { critical: 0, high: 1, moderate: 2, low: 3 }
         const seen = new Set()
         const unique = surface.filter((s) => {
@@ -287,8 +352,10 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
             .sort((a, b) => (mineIds.has(b.id ?? b.headline) - mineIds.has(a.id ?? a.headline))
                 || (rank[a.severity_tier] ?? 9) - (rank[b.severity_tier] ?? 9)
                 || String(b.published_at || "").localeCompare(String(a.published_at || "")))
+            .filter((x) => !slot.since || !x.published_at || Date.parse(x.published_at) >= slot.since - 6 * 3600_000)
             .slice(0, 4)
-    }, [surface, split])
+    }, [surface, split, slot])
+    const overnight = useFrozen(`happened:${slot.key}`, overnightNow, (a) => knowsYou && a.length > 0 && a.length >= Math.min(4, overnightNow.length))
 
     /* Top scenario per board, with its own base rate kept alongside.
        A FORECAST WITHOUT ITS BASE RATE IS NOT A FORECAST. The model's
@@ -331,17 +398,29 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
         return () => { live = false; clearInterval(t) }
     }, [])
 
+    /* WHAT IS AHEAD, YOURS FIRST. A forecast or an announcement that names
+       one of your countries leads; the rest follow. Held for the part of
+       the day like the rest of the brief. */
+    const outlookMine = useMemo(() => {
+        const items = safeArray(outlook?.outlook)
+        const names = [...(w?.countries?.keys?.() || [])].map((c) => String(c).toLowerCase())
+        const isMine = (o) => names.some((c) => `${o.place || ""} ${o.statement || ""}`.toLowerCase().includes(c))
+        return [...items].sort((a, b) => isMine(b) - isMine(a))
+    }, [outlook, w])
+    const outlookHeld = useFrozen(`ahead:${slot.key}`, outlookMine, (a) => knowsYou && a.length > 0)
+
     /* ANNOUNCED. Gatherings and actions announced on Telegram for the next
        week (telegram_ingest.upcoming) — a demonstration called for tomorrow
        at République is something today may bring, by the organisers' own
        word rather than by a model's probability, so it carries no percent. */
     const announced = useMemo(() => {
         const until = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)
-        return surface
-            .filter((x) => x.source_type === "telegram_announcement" && x.starts_at && x.starts_at.slice(0, 10) <= until)
-            .sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at)))
+        const list = surface.filter((x) => x.source_type === "telegram_announcement" && x.starts_at && x.starts_at.slice(0, 10) <= until)
+        const mine = new Set(partition(list, w).mine.map((m) => m.id))
+        return list
+            .sort((a, b) => (mine.has(b.id) - mine.has(a.id)) || String(a.starts_at).localeCompare(String(b.starts_at)))
             .slice(0, 4)
-    }, [surface])
+    }, [surface, w])
 
     const critical = surface.filter((s) => s.severity_tier === "critical").length
     const stats = [
@@ -377,7 +456,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
 
     const columns = [
         {
-            k: "Overnight", score: "",
+            k: slot.happened, score: "",
             items: overnight.map((s) => ({
                 c: SEV_DOT[s.severity_tier] || "var(--txt4)",
                 t: s.title || s.headline || "Untitled signal",
@@ -386,9 +465,9 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
             })),
         },
         {
-            k: "Today may bring",
-            score: outlook?.outlook?.length
-                ? `${outlook.outlook.length} from ${outlook.count} signals`
+            k: slot.ahead,
+            score: outlookHeld.length
+                ? `${outlookHeld.length} from ${outlook?.count ?? "—"} signals`
                 : (outlook && outlook.ok === false ? "unavailable" : ""),
             items: [...announced.map((a) => ({
                 c: "var(--amber)",
@@ -399,8 +478,8 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                     window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: a.lat, lon: a.lon, altitude: 30000 } }))
                     window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "telegram", entityId: a.id, data: a } }))
                 },
-            })), ...(outlook?.outlook?.length
-                ? outlook.outlook.map((o) => ({
+            })), ...(outlookHeld.length
+                ? outlookHeld.map((o) => ({
                     p: o.probability,
                     // Who and where, in front, because that is what makes it
                     // a forecast rather than a category.
@@ -424,7 +503,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                 }))],
         },
         {
-            k: "Last night's forecast",
+            k: slot.record,
             // The honest score. Nothing in the backend resolves a forecast
             // yet — `record: {n: 0}` on every board — so this reports that
             // rather than drawing marks it cannot defend.
@@ -555,30 +634,33 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                         )}
                     </div>
 
-                    {groundVideo && (
-                        <div data-screen-label="From the ground" style={{
-                            display: "grid", gridTemplateColumns: "minmax(0,1.25fr) minmax(0,1fr)", gap: 20,
-                            padding: 16, border: "1px solid var(--gline)", background: "var(--glass2)", alignItems: "center",
-                        }}>
-                            <TelegramMedia post={groundVideo} maxHeight="380px" radius="0" />
-                            <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
-                                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase",
-                                               color: groundVideo.severity_tier === "critical" ? "var(--red)" : "var(--txt3)" }}>
-                                    From the ground · {whenLabel(groundVideo.published_at)} · <bdi>{groundVideo.source}</bdi>
-                                </span>
-                                <h3 style={{ margin: 0, fontSize: 24, lineHeight: 1.2, fontWeight: 600, textWrap: "pretty" }}>{groundVideo.headline}</h3>
-                                <span style={{ fontSize: 13, color: "var(--txt2)", textWrap: "pretty" }}>{groundVideo.context}</span>
-                                <span style={{ fontSize: 12, color: "var(--txt3)" }}>
-                                    {[groundVideo.place, groundVideo.verification].filter(Boolean).join(" · ")}
-                                </span>
-                                <div>
-                                    <button onClick={() => {
-                                        onOpenModule("map")
-                                        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: groundVideo.lat, lon: groundVideo.lon, altitude: 60000 } }))
-                                        window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "telegram", entityId: groundVideo.id, data: groundVideo } }))
-                                    }} style={{ height: 30, padding: "0 12px", border: 0, background: "var(--acc)", color: "var(--mz-cream)",
-                                                font: "inherit", fontWeight: 600, cursor: "pointer" }}>Show on the map</button>
-                                </div>
+                    {/* ── From the ground: three stories on video ─────────── */}
+                    {groundVideos.length > 0 && (
+                        <div data-screen-label="From the ground" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }}>From the ground</span>
+                                <span style={{ fontSize: 11.5, color: "var(--txt4)" }}>the {groundVideos.length === 1 ? "most breaking story" : `${groundVideos.length} most breaking stories`} {split.hasInterests ? "for you" : "worldwide"} · renewed {slot.part === "night" ? "tonight" : `this ${slot.part}`}</span>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,300px),1fr))", gap: 12 }}>
+                                {groundVideos.map((v) => (
+                                    <div key={v.id} style={{ display: "flex", flexDirection: "column", border: "1px solid var(--gline)", background: "var(--glass2)", minWidth: 0 }}>
+                                        <TelegramMedia post={v} maxHeight="260px" radius="0" />
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px 12px", minWidth: 0 }}>
+                                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase",
+                                                           color: v.severity_tier === "critical" ? "var(--red)" : "var(--txt3)" }}>
+                                                {whenLabel(v.posted_at || v.published_at)} · <bdi>{v.channel_title || v.source || v.channel}</bdi>{v._mine ? " · yours" : ""}
+                                            </span>
+                                            <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.3, overflowWrap: "anywhere" }}>{v.headline}</span>
+                                            <span style={{ fontSize: 12, color: "var(--txt3)", overflowWrap: "anywhere" }}>{String(v.place || v.geocoded_as || "").split(",").slice(0, 2).join(",")}</span>
+                                            <button onClick={() => {
+                                                onOpenModule("map")
+                                                window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: v.lat, lon: v.lon, altitude: 60000 } }))
+                                                window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "telegram", entityId: v.id, data: v } }))
+                                            }} style={{ alignSelf: "flex-start", height: 28, padding: "0 12px", border: 0, background: "var(--acc)", color: "var(--mz-cream)",
+                                                        font: "inherit", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Show on the map</button>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     )}

@@ -7,9 +7,16 @@
  * 2. WHAT MAY FOLLOW: the outlook (backend/outlook.py) — who may do what,
  *    where, by when, how we will know, and what to watch for — each with a
  *    one-click response: watch the area by satellite, or make it a theater.
+ *
+ * YOURS FIRST (the owner, 2026-10-07): both lists follow the user's
+ * interests — the countries their theaters frame, the ones they chose, and
+ * what lies near their assets. "Yours" shows only those (the default once
+ * there are any); "Everywhere" shows all, yours marked and first.
  */
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
+import { getSettings, subscribeSettings } from "../state/settingsStore.js"
+import { watched, nearestAsset } from "../state/interests.js"
 import { places as loadPlaces } from "../voice/gazetteer.js"
 import { theaterHere, watchArea } from "./respond.js"
 
@@ -44,22 +51,54 @@ export default function WhatsNext({ onOpenModule = () => {} }) {
         loadPlaces().then((ps) => { if (live) setPlaces(ps.filter((p) => p.kind === "country")) }).catch(() => {})
         return () => { live = false }
     }, [])
+    const [theaters, setTheaters] = useState([])
+    const [assets, setAssets] = useState([])
+    const [interests, setInterests] = useState(() => getSettings()?.interests || {})
+    useEffect(() => subscribeSettings((st) => setInterests(st?.interests || {})), [])
+    useEffect(() => {
+        let live = true
+        fetch(`${API_BASE}/api/theaters`, { credentials: "include" }).then((r) => (r.ok ? r.json() : [])).then((d) => { if (live) setTheaters(Array.isArray(d) ? d : []) }).catch(() => {})
+        fetch(`${API_BASE}/api/my-assets`, { credentials: "include" }).then((r) => (r.ok ? r.json() : {})).then((d) => { if (live) setAssets(d.assets || []) }).catch(() => {})
+        return () => { live = false }
+    }, [])
+    const w = useMemo(() => watched(interests || {}, theaters, places, assets), [interests, theaters, places, assets])
+    const hasYours = w.countries.size > 0 || w.assets.length > 0
+    const [scope, setScope] = useState(null)              // null until known: "yours" when there is something
+    const view = scope || (hasYours ? "yours" : "everywhere")
+    const countryIsMine = (name) => w.countries.has(name)
+    const outlookIsMine = (o) => (o.lat != null && nearestAsset({ lat: o.lat, lon: o.lon }, w.assets))
+        || [...w.countries.keys()].some((c) => `${o.place || ""} ${o.statement || ""}`.toLowerCase().includes(String(c).toLowerCase()))
     const where = (country) => places.find((p) => p.name.toLowerCase() === String(country || "").toLowerCase())
     const show = (lat, lon, altitude) => {
         onOpenModule("map")
         window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat, lon, altitude } }))
     }
 
-    const rising = (esc?.countries || []).filter((c) => c.change_pct >= 40)
+    const risingAll = (esc?.countries || []).filter((c) => c.change_pct >= 40)
+        .sort((a, b) => countryIsMine(b.country) - countryIsMine(a.country))
+    const rising = view === "yours" ? risingAll.filter((c) => countryIsMine(c.country)) : risingAll
+    const outlookAll = [...(outlook?.outlook || [])].sort((a, b) => !!outlookIsMine(b) - !!outlookIsMine(a))
+    const outlookShown = view === "yours" ? outlookAll.filter((o) => outlookIsMine(o)) : outlookAll
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", border: "1px solid var(--gline2)" }}>
+                    {[["yours", "Yours"], ["everywhere", "Everywhere"]].map(([k, l]) => (
+                        <button key={k} onClick={() => setScope(k)} style={{ ...BTN, border: 0, background: view === k ? "var(--accdim)" : "transparent" }}>{l}</button>
+                    ))}
+                </div>
+                <span style={{ fontSize: 12, color: "var(--txt3)" }}>
+                    {hasYours ? `Yours: ${[...w.countries.keys()].slice(0, 6).join(", ")}${w.countries.size > 6 ? "…" : ""}${w.assets.length ? `${w.countries.size ? " and " : ""}near ${w.assets.length} asset${w.assets.length === 1 ? "" : "s"}` : ""}`
+                        : "Nothing is yours yet — make a theater, add countries under Settings › Your interests, or register an asset."}
+                </span>
+            </div>
             <div style={CARD}>
                 <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--gline)", display: "flex", alignItems: "baseline", gap: 10 }}>
                     <span style={EYEBROW}>Escalating now</span>
                     <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>{esc?.rule || "Violent events against each country's own normal"}</span>
                 </div>
                 {!esc ? <div style={{ padding: 14, color: "var(--txt3)" }}>Loading…</div>
-                    : !rising.length ? <div style={{ padding: 14, color: "var(--txt3)" }}>No country's violence is markedly above its normal in the last 3 days.</div>
+                    : !rising.length ? <div style={{ padding: 14, color: "var(--txt3)" }}>{view === "yours" && risingAll.length ? `None of your countries is markedly above its normal; ${risingAll.length} elsewhere — see Everywhere.` : "No country's violence is markedly above its normal in the last 3 days."}</div>
                     : rising.map((c) => {
                         const p = where(c.country)
                         return (
@@ -67,6 +106,7 @@ export default function WhatsNext({ onOpenModule = () => {} }) {
                                 <div style={{ minWidth: 0 }}>
                                     <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
                                         <b style={{ fontSize: 15 }}>{c.country}</b>
+                                        {countryIsMine(c.country) && <span style={{ fontSize: 10.5, color: "var(--acchi)" }}>yours · {w.countries.get(c.country)}</span>}
                                         <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 13, color: c.escalating ? "var(--red)" : "var(--amber)" }}>
                                             {c.change_pct > 0 ? "+" : ""}{c.change_pct}%
                                         </span>
@@ -89,12 +129,13 @@ export default function WhatsNext({ onOpenModule = () => {} }) {
             <div style={CARD}>
                 <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--gline)" }}><span style={EYEBROW}>What may follow · next 14 days</span></div>
                 {!outlook ? <div style={{ padding: 14, color: "var(--txt3)" }}>Loading…</div>
-                    : !(outlook.outlook || []).length ? <div style={{ padding: 14, color: "var(--txt3)" }}>Nothing specific enough to forecast from today's signals.</div>
-                    : outlook.outlook.map((o, i) => (
+                    : !outlookShown.length ? <div style={{ padding: 14, color: "var(--txt3)" }}>{view === "yours" && outlookAll.length ? `Nothing forecast for your countries or assets; ${outlookAll.length} elsewhere — see Everywhere.` : "Nothing specific enough to forecast from today's signals."}</div>
+                    : outlookShown.map((o, i) => (
                         <div key={i} style={{ padding: "12px 14px", borderBottom: "1px solid var(--gline)", display: "flex", flexDirection: "column", gap: 6 }}>
                             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                                 <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 15, color: o.probability >= 60 ? "var(--red)" : "var(--amber)", minWidth: 40 }}>{o.probability}%</span>
                                 <b style={{ fontSize: 14.5, textWrap: "pretty" }}>{[o.place, o.statement].filter(Boolean).join(" · ")}</b>
+                                {outlookIsMine(o) && <span style={{ fontSize: 10.5, color: "var(--acchi)", whiteSpace: "nowrap" }}>yours</span>}
                             </div>
                             {o.because && <span style={{ fontSize: 12.5, color: "var(--txt2)", paddingLeft: 50 }}>{o.because}</span>}
                             {(o.watch_for || []).length > 0 && (
