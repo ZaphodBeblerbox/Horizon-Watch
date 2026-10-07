@@ -134,16 +134,63 @@ def _ts(t: _dt.datetime, sep: str = " ") -> str:
     return t.astimezone(_dt.timezone.utc).replace(tzinfo=None).isoformat(sep=sep, timespec="seconds")
 
 
+def tracks(con, profile: dict, start: _dt.datetime, end: _dt.datetime) -> None:
+    """For each moving asset, where it was each day of the period (the daily
+    roll-ups vessel_day / aircraft_day: first and last position), as
+    site["track"] = {day: [(lat, lon), …]}. A signal counts for a ship where
+    the ship was that day, not where it was registered."""
+    a, b = start.date().isoformat(), end.date().isoformat()
+    for s in profile.get("sites") or []:
+        if not s.get("moves"):
+            continue
+        ids = s.get("identifiers") or {}
+        q = None
+        if ids.get("mmsi"):
+            q = ("SELECT day, first_lat, first_lon, last_lat, last_lon FROM vessel_day WHERE mmsi = ? AND day BETWEEN ? AND ?", ids["mmsi"])
+        elif ids.get("icao"):
+            q = ("SELECT day, first_lat, first_lon, last_lat, last_lon FROM aircraft_day WHERE lower(icao24) = lower(?) AND day BETWEEN ? AND ?", ids["icao"])
+        if not q:
+            continue
+        try:
+            rows = con.execute(q[0], (q[1], a, b)).fetchall()
+        except sqlite3.OperationalError:
+            continue
+        tr = {}
+        for r in rows:
+            pts = [(r[1], r[2]), (r[3], r[4])]
+            tr[r[0]] = [(float(x), float(y)) for x, y in pts if x is not None and y is not None]
+        if tr:
+            s["track"] = tr
+
+
+def _site_points(s: dict) -> list[tuple[float, float]]:
+    pts = [p for day in (s.get("track") or {}).values() for p in day]
+    if s.get("lat") is not None and s.get("lon") is not None:
+        pts.append((s["lat"], s["lon"]))
+    return pts
+
+
+def site_km(s: dict, item: dict) -> float | None:
+    """Distance from a site to an item; for a mover, from where it was that day."""
+    tr = s.get("track") or {}
+    day = _day(item.get("when"))
+    pts = tr.get(day) or ([] if tr else None)
+    if pts is None or not pts:
+        if s.get("lat") is None:
+            return None
+        pts = [(s["lat"], s["lon"])] if not tr else [p for d in tr.values() for p in d]
+    return min(km(la, lo, item["lat"], item["lon"]) for la, lo in pts)
+
+
 def _bboxes(profile: dict) -> list[tuple[float, float, float, float]]:
     """Boxes (west, south, east, north) that cover the sites and the countries."""
     out = []
     for s in profile.get("sites") or []:
-        if s.get("lat") is None or s.get("lon") is None:
-            continue
         r = float(s.get("radius_km") or 25)
-        dlat = r / 111.0
-        dlon = r / (111.0 * max(0.2, math.cos(math.radians(s["lat"]))))
-        out.append((s["lon"] - dlon, s["lat"] - dlat, s["lon"] + dlon, s["lat"] + dlat))
+        for la, lo in _site_points(s):
+            dlat = r / 111.0
+            dlon = r / (111.0 * max(0.2, math.cos(math.radians(la))))
+            out.append((lo - dlon, la - dlat, lo + dlon, la + dlat))
     shapes = _country_shapes()
     names = set(profile.get("countries") or [])
     for v in profile.get("vectors") or []:
@@ -168,6 +215,9 @@ def _bbox_sql(lat: str, lon: str, boxes) -> tuple[str, list]:
     return "(" + " OR ".join(parts) + ")", args
 
 
+# fusion domains as a reader names them; internal stages are not sources
+DOMAIN_LABEL = {"NEWS": "news", "CORROBORATED": "", "SAT-TASK": "Parallax imagery tasking", "SAT": "imagery", "SAR": "radar imagery", "OPTICAL": "optical imagery",
+                "TELEGRAM": "Telegram", "GEOCONFIRMED": "GeoConfirmed", "THERMAL": "FIRMS", "HEAT": "FIRMS"}
 DATE_ONLY = re.compile(r"^\s*\d{1,2} [A-Z]{3} \d{4}\s*$")
 COORD_TITLE = re.compile(r"^\s*-?\d+(\.\d+)?°[NS]\s+-?\d+(\.\d+)?°[EW]\b")
 
@@ -206,6 +256,7 @@ def read_items(con, start: _dt.datetime, end: _dt.datetime, boxes, counts: Count
                          f"LIMIT {ROWS_PER_SOURCE}", [a, b, *args]):
         raw = _j(r["raw_json"], {}) or {}
         title, detail, url, kind = r["title"] or r["alert_type"], raw.get("message") or "", None, "alert"
+        src_label = DOMAIN_LABEL.get((r["source"] or "").upper(), r["source"] or "") or "Parallax"
         if r["alert_type"] == "geoconfirmed_event":
             # titled with its date; what happened is in the placemark's description
             inner = raw.get("raw") or ""
@@ -217,7 +268,7 @@ def read_items(con, start: _dt.datetime, end: _dt.datetime, boxes, counts: Count
             desc = re.sub(r"^[\d:\s\-–,]+(-|–)\s*", "", desc)
             title, detail, url, kind = desc[:160] or title, desc, _first_url(inner), "geoconfirmed"
         items.append({"ref": f"alert:{r['alert_id']}", "kind": kind, "source": "GeoConfirmed" if kind == "geoconfirmed" else (r["source"] or ""),
-                      "detector": r["alert_type"], "url": url,
+                      "detector": r["alert_type"], "url": url, "source_label": "GeoConfirmed" if kind == "geoconfirmed" else src_label,
                       "title": title, "detail": detail, "severity": r["severity"],
                       "lat": r["lat"], "lon": r["lon"], "when": r["created_at"], "place": r["region"] or "",
                       "entity": r["entity_name"] or "", "count": r["fire_count"] or 1})
@@ -232,8 +283,8 @@ def read_items(con, start: _dt.datetime, end: _dt.datetime, boxes, counts: Count
         if (COORD_TITLE.match(title) or DATE_ONLY.match(title)) and keys:
             title = keys[0]                                  # "52.39°N 13.54°E Intelligence Event" says nothing
         place = re.sub(r"\s*·\s*-?\d+\.\d+°[NS].*$", "", r["location_name"] or "")
-        items.append({"ref": f"fusion:{r['fusion_id']}", "kind": "fusion", "source": "FUSION " + " ".join(domains), "detector": "fusion",
-                      "title": title, "detail": r["narrative"] or "; ".join(keys)[:600],
+        items.append({"ref": f"fusion:{r['fusion_id']}", "kind": "fusion", "source": "FUSION " + " ".join(domains), "source_label": "Parallax fusion (" + ", ".join(dict.fromkeys(DOMAIN_LABEL.get(d, d) for d in domains if DOMAIN_LABEL.get(d, d) and d != "SAT-TASK")) + ")", "detector": "fusion",
+                      "title": title, "detail": "; ".join(k for k in keys if k != title)[:600] or (r["narrative"] or "")[:600],
                       "severity": r["severity"], "lat": r["lat"], "lon": r["lon"], "when": r["created_at"],
                       "place": "" if COORD_TITLE.match(place) else place, "confidence": r["confidence"], "keys": keys})
 
@@ -288,7 +339,7 @@ def read_items(con, start: _dt.datetime, end: _dt.datetime, boxes, counts: Count
         what = r["object_type"].replace("_", " ")
         if attrs.get("vessel_length_m"):
             what += f", about {attrs['vessel_length_m']:.0f} m"
-        items.append({"ref": f"imagery:{r['detection_id']}", "kind": "imagery", "source": f"Parallax imagery ({r['instrument'] or 'Sentinel'})",
+        items.append({"ref": f"imagery:{r['detection_id']}", "kind": "imagery", "source": "Parallax imagery (" + ({"SAR": "Sentinel-1 radar", "OPTICAL": "Sentinel-2 optical"}.get((r["instrument"] or "").upper(), "Sentinel")) + ")",
                       "detector": r["object_type"], "title": f"{what} detected" + (f" near {r['nearest_port']}" if r["nearest_port"] else ""),
                       "detail": f"confidence {r['confidence']:.2f}" + (f", change: {attrs['change_type']}" if attrs.get("change_type") else ""),
                       "severity": r["severity"] or "info", "lat": r["centroid_lat"], "lon": r["centroid_lon"], "when": r["created_at"],
@@ -371,12 +422,14 @@ def reach(item: dict, profile: dict, sites_by_id: dict, targets: dict) -> dict |
         cand = None
         for sid in v.get("sites") or []:
             s = sites_by_id.get(sid)
-            if not s or s.get("lat") is None:
+            if not s:
                 continue
             if not oa.reaches(s.get("kind"), cat):
                 continue
             r = float(s.get("radius_km") or 25)
-            d = km(s["lat"], s["lon"], item["lat"], item["lon"])
+            d = site_km(s, item)
+            if d is None:
+                continue
             imp = {"critical": 1.2, "high": 1.0}.get(s.get("importance"), 0.85)
             if d <= r:
                 city = item["kind"] in CITY_LEVEL or item.get("city_level")
@@ -426,14 +479,14 @@ def merge(items: list[dict]) -> list[dict]:
                 hit = e
                 break
         if hit is None:
-            ev = {**it, "reports": [it], "families": {FAMILY.get(it["kind"], it["kind"])}, "sources": [it["source"]]}
+            ev = {**it, "reports": [it], "families": {FAMILY.get(it["kind"], it["kind"])}, "sources": [it.get("source_label") or it["source"]]}
             index[key].append(len(events))
             events.append(ev)
         else:
             hit["reports"].append(it)
             hit["families"].add(FAMILY.get(it["kind"], it["kind"]))
-            if it["source"] not in hit["sources"]:
-                hit["sources"].append(it["source"])
+            if (it.get("source_label") or it["source"]) not in hit["sources"]:
+                hit["sources"].append(it.get("source_label") or it["source"])
             if not hit.get("url") and it.get("url"):
                 hit["url"] = it["url"]
             if not hit.get("place") and it.get("place"):
@@ -473,7 +526,7 @@ def patterns(items: list[dict], start: _dt.datetime, days: int) -> list[dict]:
         places = Counter((i.get("place") or i.get("country") or "").strip() for i in its)
         places.pop("", None)
         active = len(by_day)
-        ev = {**peak, "pattern": True, "reports": its, "families": {FAMILY.get(peak["kind"], peak["kind"])}, "sources": [peak["source"]],
+        ev = {**peak, "pattern": True, "reports": its, "families": {FAMILY.get(peak["kind"], peak["kind"])}, "sources": [peak.get("source_label") or peak["source"]],
               "title": peak["title"], "days_active": active, "per_day": dict(sorted(by_day.items())),
               "places": [p for p, _ in places.most_common(6)], "first": min(str(i["when"]) for i in its), "last": max(str(i["when"]) for i in its)}
         ev["score0"] = peak["score0"] * (0.6 + 0.4 * active / max(1, days)) * (1 + 0.15 * math.log2(len(its)))
@@ -578,6 +631,7 @@ def collect(profile: dict, cadence: str, start: _dt.datetime | None = None, end:
     con.row_factory = sqlite3.Row
     counts: Counter = Counter()
     try:
+        tracks(con, profile, start, end)
         boxes = _bboxes(profile)
         names = set(profile.get("countries") or []) | {c for v in profile.get("vectors") or [] for c in v.get("countries") or []}
         isos = [x for x in (iso2(n) for n in names) if x]
@@ -627,7 +681,45 @@ def collect(profile: dict, cadence: str, start: _dt.datetime | None = None, end:
         "by_category": dict(Counter(e["category"] for e in chosen)),
         "reached_by_category": dict(by_cat_reached),
         "series": series(kept, start, days),
+        "sites": site_summary(profile, [public(e) for e in chosen], kept, db_path),
     }
+
+
+def site_summary(profile: dict, events: list[dict], reached: list[dict], db_path: str | None = None) -> list[dict]:
+    """Every registered asset and what the period held for it: the events at
+    it, the precedents against its kind of target, the strongest and the
+    nearest, and the console's latest brief on it (background, not evidence)."""
+    import owned_assets as oa
+    out = []
+    briefs = {}
+    try:
+        con = sqlite3.connect(db_path or _db_path(), timeout=60)
+        for aid, b in con.execute("SELECT asset_id, brief FROM owned_asset_briefs b1 WHERE created_at = "
+                                  "(SELECT MAX(created_at) FROM owned_asset_briefs b2 WHERE b2.asset_id = b1.asset_id)"):
+            briefs[aid] = (_j(b, {}) or {}).get("impact")
+        con.close()
+    except sqlite3.Error:
+        pass
+    for s in profile.get("sites") or []:
+        mine = [e for e in events if e.get("site") == s["name"]]
+        at = [e for e in mine if e["reach"] in ("site", "city")]
+        prec = [e for e in mine if e["reach"] == "precedent"]
+        n_reached = sum(1 for i in reached if i["match"].get("site") == s["id"])
+        nearest = min(at, key=lambda e: e.get("km") or 9e9) if at else None
+        strongest = max(mine, key=lambda e: e["score"]) if mine else None
+        out.append({"id": s["id"], "name": s["name"], "kind": s["kind"], "kind_label": (oa.KINDS.get(s["kind"]) or {}).get("label", s["kind"]),
+                    "place": s.get("address") or s.get("country") or "", "country": s.get("country"), "radius_km": s.get("radius_km"),
+                    "importance": s.get("importance"), "moves": s.get("moves"), "signals": n_reached, "events": len(at), "precedents": len(prec),
+                    "nearest": {"sid": nearest["sid"], "title": nearest["title"], "km": nearest.get("km")} if nearest else None,
+                    "strongest": {"sid": strongest["sid"], "title": strongest["title"]} if strongest else None,
+                    "brief": briefs.get(s["id"])})
+    return out
+
+
+def _scrub(t: str) -> str:
+    """Detectors' "Unknown Location" fallbacks say nothing; the place is given separately."""
+    t = re.sub(r"\s*(at|in|near|@|—|-)?\s*unknown location\b", "", t, flags=re.I)
+    return re.sub(r"\s{2,}", " ", t).strip()
 
 
 def public(e: dict) -> dict:
@@ -636,7 +728,7 @@ def public(e: dict) -> dict:
     place = e.get("place") or ""
     if not place:
         place = (f"{m['km']} km from {m['site_name']}" if m.get("site_name") and m["how"] == "site" else e.get("country") or "")
-    out = {"sid": e["sid"], "ref": e["ref"], "kind": e["kind"], "when": str(e["when"]), "title": e["title"], "detail": (e.get("detail") or "")[:700],
+    out = {"sid": e["sid"], "ref": e["ref"], "kind": e["kind"], "when": str(e["when"]), "title": _scrub(e["title"]), "detail": _scrub(e.get("detail") or "")[:700],
            "place": place, "country": e.get("country"), "lat": round(float(e["lat"]), 4), "lon": round(float(e["lon"]), 4),
            "category": e["category"], "severity": e.get("severity"), "vector": e["vector"], "vector_name": m["vector_name"],
            "reach": m["how"], "site": m.get("site_name"), "km": m.get("km"), "sources": e["sources"][:8], "reports": len(e["reports"]),

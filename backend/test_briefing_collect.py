@@ -22,7 +22,7 @@ def db(tmp_path):
     c.executescript("""
     CREATE TABLE users (id TEXT, email TEXT, name TEXT, company TEXT, title TEXT, settings TEXT);
     CREATE TABLE owned_assets (id TEXT, owner_id TEXT, name TEXT, kind TEXT, lat REAL, lon REAL, radius_km REAL, country TEXT,
-                               address TEXT, importance TEXT, shared INTEGER);
+                               address TEXT, importance TEXT, shared INTEGER, identifiers TEXT);
     CREATE TABLE alerts (alert_id TEXT, source TEXT, alert_type TEXT, title TEXT, severity TEXT, lat REAL, lon REAL, region TEXT,
                          country_code TEXT, entity_name TEXT, entity_type TEXT, raw_json TEXT, created_at TEXT, fire_count INTEGER);
     CREATE TABLE telegram_posts (channel TEXT, msg_id INTEGER, channel_title TEXT, posted_at TEXT, headline TEXT, summary_en TEXT,
@@ -30,7 +30,7 @@ def db(tmp_path):
                                  media TEXT, thumb TEXT, graphic INTEGER, unpublished_reason TEXT, relevant INTEGER);
     """)
     c.execute("INSERT INTO users VALUES (?, 'a@b.c', 'A', 'Acme', 'Security', '{}')", (UID,))
-    c.execute("INSERT INTO owned_assets VALUES ('OA-1', ?, 'Umspannwerk Mitte', 'substation', 52.52, 13.38, 20, 'Germany', '', 'high', 0)", (UID,))
+    c.execute("INSERT INTO owned_assets VALUES ('OA-1', ?, 'Umspannwerk Mitte', 'substation', 52.52, 13.38, 20, 'Germany', '', 'high', 0, NULL)", (UID,))
     rows = [
         # the Baltic tanker: maritime, at sea — reaches no vector of a substation
         ("a1", "AIS", "Sanctioned Vessel", "Sanctioned vessel EAGLE S in the Baltic Sea", "high", 54.9, 13.9, 1),
@@ -92,3 +92,22 @@ def test_standing_conditions_fold_into_one_pattern(db):
     assert out["funnel"]["read"] >= 23 and out["funnel"]["used"] == len(out["events"])
     ids = [e["sid"] for e in out["events"]]
     assert ids == sorted(ids) and len(set(ids)) == len(ids)
+
+
+def test_a_moving_vessel_is_matched_where_it_was_that_day(db):
+    c = sqlite3.connect(db)
+    c.executescript("CREATE TABLE vessel_day (day TEXT, mmsi TEXT, first_lat REAL, first_lon REAL, last_lat REAL, last_lon REAL);")
+    # registered in Hamburg, but sailing the Red Sea this week
+    c.execute("INSERT INTO owned_assets VALUES ('OA-2', ?, 'MV Example', 'vessel_bulk', 53.54, 9.98, 50, NULL, '', 'high', 0, NULL)", (UID,))
+    c.execute("UPDATE owned_assets SET identifiers = '{\"mmsi\": \"211000001\"}' WHERE id = 'OA-2'")
+    day = (NOW - dt.timedelta(days=2)).date().isoformat()
+    c.execute("INSERT INTO vessel_day VALUES (?, '211000001', 14.9, 42.0, 15.2, 41.8)", (day,))
+    c.execute("INSERT INTO alerts VALUES ('r1','OSINT','incident','Missile attack on a bulk carrier off Hodeidah','critical',15.0,41.9,'',NULL,'','','{}',?,1)",
+              (_ts(2, 3),))
+    c.commit(); c.close()
+    prof = profile.derive(UID, db)
+    out = collect.collect(prof, "weekly", start=NOW - dt.timedelta(days=7), end=NOW, db_path=db)
+    hit = next(e for e in out["events"] if "Hodeidah" in e["title"])
+    assert hit["site"] == "MV Example" and hit["reach"] == "site"
+    ship = next(s for s in out["sites"] if s["name"] == "MV Example")
+    assert ship["events"] == 1 and ship["strongest"]["sid"] == hit["sid"]

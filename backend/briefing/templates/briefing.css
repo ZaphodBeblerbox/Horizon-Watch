@@ -109,7 +109,7 @@ td.lvl { color: #fff; font-weight: 700; text-align: left; }
 figure.fig { margin: 3mm auto 2mm; text-align: center; }
 figure.fig svg, figure.fig img { max-width: 100%; height: auto; }
 figure.fig-half svg, figure.fig-half img { max-width: 72%; }
-figure.imgfig img { max-height: 105mm; object-fit: contain; border: .5pt solid var(--rule); }
+figure.imgfig img { max-height: 92mm; max-width: 70%; object-fit: contain; border: .5pt solid var(--rule); }
 
 /* cards */
 .orgcard { border: .6pt solid var(--rule); padding: 3mm 4mm; margin: 3mm 0 4mm; }
@@ -150,3 +150,4 @@ table.ach th { font-size: 7.6pt; padding: 1mm 2mm; }
 
 .list { margin: 0 0 3mm 4mm; padding-left: 3mm; } .list li { margin-bottom: 1.2mm; }
 .endline { font-size: 7.6pt; color: var(--muted); border-top: .5pt solid var(--rule); padding-top: 2mm; margin-top: 6mm; text-align: left; }
+h1, h2, h3 { position: relative; }

@@ -77,6 +77,23 @@ GROUP_VECTOR = {
 COUNTRY_VECTOR = {"de": "Lage {c}", "en": "{c}: security situation", "fr": "{c} : situation sécuritaire"}
 
 
+def localise(prof: dict, lang: str) -> dict:
+    """The derived vector names in the issue's language; a name the user
+    wrote stays as written."""
+    from .countries import name as cname
+    lang = lang if lang in spec.LANGUAGES else "de"
+    for v in prof.get("vectors") or []:
+        if v.get("origin") == "assets":
+            group = next((g for g, names in GROUP_VECTOR.items() if v["name"] in names.values()), None)
+            if group:
+                v["name"] = GROUP_VECTOR[group][lang]
+        elif v.get("origin") == "country" and v.get("countries"):
+            c = v["countries"][0]
+            if any(v["name"] == COUNTRY_VECTOR[l].format(c=x) for l in spec.LANGUAGES for x in (c, cname(c, l))):
+                v["name"] = COUNTRY_VECTOR[lang].format(c=cname(c, lang))
+    return prof
+
+
 def _db_path() -> str:
     try:
         from paths import DB_PATH
@@ -117,11 +134,19 @@ def _user(con, user_id: str) -> dict:
 
 def _assets(con, user_id: str) -> list[dict]:
     try:
-        rows = con.execute("SELECT id, name, kind, lat, lon, radius_km, country, address, importance FROM owned_assets "
+        rows = con.execute("SELECT id, name, kind, lat, lon, radius_km, country, address, importance, identifiers FROM owned_assets "
                            "WHERE owner_id = ? OR shared = 1", (user_id,)).fetchall()
     except sqlite3.OperationalError:
         return []
     return [dict(r) for r in rows]
+
+
+def _ids(v) -> dict:
+    try:
+        d = json.loads(v) if isinstance(v, str) else (v or {})
+    except (TypeError, ValueError):
+        d = {}
+    return {k: str(d[k]) for k in ("mmsi", "imo", "icao", "registration") if d.get(k)}
 
 
 def derive(user_id: str, db_path: str | None = None, language: str = "de") -> dict:
@@ -145,7 +170,8 @@ def derive(user_id: str, db_path: str | None = None, language: str = "de") -> di
         group = k.get("group", "Sites")
         site = {"id": a["id"], "name": a["name"], "kind": a["kind"], "group": group, "lat": a["lat"], "lon": a["lon"],
                 "radius_km": a.get("radius_km") or k.get("radius", 25), "country": country_name(a.get("country")),
-                "address": a.get("address"), "importance": a.get("importance") or "normal", "moves": bool(k.get("moves"))}
+                "address": a.get("address"), "importance": a.get("importance") or "normal", "moves": bool(k.get("moves")),
+                "identifiers": _ids(a.get("identifiers"))}
         sites.append(site)
         groups.setdefault(group, []).append(site)
         if site["country"]:

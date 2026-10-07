@@ -90,7 +90,7 @@ _env.filters.update(fmt=fmt, shorturl=shorturl, achclass=achclass)
 
 
 # ── contents ─────────────────────────────────────────────────────────────────
-PART_TITLE = {"key_judgments": "key_judgments", "exposure": "exposure", "decisions": "decisions", "how_to_read": "how_to_read",
+PART_TITLE = {"key_judgments": "key_judgments", "sites": "sites", "exposure": "exposure", "decisions": "decisions", "how_to_read": "how_to_read",
               "chronology": "chronology", "imagery": "imagery", "analyst_desk": "analyst_desk", "scenarios": "scenarios",
               "indicators": "indicators", "calendar": "calendar", "gaps": "gaps", "exposure_cards": "exposure_cards",
               "sources": "sources", "method": "method", "glossary": "glossary"}
@@ -119,7 +119,7 @@ def render_html(doc: dict, pages: dict | None = None) -> str:
     L = labels(doc["meta"].get("language", "en"))
     parts = set(spec.parts_for(doc["meta"]["cadence"]))
     ctx = {k: (doc.get(k) if k in parts else None) for k in
-           ("key_judgments", "exposure", "decisions", "how_to_read", "chronology", "imagery", "analyst_desk", "scenarios",
+           ("key_judgments", "sites", "exposure", "decisions", "how_to_read", "chronology", "imagery", "analyst_desk", "scenarios",
             "indicators", "calendar", "gaps", "exposure_cards", "sources", "method", "glossary")}
     ctx["sections"] = doc.get("sections") if "sections" in parts else []
     contents = None

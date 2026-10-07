@@ -1,0 +1,110 @@
+"""
+briefing/acronyms.py — the abbreviations a briefing may use, explained.
+
+The owner's rule: every acronym is explained. validate.py finds every
+abbreviation in the finished text; one listed here goes into the glossary
+with this meaning; one that is not must be explained by the writer (in the
+glossary it returns) or the repair pass is asked to write it out.
+"""
+from __future__ import annotations
+
+A = {
+    "API": ("Application Programming Interface: Programmierschnittstelle, hier der Zugang zum Sprachmodell.",
+            "Application Programming Interface; here, access to the language model.",
+            "Interface de programmation ; ici, l'accès au modèle de langage."),
+    "Antifa": ("Sammelbezeichnung für antifaschistische, teils militante Gruppen.", "Umbrella term for anti-fascist groups, some of them militant.",
+               "Terme générique désignant des groupes antifascistes, parfois militants."),
+    "ANTIFA": ("Sammelbezeichnung für antifaschistische, teils militante Gruppen.", "Umbrella term for anti-fascist groups, some of them militant.",
+               "Terme générique désignant des groupes antifascistes, parfois militants."),
+    "ADS-B": ("Automatic Dependent Surveillance–Broadcast: Selbstmeldeverfahren von Luftfahrzeugen (Position, Höhe, Kennung).",
+              "Automatic Dependent Surveillance–Broadcast: aircraft broadcast their position, altitude and identity.",
+              "Automatic Dependent Surveillance–Broadcast : les aéronefs diffusent leur position, altitude et identité."),
+    "AIS": ("Automatic Identification System: Selbstmeldeverfahren von Schiffen (Position, Kurs, Kennung).",
+            "Automatic Identification System: ships broadcast their position, course and identity.",
+            "Automatic Identification System : les navires diffusent leur position, cap et identité."),
+    "GNSS": ("Global Navigation Satellite System: Satellitennavigation (GPS, Galileo, GLONASS, BeiDou).",
+             "Global Navigation Satellite System: satellite navigation (GPS, Galileo, GLONASS, BeiDou).",
+             "Global Navigation Satellite System : navigation par satellite (GPS, Galileo, GLONASS, BeiDou)."),
+    "GPS": ("Global Positioning System: US-amerikanisches Satellitennavigationssystem.",
+            "Global Positioning System: the US satellite navigation system.",
+            "Global Positioning System : système de navigation par satellite américain."),
+    "SAR": ("Synthetic Aperture Radar: Radarbildgebung aus dem All, wolken- und tageszeitunabhängig.",
+            "Synthetic Aperture Radar: radar imaging from space, independent of cloud and daylight.",
+            "Synthetic Aperture Radar : imagerie radar spatiale, indépendante des nuages et de la lumière."),
+    "MMSI": ("Maritime Mobile Service Identity: neunstellige Funkkennung eines Schiffs.",
+             "Maritime Mobile Service Identity: a ship's nine-digit radio identifier.",
+             "Maritime Mobile Service Identity : identifiant radio à neuf chiffres d'un navire."),
+    "IMO": ("International Maritime Organization; auch die dauerhafte IMO-Nummer eines Schiffs.",
+            "International Maritime Organization; also a ship's permanent IMO number.",
+            "Organisation maritime internationale ; aussi le numéro IMO permanent d'un navire."),
+    "ICAO": ("International Civil Aviation Organization; auch die 24-Bit-Kennung eines Luftfahrzeugs.",
+             "International Civil Aviation Organization; also an aircraft's 24-bit address.",
+             "Organisation de l'aviation civile internationale ; aussi l'adresse 24 bits d'un aéronef."),
+    "OSINT": ("Open Source Intelligence: Aufklärung aus öffentlich zugänglichen Quellen.",
+              "Open Source Intelligence: intelligence from publicly available sources.",
+              "Renseignement d'origine sources ouvertes."),
+    "NATO": ("Nordatlantikvertrags-Organisation.", "North Atlantic Treaty Organization.", "Organisation du traité de l'Atlantique nord (OTAN)."),
+    "OTAN": ("Nordatlantikvertrags-Organisation (frz. Abkürzung).", "North Atlantic Treaty Organization (French abbreviation).",
+             "Organisation du traité de l'Atlantique nord."),
+    "EU": ("Europäische Union.", "European Union.", "Union européenne."),
+    "UE": ("Europäische Union (frz. Abkürzung).", "European Union (French abbreviation).", "Union européenne."),
+    "UN": ("Vereinte Nationen.", "United Nations.", "Nations unies."),
+    "ONU": ("Vereinte Nationen (frz. Abkürzung).", "United Nations (French abbreviation).", "Organisation des Nations unies."),
+    "UAV": ("Unmanned Aerial Vehicle: unbemanntes Luftfahrzeug (Drohne).", "Unmanned Aerial Vehicle: a drone.", "Drone (véhicule aérien sans pilote)."),
+    "LNG": ("Liquefied Natural Gas: Flüssigerdgas.", "Liquefied Natural Gas.", "Gaz naturel liquéfié (GNL)."),
+    "GNL": ("Flüssigerdgas (frz. Abkürzung).", "Liquefied natural gas (French abbreviation).", "Gaz naturel liquéfié."),
+    "STS": ("Ship-to-Ship: Umladung von Ladung zwischen zwei Schiffen auf See.", "Ship-to-ship transfer of cargo at sea.",
+            "Transbordement de cargaison de navire à navire en mer."),
+    "BKA": ("Bundeskriminalamt.", "Bundeskriminalamt, Germany's Federal Criminal Police Office.", "Bundeskriminalamt, office fédéral de police criminelle allemand."),
+    "BfV": ("Bundesamt für Verfassungsschutz (Inlandsnachrichtendienst).", "Bundesamt für Verfassungsschutz, Germany's domestic intelligence service.",
+            "Bundesamt für Verfassungsschutz, service de renseignement intérieur allemand."),
+    "BND": ("Bundesnachrichtendienst (Auslandsnachrichtendienst).", "Bundesnachrichtendienst, Germany's foreign intelligence service.",
+            "Bundesnachrichtendienst, service de renseignement extérieur allemand."),
+    "BSI": ("Bundesamt für Sicherheit in der Informationstechnik.", "Germany's Federal Office for Information Security.",
+            "Office fédéral allemand de la sécurité des systèmes d'information."),
+    "KRITIS": ("Kritische Infrastrukturen.", "Critical infrastructure (German legal term).", "Infrastructures critiques (terme juridique allemand)."),
+    "GRU": ("Militärischer Nachrichtendienst der Russischen Föderation.", "Russia's military intelligence service.", "Service de renseignement militaire russe."),
+    "FSB": ("Inlandsgeheimdienst der Russischen Föderation.", "Russia's Federal Security Service.", "Service fédéral de sécurité russe."),
+    "SVR": ("Auslandsnachrichtendienst der Russischen Föderation.", "Russia's Foreign Intelligence Service.", "Service de renseignement extérieur russe."),
+    "IRGC": ("Islamische Revolutionsgarde (Iran).", "Islamic Revolutionary Guard Corps (Iran).", "Corps des gardiens de la révolution islamique (Iran)."),
+    "OFAC": ("Office of Foreign Assets Control: Sanktionsbehörde des US-Finanzministeriums.", "Office of Foreign Assets Control, the US Treasury's sanctions office.",
+             "Office of Foreign Assets Control, autorité américaine des sanctions."),
+    "UAE": ("Vereinigte Arabische Emirate.", "United Arab Emirates.", "Émirats arabes unis."),
+    "VAE": ("Vereinigte Arabische Emirate.", "United Arab Emirates (German abbreviation).", "Émirats arabes unis (abréviation allemande)."),
+    "EAU": ("Vereinigte Arabische Emirate (frz. Abkürzung).", "United Arab Emirates (French abbreviation).", "Émirats arabes unis."),
+    "USA": ("Vereinigte Staaten von Amerika.", "United States of America.", "États-Unis d'Amérique."),
+    "US": ("Vereinigte Staaten.", "United States.", "États-Unis."),
+    "UK": ("Vereinigtes Königreich.", "United Kingdom.", "Royaume-Uni."),
+    "GDELT": ("Global Database of Events, Language and Tone: maschinell kodierte weltweite Nachrichtenereignisse.",
+              "Global Database of Events, Language and Tone: machine-coded world news events.",
+              "Global Database of Events, Language and Tone : événements d'actualité codés automatiquement."),
+    "FIRMS": ("Fire Information for Resource Management System (NASA): satellitengestützte Hitzepunkte.",
+              "Fire Information for Resource Management System (NASA): satellite-detected heat spots.",
+              "Fire Information for Resource Management System (NASA) : points chauds détectés par satellite."),
+    "CBRN": ("Chemisch, biologisch, radiologisch, nuklear.", "Chemical, biological, radiological, nuclear.", "Chimique, biologique, radiologique, nucléaire (NRBC)."),
+    "IED": ("Improvised Explosive Device: unkonventionelle Spreng- und Brandvorrichtung.", "Improvised explosive device.", "Engin explosif improvisé (EEI)."),
+    "ACH": ("Analysis of Competing Hypotheses: Analyse konkurrierender Hypothesen.", "Analysis of Competing Hypotheses.", "Analyse des hypothèses concurrentes."),
+    "UTC": ("Koordinierte Weltzeit.", "Coordinated Universal Time.", "Temps universel coordonné."),
+    "Z": ("Zulu-Zeit, gleichbedeutend mit UTC.", "Zulu time, the same as UTC.", "Heure Zulu, identique à l'UTC."),
+    "MW": ("Megawatt.", "Megawatt.", "Mégawatt."),
+    "km": ("Kilometer.", "Kilometre.", "Kilomètre."),
+    "IAEA": ("Internationale Atomenergie-Organisation.", "International Atomic Energy Agency.", "Agence internationale de l'énergie atomique (AIEA)."),
+    "CERT": ("Computer Emergency Response Team.", "Computer Emergency Response Team.", "Centre de réponse aux incidents informatiques."),
+    "DDoS": ("Distributed Denial of Service: Überlastungsangriff auf Netzdienste.", "Distributed denial-of-service attack.", "Attaque par déni de service distribué."),
+    "ISR": ("Intelligence, Surveillance, Reconnaissance: Aufklärung und Überwachung.", "Intelligence, surveillance and reconnaissance.",
+            "Renseignement, surveillance et reconnaissance."),
+    "AWACS": ("Airborne Warning and Control System: fliegendes Radarfrühwarnsystem.", "Airborne Warning and Control System.",
+              "Système aéroporté de détection et de contrôle."),
+}
+LANG_INDEX = {"de": 0, "en": 1, "fr": 2}
+
+# Capitalised words that are not abbreviations (headings, tags, Roman numerals, ids).
+NOT_ACRONYMS = {"FAKT", "FACT", "FAIT", "GEMELDET", "REPORTED", "SIGNALÉ", "BEWERTUNG", "ASSESSMENT", "ÉVALUATION", "ANNAHME",
+                "ASSUMPTION", "HYPOTHÈSE", "LÜCKE", "GAP", "LACUNE", "PROGNOSE", "FORECAST", "PRÉVISION", "BEOBACHTUNG",
+                "OBSERVATION", "INTERESSIERTE", "PARTEI", "INTERESTED", "PARTY", "PARTIE", "INTÉRESSÉE", "II", "III", "IV", "VI",
+                "VII", "VIII", "IX", "XI", "XII", "PARALLAX", "PROBE", "REHEARSAL", "RÉPÉTITION", "OK", "TV", "CEO", "CFO"}
+
+
+def meaning(term: str, lang: str) -> str | None:
+    hit = A.get(term) or A.get(term.upper())
+    return hit[LANG_INDEX.get(lang, 0)] if hit else None

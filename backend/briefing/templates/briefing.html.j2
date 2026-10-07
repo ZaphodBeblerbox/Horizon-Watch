@@ -97,6 +97,18 @@
 </section>
 {% endif %}
 
+{#- ── OUR SITES ─────────────────────────────────────────────────────────── -#}
+{% if sites %}
+<section class="part{% if meta.cadence == 'daily' %} nobreak{% endif %}" id="sites">
+  <h1>{{ mark("sites") }}{{ L.sites }}</h1>
+  <p class="lead">{{ L.sites_lead }}</p>
+  <table class="grid"><thead><tr><th>{{ L.site }}</th><th>{{ L.kind }}</th><th>{{ L.at_site }}</th><th>{{ L.precedents }}</th><th>{{ L.strongest }}</th></tr></thead>
+  <tbody>{% for s in sites %}<tr><td><b>{{ s.name }}</b><br><span class="small">{{ s.place }}</span></td><td>{{ s.kind_label }}</td><td>{{ s.events }}</td><td>{{ s.precedents }}</td>
+  <td>{% if s.strongest %}{{ (s.strongest.title ~ " [" ~ s.strongest.sid ~ "]")|fmt }}{% else %}{{ L.none_short }}{% endif %}</td></tr>{% endfor %}</tbody></table>
+  {% for s in sites if s.text %}<div class="keep"><h4>{{ s.name }}</h4><p>{{ s.text|fmt }}</p></div>{% endfor %}
+</section>
+{% endif %}
+
 {#- ── EXPOSURE REGISTER ──────────────────────────────────────────────────── -#}
 {% if exposure %}
 <section class="part" id="exposure">
@@ -178,7 +190,7 @@
   <h1>{{ mark("imagery") }}{{ L.imagery }}</h1>
   {% if imagery.lead %}<p class="lead">{{ imagery.lead }}</p>{% endif %}
   {% for im in imagery["items"] %}
-  <figure class="fig imgfig"><img src="{{ im.src }}" alt=""><figcaption>{{ L.figure }} {{ im.number }} — {{ im.caption }}</figcaption></figure>
+  <figure class="fig imgfig"><img src="{{ im.src }}" alt=""><figcaption>{{ L.figure }} {{ im.number }} — {{ im.caption|fmt }}</figcaption></figure>
   {% if im.text %}<p>{{ tag(im.tag) }}{{ im.text|fmt }}</p>{% endif %}
   {% endfor %}
   {% if imagery.meaning %}{{ meaning(imagery.meaning) }}{% endif %}

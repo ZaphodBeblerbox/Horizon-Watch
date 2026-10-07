@@ -126,6 +126,12 @@ def place_map(points: list[dict], bbox: tuple[float, float, float, float] | None
     ax.annotate(f"{step} km", (x0, y0), xytext=(0, 4), textcoords="offset points", fontsize=7)
     ax.annotate("N", (e * k - (e - w) * k * 0.04, n - (n - s) * 0.08), fontsize=8, ha="center", weight="bold")
     if legend:
-        txt = (legend_title + "\n" if legend_title else "") + "\n".join(legend)
-        ax.text(1.02, 1.0, txt, transform=ax.transAxes, fontsize=7, va="top", ha="left", linespacing=1.5)
+        from matplotlib.lines import Line2D
+        if all(isinstance(x, (tuple, list)) for x in legend):
+            handles = [Line2D([], [], marker="o", linestyle="", color=c, markeredgecolor="white", markersize=6, label=t) for t, c in legend]
+            lg = ax.legend(handles=handles, title=legend_title or None, loc="upper left", bbox_to_anchor=(1.01, 1.0), frameon=False,
+                           fontsize=7, title_fontsize=7, alignment="left", handletextpad=0.3)
+        else:
+            txt = (legend_title + "\n" if legend_title else "") + "\n".join(legend)
+            ax.text(1.02, 1.0, txt, transform=ax.transAxes, fontsize=7, va="top", ha="left", linespacing=1.5)
     return _svg(fig)

@@ -26,6 +26,7 @@ PARTS = [
     # key            daily  weekly  monthly   what it is
     ("cover",         True,  True,   True),    # cover sheet (daily: a header band, not a page)
     ("key_judgments", True,  True,   True),    # 3 (daily) / 4 (weekly) / 5 (monthly) judgments
+    ("sites",         True,  True,   True),    # every registered asset: what the period held for it
     ("contents",      False, True,   True),    # table of contents with page numbers
     ("exposure",      False, True,   True),    # exposure register: vectors, level 1–5, change
     ("decisions",     False, True,   True),    # decisions with owner and date
@@ -151,7 +152,7 @@ LABELS = {
         "gaps": "Erfassungslücken und Aussortiertes", "excluded": "Bewusst nicht aufgenommen", "exposure_cards": "Expositionskarten",
         "sources": "Belegverzeichnis", "tier": "St.", "reliability": "Verlässlichkeit", "note": "Anmerkung", "method": "Methodik, Prüfung und Grenzen",
         "glossary": "Glossar und Abkürzungen", "term": "Begriff", "meaning": "Bedeutung in diesem Bericht", "figure": "Abb.", "source": "Quelle",
-        "watch": "Worauf zu achten ist", "what_changed": "Was sich änderte", "why_matters": "Warum es zählt", "rehearsal": "PROBE — nicht vom Modell verfasst",
+        "sites": "Eigene Standorte und Objekte", "site": "Objekt", "kind": "Art", "at_site": "Vorgänge vor Ort", "precedents": "Präzedenzfälle", "strongest": "Stärkster Vorgang", "nearest": "Nächster Vorgang", "sites_lead": "Jedes registrierte Objekt mit dem, was der Zeitraum für es brachte — vor Ort (im Radius), in derselben Stadt, und als Präzedenzfall gleicher Zielart im Land.", "none_short": "keine", "watch": "Worauf zu achten ist", "what_changed": "Was sich änderte", "why_matters": "Warum es zählt", "rehearsal": "PROBE — nicht vom Modell verfasst",
     },
     "en": {
         "issue": "Issue no.", "monthly": "Monthly Situation Report", "weekly": "Weekly Situation Report", "daily": "Daily Brief",
@@ -171,7 +172,7 @@ LABELS = {
         "gaps": "Collection Gaps and Exclusions", "excluded": "Deliberately excluded", "exposure_cards": "Exposure Cards",
         "sources": "Source Register", "tier": "Tier", "reliability": "Reliability", "note": "Note", "method": "Method, Checks and Limits",
         "glossary": "Glossary and Abbreviations", "term": "Term", "meaning": "Meaning in this report", "figure": "Fig.", "source": "Source",
-        "watch": "What to watch", "what_changed": "What changed", "why_matters": "Why it matters", "rehearsal": "REHEARSAL — not written by the model",
+        "sites": "Our Sites and Assets", "site": "Asset", "kind": "Type", "at_site": "Events at site", "precedents": "Precedents", "strongest": "Strongest event", "nearest": "Nearest event", "sites_lead": "Every registered asset and what the period held for it — at the site (within its radius), in the same city, and as a precedent against the same kind of target in the country.", "none_short": "none", "watch": "What to watch", "what_changed": "What changed", "why_matters": "Why it matters", "rehearsal": "REHEARSAL — not written by the model",
     },
     "fr": {
         "issue": "Numéro", "monthly": "Rapport de situation mensuel", "weekly": "Rapport de situation hebdomadaire", "daily": "Point quotidien",
@@ -191,7 +192,7 @@ LABELS = {
         "gaps": "Lacunes et éléments écartés", "excluded": "Délibérément écartés", "exposure_cards": "Fiches d'exposition",
         "sources": "Registre des sources", "tier": "Niv.", "reliability": "Fiabilité", "note": "Remarque", "method": "Méthode, contrôles et limites",
         "glossary": "Glossaire et abréviations", "term": "Terme", "meaning": "Sens dans ce rapport", "figure": "Fig.", "source": "Source",
-        "watch": "Points de vigilance", "what_changed": "Ce qui a changé", "why_matters": "Pourquoi cela compte", "rehearsal": "RÉPÉTITION — non rédigé par le modèle",
+        "sites": "Nos sites et actifs", "site": "Actif", "kind": "Type", "at_site": "Événements sur site", "precedents": "Précédents", "strongest": "Événement le plus fort", "nearest": "Événement le plus proche", "sites_lead": "Chaque actif enregistré et ce que la période lui a apporté — sur le site (dans son rayon), dans la même ville, et comme précédent contre le même type de cible dans le pays.", "none_short": "aucun", "watch": "Points de vigilance", "what_changed": "Ce qui a changé", "why_matters": "Pourquoi cela compte", "rehearsal": "RÉPÉTITION — non rédigé par le modèle",
     },
 }
 
