@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react"
-import { Entity } from "resium"
+import { Entity, useCesium } from "resium"
 import {
     Cartesian2, Color,
     CallbackProperty, Transforms, HeadingPitchRoll, ColorBlendMode,
@@ -9,6 +9,7 @@ import { vesselShipType } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
 import { safeCartesian, vesselHeading, bearingBetween } from "./markerOrientation.js"
+import { createMotion, VESSEL, live as liveMotion } from "./smoothMotion.js"
 import { familyFor as hullFor, modelUrl as hullUrl,
          headingRadiansFromDegrees as hullHeadingFrom } from "./vesselModels.js"
 
@@ -46,6 +47,43 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
     // reports has told us its course by doing so. Kept in a ref because
     // it must not trigger a render of its own.
     const courseRef = useRef({})
+    // Ships move slowly and AIS reports are minutes apart: each is drawn
+    // continuing along its course over ground, eased onto each new report
+    // (smoothMotion.js) instead of jumping when the poll lands.
+    const motionRef = useRef(null)
+    if (!motionRef.current) motionRef.current = createMotion(VESSEL)
+    liveMotion.vessels = motionRef.current
+    useEffect(() => {
+        const live = new Set()
+        for (const v of vessels || []) {
+            const mmsi = v?.mmsi != null ? String(v.mmsi) : null
+            const lat = Number(v?.lat), lon = Number(v?.lon ?? v?.lng)
+            if (!mmsi || !Number.isFinite(lat) || !Number.isFinite(lon)) continue
+            live.add(mmsi)
+            const cog = Number(v.cog), hdg = Number(v.true_heading ?? v.heading)
+            const track = Number.isFinite(cog) && cog < 360 ? cog : Number.isFinite(hdg) && hdg < 360 ? hdg : NaN
+            const ts = Number(v.last_update) > 1e9 ? Number(v.last_update) * 1000 : undefined
+            motionRef.current.update(mmsi, { lat, lon, track, gs: Number(v.speed ?? v.sog ?? 0), ts })
+        }
+        if (pinnedMmsi) live.add(String(pinnedMmsi))
+        motionRef.current.prune(live)
+    }, [vessels, pinnedMmsi])
+    // Draw every frame while there are ships to move (~20 fps is plenty at ship speeds).
+    const cesium = useCesium()
+    const hasVessels = (vessels || []).length > 0
+    useEffect(() => {
+        const scene = cesium?.scene || cesium?.viewer?.scene
+        if (!scene || !hasVessels) return undefined
+        let raf = 0, last = 0
+        const tick = (t) => {
+            raf = requestAnimationFrame(tick)
+            if (t - last < 50) return
+            last = t
+            if (!scene.isDestroyed?.()) scene.requestRender()
+        }
+        raf = requestAnimationFrame(tick)
+        return () => cancelAnimationFrame(raf)
+    }, [cesium?.scene, cesium?.viewer, hasVessels])
     useEffect(() => {
         const seen = courseRef.current
         for (const v of vessels || []) {
@@ -197,17 +235,25 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
                 // Null rather than a throw: Cesium's fromDegrees raises on
                 // a coordinate that is not a number, and a raise here
                 // unmounts the whole globe instead of dropping one hull.
-                const position = safeCartesian(aisLon(v), aisLat(v), 0)
-                if (!position) return null
+                const reported = safeCartesian(aisLon(v), aisLat(v), 0)
+                if (!reported) return null
+                const at = () => {
+                    const m = motionRef.current.get(mmsiStr)
+                    return (m && safeCartesian(m.lon, m.lat, 0)) || reported
+                }
+                const position = new CallbackProperty(at, false)
 
                 return (
                     <Entity
                         id={`ais-${v.mmsi}`}
                         key={v.mmsi}
                         position={position}
-                        orientation={new CallbackProperty(() =>
-                            Transforms.headingPitchRollQuaternion(
-                                position, new HeadingPitchRoll(hullAngle, 0, 0)), false)}
+                        orientation={new CallbackProperty(() => {
+                            // the reported heading when there is one; else the course it is making
+                            const m = usableHdg === null ? motionRef.current.get(mmsiStr) : null
+                            const ang = m && Number.isFinite(m.track) ? hullHeadingFrom(m.track) : hullAngle
+                            return Transforms.headingPitchRollQuaternion(at(), new HeadingPitchRoll(ang, 0, 0))
+                        }, false)}
                         model={{
                             uri: hullUrl(hull),
                             // Nominal metres for the TYPE — AIS gives us no

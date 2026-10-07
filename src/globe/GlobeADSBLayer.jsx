@@ -9,7 +9,7 @@ import { acClassify } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { safeCartesian } from "./markerOrientation.js"
-import { deadReckon } from "./deadReckon.js"
+import { createMotion, AIRCRAFT, live as liveMotion } from "./smoothMotion.js"
 import { familyForDrawing, isSurfaceVehicle, modelUrl, modelHeadingRadians } from "./aircraftModels.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
@@ -55,7 +55,7 @@ const DROP_LINE_BUDGET = 120
  * where that rebuilt thousands of React components to achieve the
  * same thing.
  */
-const DR_RENDER_MS = 100
+const DR_RENDER_MS = 33
 
 // THE CAP AND THE MODEL BUDGET ARE THE SAME NUMBER ON PURPOSE. They
 // used to be 6000 and 800: the extra 5,200 aircraft each became an
@@ -68,7 +68,11 @@ const DESKTOP_ADSB_CAP = 800
 export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
                                         pinnedIcao = null }) {
 
-    const drBaseRef = useRef({})
+    // Where each aircraft is drawn between reports: continued along its
+    // track, eased onto each new report instead of snapping (smoothMotion.js).
+    const motionRef = useRef(null)
+    if (!motionRef.current) motionRef.current = createMotion(AIRCRAFT)
+    liveMotion.aircraft = motionRef.current
     const rawRef    = useRef([])
     // Last full record per aircraft, kept so a PINNED contact can outlive
     // its absence from a refresh. See the pin comment below.
@@ -97,7 +101,11 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
             const lat  = ac.lat  ?? ac.latitude
             const lon  = ac.lon  ?? ac.longitude
             if (icao && lat != null && lon != null) {
-                drBaseRef.current[icao] = { lat, lon, track: ac.track ?? ac.heading ?? 0, gs: ac.gs ?? 0, ts: now }
+                const altFt = Number(ac.alt_baro ?? ac.altitude ?? ac.baro_altitude ?? 0)
+                motionRef.current.update(icao, {
+                    lat: Number(lat), lon: Number(lon), alt: (Number.isFinite(altFt) ? altFt : 0) * 0.3048,
+                    track: Number(ac.track ?? ac.heading), gs: Number(ac.gs ?? 0),
+                }, now)
                 lastSeenRef.current[icao] = { ac, ts: now }
             }
         })
@@ -112,7 +120,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
         }
 
         rawRef.current = merged
-        Object.keys(drBaseRef.current).forEach(k => { if (!live.has(k)) delete drBaseRef.current[k] })
+        motionRef.current.prune(live)
         Object.keys(lastSeenRef.current).forEach(k => {
             if (!live.has(k) && now - lastSeenRef.current[k].ts > PIN_COAST_MS) delete lastSeenRef.current[k]
         })
@@ -218,10 +226,17 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
     useEffect(() => {
         const scene = cesium?.scene || cesium?.viewer?.scene
         if (!scene || !hasAircraft) return
-        const iv = setInterval(() => {
+        // Every display frame (capped at ~30 fps), not every 100 ms: at
+        // 10 fps the movement stepped visibly.
+        let raf = 0, last = 0
+        const tick = (t) => {
+            raf = requestAnimationFrame(tick)
+            if (t - last < DR_RENDER_MS) return
+            last = t
             if (!scene.isDestroyed?.()) scene.requestRender()
-        }, DR_RENDER_MS)
-        return () => clearInterval(iv)
+        }
+        raf = requestAnimationFrame(tick)
+        return () => cancelAnimationFrame(raf)
     }, [cesium?.scene, cesium?.viewer, hasAircraft])
 
     useEffect(() => {
@@ -274,11 +289,11 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
                 // the line stays under the aircraft as it is extrapolated
                 // rather than trailing back to the last report.
                 const atNow = () => {
-                    const dr = deadReckon(drBaseRef.current[icao], Date.now())
-                    const la = dr ? dr.lat : lat
-                    const lo = dr ? dr.lon : lon
+                    const m = motionRef.current.get(icao)
+                    const la = m ? m.lat : lat
+                    const lo = m ? m.lon : lon
                     return {
-                        air: safeCartesian(lo, la, altM) || reported,
+                        air: safeCartesian(lo, la, m ? m.alt : altM) || reported,
                         ground: safeCartesian(lo, la, 0),
                     }
                 }
@@ -318,7 +333,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
                 const orientation = family ? new CallbackProperty(() => {
                     const p = position.getValue()
                     return p ? Transforms.headingPitchRollQuaternion(
-                        p, new HeadingPitchRoll(modelHeadingRadians(track), 0, 0)) : undefined
+                        p, new HeadingPitchRoll(modelHeadingRadians(Number.isFinite(motionRef.current.get(icao)?.track) ? motionRef.current.get(icao).track : track), 0, 0)) : undefined
                 }, false) : undefined
 
 

@@ -17,10 +17,10 @@
  */
 import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
-import { nextRange } from "./followZoom.js"
+import { nextRange, pitchForRange } from "./followZoom.js"
 import {
     ScreenSpaceEventHandler, ScreenSpaceEventType,
-    HeadingPitchRange, Matrix4, Math as CesiumMath,
+    HeadingPitchRange, Matrix4, Math as CesiumMath, Cartographic, Cartesian3,
 } from "cesium"
 
 /** Close enough to read the airframe, far enough to keep context. */
@@ -71,12 +71,42 @@ export default function GlobeFollowLayer({ enabled = true }) {
         // step and the view ended up in space. That is the reported bug.
         const ssc = scene.screenSpaceCameraController
         const zoomWasEnabled = ssc ? ssc.enableZoom : true
+        // ALL of Cesium's camera inputs are off while locked, not just
+        // zoom: its rotate/tilt/translate ran alongside the lock and the
+        // two fought, which is what made moving around a followed contact
+        // jump. The lock now owns the camera; it gives it back on release.
+        const SSC_KEYS = ["enableZoom", "enableRotate", "enableTilt", "enableTranslate", "enableLook"]
+        let saved = null
+        const takeCamera = () => {
+            if (!ssc || saved) return
+            saved = Object.fromEntries(SSC_KEYS.map((k) => [k, ssc[k]]))
+            SSC_KEYS.forEach((k) => { ssc[k] = false })
+        }
+        const giveCamera = () => {
+            if (ssc && saved) SSC_KEYS.forEach((k) => { ssc[k] = saved[k] })
+            saved = null
+        }
 
-        const stop = () => {
+        // A hint while locked: how to look around and how to leave.
+        const hint = document.createElement("div")
+        Object.assign(hint.style, {
+            position: "absolute", left: "50%", bottom: "64px", transform: "translateX(-50%)", zIndex: 5,
+            padding: "7px 14px", borderRadius: "16px", background: "rgba(11,18,32,.82)", color: "#e8ecf1",
+            font: "500 12.5px system-ui, sans-serif", pointerEvents: "none", display: "none", whiteSpace: "nowrap",
+        })
+        viewer.container?.appendChild(hint)
+        const showHint = (label) => {
+            hint.textContent = `Following ${label} · drag to look around · scroll to zoom · right-drag, Esc or a click to leave`
+            hint.style.display = "block"
+        }
+
+        const stop = (force = false) => {
             if (!followRef.current) return
             // Ignore the tail of the gesture that started the lock.
-            if (performance.now() - followRef.current.startedAt < RELEASE_GRACE_MS) return
+            if (!force && performance.now() - followRef.current.startedAt < RELEASE_GRACE_MS) return
             followRef.current = null
+            hint.style.display = "none"
+            giveCamera()
             if (ssc) ssc.enableZoom = zoomWasEnabled
             if (!viewer.isDestroyed?.()) {
                 // Release the reference frame, or every later camera move
@@ -90,9 +120,13 @@ export default function GlobeFollowLayer({ enabled = true }) {
             const entity = picked?.id
             const id = entity && String(entity.id || "")
             if (!id || !FOLLOWABLE.test(id)) return
-            if (ssc) ssc.enableZoom = false
+            takeCamera()
+            const label = (entity.label?.text?.getValue?.(viewer.clock.currentTime) || entity.name || id.replace(/^(adsb|ais)-/, "")).trim()
+            showHint(label || "contact")
             followRef.current = {
                 id,
+                pitch: CesiumMath.toRadians(PITCH_DEG),
+                orbiting: true,
                 range: id.startsWith("adsb-") ? AIRCRAFT_RANGE_M : VESSEL_RANGE_M,
                 heading: viewer.camera.heading,
                 last: performance.now(),
@@ -107,7 +141,7 @@ export default function GlobeFollowLayer({ enabled = true }) {
         // instincts — scroll to zoom out, drag to look elsewhere — did
         // nothing at all and the camera appeared stuck. Wheel, drag and
         // pinch all mean "I want to drive now", so they all release.
-        handler.setInputAction(stop, ScreenSpaceEventType.RIGHT_CLICK)
+        handler.setInputAction(() => stop(), ScreenSpaceEventType.RIGHT_CLICK)
 
         // THE WHEEL ZOOMS THE CONTACT, IT DOES NOT FLEE IT. Scrolling
         // used to release the lock, which was right when the lock
@@ -120,7 +154,24 @@ export default function GlobeFollowLayer({ enabled = true }) {
             const f = followRef.current
             if (!f) return
             const next = nextRange(f.range, delta)
-            if (next === null) { stop(); return }   // pulled back far enough to mean "done"
+            if (next === null) {
+                // Pulled back far enough to mean "done": let go looking
+                // straight down at the contact from that height, so the
+                // map is where you left it — not the horizon, not space.
+                const ent = viewer.entities.getById(f.id)
+                const pos = ent?.position?.getValue(viewer.clock.currentTime)
+                const heading = f.heading
+                stop(true)
+                if (pos && !viewer.isDestroyed?.()) {
+                    const c = Cartographic.fromCartesian(pos)
+                    viewer.camera.setView({
+                        destination: Cartesian3.fromRadians(c.longitude, c.latitude, f.range * 1.15),
+                        orientation: { heading, pitch: CesiumMath.toRadians(-90), roll: 0 },
+                    })
+                    scene.requestRender?.()
+                }
+                return
+            }
             f.range = next
             // The ease targets this too, or an early scroll is undone by
             // the lock-on animation still running.
@@ -128,9 +179,34 @@ export default function GlobeFollowLayer({ enabled = true }) {
             f.startedAt = 0
             scene.requestRender?.()
         }, ScreenSpaceEventType.WHEEL)
-        handler.setInputAction(stop, ScreenSpaceEventType.LEFT_DOWN)
-        handler.setInputAction(stop, ScreenSpaceEventType.MIDDLE_DOWN)
-        handler.setInputAction(stop, ScreenSpaceEventType.PINCH_START)
+        // LEFT-DRAG LOOKS AROUND THE CONTACT; a left click without a drag
+        // leaves. Dragging used to release the lock, so the obvious way to
+        // see the other side of a ship ended the follow.
+        let drag = null
+        handler.setInputAction((e) => {
+            if (!followRef.current) return
+            drag = { x: e.position.x, y: e.position.y, moved: false }
+        }, ScreenSpaceEventType.LEFT_DOWN)
+        handler.setInputAction((m) => {
+            const f = followRef.current
+            if (!f || !drag) return
+            const dx = m.endPosition.x - m.startPosition.x, dy = m.endPosition.y - m.startPosition.y
+            if (Math.abs(m.endPosition.x - drag.x) + Math.abs(m.endPosition.y - drag.y) > 4) drag.moved = true
+            f.orbiting = false                              // the user is driving: no auto-orbit
+            f.heading -= dx * 0.006
+            f.pitch = Math.max(CesiumMath.toRadians(-88), Math.min(CesiumMath.toRadians(-4), f.pitch - dy * 0.005))
+            scene.requestRender?.()
+        }, ScreenSpaceEventType.MOUSE_MOVE)
+        handler.setInputAction(() => {
+            const wasClick = drag && !drag.moved
+            drag = null
+            if (wasClick) stop()
+        }, ScreenSpaceEventType.LEFT_UP)
+        // PANNING AWAY LEAVES: right- or middle-drag and a two-finger pan
+        // release the lock and hand the camera back mid-gesture.
+        handler.setInputAction(() => stop(true), ScreenSpaceEventType.RIGHT_DOWN)
+        handler.setInputAction(() => stop(true), ScreenSpaceEventType.MIDDLE_DOWN)
+        handler.setInputAction(() => stop(true), ScreenSpaceEventType.PINCH_START)
 
         const follow = () => {
             const f = followRef.current
@@ -151,25 +227,24 @@ export default function GlobeFollowLayer({ enabled = true }) {
                 // A contact can be missing for a refresh without being
                 // gone. Coast briefly rather than dropping the lock.
                 if (!f.lostAt) f.lostAt = now
-                if (now - f.lostAt > LOST_GRACE_MS) stop()
+                if (now - f.lostAt > LOST_GRACE_MS) stop(true)
                 return
             }
             f.lostAt = 0
 
-            f.heading += ORBIT_RAD_PER_SEC * dt
+            if (f.orbiting) f.heading += ORBIT_RAD_PER_SEC * dt
 
             // Ease the range over the first second and a half.
             const t = Math.min(1, (now - f.startedAt) / 1500)
             const eased = t * t * (3 - 2 * t)
             const range = f.fromRange + (f.range - f.fromRange) * eased
 
-            viewer.camera.lookAt(pos, new HeadingPitchRange(
-                f.heading, CesiumMath.toRadians(PITCH_DEG), range))
+            viewer.camera.lookAt(pos, new HeadingPitchRange(f.heading, pitchForRange(f.pitch, range), range))
             scene.requestRender?.()
         }
         scene.postUpdate.addEventListener(follow)
 
-        const onKey = (e) => { if (e.key === "Escape") stop() }
+        const onKey = (e) => { if (e.key === "Escape") stop(true) }
         window.addEventListener("keydown", onKey)
 
         return () => {
@@ -182,7 +257,9 @@ export default function GlobeFollowLayer({ enabled = true }) {
             // Or unmounting while locked leaves the globe permanently
             // unzoomable, which is a far worse bug than the one this
             // whole block exists to fix.
+            if (!viewer.isDestroyed?.()) giveCamera()
             if (ssc && !viewer.isDestroyed?.()) ssc.enableZoom = zoomWasEnabled
+            hint.remove()
             followRef.current = null
         }
     }, [ctx?.viewer, ctx?.scene, enabled])

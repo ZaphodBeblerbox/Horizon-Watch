@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from "react"
 import { usablePoints, vertexHeight } from "./trackPoints.js"
 import { Entity } from "resium"
-import { Cartesian3, Color, PolylineDashMaterialProperty, ColorMaterialProperty } from "cesium"
+import { Cartesian3, Color, PolylineDashMaterialProperty, ColorMaterialProperty, CallbackProperty } from "cesium"
+import { liveAt } from "./smoothMotion.js"
 import API_BASE from "../apiBase.js"
 
 // GlobeTrackLayer — real recent-position-history trails for AIS vessels and
@@ -76,6 +77,39 @@ function usePositionHistory(enabled, path, keys) {
 
 const AIS_TRACK_COLOR  = Color.fromCssColorString("#5AC8FA").withAlpha(0.55)
 const ADSB_TRACK_COLOR = Color.fromCssColorString("#FF9F0A").withAlpha(0.5)
+// Made once: a new material each render made Resium swap the property and
+// Cesium rebuild the line.
+const AIS_MATERIAL = new ColorMaterialProperty(AIS_TRACK_COLOR)
+const ADSB_MATERIAL = new PolylineDashMaterialProperty({ color: ADSB_TRACK_COLOR, dashLength: 12 })
+
+/** Metres between two lon/lat points, roughly (for "is the head near the trail"). */
+const near = (a, b, km) => Math.abs(a.lat - b.lat) * 111 < km && Math.abs(a.lon - b.lon) * 111 * Math.cos((a.lat * Math.PI) / 180) < km
+
+/**
+ * One trail: its stored history, ending where the contact is DRAWN now.
+ *
+ * The positions are a callback, so the line is drawn synchronously each
+ * frame. A static line is rebuilt off the main thread whenever its
+ * positions change, and vanishes while that happens — the trails blinked
+ * at every poll. The history part is built once per poll; the head is the
+ * contact's smoothed live position (smoothMotion.js), so the trail and the
+ * model never part company.
+ */
+function trailCallback(kind, id, pts, heightOf) {
+    const base = pts.map((p) => Cartesian3.fromDegrees(p.lon, p.lat, heightOf(p)))
+    const last = pts[pts.length - 1]
+    let cache = null, cacheAt = 0
+    return new CallbackProperty(() => {
+        const now = Date.now()
+        if (cache && now - cacheAt < 30) return cache
+        const head = liveAt(kind, id, now)
+        cache = head && near(head, last, 60)
+            ? [...base, Cartesian3.fromDegrees(head.lon, head.lat, kind === "aircraft" ? (head.alt ?? 0) : 0)]
+            : base
+        cacheAt = now
+        return cache
+    }, false)
+}
 
 export default function GlobeTrackLayer({ aisEnabled = false, adsbEnabled = false,
                                          vessels = [], aircraft = [] }) {
@@ -91,50 +125,29 @@ export default function GlobeTrackLayer({ aisEnabled = false, adsbEnabled = fals
     const vesselTracks  = usePositionHistory(aisEnabled,  "/api/history/vessels", vesselKeys)
     const aircraftTracks = usePositionHistory(adsbEnabled, "/api/history/aircraft", aircraftKeys)
 
+    // Built when the history changes (a poll), not on every render of the
+    // map — the parent re-renders with each feed refresh.
+    const vesselLines = useMemo(() => [...vesselTracks.entries()].map(([mmsi, points]) => {
+        const pts = usablePoints(points)
+        // Vessels are at sea level: drawn at height 0 rather than clamped
+        // to the ground, which a per-frame line cannot be cheaply.
+        return pts.length >= 2 ? [mmsi, trailCallback("vessels", mmsi, pts, () => 0)] : null
+    }).filter(Boolean), [vesselTracks])
+    const aircraftLines = useMemo(() => [...aircraftTracks.entries()].map(([icao, points]) => {
+        const pts = usablePoints(points)
+        return pts.length >= 2 ? [icao, trailCallback("aircraft", icao, pts, (p) => vertexHeight(p.altitude))] : null
+    }).filter(Boolean), [aircraftTracks])
+
     return (
         <>
-            {[...vesselTracks.entries()].map(([mmsi, points]) => {
-                if (points.length < 2) return null
-                // VALIDATED FIRST. fromDegreesArray does not check its
-                // input, so one null coordinate becomes a NaN cartesian
-                // and the ground clamp below then throws inside the
-                // render loop — which stops Cesium rendering the entire
-                // globe, not just this track.
-                const pts = usablePoints(points)
-                if (pts.length < 2) return null
-                const positions = Cartesian3.fromDegreesArray(pts.flatMap(p => [p.lon, p.lat]))
-                return (
-                    <Entity
-                        key={`track-ais-${mmsi}`}
-                        id={`track-ais-${mmsi}`}
-                        polyline={{
-                            positions,
-                            width: 2,
-                            material: new ColorMaterialProperty(AIS_TRACK_COLOR),
-                            clampToGround: true,
-                        }}
-                    />
-                )
-            })}
-            {[...aircraftTracks.entries()].map(([icao, points]) => {
-                if (points.length < 2) return null
-                const pts = usablePoints(points)
-                if (pts.length < 2) return null
-                const positions = Cartesian3.fromDegreesArrayHeights(
-                    pts.flatMap(p => [p.lon, p.lat, vertexHeight(p.altitude)]),
-                )
-                return (
-                    <Entity
-                        key={`track-adsb-${icao}`}
-                        id={`track-adsb-${icao}`}
-                        polyline={{
-                            positions,
-                            width: 2,
-                            material: new PolylineDashMaterialProperty({ color: ADSB_TRACK_COLOR, dashLength: 12 }),
-                        }}
-                    />
-                )
-            })}
+            {vesselLines.map(([mmsi, positions]) => (
+                <Entity key={`track-ais-${mmsi}`} id={`track-ais-${mmsi}`}
+                        polyline={{ positions, width: 2, material: AIS_MATERIAL }} />
+            ))}
+            {aircraftLines.map(([icao, positions]) => (
+                <Entity key={`track-adsb-${icao}`} id={`track-adsb-${icao}`}
+                        polyline={{ positions, width: 2, material: ADSB_MATERIAL }} />
+            ))}
         </>
     )
 }
