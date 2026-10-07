@@ -34,7 +34,7 @@ export const STEPS = [
     {
         where: "Home",
         title: "The day, in one page",
-        body: "Home leads with the newest footage from the ground, then what happened while you were away, what may happen next, and how yesterday's forecasts turned out — all for the places you watch.",
+        body: "Home is built on what is yours: it opens with what is most urgent for you — signals near your assets, then the most severe in your theaters — refreshed every 30 seconds. Below: footage from the ground, what happened while you were away, what may happen next, and how yesterday's forecasts turned out.",
         target: '[data-tour="brief"]',
         go: () => nav("home"),
     },
@@ -48,7 +48,7 @@ export const STEPS = [
     {
         where: "Everywhere",
         title: "Theaters are the places you watch",
-        body: "Each tab is a theater: a place, and the layers that matter there. + makes a new one. The number on a tab is how many signals it holds right now.",
+        body: "Each tab is a theater: a place, and the layers that matter there. You start with none — + makes your first: frame the region on the map and choose its layers. Your theaters are yours alone; Home and your notifications follow them. The number on a tab is how many signals it holds right now.",
         target: '[data-tour="tabs"]',
     },
     {
@@ -94,6 +94,20 @@ export const STEPS = [
         go: () => nav("imagery"),
     },
     {
+        where: "Assets",
+        title: "What you protect",
+        body: "Register your sites, vessels, aircraft, vehicles and people — an address is enough, or a ship's MMSI or an aircraft's ICAO code, and moving assets are followed live. For each one Parallax ranks what happens within its radius and can reach that kind of asset — a protest outside a substation counts, a tanker at sea does not — and writes how it affects you, what could come next and what to do, with the signals it rests on. Something new near an asset rings the bell.",
+        target: '[data-screen-label="Assets"]',
+        go: () => nav("assets"),
+    },
+    {
+        where: "Desk",
+        title: "What your team has seen",
+        body: "The Desk is your team's feed. Post what you see — with a signal, a briefing, Telegram footage, a photo or file, a place or one of your assets attached. A tick says you have seen a post, comments discuss it; filter by theater, by person or by what needs an answer. “Share to the desk” in the inspector, the reader and on an asset page posts straight from there.",
+        target: '[data-testid="view-root-desk"]',
+        go: () => nav("desk"),
+    },
+    {
         where: "Inbox",
         title: "Everything, as a list",
         body: "Every signal that reached you, newest first: filter it, read it, file it into a case, or add it to a briefing. Footage plays inline.",
@@ -114,6 +128,13 @@ export const STEPS = [
         target: '[data-tour="alerts"]',
         go: () => { nav("home"); setTimeout(() => openOverlay("overlay:tray"), 300) },
         leave: () => closeOverlay("overlay:tray"),
+    },
+    {
+        where: "Profile",
+        title: "Your profile",
+        body: "The round button at the foot of the rail is you: your name, title and company, a picture and a header (drag either to frame it), your time zone and a short bio — what your team sees on your posts and in Messages. Administrators find the account administration here too.",
+        target: '[data-screen-label="Profile"]',
+        go: () => nav("profile"),
     },
     {
         where: "The rail",
