@@ -1,121 +1,84 @@
-import { useState, lazy, Suspense, Component } from "react"
-import "../styles/mobileShell.css"
-import AlertsTab from "./tabs/AlertsTab.jsx"
-import BriefTab from "./tabs/BriefTab.jsx"
-import NoteTab from "./tabs/NoteTab.jsx"
-import FootageTab from "./tabs/FootageTab.jsx"
-
-// MapTab now renders the real Cesium globe (src/components/GlobeView.jsx) —
-// still lazy so its real weight (Cesium, terrain, live tracks) only loads
-// once the analyst actually opens Map, exactly like every other Cesium-
-// bearing destination in the desktop console already does implicitly by
-// living behind its own tab.
-const MapTab = lazy(() => import("./tabs/MapTab.jsx"))
-
-const TABS = [
-    { id: "alerts", label: "Alerts", icon: "◆" },
-    { id: "footage", label: "Footage", icon: "▶" },
-    { id: "brief",  label: "Brief",  icon: "▤" },
-    { id: "map",    label: "Map",    icon: "⬡" },
-    { id: "note",   label: "Note",   icon: "◈" },
-]
-
 /**
- * The real phone-mode shell — rendered by app.jsx in place of the desktop
- * console below the phone breakpoint (see app.jsx's `phoneMode` state),
- * never a second standalone page. `initialBriefingReportId` carries the
- * desktop's own currently-open briefing across the mode switch (the one
- * concrete "don't lose what the analyst was looking at" case the
- * correction prompt names) — Brief opens to that same real document
- * instead of defaulting to "most recent" when one was already open.
+ * MobileApp.jsx — Parallax on the phone (v1.1, the owner, 2026-10-07).
+ *
+ * Five places at the bottom: Home (built on the user's theaters and assets,
+ * turning three times a day), the Map (a light 2-D map with its own
+ * theaters, filters and layers), the Desk (the team's feed, posting from the
+ * field), Messages, and More — the quick menu for Assets, Alerts, Reports,
+ * Footage and the Profile. The bell at the top counts what is for the user.
+ *
+ * Rendered by app.jsx in place of the desktop console below the phone
+ * breakpoint; same session, same data, same rules for "yours".
  */
-export default function MobileApp({ initialBriefingReportId }) {
-    const [tab, setTab] = useState("alerts")
-    // Real state (not a picker-local list) carrying a reference from
-    // anywhere in the app into the Note tab — the exact fix for the
-    // reference-picker data-loss bug: a moderate-severity signal reached
-    // via a Brief reference must still be attached when the analyst jumps
-    // to Note, never silently dropped to "None".
-    const [pendingNoteRef, setPendingNoteRef] = useState(null)
+import { useState } from "react"
+import "./m2.css"
+import PlxIcons from "../plx6/PlxIcons.jsx"
+import MHome from "./screens/MHome.jsx"
+import MMap from "./screens/MMap.jsx"
+import MDesk from "./screens/MDesk.jsx"
+import MMessages from "./screens/MMessages.jsx"
+import { MAssets, MAlerts, MReports, MProfile } from "./screens/MMore.jsx"
+import FootageTab from "./tabs/FootageTab.jsx"
+import { Icon, Sheet } from "./screens/common.jsx"
+import { usePoll, arr } from "./useMine.js"
 
-    function openNoteWithReference(ref) {
-        setPendingNoteRef(ref)
-        setTab("note")
-    }
+const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
+const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["reports", "Reports", "g-report"], ["footage", "Footage", "g-play"], ["profile", "Profile", "g-user"]]
+const TITLES = { home: null, map: "Map", desk: "Desk", messages: "Messages", assets: "Assets", alerts: "Alerts", reports: "Situation reports", footage: "Footage", profile: "Profile" }
 
-    // Real "show on map" — the exact same akili:fly-to event GlobeView
-    // already listens for (the desktop console's own real mechanism, per
-    // src/components/GlobeView.jsx), not a mobile-only parallel event. The
-    // globe stays mounted (display:none) behind every other tab, so the fly
-    // happens immediately; switching tabs just lets the analyst see it.
-    function showOnMap(lat, lon) {
-        if (lat == null || lon == null) return
-        setTab("map")
-        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat, lon, altitude: 60000 } }))
-    }
-
+export default function MobileApp() {
+    const [tab, setTab] = useState("home")
+    const [menu, setMenu] = useState(false)
+    const [focus, setFocus] = useState(null)
+    const [assetOpen, setAssetOpen] = useState(null)
+    const notes = usePoll("/api/notifications?limit=60", 60_000, (d) => arr(d?.items ?? d))
+    const unread = usePoll("/api/chat/unread", 30_000, (d) => d?.unread ?? 0)
+    const go = (t, opts) => { setMenu(false); if (opts?.asset) setAssetOpen(opts.asset); setTab(t) }
+    const showOnMap = (s) => { if (!s || !Number.isFinite(+s.lat)) return; setFocus({ ...s, _t: Date.now() }); setTab("map") }
+    const inMore = MORE.some(([k]) => k === tab)
     return (
-        <div className={`phone-shell m-body${tab === "map" ? " map-active" : ""}`}>
-            <div />
-            <div className="m-header">Parallax</div>
-
-            {/* No inline `position` here — an inline style always wins over
-                the stylesheet, which would silently defeat mobileShell.css's
-                `.phone-shell.map-active .m-map-content { position: absolute }`
-                full-bleed rule (confirmed live: this was exactly why the
-                globe's canvas rendered at zero height the first time). */}
-            <div className="m-map-content" style={{ minHeight: 0, overflow: "hidden" }}>
-                <TabPanel active={tab === "alerts"}><AlertsTab onOpenNoteWithReference={openNoteWithReference} onShowOnMap={showOnMap} /></TabPanel>
-                <TabPanel active={tab === "footage"}><FootageTab onShowOnMap={showOnMap} /></TabPanel>
-                <TabPanel active={tab === "brief"}><BriefTab onOpenNoteWithReference={openNoteWithReference} initialReportId={initialBriefingReportId} /></TabPanel>
-                <TabPanel active={tab === "map"}>
-                    <MapErrorBoundary>
-                        <Suspense fallback={<Loading />}>
-                            <MapTab active={tab === "map"} />
-                        </Suspense>
-                    </MapErrorBoundary>
-                </TabPanel>
-                <TabPanel active={tab === "note"}>
-                    <NoteTab pendingReference={pendingNoteRef} onReferenceConsumed={() => setPendingNoteRef(null)} />
-                </TabPanel>
-            </div>
-
-            <div className="m-tabbar">
-                {TABS.map((t) => (
-                    <button key={t.id} className="m-tab-btn m-tap" aria-current={tab === t.id} onClick={() => setTab(t.id)}>
-                        <span style={{ fontSize: 18 }}>{t.icon}</span>
-                        <span>{t.label}</span>
+        <div className="m2" data-screen-label="Phone">
+            <PlxIcons />
+            <header className="m2-top">
+                {TITLES[tab] ? <span className="m2-title">{TITLES[tab]}</span> : <span className="m2-brand" style={{ flex: 1 }}>PARALLAX</span>}
+                <button className="m2-iconbtn" aria-label="Alerts" onClick={() => go("alerts")}>
+                    <Icon id="g-bell" />{arr(notes).length > 0 && <span className="m2-badge">{Math.min(99, arr(notes).length)}</span>}
+                </button>
+            </header>
+            <main className="m2-body">
+                {/* Every screen stays mounted (the map keeps its place; a thread keeps its scroll); only one shows. */}
+                <Pane on={tab === "home"}><MHome onShowOnMap={showOnMap} onOpen={go} /></Pane>
+                <Pane on={tab === "map"}><MMap active={tab === "map"} focus={focus} /></Pane>
+                <Pane on={tab === "desk"}><MDesk active={tab === "desk"} /></Pane>
+                <Pane on={tab === "messages"}><MMessages active={tab === "messages"} /></Pane>
+                {tab === "assets" && <Pane on><MAssets onShowOnMap={showOnMap} initial={assetOpen} /></Pane>}
+                {tab === "alerts" && <Pane on><MAlerts onShowOnMap={showOnMap} onOpen={go} /></Pane>}
+                {tab === "reports" && <Pane on><MReports /></Pane>}
+                {tab === "footage" && <Pane on><div className="m2-scroll" style={{ padding: 0 }}><FootageTab onShowOnMap={(lat, lon) => showOnMap({ lat, lon })} /></div></Pane>}
+                {tab === "profile" && <Pane on><MProfile /></Pane>}
+            </main>
+            <nav className="m2-nav">
+                {NAV.map(([k, label, icon]) => (
+                    <button key={k} aria-current={k === "more" ? (menu || inMore) : tab === k} onClick={() => (k === "more" ? setMenu(true) : go(k))}>
+                        <Icon id={icon} size={22} />
+                        <span>{label}</span>
+                        {k === "messages" && unread > 0 && <span className="m2-badge" style={{ top: 4, right: "calc(50% - 22px)" }}>{unread}</span>}
                     </button>
                 ))}
-            </div>
+            </nav>
+            {menu && (
+                <Sheet onClose={() => setMenu(false)}>
+                    <div className="m2-menu">
+                        {MORE.map(([k, label, icon]) => (
+                            <button key={k} onClick={() => go(k)}><Icon id={icon} size={22} /><span>{label}</span></button>
+                        ))}
+                    </div>
+                </Sheet>
+            )}
         </div>
     )
 }
 
-function TabPanel({ active, children }) {
-    return <div style={{ display: active ? "flex" : "none", flexDirection: "column", height: "100%", minHeight: 0 }}>{children}</div>
-}
-
-function Loading() {
-    return <div style={{ padding: 20, color: "var(--txt-3)", fontSize: 13 }}>Loading map…</div>
-}
-
-// Real offline degradation: a genuinely failed dynamic import of the Map
-// tab's own chunk (a real possible failure on a bad connection) throws past
-// Suspense and needs a real error boundary, or it would take the whole
-// phone shell down instead of leaving Alerts/Brief/Note working.
-class MapErrorBoundary extends Component {
-    constructor(props) { super(props); this.state = { failed: false } }
-    static getDerivedStateFromError() { return { failed: true } }
-    componentDidCatch(err) { console.error("[phone map] chunk load failed:", err) }
-    render() {
-        if (this.state.failed) {
-            return (
-                <div style={{ padding: 20, color: "var(--txt-3)", fontSize: 14, lineHeight: 1.5 }}>
-                    Map unavailable offline. Alerts, Brief and Note still work.
-                </div>
-            )
-        }
-        return this.props.children
-    }
+function Pane({ on, children }) {
+    return <div style={{ position: "absolute", inset: 0, display: on ? "block" : "none" }}>{children}</div>
 }

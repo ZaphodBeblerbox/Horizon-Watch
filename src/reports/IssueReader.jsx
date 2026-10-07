@@ -184,7 +184,8 @@ export function IssueView({ doc, ev, toc = [], refId = null, setRef = () => {}, 
     const go = (id) => document.getElementById(`issue-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
 
     return <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
-        <nav style={{ width: 230, flex: "none", borderRight: "1px solid var(--gline)", overflow: "auto", padding: "14px 10px" }}>
+        <nav style={{ width: 230, flex: "none", borderRight: "1px solid var(--gline)", overflow: "auto", padding: "14px 10px",
+                      display: typeof window !== "undefined" && window.innerWidth < 760 ? "none" : undefined }}>
             {onClose && <button onClick={onClose} style={{ border: 0, background: "transparent", color: "var(--acchi)", cursor: "pointer", font: "inherit", padding: "0 6px 10px" }}>‹ All reports</button>}
             <div style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".12em", color: "var(--txt4)", padding: "0 6px 6px" }}>{(L.contents || "").toUpperCase()}</div>
             {toc.map(([id, t]) => <button key={id} onClick={() => go(id)} style={{
@@ -193,7 +194,10 @@ export function IssueView({ doc, ev, toc = [], refId = null, setRef = () => {}, 
             }}>{t}</button>)}
         </nav>
         <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-            <article style={{ maxWidth: 780, margin: "0 auto", padding: "26px 28px 80px" }}>
+            {onClose && typeof window !== "undefined" && window.innerWidth < 760 && (
+                <button onClick={onClose} style={{ border: 0, background: "transparent", color: "var(--acchi)", cursor: "pointer", font: "inherit", padding: "12px 16px 0" }}>‹ All reports</button>
+            )}
+            <article style={{ maxWidth: 780, margin: "0 auto", padding: typeof window !== "undefined" && window.innerWidth < 760 ? "14px 16px 60px" : "26px 28px 80px" }}>
                 <div style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, letterSpacing: ".12em", color: "var(--txt4)" }}>
                     PARALLAX · {(L[m.cadence] || "").toUpperCase()} · {m.serial}</div>
                 <h1 style={{ ...H1, fontSize: 30, margin: "8px 0 6px" }}>{m.title}</h1>
