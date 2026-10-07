@@ -28,6 +28,8 @@ on:
 
 jobs:
   dmg:
+    permissions:
+      contents: write          # to publish the update release on this repo
     runs-on: macos-14          # Apple silicon
     timeout-minutes: 45
 
@@ -71,9 +73,48 @@ jobs:
         # all. It builds locally because this machine's default heap is
         # larger, which is exactly the kind of difference that only shows
         # up in CI.
+        #
+        # SIGNED FOR AUTO-UPDATE. With the private key in the environment
+        # the app bundle also yields Parallax.app.tar.gz and its .sig — the
+        # update installed copies download and verify against the public key
+        # in tauri.conf.json. Without them nothing installed ever updates
+        # (1.0.9 to 1.1.1 reached nobody that way).
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-        run: npx tauri build --bundles dmg
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: npx tauri build --bundles app,dmg
+
+      # Installed copies look for updates at
+      # Horizon-Watch/releases/latest/download/latest.json (tauri.conf.json
+      # plugins.updater.endpoints), so the signed update is published THERE,
+      # as the latest release, with the latest.json that points at it.
+      - name: Publish the update for installed copies
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          B=src-tauri/target/release/bundle
+          TGZ="$B/macos/Parallax.app.tar.gz"
+          test -f "$TGZ" && test -f "$TGZ.sig" || { echo "no signed update bundle"; exit 1; }
+          python3 - "$VERSION" "$TGZ.sig" <<'PY'
+          import json, sys, datetime
+          v, sig = sys.argv[1], open(sys.argv[2]).read().strip()
+          j = {"version": v, "notes": f"Parallax {v}",
+               "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "platforms": {"darwin-aarch64": {"signature": sig,
+                   "url": f"https://github.com/ZaphodBeblerbox/Horizon-Watch/releases/download/v{v}/Parallax.app.tar.gz"}}}
+          open("latest.json", "w").write(json.dumps(j, indent=2))
+          PY
+          DMG=$(find src-tauri/target -name "*.dmg" -print -quit)
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" latest.json "$TGZ" "$TGZ.sig" "$DMG" --clobber
+          else
+            gh release create "$TAG" latest.json "$TGZ" "$TGZ.sig" "$DMG" \
+              --title "Parallax $VERSION" --latest \
+              --notes "Installed copies update from here. New installs: download the .dmg."
+          fi
 
       - name: Find the DMG
         id: find
