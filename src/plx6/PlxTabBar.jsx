@@ -154,10 +154,19 @@ export default function PlxTabBar({
                         </div>
                     )
                 })}
+                {/* A new account starts with no theaters: it chooses its own. */}
+                {tabs.length === 0 && (
+                    <button onClick={onAddTab} data-tour="first-theater" style={{
+                        display: "flex", alignItems: "center", gap: 8, padding: "0 14px", border: 0,
+                        background: "var(--accdim)", color: "var(--txt)", font: "inherit", fontSize: 13,
+                        cursor: "pointer", whiteSpace: "nowrap", borderRadius: 0,
+                    }}><PlxIcon href="#g-plus" size={13} />Create your first theater — the region you watch</button>
+                )}
                 <button
                     onClick={onAddTab} title="New theater"
                     style={{
-                        width: 34, flex: "none", display: "flex", alignItems: "center",
+                        display: tabs.length === 0 ? "none" : "flex",
+                        width: 34, flex: "none", alignItems: "center",
                         justifyContent: "center", border: 0, background: OFF,
                         color: "var(--txt3)", cursor: "pointer",
                     }}

@@ -128,8 +128,28 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => { if (d) setSurface(safeArray(d?.items ?? d)) })
             .catch(() => {})
-        const t = setInterval(load, 60_000)
+        // every 30 s: Home leads with what is urgent for this user right now
+        const t = setInterval(load, 30_000)
         return () => clearInterval(t)
+    }, [])
+
+    /* THE USER'S ASSET ALERTS (asset_watch.py): signals within an asset's
+       radius that can reach that kind of asset — personal, rebuilt by the
+       server every few minutes, read here every 30 s. */
+    const [assetCards, setAssetCards] = useState([])
+    useEffect(() => {
+        let live = true
+        const load = () => fetch(`${API_BASE}/api/notifications?limit=40`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                if (!live || !d) return
+                const items = safeArray(d?.items ?? d?.notifications ?? d)
+                setAssetCards(items.filter((n) => n.kind === "asset"))
+            })
+            .catch(() => {})
+        load()
+        const t = setInterval(load, 30_000)
+        return () => { live = false; clearInterval(t) }
     }, [])
     // The clock the page reads: the greeting (morning / afternoon / evening
     // brief) and every "x min ago" move on by themselves.
@@ -197,6 +217,43 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     useEffect(() => subscribeSettings((st) => setInterests(st?.interests || null)), [])
     const w = useMemo(() => watched(interests || {}, userTheaters, countryPlaces, myAssets || []), [interests, userTheaters, countryPlaces, myAssets])
     const split = useMemo(() => partition(surface, w), [surface, w])
+
+    /* MOST URGENT FOR YOU. What this user's theaters and assets make
+       theirs (the owner, 2026-10-07: Home is built on the user's interests —
+       their theaters and their assets): signals near their assets first,
+       then the most severe signals in their theaters' countries and their
+       chosen interests, newest first within a severity. Nothing from
+       elsewhere: with no theaters or assets it says how to get a list. */
+    const urgent = useMemo(() => {
+        const SEV = { critical: 0, high: 1, elevated: 1, moderate: 2, medium: 2, low: 3 }
+        const fromAssets = assetCards.map((n) => ({
+            key: n.id, title: n.title, sev: n.sev, when: n.created_at, why: n.reason,
+            assetId: n.asset_id, lat: n.lat, lon: n.lon, kind: "asset",
+        }))
+        const fromTheaters = split.mine.map((m) => ({
+            key: `s:${m.id ?? m.headline}`, title: m.title || m.headline, sev: m.severity_tier,
+            when: m.published_at, why: m.location || m.place || "", item: m, kind: "signal",
+        }))
+        const seen = new Set()
+        return [...fromAssets, ...fromTheaters]
+            .filter((x) => x.title && !seen.has(x.title) && seen.add(x.title))
+            .sort((a, b) => (a.kind === "asset" ? 0 : 1) - (b.kind === "asset" ? 0 : 1)
+                || (SEV[a.sev] ?? 9) - (SEV[b.sev] ?? 9)
+                || String(b.when || "").localeCompare(String(a.when || "")))
+            .slice(0, 6)
+    }, [assetCards, split])
+    const openUrgent = (u) => {
+        if (u.assetId) {
+            window.__plxAssetSel = u.assetId
+            window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "assets" } }))
+            setTimeout(() => window.dispatchEvent(new CustomEvent("akili:open-asset", { detail: { id: u.assetId } })), 200)
+            return
+        }
+        const it = u.item || {}
+        if (it.lat != null) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: it.lat, lon: it.lon, altitude: 250000 } }))
+        window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: it.source_type || "signal", entityId: it.id, data: it } }))
+    }
+    const hasOwn = (userTheaters || []).length > 0 || (myAssets || []).length > 0 || split.hasInterests
 
     /* FROM THE GROUND. The one Telegram video worth playing at launch: a
        first-hand or official report with footage from the last 12 hours,
@@ -461,6 +518,42 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                             }}>⌘K</span>
                         </button>
                     </header>
+
+                    {/* ── Most urgent for you ───────────────────────────── */}
+                    <div data-screen-label="Most urgent" style={{
+                        border: "1px solid var(--gline)", background: "var(--glass2)", padding: "14px 18px",
+                    }}>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
+                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }}>Most urgent for you</span>
+                            <span style={{ fontSize: 11.5, color: "var(--txt4)" }}>your theaters and assets · live, every 30 s</span>
+                        </div>
+                        {!hasOwn ? (
+                            <div style={{ fontSize: 13.5, color: "var(--txt2)", lineHeight: 1.5 }}>
+                                Nothing is yours yet. Create a theater (the + in the strip above) or register an asset under Assets,
+                                and the signals that concern them appear here first.
+                            </div>
+                        ) : urgent.length === 0 ? (
+                            <div style={{ fontSize: 13.5, color: "var(--txt3)" }}>Nothing urgent in your theaters or near your assets right now.</div>
+                        ) : (
+                            <div style={{ display: "flex", flexDirection: "column" }}>
+                                {urgent.map((u) => (
+                                    <button key={u.key} onClick={() => openUrgent(u)} style={{
+                                        display: "grid", gridTemplateColumns: "10px 1fr auto", gap: 10, alignItems: "baseline", textAlign: "left",
+                                        padding: "8px 0", border: 0, borderTop: "1px solid var(--gline)", background: "transparent",
+                                        color: "var(--txt)", font: "inherit", cursor: "pointer", minWidth: 0,
+                                    }}>
+                                        <span style={{ width: 8, height: 8, borderRadius: 4, alignSelf: "center",
+                                            background: u.sev === "critical" ? "var(--red)" : (u.sev === "high" || u.sev === "elevated") ? "var(--amber)" : "var(--txt4)" }} />
+                                        <span style={{ minWidth: 0 }}>
+                                            <span style={{ fontSize: 14, fontWeight: 550, display: "block", overflowWrap: "anywhere" }}>{u.title}</span>
+                                            {u.why && <span style={{ fontSize: 12, color: "var(--txt3)", display: "block", overflowWrap: "anywhere" }}>{u.why}</span>}
+                                        </span>
+                                        <span style={{ fontSize: 11.5, color: "var(--txt4)", whiteSpace: "nowrap" }}>{u.when ? whenLabel(u.when) : ""}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
 
                     {groundVideo && (
                         <div data-screen-label="From the ground" style={{

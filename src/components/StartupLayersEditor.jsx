@@ -21,10 +21,12 @@ import { STARTUP_GROUPS } from "./layerRailConfig.js"
 import { getStartupLayers, saveStartupLayers, clearStartupLayers } from "../state/useChrome.js"
 
 const EMPTY = { groups: {}, context: {}, infra: {}, tracks: {} }
+// a first login's clean sheet ({clean: true}) is everything off
+const norm = (s) => (s && s.clean ? EMPTY : s)
 
 export default function StartupLayersEditor() {
-    const [saved, setSaved] = useState(() => getStartupLayers())
-    const [draft, setDraft] = useState(() => getStartupLayers() || EMPTY)
+    const [saved, setSaved] = useState(() => norm(getStartupLayers()))
+    const [draft, setDraft] = useState(() => norm(getStartupLayers()) || EMPTY)
     const [state, setState] = useState("idle")   // idle | saving | saved | error
     const [err, setErr] = useState(null)
 
@@ -32,7 +34,7 @@ export default function StartupLayersEditor() {
     // single read on mount usually sees nothing.
     useEffect(() => {
         const t = setTimeout(() => {
-            const s = getStartupLayers()
+            const s = norm(getStartupLayers())
             if (s && state === "idle") { setSaved(s); setDraft(s) }
         }, 1200)
         return () => clearTimeout(t)

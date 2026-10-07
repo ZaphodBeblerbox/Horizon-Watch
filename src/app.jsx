@@ -375,7 +375,14 @@ export default function App() {
     }, [])
     useEffect(() => {
         runAuthCheck()
-        return subscribeAuth(setAuthUser)
+        // A SIGN-IN LOADS THE USER'S OWN SETTINGS AND THEME TOO. Only the
+        // session check on page load did, so after signing in every saved
+        // preference — interests, startup layers, the walkthrough and the
+        // v1.1 welcome — stayed at the defaults until a reload.
+        return subscribeAuth((u) => {
+            setAuthUser(u)
+            if (u) { reconcileTheme(u); reconcileSettings(u) }
+        })
     }, [runAuthCheck])
     // Real sliding-expiry companion (backend/main.py's GET /api/auth/me
     // now reissues the session cookie with a fresh window on every real
@@ -649,32 +656,20 @@ export default function App() {
        and what it falls back to if the server cannot be reached. The three
        match the seeded defaults exactly, so nothing flickers into
        something different. */
-    const [theaters, setTheaters] = useState(() => ([
-        { id: "redsea", name: "Red Sea watch",  sev: "critical", n: 8,
-          view: { lat: 13.6, lon: 43.3, height: 2_400_000 },
-          layers: { groups: ["maritime", "news"],
-                    infra: ["chokepoints", "ports", "cables"],
-                    tracks: ["vessels"] } },
-        { id: "hormuz", name: "Hormuz transit", sev: "elevated", n: 7,
-          view: { lat: 26.6, lon: 56.4, height: 2_000_000 },
-          layers: { groups: ["maritime", "news"],
-                    infra: ["chokepoints", "ports"],
-                    tracks: ["vessels"] } },
-        { id: "taiwan", name: "Taiwan Strait",  sev: "steady",   n: 6,
-          view: { lat: 24.3, lon: 119.6, height: 2_600_000 },
-          layers: { groups: ["maritime", "air", "news"],
-                    infra: ["chokepoints", "ports", "airfields"],
-                    tracks: ["vessels", "aircraft"] } },
-    ]))
-    const [theaterId, setTheaterId] = useState("redsea")
+    // No placeholder strip: a new account has no theaters until it makes
+    // one (the owner, 2026-10-07), and showing three it does not own for
+    // the second before the list arrives would say otherwise.
+    const [theaters, setTheaters] = useState([])
+    const [theaterId, setTheaterId] = useState(null)
     const [editingTheater, setEditingTheater] = useState(null)   // row | "new" | null
 
     const refreshTheaters = useCallback(async (selectId) => {
         try {
             const rows = await listTheaters()
-            if (!rows?.length) return
+            if (!Array.isArray(rows)) return
             setTheaters(rows)
             setTheaterId((cur) => {
+                if (!rows.length) return null
                 if (selectId) return selectId
                 // The id the fallback used ("redsea") is not a real row id,
                 // so the first load has to re-point at a real one.
@@ -2059,11 +2054,10 @@ export default function App() {
                             // Never the last one (A2.1); if the closed tab
                             // was active, the first survivor opens.
                             const rest = theaters.filter((t) => t.id !== id)
-                            if (!rest.length) return
                             const gone = theaters.find((t) => t.id === id)
                             if (!confirm(`Remove “${gone?.name || "this theater"}” from the strip? Anything you filed while watching it stays where it is.`)) return
                             setTheaters(rest)
-                            if (theaterId === id) setTheaterId(rest[0].id)
+                            if (theaterId === id) setTheaterId(rest[0]?.id ?? null)
                             // The strip is a view of rows now, so closing a
                             // tab has to remove the row or it comes back on
                             // the next load.
@@ -2567,7 +2561,7 @@ export default function App() {
                 {editingTheater && (
                     <TheaterEditor
                         theater={editingTheater === "new" ? null : editingTheater}
-                        canDelete={theaters.length > 1}
+                        canDelete={theaters.length >= 1}
                         readView={() => {
                             const v = window.__akiliCamera
                             return (v && Number.isFinite(v.lat))

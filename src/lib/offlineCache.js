@@ -190,6 +190,13 @@ export function installOfflineCache({
     const patched = async (input, init = {}) => {
         const url = typeof input === "string" ? input : input?.url
         const method = init.method || (typeof input === "object" && input?.method) || "GET"
+        // Our own API always gets the sign-in cookie. Much of the data is
+        // per user now (theaters, imagery areas, assets — the owner,
+        // 2026-10-07), and a call that forgot `credentials` was answered as
+        // nobody: 401, or an empty list that looked like "you have none".
+        if (url && apiBase && url.startsWith(apiBase) && typeof input === "string" && init.credentials == null) {
+            init = { ...init, credentials: "include" }
+        }
 
         if (!isCacheable(method, url, apiBase)) return native(input, init)
 

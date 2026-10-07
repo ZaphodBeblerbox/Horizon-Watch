@@ -102,7 +102,14 @@ export const DEFAULTS = {
     //   null   — never run (show it)
     //   "done" — completed or skipped (do not show)
     tutorial: null,
+    // The release whose welcome this user has seen ("1.1"). A user who has
+    // not seen the current one gets the welcome and the walkthrough once,
+    // at their first login to it — and never again, on any device.
+    welcome: null,
 }
+
+/** The release the welcome card introduces. */
+export const RELEASE = "1.1"
 
 let _settings = { ...DEFAULTS }
 const listeners = new Set()
@@ -153,8 +160,24 @@ function applyDensity(density) {
  * truth for every real setting, same pattern as themeStore.reconcileTheme.
  * No paint-time mirror exists for most settings (only density has one),
  * so this is where their real values first become visible/effective. */
+let _fromServer = false
+/** True once this user's settings have come from the server: before that,
+ * every value is a default, and nothing shown "once" may be decided on it. */
+export function settingsFromServer() {
+    return _fromServer
+}
+
 export function reconcileSettings(user) {
+    _fromServer = !!user
     _settings = deepMerge(DEFAULTS, user?.settings || {})
+    // A FIRST EVER LOGIN IS A CLEAN SHEET (the owner, 2026-10-07): no
+    // theaters, no layers. An account that has never saved a setting has
+    // never been used; it opens on a bare map, saved as its startup set so
+    // the next session opens the same way until the user chooses otherwise.
+    if (user && (!user.settings || Object.keys(user.settings).length === 0) && _settings.startupLayers == null) {
+        _settings = { ..._settings, startupLayers: { clean: true } }
+        Promise.resolve().then(() => updateSetting("startupLayers", { clean: true })).catch(() => {})
+    }
     applyDensity(getAtPath(_settings, "general.density"))
     _publish()
 }

@@ -125,7 +125,7 @@ DATA_DIR = str(_paths.DATA_DIR)
 _socket.setdefaulttimeout(20)
 
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Request, Response, UploadFile, File, Form
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, UploadFile, File, Form
 from fastapi.responses import Response as FastAPIResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
@@ -419,6 +419,15 @@ try:
     app.include_router(_briefing_engine_router.router)
 except Exception as _be:                                      # noqa: BLE001
     print(f"[briefing] engine unavailable, situation reports are off: {type(_be).__name__}: {_be}")
+try:
+    # theaters are each user's own: the defaults once seeded into every
+    # account, untouched, are removed (routers/theaters.prune_seeded)
+    from routers import theaters as _theaters_mod
+    _pruned = _theaters_mod.prune_seeded()
+    if any(_pruned.values()):
+        print(f"[theaters] removed seeded defaults nobody chose: {_pruned}")
+except Exception as _te:                                      # noqa: BLE001
+    print(f"[theaters] could not prune seeded defaults: {_te}")
 try:
     import briefing.job as _briefing_job
     _n = _briefing_job.recover_interrupted()
@@ -22429,8 +22438,42 @@ def _detection_row_to_dict(row) -> dict:
     }
 
 
+# ── imagery areas are personal ──────────────────────────────────────────────
+# Each user's watch zones (imagery areas) and their scans are their own (the
+# owner, 2026-10-07). A zone records who drew it; one from before that has no
+# owner and belongs to the admins — the people who set the system up.
+def _zone_user(request: Request) -> dict:
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="authentication required")
+    return user
+
+
+def _zones_visible(q, user: dict):
+    from database import WatchZone
+    from sqlalchemy import or_
+    uid = str(user.get("id"))
+    if user.get("is_super_admin"):
+        return q.filter(or_(WatchZone.owner == uid, WatchZone.owner.is_(None)))
+    return q.filter(WatchZone.owner == uid)
+
+
+def _zone_guard(request: Request, system_id: str):
+    """Route dependency: the zone in the path must be the caller's."""
+    from database import WatchZone, get_db
+    user = _zone_user(request)
+    with get_db() as db:
+        z = _zones_visible(db.query(WatchZone).filter(WatchZone.system_id == system_id), user).first()
+    if not z:
+        raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+
+
+def _zone_guard_by_id(request: Request, zone_id: str):
+    _zone_guard(request, zone_id)
+
+
 @app.post("/api/watch-zones")
-def api_watch_zones_create(body: dict):
+def api_watch_zones_create(body: dict, request: Request):
     # Real root-cause fix, found live (Imagery/Situation top-bar entry
     # point round): this was a plain `def` (synchronous) endpoint, so
     # FastAPI/Starlette ran it in an AnyIO worker thread — not the real
@@ -22493,6 +22536,7 @@ def api_watch_zones_create(body: dict):
     now           = _dt_wz.datetime.utcnow()
     next_scan     = now + _dt_wz.timedelta(hours=scan_interval)
 
+    _zone_owner_id = str(_zone_user(request).get("id"))
     with get_db() as db:
         system_id = _next_zone_system_id(db)
         zone = WatchZone(
@@ -22508,6 +22552,7 @@ def api_watch_zones_create(body: dict):
             scan_interval_hours = scan_interval,
             enabled             = True,
             created_by          = body.get("created_by"),
+            owner               = _zone_owner_id,      # personal (the owner, 2026-10-07)
             created_at          = now,
             next_scan_at        = next_scan,
             ml_tasks            = _json_wz.dumps(ml_tasks),
@@ -22561,14 +22606,15 @@ def api_watch_zones_create(body: dict):
 
 
 @app.get("/api/watch-zones")
-def api_watch_zones_list():
+def api_watch_zones_list(request: Request):
     from database import WatchZone, get_db
+    user = _zone_user(request)
     with get_db() as db:
-        zones = db.query(WatchZone).order_by(WatchZone.id).all()
+        zones = _zones_visible(db.query(WatchZone), user).order_by(WatchZone.id).all()
         return [_zone_row_to_dict(z) for z in zones]
 
 
-@app.get("/api/watch-zones/{system_id}")
+@app.get("/api/watch-zones/{system_id}", dependencies=[Depends(_zone_guard)])
 def api_watch_zone_get(system_id: str):
     from database import WatchZone, get_db
     with get_db() as db:
@@ -22578,7 +22624,7 @@ def api_watch_zone_get(system_id: str):
         return _zone_row_to_dict(zone)
 
 
-@app.put("/api/watch-zones/{system_id}")
+@app.put("/api/watch-zones/{system_id}", dependencies=[Depends(_zone_guard)])
 def api_watch_zone_update(system_id: str, body: dict):
     from database import WatchZone, OntologyEntity, get_db
     import datetime as _dt_wz
@@ -22645,7 +22691,7 @@ def api_watch_zone_update(system_id: str, body: dict):
         return _zone_row_to_dict(zone)
 
 
-@app.delete("/api/watch-zones/{system_id}")
+@app.delete("/api/watch-zones/{system_id}", dependencies=[Depends(_zone_guard)])
 def api_watch_zone_delete(system_id: str):
     """Hard delete — removes zone and all associated scans/detections."""
     from database import WatchZone, SentinelScan, SentinelDetection, get_db
@@ -22662,7 +22708,7 @@ def api_watch_zone_delete(system_id: str):
         return {"deleted": system_id, "scans_purged": len(scans)}
 
 
-@app.get("/api/watch-zones/{system_id}/scans")
+@app.get("/api/watch-zones/{system_id}/scans", dependencies=[Depends(_zone_guard)])
 def api_watch_zone_scans(system_id: str):
     from database import WatchZone, SentinelScan, get_db
     with get_db() as db:
@@ -22692,7 +22738,7 @@ def api_scan_get(scan_id: str):
         return _scan_row_to_dict(scan)
 
 
-@app.get("/api/watch-zones/{system_id}/detections")
+@app.get("/api/watch-zones/{system_id}/detections", dependencies=[Depends(_zone_guard)])
 def api_watch_zone_detections(
     system_id: str,
     object_type: str = None,
@@ -22722,7 +22768,7 @@ def api_watch_zone_detections(
         return [_detection_row_to_dict(d) for d in detections]
 
 
-@app.get("/api/watch-zones/{system_id}/analytics")
+@app.get("/api/watch-zones/{system_id}/analytics", dependencies=[Depends(_zone_guard)])
 def api_watch_zone_analytics(system_id: str):
     from database import WatchZone, SentinelScan, SentinelDetection, get_db
     import datetime as _dt_wz
@@ -22936,13 +22982,14 @@ async def api_dossiers_set_alerting(entity_type: str, code: str, request: Reques
 
 
 @app.get("/api/imagery/aois")
-def api_imagery_aois(status: str = None):
+def api_imagery_aois(request: Request, status: str = None):
     """Real AOIs — WatchZone rows, optionally filtered by real status
     (active|paused|proposed). Maps onto the existing real WatchZone model
     (see backend/database.py) rather than a second parallel AOI table."""
     from database import WatchZone, get_db as _gdb_im1
+    user = _zone_user(request)
     with _gdb_im1() as db:
-        q = db.query(WatchZone)
+        q = _zones_visible(db.query(WatchZone), user)
         if status:
             q = q.filter(WatchZone.status == status)
         return [_zone_row_to_dict(z) for z in q.order_by(WatchZone.created_at.desc()).all()]
@@ -22964,7 +23011,7 @@ async def api_imagery_propose_coverage(request: Request):
         return imagery_pipeline.propose_coverage(db, country_code, created_by=body.get("created_by") or "operator")
 
 
-@app.post("/api/imagery/aois/{system_id}/accept")
+@app.post("/api/imagery/aois/{system_id}/accept", dependencies=[Depends(_zone_guard)])
 def api_imagery_accept_aoi(system_id: str):
     """Promotes a real proposed AOI to active and starts its real scan
     loop (the existing scheduler already only scans enabled=True zones —
@@ -23190,7 +23237,7 @@ def _zone_surroundings(z: dict) -> dict:
             "fires": fires, "vessels_now": vessels, "lat": lat, "lon": lon}
 
 
-@app.get("/api/imagery/zones/{system_id}/context")
+@app.get("/api/imagery/zones/{system_id}/context", dependencies=[Depends(_zone_guard)])
 def api_imagery_zone_context(system_id: str):
     """What to look for in this area given where it is (zone_context.py)."""
     import zone_context
@@ -23285,7 +23332,7 @@ def _esri_mosaic(west: float, south: float, east: float, north: float, out_w: in
     return buf.getvalue()
 
 
-@app.get("/api/imagery/zones/{system_id}/hires")
+@app.get("/api/imagery/zones/{system_id}/hires", dependencies=[Depends(_zone_guard)])
 def api_imagery_zone_hires(system_id: str):
     """The sharpest picture of the area there is: Esri World Imagery (Vantor/
     Maxar and others, typically 0.3-0.6 m), exported over the area's exact
@@ -23332,7 +23379,7 @@ def api_imagery_zone_hires(system_id: str):
             "attribution": "Esri World Imagery"}
 
 
-@app.get("/api/imagery/zones/{system_id}/dates")
+@app.get("/api/imagery/zones/{system_id}/dates", dependencies=[Depends(_zone_guard)])
 async def api_imagery_zone_dates(system_id: str, days: int = Query(365, ge=7, le=1500), max_cloud: int = Query(30, ge=0, le=100)):
     """Sentinel-2 acquisitions over the area in the last `days`, one per day,
     with cloud cover — the dates that can be compared against."""
@@ -23350,7 +23397,7 @@ async def api_imagery_zone_dates(system_id: str, days: int = Query(365, ge=7, le
     return {"dates": sorted(by_day.values(), key=lambda x: x["date"], reverse=True), "error": res.get("error")}
 
 
-@app.get("/api/imagery/zones/{system_id}/sar")
+@app.get("/api/imagery/zones/{system_id}/sar", dependencies=[Depends(_zone_guard)])
 async def api_imagery_zone_sar(system_id: str, date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$")):
     """The area in radar: the Sentinel-1 pass of `date` (or the latest in 30
     days), a VV/VH false-colour image, and the ships the radar detector
@@ -23418,7 +23465,7 @@ async def api_imagery_zone_sar(system_id: str, date: str | None = Query(None, pa
             "changes": body["changes"], "dates": days, "attribution": "Copernicus Sentinel-1"}
 
 
-@app.get("/api/imagery/zones/{system_id}/on-date")
+@app.get("/api/imagery/zones/{system_id}/on-date", dependencies=[Depends(_zone_guard)])
 async def api_imagery_zone_on_date(system_id: str, date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
     """The area as Sentinel-2 saw it on one day, true colour at native
     10 m/px over the area's exact bounds — to compare a pass against any
@@ -23829,7 +23876,7 @@ def _launch_zone_scan_background(zone_dict: dict, triggered_by: str) -> None:
         _scan_executor.submit(_blocking_scan)
 
 
-@app.post("/api/watch-zones/{system_id}/scan-now")
+@app.post("/api/watch-zones/{system_id}/scan-now", dependencies=[Depends(_zone_guard)])
 def api_watch_zone_scan_now(system_id: str):
     from database import WatchZone, SentinelScan, get_db
 
@@ -23869,7 +23916,7 @@ def api_watch_zone_scan_now(system_id: str):
             "message": "Scan launched — check GET /api/watch-zones/{id}/scans for status"}
 
 
-@app.delete("/api/watch-zones/{zone_id}/scans/{scan_id}")
+@app.delete("/api/watch-zones/{zone_id}/scans/{scan_id}", dependencies=[Depends(_zone_guard_by_id)])
 def api_scan_delete(zone_id: str, scan_id: str):
     """Delete one scan and the detections that belong to it.
 
@@ -29156,6 +29203,19 @@ async def api_auth_login(request: Request, response: Response):
             raise HTTPException(
                 status_code=403,
                 detail="This account is waiting to be approved. You will be able to sign in once an administrator has reviewed it.")
+        # A FIRST EVER LOGIN IS A CLEAN SHEET (the owner, 2026-10-07): an
+        # account that has never saved a setting opens on a bare map. Saved
+        # here, with the login, so it cannot be lost to a slow first request;
+        # its startup layer set stays "everything off" until the user saves
+        # another. (Theaters: a new account has none — routers/theaters.py.)
+        try:
+            if not u.settings:
+                u.settings = {"startupLayers": {"clean": True}}
+            u.last_login = datetime.utcnow()
+            db.commit()
+        except Exception as _fl:                              # noqa: BLE001
+            db.rollback()
+            print(f"[auth] first-login settings not saved: {_fl}")
         token = _create_session_token(u.id)
         response.set_cookie(key="hw_session", value=token, max_age=JWT_SESSION_HOURS * 3600, **_cookie_kwargs(request))
         out = _user_to_dict(u)

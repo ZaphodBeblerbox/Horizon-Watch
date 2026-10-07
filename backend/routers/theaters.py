@@ -4,11 +4,10 @@ A theater is where the camera goes and what is switched on when you select
 it. They were three literals in a React useState, so there was no way to
 add one, edit one, or keep one across browsers.
 
-THE DEFAULTS ARE SEEDED, NOT HARDCODED. A new account's first read creates
-the three that used to be in the code, as real rows it then owns. After
-that they are ordinary data: rename them, move them, delete them. Seeding
-on read rather than at sign-up means accounts that already exist get them
-too, without a migration that has to guess who needs what.
+EACH USER'S OWN. A new account starts with no theaters and makes its own
+(the owner, 2026-10-07: theaters are personal unless shared). The three
+DEFAULTS were seeded into every account until then; accounts that have them
+keep them as ordinary rows to rename, move or delete.
 """
 
 import datetime
@@ -95,13 +94,10 @@ def list_theaters(request: Request):
     from database import Theater, get_db
     me = _me(request)
     with get_db() as db:
+        # NOT SEEDED any more: each user chooses their own theaters, and a
+        # new account starts with none (the owner, 2026-10-07). DEFAULTS
+        # stays as the suggestions the "new theater" form can offer.
         rows = db.query(Theater).filter(Theater.owner_user_id == me["id"]).all()
-        if not rows:
-            for i, d in enumerate(DEFAULTS):
-                db.add(Theater(owner_user_id=me["id"], name=d["name"], sev=d["sev"],
-                               view=d["view"], layers=d["layers"], sort_index=i))
-            db.commit()
-            rows = db.query(Theater).filter(Theater.owner_user_id == me["id"]).all()
         rows.sort(key=lambda t: (t.sort_index, t.created_at or datetime.datetime.min))
         return [_dict(t) for t in rows]
 
@@ -205,3 +201,40 @@ async def reorder(request: Request):
         db.commit()
         out = sorted(rows.values(), key=lambda t: t.sort_index)
         return [_dict(t) for t in out]
+
+
+def prune_seeded() -> dict:
+    """Remove the seeded defaults nobody chose (the owner, 2026-10-07: every
+    user starts with no theaters and makes their own).
+
+    Only rows still exactly as seeded — a default's name, view and layers,
+    never edited (updated within two seconds of creation) — are touched:
+    on an ordinary account they go; on an admin account (the people who set
+    the system up, who have used them) only duplicates go, from the race that
+    seeded some accounts twice. Anything a user renamed, moved or re-layered
+    is theirs and stays. Safe to run at every start: nothing seeds any more.
+    """
+    from database import Theater, User, get_db
+    removed = {"seeded": 0, "duplicates": 0}
+    defaults = {(d["name"], tuple(sorted(d["view"].items()))): d for d in DEFAULTS}
+    with get_db() as db:
+        admins = {u.id for u in db.query(User).filter(User.is_super_admin == True).all()}  # noqa: E712
+        seen = set()
+        rows = db.query(Theater).order_by(Theater.owner_user_id, Theater.created_at).all()
+        for t in rows:
+            view = tuple(sorted((t.view or {}).items()))
+            d = defaults.get((t.name, view))
+            if not d or (t.layers or {}) != d["layers"]:
+                continue
+            if t.created_at and t.updated_at and abs((t.updated_at - t.created_at).total_seconds()) > 2:
+                continue                                   # edited since: the user's own
+            if t.owner_user_id not in admins:
+                db.delete(t)
+                removed["seeded"] += 1
+            elif (t.owner_user_id, t.name) in seen:
+                db.delete(t)
+                removed["duplicates"] += 1
+            else:
+                seen.add((t.owner_user_id, t.name))
+        db.commit()
+    return removed

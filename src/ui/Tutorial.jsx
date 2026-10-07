@@ -19,7 +19,7 @@
  * The setting is tri-state: null = not seen, "done" = finished or skipped.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
-import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
+import { getSettings, subscribeSettings, updateSetting, settingsFromServer, RELEASE } from "../state/settingsStore.js"
 import { STEPS } from "./tutorialSteps.js"
 
 const PAD = 8
@@ -55,7 +55,11 @@ export function placeCard(ring, vw, vh, cardW = CARD_W, cardH = 220) {
 }
 
 export default function Tutorial() {
-    const [open, setOpen] = useState(() => getSettings()?.tutorial == null)
+    // Decided only on the user's own settings from the server — on the
+    // defaults it would greet everyone again on every new browser.
+    const due = (st) => settingsFromServer() && st?.welcome !== RELEASE
+    const [welcome, setWelcome] = useState(() => due(getSettings()))
+    const [open, setOpen] = useState(false)
     const [i, setI] = useState(0)
     const [ring, setRing] = useState(null)
     const [found, setFound] = useState(true)
@@ -69,6 +73,7 @@ export default function Tutorial() {
     // settings now and then, and "still not seen" must not jump back to step 1.
     const lastSeen = useRef(getSettings()?.tutorial ?? null)
     useEffect(() => subscribeSettings((s) => {
+        if (due(s)) setWelcome(true)
         const v = s?.tutorial ?? null
         if (v === lastSeen.current) return
         lastSeen.current = v
@@ -81,11 +86,20 @@ export default function Tutorial() {
         return () => window.removeEventListener("akili:start-tour", h)
     }, [])
 
+    // One save after the other: two PATCHes in flight at once each wrote the
+    // settings as they read them, and the later one dropped the earlier key
+    // (the welcome came back after a reload).
+    const seen = useCallback(async () => {
+        setWelcome(false)
+        if (getSettings()?.welcome !== RELEASE) await updateSetting("welcome", RELEASE)
+        if (getSettings()?.tutorial !== "done") await updateSetting("tutorial", "done")
+    }, [])
+
     const finish = useCallback(() => {
         setOpen(false)
-        updateSetting("tutorial", "done")
+        seen()
         STEPS[i]?.leave?.()
-    }, [i])
+    }, [i, seen])
 
     // Open what the step is about, then find its target (it may take a
     // moment to mount or slide in) and keep the ring on it while it moves.
@@ -125,6 +139,36 @@ export default function Tutorial() {
         return () => window.removeEventListener("keydown", onKey, true)
     }, [open, finish])
 
+    if (welcome && !open) {
+        return (
+            <div role="dialog" aria-label="Welcome to Parallax" style={{ position: "fixed", inset: 0, zIndex: 6000, display: "grid", placeItems: "center", background: "rgba(6,8,12,.66)" }}>
+                <div style={{
+                    width: 460, maxWidth: "calc(100vw - 32px)", background: "var(--bar, #161a22)", border: "1px solid var(--gline2, #333)",
+                    boxShadow: "var(--gshadow)", padding: "22px 24px 18px", color: "var(--txt)",
+                    backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
+                }}>
+                    <div style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)", marginBottom: 10 }}>
+                        Parallax v{RELEASE}
+                    </div>
+                    <h2 style={{ margin: "0 0 10px", fontFamily: "var(--mz-font-body)", fontWeight: 600, fontSize: 21 }}>Welcome to the new Parallax</h2>
+                    <p style={{ margin: "0 0 10px", fontSize: 13.5, lineHeight: 1.6, color: "var(--txt2)" }}>
+                        A new interface, built around what you protect. Register your sites, vessels and aircraft under Assets and
+                        Parallax tells you what happens near them and why it matters. The Desk is where your team shares what it
+                        sees; situation reports are written for you, in German, English or French.
+                    </p>
+                    <p style={{ margin: "0 0 16px", fontSize: 13.5, lineHeight: 1.6, color: "var(--txt2)" }}>
+                        Everything you set up is yours alone unless you share it. Start by creating your first theater: the region
+                        you watch.
+                    </p>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button onClick={() => { seen() }} style={BTN}>Not now</button>
+                        <span style={{ flex: 1 }} />
+                        <button onClick={() => { setWelcome(false); setI(0); setOpen(true) }} style={{ ...BTN, ...PRIMARY }}>Take the walkthrough</button>
+                    </div>
+                </div>
+            </div>
+        )
+    }
     if (!open) return null
     const step = STEPS[i]
     const last = i === STEPS.length - 1

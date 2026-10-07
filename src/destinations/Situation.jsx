@@ -541,6 +541,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
             const saved = getStartupLayers()
             if (!saved) return
             startupApplied.current = true
+            if (saved.clean) {
+                // a first login's clean sheet: every layer off
+                const off = (o) => Object.fromEntries(Object.keys(o).map((k) => [k, false]))
+                setGroupsOn(off); setContextOn(off); setInfraOn(off); setTracksOn(off)
+                return
+            }
             if (saved.groups)  setGroupsOn(saved.groups)
             if (saved.context) setContextOn(saved.context)
             if (saved.infra)   setInfraOn(saved.infra)
