@@ -128,6 +128,20 @@ async function _tryFetchMe() {
     }
 }
 
+/* THE LAST PROFILE THE SERVER GAVE, KEPT ON THIS MACHINE. A sign-in without
+   the server (offlineAuth) knew who you were but not your picture, header or
+   settings, so an outage took the profile picture and the saved default
+   layers with it (the owner, 2026-10-08). The copy is refreshed on every
+   successful check and only ever read back for the same account. */
+const PROFILE_KEY = (email) => `plx-profile:${String(email || "").toLowerCase()}`
+function _keepProfile(user) {
+    if (!user?.email) return
+    try { localStorage.setItem(PROFILE_KEY(user.email), JSON.stringify(user)) } catch { /* full or blocked: the next check tries again */ }
+}
+export function lastProfile(email) {
+    try { return JSON.parse(localStorage.getItem(PROFILE_KEY(email)) || "null") } catch { return null }
+}
+
 /** Real app-boot (and periodic re-validation) check. Retries a real
  * transient failure with backoff before giving up — only a genuine 401
  * ever clears a session here; a still-unresolved transient failure after
@@ -142,6 +156,7 @@ export async function checkSession() {
         const result = await _tryFetchMe()
         if (result.outcome === "ok") {
             _currentUser = result.user
+            _keepProfile(result.user)
             _authTransientError = false
             _authChecked = true
             _publish()
@@ -205,6 +220,7 @@ export async function login(email, password) {
         try {
             await enrol({ email, password, user, store: _enrolStore(), crypto: window.crypto })
         } catch { /* a machine that cannot enrol still logged in fine */ }
+        _keepProfile(user)
         _publish()
         return user
     } catch (e) {
@@ -216,11 +232,13 @@ export async function login(email, password) {
 
         const r = await offlineLogin({ email, password, store: _enrolStore(), crypto: window.crypto })
         if (!r.ok) throw new Error(r.reason)
-        _currentUser = r.user
+        // who you are from the enrolment; your picture, header and settings from the last profile
+        const kept = lastProfile(r.user?.email || email)
+        _currentUser = kept && (!r.user?.id || kept.id === r.user.id) ? { ...kept, ...r.user, avatar: kept.avatar, cover: kept.cover, settings: kept.settings } : r.user
         _offlineSession = true
         _authChecked = true
         _publish()
-        return r.user
+        return _currentUser
     }
 }
 

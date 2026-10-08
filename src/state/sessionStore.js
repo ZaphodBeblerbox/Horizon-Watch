@@ -17,6 +17,7 @@ import { getCameraState, restoreCameraState } from "../globe/cameraState.js"
 import { getFilterState, restoreFilterState } from "../state/situationFilterState.js"
 import { getArchiveState, restoreArchiveState } from "./archiveState.js"
 import { getBriefingItems, clearBriefing, addToBriefing } from "./briefingBasket.js"
+import { getStartupLayers } from "./useChrome.js"
 import { loadProfile } from "../constants/profile.js"
 
 const TAB_STORAGE_KEY = "akili_tabs_v2"
@@ -96,9 +97,16 @@ export async function saveSession(sessionId) {
 
 /** Real atomic restore — every real piece of a session is applied here,
  * in one call, so a session switch never leaves the desk half-restored. */
-export function applySession(session) {
+export function applySession(session, { atLaunch = false } = {}) {
     if (!session) return
-    restoreFilterState({
+    // AT LAUNCH, THE USER'S OWN DEFAULT WINS. The workspace session is
+    // auto-saved every minute with whatever was on, and restoring it at
+    // start overwrote the layer set the user had saved as their default
+    // (the owner, 2026-10-08: "I had created the default layer and it
+    // wasn't applied"). Its camera, tabs and basket still come back;
+    // switching to a session on purpose still brings its layers too.
+    const keepDefault = atLaunch && !!getStartupLayers()
+    restoreFilterState(keepDefault ? { severityFloor: session.severity_floor } : {
         severityFloor: session.severity_floor,
         timeWindow: session.time_window,
         groupsOn: Object.fromEntries((session.domains || []).map((d) => [d, true])),
@@ -311,7 +319,7 @@ export async function ensureActiveSession() {
     try { lastId = localStorage.getItem(ACTIVE_SESSION_KEY) } catch { /* ignore */ }
     const restored = (lastId && sessions.find((s) => s.session_id === lastId)) || sessions[0]
     _activeSession = restored
-    applySession(restored)
+    applySession(restored, { atLaunch: true })
     try { localStorage.setItem(ACTIVE_SESSION_KEY, restored.session_id) } catch { /* ignore */ }
     await _refreshActiveViews()
     return restored

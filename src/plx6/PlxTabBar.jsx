@@ -109,7 +109,8 @@ export default function PlxTabBar({
                 {/* GLOBAL: always first, never stored — the whole world, with
                     whatever layers are on (the owner, 2026-10-07: a theater
                     mode that is not stuck to one region). */}
-                <div onClick={() => onTab("global")} title="Global — the whole world" data-tour="global-theater"
+                <div onClick={() => onTab("global")} title="Global — the whole world · double-click to choose what it shows" data-tour="global-theater"
+                    onDoubleClick={(e) => { if (onEditTab) { e.stopPropagation(); onEditTab("global") } }}
                     style={{
                         display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flex: "none",
                         boxSizing: "border-box", margin: "5px 2px", borderRadius: 0,

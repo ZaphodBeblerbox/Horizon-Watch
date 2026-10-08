@@ -169,6 +169,7 @@ export function settingsFromServer() {
 
 export function reconcileSettings(user) {
     _fromServer = !!user
+    _email = user?.email ? String(user.email).toLowerCase() : null
     _settings = deepMerge(DEFAULTS, user?.settings || {})
     // A FIRST EVER LOGIN IS A CLEAN SHEET (the owner, 2026-10-07): no
     // theaters, no layers. An account that has never saved a setting has
@@ -180,6 +181,7 @@ export function reconcileSettings(user) {
     }
     applyDensity(getAtPath(_settings, "general.density"))
     _publish()
+    if (user) _flush(user)
 }
 
 /** Real apply-on-change write: updates local state + any first-paint-
@@ -224,8 +226,48 @@ export async function updateSetting(path, value) {
         // Reported rather than thrown: most callers are fire-and-forget
         // toggles, and making them all handle a rejection would trade one
         // silent failure for a page full of unhandled ones.
+        if (r.status >= 500) _queue(patch)                 // the server is down, not refusing
         return { ok: false, error: `HTTP ${r.status}` }
     } catch (e) {
-        return { ok: false, error: e?.message || "network error" }
+        // NOBODY ANSWERED: kept on this machine and sent when the server is
+        // back (the owner, 2026-10-08: a default layer set saved during an
+        // outage was gone at the next start).
+        _queue(patch)
+        return { ok: false, queued: true, error: e?.message || "network error" }
     }
+}
+
+const PENDING_KEY = (email) => `plx-settings-pending:${String(email || "").toLowerCase()}`
+let _email = null
+function _queue(patch) {
+    if (!_email) return
+    try {
+        const prev = JSON.parse(localStorage.getItem(PENDING_KEY(_email)) || "{}")
+        localStorage.setItem(PENDING_KEY(_email), JSON.stringify(deepMerge(prev, patch)))
+        // the local profile copy too, so a restart during the outage still has it
+        const pk = `plx-profile:${_email}`
+        const prof = JSON.parse(localStorage.getItem(pk) || "null")
+        if (prof) localStorage.setItem(pk, JSON.stringify({ ...prof, settings: deepMerge(prof.settings || {}, patch) }))
+    } catch { /* storage blocked: the change lives until the tab closes */ }
+}
+
+/** Send what was saved while the server was away, once it answers again. */
+async function _flush(serverUser) {
+    if (!_email) return
+    let pending = null
+    try { pending = JSON.parse(localStorage.getItem(PENDING_KEY(_email)) || "null") } catch { pending = null }
+    if (!pending || !Object.keys(pending).length) return
+    _settings = deepMerge(_settings, pending)
+    _publish()
+    try {
+        const r = await fetch(`${API_BASE}/api/users/me/settings`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(pending),
+        })
+        if (r.ok) {
+            localStorage.removeItem(PENDING_KEY(_email))
+            _settings = deepMerge(structuredClone(DEFAULTS), await r.json())
+            _publish()
+        }
+    } catch { /* still away: tried again at the next check */ }
+    void serverUser
 }

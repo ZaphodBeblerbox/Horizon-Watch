@@ -51,7 +51,7 @@ export default function StartupLayersEditor() {
     const save = async () => {
         setState("saving"); setErr(null)
         const r = await saveStartupLayers(draft)
-        if (r?.ok === false) { setState("error"); setErr(r.error); return }
+        if (r?.ok === false && !r?.queued) { setState("error"); setErr(r.error); return }
         setSaved(draft); setState("saved")
     }
 

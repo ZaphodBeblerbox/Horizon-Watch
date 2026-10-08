@@ -1263,7 +1263,11 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                               title="Open the app with exactly these layers next time"
                               onClick={() => {
                                   saveStartupLayers({ groups: groupsOn, context: contextOn, infra: infraOn, tracks: tracksOn })
-                                      .then(() => toast("Saved as your default view", { icon: "i-check" }))
+                                      .then((r) => (r?.ok !== false
+                                          ? toast("Saved as your default view", { icon: "i-check" })
+                                          : r?.queued
+                                              ? toast("Saved on this device — sent to the server as soon as it is back", { icon: "i-check" })
+                                              : toast(`Could not save default view (${r?.error || "error"})`, { icon: "i-alert" })))
                                       .catch(() => toast("Could not save default view", { icon: "i-alert" }))
                               }}
                               style={{ font: "400 11px var(--font)", color: "var(--acc-hi)", cursor: "pointer" }}>save default</span>

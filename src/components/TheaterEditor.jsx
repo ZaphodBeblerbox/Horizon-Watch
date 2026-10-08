@@ -73,7 +73,9 @@ function Pill({ on, children, onClick }) {
  * @param theater   the one being edited, or null to make a new one
  * @param readView  () => ({lat, lon, height}) for where the map is now
  */
-export default function TheaterEditor({ theater = null, readView = null, onSave, onDelete, onClose, canDelete = true }) {
+/* layersOnly: the Global theater — always the whole world, no name to give;
+   only what it switches on is the user's to choose. */
+export default function TheaterEditor({ theater = null, readView = null, onSave, onDelete, onClose, canDelete = true, layersOnly = false }) {
     const [name, setName] = useState(theater?.name || "")
     const [sev, setSev] = useState(theater?.sev || "steady")
     const [view, setView] = useState(theater?.view?.lat != null ? theater.view : null)
@@ -134,12 +136,13 @@ export default function TheaterEditor({ theater = null, readView = null, onSave,
                     borderBottom: "1px solid var(--gline)",
                 }}>
                     <b style={{ flex: 1, minWidth: 0, font: "600 13px var(--font)", color: "var(--txt)" }}>
-                        {theater ? "Edit theater" : "New theater"}
+                        {layersOnly ? "Global — what it shows" : theater ? "Edit theater" : "New theater"}
                     </b>
                     <button onClick={onClose} style={{ ...BTN, border: 0, flex: "none", padding: "0 6px" }}>✕</button>
                 </div>
 
                 <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
+                    {!layersOnly && (<>
                     <div>
                         <div style={{ ...EYE, marginBottom: 5 }}>Name</div>
                         <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
@@ -204,6 +207,7 @@ export default function TheaterEditor({ theater = null, readView = null, onSave,
                             </div>
                         )}
                     </div>
+                    </>)}
 
                     <div>
                         <div style={{ ...EYE, marginBottom: 5 }}>

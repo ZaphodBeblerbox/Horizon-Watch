@@ -10,10 +10,11 @@
  *                         afternoon) and what may follow, the user's first;
  *                         both turn at 05, 12 and 18 (home/dayPart.js)
  */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
 import { slotOf, useFrozen } from "../../home/dayPart.js"
-import { getCurrentUser } from "../../state/authStore.js"
+import { getCurrentUser, subscribeAuth } from "../../state/authStore.js"
+import { greetingFor } from "../../data/greetings.js"
 import { useMine, usePoll, arr } from "../useMine.js"
 import { Row, SignalSheet, sevColor, when } from "./common.jsx"
 
@@ -28,7 +29,9 @@ function km(a, b) {
 
 export default function MHome({ onShowOnMap, onOpen }) {
     const mine = useMine()
-    const user = getCurrentUser()
+    const [user, setUser] = useState(() => getCurrentUser())
+    useEffect(() => subscribeAuth(setUser), [])
+    const seed = useRef(Math.floor(Math.random() * 997)).current
     const surface = usePoll("/api/surface", 30_000, (d) => arr(d?.items ?? d))
     const notes = usePoll("/api/notifications?limit=40", 30_000, (d) => arr(d?.items ?? d))
     const posts = usePoll("/api/telegram/posts?hours=48", 10 * 60_000, (d) => arr(d?.posts))
@@ -79,13 +82,26 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const ahead = useFrozen(`m-ahead:${slot.key}`, aheadNow, (a) => mine.ready && a.length > 0)
 
     const first = String(user?.name || user?.display_name || "").split(" ")[0]
-    const hello = { morning: "Good morning", afternoon: "Good afternoon", night: "Good evening" }[slot.part]
+    const greet = greetingFor(first, { seed })
     return (
         <div className="m2-scroll" data-screen-label="Phone home">
-            <div style={{ margin: "2px 2px 16px" }}>
-                <div style={{ fontSize: 22, fontWeight: 650 }}>{hello}{first ? `, ${first}` : ""}</div>
-                <div className="m2-sub">{mine.has ? `Built on your ${[mine.theaters.length && `${mine.theaters.length} theater${mine.theaters.length === 1 ? "" : "s"}`, mine.assets.length && `${mine.assets.length} asset${mine.assets.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ") || "interests"}.`
-                    : "Nothing is yours yet — add a theater or an asset and Home follows them."}</div>
+            {/* WHO YOU ARE AND A WELCOME, as on the desktop: the header and
+                picture from the profile, the greeting for the time of day. */}
+            <div className="m2-card" style={{ overflow: "hidden", margin: "0 0 16px" }} data-screen-label="Phone welcome">
+                {user?.cover && <img src={user.cover} alt="" style={{ display: "block", width: "100%", height: 96, objectFit: "cover", objectPosition: user.cover_pos || "50% 50%" }} />}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", marginTop: user?.cover ? -34 : 0 }}>
+                    {user?.avatar
+                        ? <img src={user.avatar} alt="" style={{ width: 56, height: 56, borderRadius: 28, objectFit: "cover", objectPosition: user.avatar_pos || "50% 50%", border: "2px solid var(--bg-0, #0f1115)", flex: "none" }} />
+                        : <span style={{ width: 56, height: 56, borderRadius: 28, display: "grid", placeItems: "center", background: user?.color || "#334", fontWeight: 700, fontSize: 18, border: "2px solid var(--bg-0, #0f1115)", flex: "none" }}>{user?.initials || "?"}</span>}
+                    <div style={{ minWidth: 0, alignSelf: "flex-end" }}>
+                        <div className="m2-eyebrow">{greet.kicker}</div>
+                        <div style={{ fontSize: 19, fontWeight: 650, lineHeight: 1.25 }}>{greet.lead}</div>
+                    </div>
+                </div>
+                <div className="m2-sub" style={{ padding: "0 14px 12px" }}>
+                    {mine.has ? `Built on your ${[mine.theaters.length && `${mine.theaters.length} theater${mine.theaters.length === 1 ? "" : "s"}`, mine.assets.length && `${mine.assets.length} asset${mine.assets.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ") || "interests"}. ${greet.sub || ""}`
+                        : "Nothing is yours yet — add a theater or an asset and Home follows them."}
+                </div>
             </div>
 
             <section className="m2-section" data-screen-label="Phone urgent">

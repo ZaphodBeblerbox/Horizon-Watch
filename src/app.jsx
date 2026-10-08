@@ -246,6 +246,7 @@ function defaultTabs() {
  */
 /** Modules you visit deliberately and leave — never the view the app
  *  opens on, however recently you were there. */
+const GLOBAL_VIEW = { lat: 20, lon: 15, height: 22_000_000 }
 const NON_LANDING_TABS = new Set(["team", "profile", "editor", "chat", "settings"])
 
 function loadTabsFromStorage() {
@@ -2042,7 +2043,8 @@ export default function App() {
                             if (id === "global") {
                                 setActiveTheater(null)
                                 window.dispatchEvent(new CustomEvent("akili:theater-select", {
-                                    detail: { id: "global", name: "Global", view: { lat: 20, lon: 15, height: 22_000_000 }, layers: {} },
+                                    // the layers the user chose for Global (double-click it); none chosen: as they are
+                                detail: { id: "global", name: "Global", view: GLOBAL_VIEW, layers: getSettings()?.globalTheater?.layers || {} },
                                 }))
                                 return
                             }
@@ -2075,7 +2077,9 @@ export default function App() {
                                 refreshTheaters()
                             })
                         }}
-                        onEditTab={(id) => setEditingTheater(theaters.find((t) => t.id === id) || null)}
+                        onEditTab={(id) => setEditingTheater(id === "global"
+                            ? { id: "global", name: "Global", sev: "steady", view: GLOBAL_VIEW, layers: getSettings()?.globalTheater?.layers || null }
+                            : theaters.find((t) => t.id === id) || null)}
                         onAddTab={() => setEditingTheater("new")}
                         onHome={() => openTab("home")}
                         onSearch={() => openOverlay("overlay:palette")}
@@ -2570,7 +2574,8 @@ export default function App() {
                 {editingTheater && (
                     <TheaterEditor
                         theater={editingTheater === "new" ? null : editingTheater}
-                        canDelete={theaters.length >= 1}
+                        canDelete={editingTheater?.id !== "global" && theaters.length >= 1}
+                        layersOnly={editingTheater?.id === "global"}
                         readView={() => {
                             const v = window.__akiliCamera
                             return (v && Number.isFinite(v.lat))
@@ -2578,6 +2583,17 @@ export default function App() {
                                 : null
                         }}
                         onSave={async (body) => {
+                            if (editingTheater?.id === "global") {
+                                // Global is the user's own, kept with their settings, not a theater row
+                                const r = await updateSetting("globalTheater", { layers: body.layers })
+                                if (r && r.ok === false) throw new Error(r.error || "Could not save")
+                                setTheaterId("global")
+                                window.dispatchEvent(new CustomEvent("akili:theater-select", {
+                                    detail: { id: "global", name: "Global", view: GLOBAL_VIEW, layers: body.layers },
+                                }))
+                                setEditingTheater(null)
+                                return
+                            }
                             if (editingTheater === "new") {
                                 const t = await createTheater(body)
                                 await refreshTheaters(t.id)
