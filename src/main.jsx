@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './app.jsx'
+import LaunchIntro from './plx6/LaunchIntro.jsx'
 import './index.css'
 import './styles/designSystem.css'
 import { initPushNotifications } from './utils/pushNotifications.js'
@@ -207,5 +208,5 @@ class ErrorBoundary extends React.Component {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-    <ErrorBoundary><App /></ErrorBoundary>
+    <><ErrorBoundary><App /></ErrorBoundary><LaunchIntro /></>
 )

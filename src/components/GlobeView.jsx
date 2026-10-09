@@ -528,6 +528,39 @@ export default function GlobeView({
         }
     }, [])
 
+    // ── The map is ready: the launch screen (plx6/LaunchIntro.jsx) waits
+    // for the first frame with the globe's tiles loaded before it opens
+    // onto the map. Once per page, by event, so the intro need not know
+    // where the globe lives.
+    useEffect(() => {
+        let raf = 0, off = null
+        const attach = () => {
+            const viewer = viewerRef.current?.cesiumElement
+            if (!viewer || viewer.isDestroyed?.()) { raf = requestAnimationFrame(attach); return }
+            // "Loaded" is a nearly empty tile queue, not tilesLoaded: the
+            // globe keeps streaming finer tiles for a long while, and
+            // tilesLoaded stays false through all of it (measured: never
+            // true in the first 9 s), long after the map is plainly there.
+            // Once the data layers start the queue climbs past 100, so the
+            // first lull (≤ 10 queued) is the basemap having arrived.
+            const since = performance.now()
+            let queue = Infinity, offQ = null
+            offQ = viewer.scene.globe?.tileLoadProgressEvent?.addEventListener((n) => { queue = n })
+            const done = () => {
+                if (window.__plxMapReady) return
+                const ready = viewer.scene?.globe?.tilesLoaded || (queue <= 10 && performance.now() - since > 800)
+                if (!ready) return
+                window.__plxMapReady = true
+                window.dispatchEvent(new Event("plx:map-ready"))
+                off?.(); offQ?.(); off = null
+            }
+            const offR = viewer.scene.postRender.addEventListener(done)
+            off = () => { offR(); offQ?.() }
+        }
+        attach()
+        return () => { cancelAnimationFrame(raf); off?.() }
+    }, [])
+
     // ── Map readout: cursor position and the MEASURED scale bar (§8) ──────
     // The scale bar is measured, not derived from a zoom level: it picks two
     // screen points 120px apart either side of centre, inverts both onto the

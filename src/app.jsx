@@ -1873,6 +1873,14 @@ export default function App() {
     // indistinguishable from the app being broken. The session check can
     // take tens of seconds against an unreachable server before it gives
     // up, and that whole time was blank.
+    // The launch screen (plx6/LaunchIntro.jsx) waits for this: nothing more
+    // to wait for at the login screen or on the phone (no globe); signed in
+    // on the desktop, it waits for the map's first loaded frame.
+    useEffect(() => {
+        if (!authChecked) return
+        window.dispatchEvent(new Event(!authUser || phoneMode ? "plx:booted" : "plx:authed"))
+    }, [authChecked, authUser, phoneMode])
+
     if (!authChecked) {
         return (
             <div style={{
