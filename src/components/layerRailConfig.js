@@ -144,6 +144,43 @@ export const TRACK_TOGGLES = [
 ]
 
 /**
+ * THE SWITCHES INSIDE A GROUP. Situation.jsx keeps each as its own state
+ * (firesOn, telegramOn, …), so nothing outside it could name them: a saved
+ * default view and a theater both carried the group switches only, and
+ * every sub-layer fell back to its built-in value on the next launch or
+ * theater change. One list here lets Situation, the theater editor and the
+ * Settings editor speak about the same keys.
+ *
+ * `parent` is the LAYER_GROUPS key the switch lives under (drawn only when
+ * that group is on), or null for one that stands on its own.
+ * `gfw:<kind>` is one Global Fishing Watch event kind.
+ */
+export const SUB_LAYERS = [
+    { key: "assets",          label: "Our assets",               parent: null },
+    { key: "imagerySignals",  label: "Imagery signals",          parent: "imagery" },
+    { key: "fires",           label: "Heat (thermal anomalies)", parent: "imagery" },
+    { key: "satImage",        label: "Satellite base image",     parent: "imagery" },
+    { key: "gpsInterference", label: "Nav interference",         parent: "air" },
+    { key: "geoConfirmed",    label: "Confirmed",                parent: "news" },
+    { key: "gdelt",           label: "Unconfirmed (wire)",       parent: "news" },
+    { key: "telegram",        label: "Telegram",                 parent: "news" },
+    { key: "unrest",          label: "Unrest & protests",        parent: "news" },
+    { key: "airspace",        label: "Controlled airspace",      parent: null },
+    { key: "gfw:encounters",  label: "Vessel encounters",        parent: null },
+    { key: "gfw:gaps",        label: "AIS gaps",                 parent: null },
+    { key: "gfw:loitering",   label: "Loitering",                parent: null },
+    { key: "gfw:port-visits", label: "Port visits",              parent: null },
+    { key: "gfwHeat",         label: "Encounter density",        parent: null },
+]
+
+/** The sub-layers a group brings with it when it is first chosen. */
+export const DEFAULT_SUBS = {
+    imagery: ["imagerySignals"],
+    news: ["geoConfirmed", "gdelt", "telegram", "unrest"],
+    air: [],
+}
+
+/**
  * The four groups a saved launch state covers, in display order.
  *
  * "Map layers" lists the GROUPS, not the layers inside them, because a
@@ -159,4 +196,31 @@ export const STARTUP_GROUPS = [
     { id: "context", title: "Context",        items: CONTEXT_TOGGLES },
     { id: "infra",   title: "Infrastructure", items: INFRA_TOGGLES },
     { id: "tracks",  title: "Live tracks",    items: TRACK_TOGGLES },
+    { id: "subs",    title: "Inside the groups", items: SUB_LAYERS },
+]
+
+/* The map's chip choices, here so the theater editor can offer them
+   without importing the globe. GDELT_EVENT_TYPES is re-exported by
+   globe/GlobeGdeltLayer.jsx, which filters by it. */
+export const GDELT_EVENT_TYPES = [
+    { key: "Fight", label: "Fight / armed clash" },
+    { key: "Assault", label: "Assault" },
+    { key: "Coerce", label: "Coerce" },
+    { key: "Protest", label: "Protest" },
+    { key: "Threaten", label: "Threaten" },
+    { key: "Reduce relations", label: "Reduce relations" },
+]
+
+export const SEVERITY_FLOORS = [
+    { key: "critical", label: "Critical+", maxRank: 0 },
+    { key: "high",     label: "High+",     maxRank: 1 },
+    { key: "moderate", label: "Moderate+", maxRank: 2 },
+    { key: "low",      label: "Low+",      maxRank: 3 },
+]
+export const TIME_WINDOWS = [
+    { key: "24h", label: "24h", hours: 24 },
+    { key: "48h", label: "48h", hours: 48 },
+    { key: "72h", label: "72h", hours: 72 },
+    { key: "7d",  label: "7d",  hours: 24 * 7 },
+    { key: "30d", label: "30d", hours: 24 * 30 },
 ]

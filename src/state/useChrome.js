@@ -65,7 +65,10 @@ export function getStartupLayers() {
 export function saveStartupLayers(layers) {
     // Returns updateSetting's {ok, error} so the caller can say whether it
     // actually persisted rather than assuming.
-    return updateSetting("startupLayers", { ...layers })
+    // clean: false is written explicitly: settings PATCHes deep-merge, so a
+    // first login's {clean: true} would otherwise survive the save and the
+    // launch would still open on a bare map.
+    return updateSetting("startupLayers", { ...layers, clean: false })
 }
 
 export function clearStartupLayers() {

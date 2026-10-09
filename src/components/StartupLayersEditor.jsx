@@ -20,7 +20,7 @@ import { useEffect, useState } from "react"
 import { STARTUP_GROUPS } from "./layerRailConfig.js"
 import { getStartupLayers, saveStartupLayers, clearStartupLayers } from "../state/useChrome.js"
 
-const EMPTY = { groups: {}, context: {}, infra: {}, tracks: {} }
+const EMPTY = { groups: {}, context: {}, infra: {}, tracks: {}, subs: {} }
 // a first login's clean sheet ({clean: true}) is everything off
 const norm = (s) => (s && s.clean ? EMPTY : s)
 

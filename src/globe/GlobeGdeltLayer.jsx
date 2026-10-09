@@ -21,6 +21,7 @@ import { useState, useEffect, useRef } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
+import { GDELT_EVENT_TYPES } from "../components/layerRailConfig.js"
 import { safeArray } from "../utils/safeArray.js"
 import { getShapeMarkerDataUri, MARK_SIZE, MARKER_MAX_CAMERA_M } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
@@ -57,14 +58,7 @@ function colourFor(goldstein) {
  * rather than a single severity slider because the reader's question
  * ("show me violence, hide the diplomacy") is about kind, not degree.
  */
-export const GDELT_EVENT_TYPES = [
-    { key: "Fight", label: "Fight / armed clash" },
-    { key: "Assault", label: "Assault" },
-    { key: "Coerce", label: "Coerce" },
-    { key: "Protest", label: "Protest" },
-    { key: "Threaten", label: "Threaten" },
-    { key: "Reduce relations", label: "Reduce relations" },
-]
+export { GDELT_EVENT_TYPES }
 
 export default function GlobeGdeltLayer({ enabled = false, limit = 500, types = null }) {
     const [points, setPoints] = useState([])

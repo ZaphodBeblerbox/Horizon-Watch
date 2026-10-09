@@ -17,6 +17,7 @@
  * sun is up by day and the moon by night. Clicking cycles
  * auto → light → dark.
  */
+import { useRef, useState } from "react"
 import PlxIcon from "./PlxIcon.jsx"
 import PlxWordmark from "./PlxWordmark.jsx"
 
@@ -33,6 +34,8 @@ export default function PlxTabBar({
     onCloseTab = () => {},
     onAddTab = () => {},
     onEditTab = null,
+    // (ids in their new display order) => void. Absent: tabs do not drag.
+    onReorder = null,
     onHome = () => {},
     onSearch = () => {},
     searchSlot = null,
@@ -62,6 +65,78 @@ export default function PlxTabBar({
         ? `Automatic · ${isDay ? "day" : "night"} at ${hh} · switches 07:00 and 19:00`
         : `${themeMode === "light" ? "Light" : "Dark"} theme`)
         + `. Click for ${{ auto: "automatic", light: "light", dark: "dark" }[next]}.`
+
+    /* DRAG A TAB TO MOVE IT, the way browser tabs move: the tab follows the
+       pointer, its neighbours slide aside to make room, and the order is
+       saved on release. Pointer events rather than HTML5 drag-and-drop,
+       which drew a ghost image, only reacted over the exact target and
+       could not slide anything. Favourites stay pinned first, so a tab
+       moves within its own group. */
+    const [drag, setDrag] = useState(null)   // {id, dx, from, to, w, active}
+    const dragRef = useRef(null)
+    const justDragged = useRef(false)
+    const isFav = (id) => !!favourites?.has?.(id)
+    const startDrag = (e, t) => {
+        if (!onReorder || e.button !== 0 || e.target.closest("button")) return
+        const el = e.currentTarget
+        const row = [...el.parentElement.children].filter((c) => c.dataset.tabId)
+        const rects = row.map((c) => ({ id: c.dataset.tabId, r: c.getBoundingClientRect() }))
+        const from = rects.findIndex((x) => x.id === t.id)
+        const fav = isFav(t.id)
+        const group = rects.map((x, i) => i).filter((i) => isFav(rects[i].id) === fav)
+        const w = rects[from].r.width + 4   // + the 2px margin either side
+        const st = { id: t.id, startX: e.clientX, dx: 0, from, to: from, w, active: false, rects, lo: group[0], hi: group[group.length - 1] }
+        dragRef.current = st
+        const move = (ev) => {
+            const d = dragRef.current
+            if (!d) return
+            const dx = ev.clientX - d.startX
+            if (!d.active && Math.abs(dx) < 5) return
+            // Within the group's span. A neighbour gives way as soon as the
+            // dragged tab's LEADING edge passes its middle, as browser tabs
+            // do; the centre never reaches the middle of the end tab, so
+            // the first and last places could not be taken that way.
+            const lo = d.rects[d.lo].r.left - d.rects[d.from].r.left
+            const hi = d.rects[d.hi].r.right - d.rects[d.from].r.right
+            const cdx = Math.max(lo, Math.min(hi, dx))
+            const left = d.rects[d.from].r.left + cdx
+            const right = d.rects[d.from].r.right + cdx
+            let to = d.from
+            for (let i = d.lo; i <= d.hi; i++) {
+                const mid = d.rects[i].r.left + d.rects[i].r.width / 2
+                if (i < d.from && cdx < 0 && left < mid) { to = i; break }
+                if (i > d.from && cdx > 0 && right > mid) to = i
+            }
+            dragRef.current = { ...d, dx: cdx, to, active: true }
+            setDrag(dragRef.current)
+        }
+        const up = () => {
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", up)
+            window.removeEventListener("pointercancel", up)
+            const d = dragRef.current
+            dragRef.current = null
+            setDrag(null)
+            if (!d?.active) return
+            justDragged.current = true          // the click that ends a drag is not a selection
+            setTimeout(() => { justDragged.current = false }, 0)
+            if (d.to === d.from) return
+            const ids = tabs.map((x) => x.id).filter((id) => id !== d.id)
+            ids.splice(d.to, 0, d.id)
+            onReorder(ids)
+        }
+        window.addEventListener("pointermove", move)
+        window.addEventListener("pointerup", up)
+        window.addEventListener("pointercancel", up)
+    }
+    // How far a tab sits from its resting place while another is dragged.
+    const shiftOf = (i, id) => {
+        if (!drag?.active) return 0
+        if (id === drag.id) return drag.dx
+        if (drag.from < drag.to && i > drag.from && i <= drag.to) return -drag.w
+        if (drag.from > drag.to && i >= drag.to && i < drag.from) return drag.w
+        return 0
+    }
 
     const hoverable = (el, on = "var(--hov)") => ({
         onMouseEnter: (e) => { e.currentTarget.style.background = on },
@@ -121,23 +196,31 @@ export default function PlxTabBar({
                     <PlxIcon href="#g-globe" size={13} />
                     <span style={{ whiteSpace: "nowrap", fontSize: 13 }}>Global</span>
                 </div>
-                {tabs.map((t) => {
+                {tabs.map((t, i) => {
                     const on = t.id === activeTab
                     return (
                         <div
-                            key={t.id} onClick={() => onTab(t.id)}
+                            key={t.id} onClick={() => { if (!justDragged.current) onTab(t.id) }}
+                            data-tab-id={t.id}
+                            onPointerDown={(e) => startDrag(e, t)}
                             /* DOUBLE-CLICK EDITS IT, which is where anybody
                                who has used a browser or a spreadsheet will
                                try first. The ✕ removes it; there is no
                                third control competing for the 18px left. */
                             onDoubleClick={(e) => { if (onEditTab) { e.stopPropagation(); onEditTab(t.id) } }}
-                            title={onEditTab ? `${t.name} — double-click to edit` : t.name}
+                            title={onEditTab ? `${t.name} — double-click to edit${onReorder ? " · drag to move" : ""}` : t.name}
                             style={{
+                                position: "relative", touchAction: "none",
+                                transform: `translateX(${shiftOf(i, t.id)}px)`,
+                                // neighbours glide; the dragged tab tracks the pointer exactly
+                                transition: drag?.active && drag.id !== t.id ? "transform 150ms ease" : "none",
+                                zIndex: drag?.id === t.id ? 2 : "auto",
                                 display: "flex", alignItems: "center", gap: 8,
                                 padding: "0 6px 0 12px", flex: "0 1 220px", minWidth: 110,
                                 boxSizing: "border-box", margin: "5px 2px", borderRadius: 0,
                                 background: on ? ON : OFF,
-                                color: on ? "var(--txt)" : "var(--txt3)", cursor: "pointer",
+                                color: on ? "var(--txt)" : "var(--txt3)", cursor: "pointer", userSelect: "none",
+                                ...(drag?.active && drag.id === t.id ? { background: "var(--accdim)", boxShadow: "var(--gshadow)", cursor: "grabbing" } : null),
                             }}
                             {...hoverable(on ? ON : OFF)}
                         >

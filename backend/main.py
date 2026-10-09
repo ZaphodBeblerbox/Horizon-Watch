@@ -11602,10 +11602,26 @@ def _prune_history_once() -> str:
     density_cutoff = now - timedelta(days=TRACK_DENSITY_RETENTION_DAYS)
     rollup_cutoff = now - timedelta(days=TRACK_DENSITY_HOURLY_DAYS)
 
-    with get_db() as db:
-        deleted_ac = db.query(AircraftHistory).filter(AircraftHistory.timestamp < raw_cutoff).delete()
-        deleted_vs = db.query(VesselHistory).filter(VesselHistory.timestamp < raw_cutoff).delete()
-        db.commit()
+    # Raw history, id-batched like the density below. This was one DELETE
+    # per table in one transaction: with ~11k aircraft recorded all day that
+    # is millions of rows, and the write lock it held made every other write
+    # in the app (sessions, theaters, alerts, snapshots) wait out the 30 s
+    # busy timeout and fail "database is locked" (seen 2026-10-10, 56 times
+    # in one run after a restart).
+    def _batched(model):
+        n = 0
+        while True:
+            with get_db() as db:
+                ids = [r[0] for r in db.query(model.id)
+                       .filter(model.timestamp < raw_cutoff).limit(5_000).all()]
+                if not ids:
+                    return n
+                db.query(model).filter(model.id.in_(ids)).delete(synchronize_session=False)
+                db.commit()
+            n += len(ids)
+            time.sleep(0.2)
+    deleted_ac = _batched(AircraftHistory)
+    deleted_vs = _batched(VesselHistory)
 
     if not TRACK_DENSITY_CLEANUP_ENABLED:
         _wal_checkpoint()
@@ -29295,6 +29311,7 @@ async def api_auth_login(request: Request, response: Response):
             if not u.settings:
                 u.settings = {"startupLayers": {"clean": True}}
             u.last_login = datetime.utcnow()
+            u.last_seen = u.last_login
             db.commit()
         except Exception as _fl:                              # noqa: BLE001
             db.rollback()
@@ -30443,12 +30460,37 @@ def api_activity_list(record_ref: str):
 _PRESENCE: dict = {}
 _PRESENCE_LOCK = threading.Lock()
 _PRESENCE_TTL_SECONDS = 45
+_LAST_SEEN_WRITTEN: dict = {}
+_LAST_SEEN_EVERY_SECONDS = 60
 
 @app.post("/api/presence")
 def api_presence_heartbeat(record_ref: str, request: Request):
     current_user = _require_current_user(request)
+    now = time.time()
     with _PRESENCE_LOCK:
-        _PRESENCE.setdefault(record_ref, {})[current_user["id"]] = time.time()
+        _PRESENCE.setdefault(record_ref, {})[current_user["id"]] = now
+        due = now - _LAST_SEEN_WRITTEN.get(current_user["id"], 0) >= _LAST_SEEN_EVERY_SECONDS
+        if due:
+            _LAST_SEEN_WRITTEN[current_user["id"]] = now
+    # users.last_seen (Admin › Users "Last seen") lost its only writer when
+    # /api/auth/session was deleted; the heartbeat that already arrives
+    # every 15 s while the app is open is the honest signal. Written at
+    # most once a minute per user, in its own thread: a heartbeat must not
+    # hold a request thread through the 30 s busy timeout when another
+    # writer has the database.
+    if due:
+        uid = current_user["id"]
+        def _write_seen():
+            from database import User, get_db as _gdb_seen
+            try:
+                with _gdb_seen() as db:
+                    u = db.query(User).filter(User.id == uid).first()
+                    if u:
+                        u.last_seen = datetime.utcnow()
+                        db.commit()
+            except Exception as _ls:                          # noqa: BLE001
+                logger.warning(f"[presence] last_seen write failed: {_ls}")
+        threading.Thread(target=_write_seen, name="last-seen", daemon=True).start()
     return {"ok": True}
 
 @app.get("/api/presence")

@@ -74,18 +74,39 @@ def _clean_view(v):
     return {"lat": lat, "lon": lon, "height": height}
 
 
+def _names(raw, key, cap=60):
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail=f"{key} must be a list of layer names")
+    # The names are the map's own keys and change as layers are added,
+    # so they are not matched against a list here — the shape is
+    # checked, and a key the map does not know simply does not light up.
+    return [str(x)[:40] for x in raw][:cap]
+
+
 def _clean_layers(v):
+    """Everything the map's Layers panel can switch, as the map names it.
+
+    groups/infra/tracks are always written. The rest came later and are
+    kept only when sent: a theater that does not name them leaves them as
+    they are when selected, which an empty list stored here would turn
+    into "all off".
+    """
     if not isinstance(v, dict):
         return {}
     out = {}
     for key in ("groups", "infra", "tracks"):
-        raw = v.get(key) or []
-        if not isinstance(raw, list):
-            raise HTTPException(status_code=400, detail=f"{key} must be a list of layer names")
-        # The names are the map's own keys and change as layers are added,
-        # so they are not matched against a list here — the shape is
-        # checked, and a key the map does not know simply does not light up.
-        out[key] = [str(x)[:40] for x in raw][:60]
+        out[key] = _names(v.get(key) or [], key)
+    for key in ("context", "subs", "gdeltTypes", "theatres"):
+        if key in v and v[key] is not None:
+            out[key] = _names(v[key], key)
+    for key in ("severityFloor", "timeWindow"):
+        if isinstance(v.get(key), str) and v[key]:
+            out[key] = v[key][:12]
+    # Track filters: each axis a list of values, or None for "no filter".
+    for key, axes in (("vessel", ("types", "flags")), ("aircraft", ("kinds", "airlines", "countries"))):
+        f = v.get(key)
+        if isinstance(f, dict):
+            out[key] = {a: (None if f.get(a) is None else _names(f[a], f"{key}.{a}", 300)) for a in axes}
     return out
 
 

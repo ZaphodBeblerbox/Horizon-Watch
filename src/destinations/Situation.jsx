@@ -33,7 +33,7 @@ import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
 import MapMeta from "../components/MapMeta.jsx"
 import MapTip from "../components/MapTip.jsx"
-import { LAYER_GROUPS } from "../components/layerRailConfig.js"
+import { LAYER_GROUPS, SEVERITY_FLOORS, TIME_WINDOWS } from "../components/layerRailConfig.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { summarizeHealth } from "../utils/systemHealth.js"
 import { buildWatchQueueRows, sortRowsBySeverity, timeAgoLabel } from "./dashboardLogic.js"
@@ -70,19 +70,6 @@ const API = API_BASE
 const REFRESH_MS = 20000
 
 const SEVERITY_TIER_ORDER = ["critical", "significant", "elevated", "low"]
-const SEVERITY_FLOORS = [
-    { key: "critical", label: "Critical+", maxRank: 0 },
-    { key: "high",     label: "High+",     maxRank: 1 },
-    { key: "moderate", label: "Moderate+", maxRank: 2 },
-    { key: "low",      label: "Low+",      maxRank: 3 },
-]
-const TIME_WINDOWS = [
-    { key: "24h", label: "24h", hours: 24 },
-    { key: "48h", label: "48h", hours: 48 },
-    { key: "72h", label: "72h", hours: 72 },
-    { key: "7d",  label: "7d",  hours: 24 * 7 },
-    { key: "30d", label: "30d", hours: 24 * 30 },
-]
 const SEV_LEGEND = [
     { rank: 0, tier: "critical",    label: "Critical", cls: "critical" },
     { rank: 1, tier: "significant", label: "High",     cls: "high" },
@@ -455,6 +442,37 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const [airspaceOn, setAirspaceOn] = useState(false)
     const [airspaceStatus, setAirspaceStatus] = useState(null)
     const [gfwHeatOn, setGfwHeatOn] = useState(false)
+    // Every switch inside a group, by its SUB_LAYERS key (layerRailConfig),
+    // as [value, setter], so a saved default view and a theater can carry
+    // them. Rebuilt each render for the values; the setters are stable, so
+    // handlers registered once can use them.
+    const subLayers = useRef(null)
+    subLayers.current = {
+        assets: [assetsOn, setAssetsOn],
+        imagerySignals: [imagerySignalsOn, setImagerySignalsOn],
+        fires: [firesOn, setFiresOn],
+        satImage: [satImageOn, setSatImageOn],
+        gpsInterference: [gpsInterferenceOn, setGpsInterferenceOn],
+        geoConfirmed: [geoConfirmedOn, setGeoConfirmedOn],
+        gdelt: [gdeltOn, setGdeltOn],
+        telegram: [telegramOn, setTelegramOn],
+        unrest: [unrestOn, setUnrestOn],
+        airspace: [airspaceOn, setAirspaceOn],
+        gfwHeat: [gfwHeatOn, setGfwHeatOn],
+        ...Object.fromEntries(Object.keys(gfwOn).map((k) =>
+            [`gfw:${k}`, [gfwOn[k], (v) => setGfwOn((p) => ({ ...p, [k]: v }))]])),
+    }
+    const currentSubs = () => Object.fromEntries(
+        Object.entries(subLayers.current).map(([k, [v]]) => [k, !!v]))
+    // {key: bool} sets the keys it names; a list sets exactly those on and
+    // every other sub-layer off.
+    const applySubs = (subs) => {
+        const want = Array.isArray(subs) ? Object.fromEntries(Object.keys(subLayers.current).map((k) => [k, subs.includes(k)])) : subs
+        for (const [k, v] of Object.entries(want || {})) {
+            const entry = subLayers.current[k]
+            if (entry && typeof v === "boolean") entry[1](v)
+        }
+    }
     const [flowsStatus, setFlowsStatus] = useState(null)
     const [basemapHealth, setBasemapHealth] = useState(null)
     // The Ukraine time slider. `null` means live; any other value is a
@@ -553,6 +571,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
             if (saved.context) setContextOn(saved.context)
             if (saved.infra)   setInfraOn(saved.infra)
             if (saved.tracks)  setTracksOn(saved.tracks)
+            if (saved.subs)    applySubs(saved.subs)
+            // severity and time window stay with the session, which brings them back itself
+            applyLayerExtrasRef.current({ ...saved, severityFloor: undefined, timeWindow: undefined })
         }
         apply()
         return subscribeSettings(apply)
@@ -1032,6 +1053,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                 Object.fromEntries(Object.keys(prev).map((k) => [k, L.infra.includes(k)])))
             if (L.tracks) setTracksOn((prev) =>
                 Object.fromEntries(Object.keys(prev).map((k) => [k, L.tracks.includes(k)])))
+            if (L.context) setContextOn((prev) =>
+                Object.fromEntries(Object.keys(prev).map((k) => [k, L.context.includes(k)])))
+            // A theater saved before sub-layers existed has no list and
+            // leaves them as they are.
+            if (Array.isArray(L.subs)) applySubs(L.subs)
+            applyLayerExtrasRef.current(L)
             void set
             if (d.view && Number.isFinite(d.view.lat) && Number.isFinite(d.view.lon)) {
                 window.dispatchEvent(new CustomEvent("akili:set-camera", {
@@ -1091,6 +1118,43 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
             window.removeEventListener("akili:voice-filter-restore", onRestore)
         }
     }, [groupsOn, timeWindow])
+
+    /* EVERYTHING THE LAYERS PANEL CAN SWITCH, in a theater's shape: lists of
+       what is on, the two chip choices, and the track filters with their
+       sets as lists (null = no filter on that axis). A theater and the
+       saved default view both carry it, so nothing the panel offers falls
+       back to a built-in value when one of them is applied. Published on
+       window for the theater editor's "take it from the map", the same
+       way the camera is (window.__akiliCamera). */
+    const onKeys = (o) => Object.keys(o || {}).filter((k) => o[k])
+    const setToList = (x) => (x instanceof Set ? [...x] : null)
+    const listToSet = (a) => (Array.isArray(a) ? new Set(a.map(String)) : null)
+    const layerSnapshot = useRef(null)
+    layerSnapshot.current = () => ({
+        groups: onKeys(groupsOn), context: onKeys(contextOn), infra: onKeys(infraOn), tracks: onKeys(tracksOn),
+        subs: onKeys(currentSubs()), gdeltTypes: [...gdeltTypes], theatres: onKeys(theatresOn),
+        severityFloor, timeWindow,
+        vessel: { types: setToList(vesselFilter.types), flags: setToList(vesselFilter.flags) },
+        aircraft: { kinds: setToList(aircraftFilter.kinds), airlines: setToList(aircraftFilter.airlines), countries: setToList(aircraftFilter.countries) },
+    })
+    useEffect(() => {
+        window.__akiliLayers = () => layerSnapshot.current?.()
+        return () => { if (window.__akiliLayers) delete window.__akiliLayers }
+    }, [])
+    // The parts beyond the on/off groups. Each applies only when named, so
+    // a theater or default saved before it existed leaves it alone.
+    const applyLayerExtras = (L) => {
+        if (Array.isArray(L.gdeltTypes)) setGdeltTypes(L.gdeltTypes.filter((k) => GDELT_EVENT_TYPES.some((t) => t.key === k)))
+        if (Array.isArray(L.theatres)) setTheatresOn(Object.fromEntries(L.theatres.map((k) => [k, true])))
+        if (SEVERITY_FLOORS.some((f) => f.key === L.severityFloor)) setSeverityFloor(L.severityFloor)
+        if (TIME_WINDOWS.some((w) => w.key === L.timeWindow)) setTimeWindow(L.timeWindow)
+        if (L.vessel && typeof L.vessel === "object") setVesselFilter((p) => ({
+            ...p, types: listToSet(L.vessel.types), flags: listToSet(L.vessel.flags) }))
+        if (L.aircraft && typeof L.aircraft === "object") setAircraftFilter((p) => ({
+            ...p, kinds: listToSet(L.aircraft.kinds), airlines: listToSet(L.aircraft.airlines), countries: listToSet(L.aircraft.countries) }))
+    }
+    const applyLayerExtrasRef = useRef(applyLayerExtras)
+    applyLayerExtrasRef.current = applyLayerExtras
 
     /* SPOKEN LAYER SWITCHES ("turn on the heat layer", "hide GDELT").
        The names are the backend's LAYERS list (routers/voice_ai.py); a
@@ -1262,7 +1326,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         <span role="button" tabIndex={0}
                               title="Open the app with exactly these layers next time"
                               onClick={() => {
-                                  saveStartupLayers({ groups: groupsOn, context: contextOn, infra: infraOn, tracks: tracksOn })
+                                  saveStartupLayers({ groups: groupsOn, context: contextOn, infra: infraOn, tracks: tracksOn, subs: currentSubs(), gdeltTypes,
+                                      theatres: onKeys(theatresOn), vessel: layerSnapshot.current().vessel, aircraft: layerSnapshot.current().aircraft })
                                       .then((r) => (r?.ok !== false
                                           ? toast("Saved as your default view", { icon: "i-check" })
                                           : r?.queued

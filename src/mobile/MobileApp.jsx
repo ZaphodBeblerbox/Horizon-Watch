@@ -21,6 +21,7 @@ import { MAssets, MAlerts, MReports, MProfile } from "./screens/MMore.jsx"
 import FootageTab from "./tabs/FootageTab.jsx"
 import { Icon, Sheet } from "./screens/common.jsx"
 import { usePoll, arr } from "./useMine.js"
+import useOnlineUsers from "../state/useOnlineUsers.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["reports", "Reports", "g-report"], ["footage", "Footage", "g-play"], ["profile", "Profile", "g-user"]]
@@ -33,6 +34,9 @@ export default function MobileApp() {
     const [assetOpen, setAssetOpen] = useState(null)
     const notes = usePoll("/api/notifications?limit=60", 60_000, (d) => arr(d?.items ?? d))
     const unread = usePoll("/api/chat/unread", 30_000, (d) => d?.unread ?? 0)
+    // Check in like the desktop does, so the phone counts as online and
+    // keeps "last seen" current. The list itself isn't shown here.
+    useOnlineUsers("phone")
     const go = (t, opts) => { setMenu(false); if (opts?.asset) setAssetOpen(opts.asset); setTab(t) }
     const showOnMap = (s) => { if (!s || !Number.isFinite(+s.lat)) return; setFocus({ ...s, _t: Date.now() }); setTab("map") }
     const inMore = MORE.some(([k]) => k === tab)

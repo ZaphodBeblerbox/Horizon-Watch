@@ -174,7 +174,7 @@ import Desk from "./desk/Desk.jsx"
 import ExplanationPanel from "./voice/ExplanationPanel.jsx"
 import TheaterEditor from "./components/TheaterEditor.jsx"
 import {
-    listTheaters, createTheater, updateTheater, deleteTheater,
+    listTheaters, createTheater, updateTheater, deleteTheater, reorderTheaters,
 } from "./lib/theatersApi.js"
 import MyWork from "./destinations/MyWork.jsx"
 import Replay from "./destinations/Replay.jsx"
@@ -2036,6 +2036,11 @@ export default function App() {
                         narrow={plxNarrow}
                         tabs={orderedTheaters}
                         favourites={favTheaters}
+                        onReorder={(ids) => {
+                            const byId = new Map(theaters.map((t) => [t.id, t]))
+                            setTheaters(ids.map((id) => byId.get(id)).filter(Boolean))
+                            reorderTheaters(ids).catch(() => { setPlxToast("Could not save the new order"); refreshTheaters() })
+                        }}
                         activeTab={theaterId}
                         onTab={(id) => {
                             setTheaterId(id)
@@ -2582,6 +2587,7 @@ export default function App() {
                                 ? { lat: +v.lat.toFixed(4), lon: +v.lon.toFixed(4), height: Math.round(v.height) }
                                 : null
                         }}
+                        readLayers={() => window.__akiliLayers?.() || null}
                         onSave={async (body) => {
                             if (editingTheater?.id === "global") {
                                 // Global is the user's own, kept with their settings, not a theater row

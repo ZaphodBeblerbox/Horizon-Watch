@@ -16,7 +16,9 @@
  * Active is a background fill (var(--accdim)), not a left bar: the spec
  * states it, and at this width a bar steals pixels from the icon.
  */
+import { useState } from "react"
 import PlxIcon from "./PlxIcon.jsx"
+import RailTip from "./RailTip.jsx"
 import Avatar from "../ui/Avatar.jsx"
 
 const ON = "var(--accdim)"
@@ -59,9 +61,14 @@ export const RAIL_MODES = [
 
 function RailButton({ label, icon, active, badge, onClick, hue = null }) {
     const ink = hue || "var(--acchi)"
+    const [tip, setTip] = useState(null)
     return (
+        <>
+        <RailTip at={tip}>{label}</RailTip>
         <button
-            title={label} aria-label={label} aria-pressed={!!active}
+            aria-label={label} aria-pressed={!!active}
+            onFocus={(e) => setTip(e.currentTarget.getBoundingClientRect())}
+            onBlur={() => setTip(null)}
             onClick={onClick}
             style={{
                 position: "relative", display: "flex", alignItems: "center",
@@ -77,8 +84,8 @@ function RailButton({ label, icon, active, badge, onClick, hue = null }) {
                 opacity: active || !hue ? 1 : 0.78,
                 cursor: "pointer", borderRadius: 0,
             }}
-            onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = "var(--hov)"; e.currentTarget.style.opacity = "1" } }}
-            onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = OFF; e.currentTarget.style.opacity = hue ? "0.78" : "1" } }}
+            onMouseEnter={(e) => { setTip(e.currentTarget.getBoundingClientRect()); if (!active) { e.currentTarget.style.background = "var(--hov)"; e.currentTarget.style.opacity = "1" } }}
+            onMouseLeave={(e) => { setTip(null); if (!active) { e.currentTarget.style.background = OFF; e.currentTarget.style.opacity = hue ? "0.78" : "1" } }}
         >
             <PlxIcon href={icon} size={17} />
             {badge ? (
@@ -88,6 +95,7 @@ function RailButton({ label, icon, active, badge, onClick, hue = null }) {
                 }}>{badge}</b>
             ) : null}
         </button>
+        </>
     )
 }
 
