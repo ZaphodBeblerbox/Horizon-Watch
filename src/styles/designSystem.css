@@ -465,6 +465,9 @@ html:has(.annobar) { --notif-top: 136px; }   /* below the map's toolbar row */
 }
 .ncard b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.35; color: var(--txt); }
 .ncard .s { display: block; font-size: 11px; line-height: 1.45; color: var(--txt-3); margin-top: 2px; }
+.ncard .nc-line { display: block; font-size: 11.5px; line-height: 1.45; color: var(--txt-2); margin-top: 4px; }
+.ncard .nc-line em { font: 500 9px var(--mono); font-style: normal; letter-spacing: .08em; text-transform: uppercase;
+                     color: var(--txt-4); margin-right: 7px; }
 .nc-acts { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
 
 /* The tray is the record — dismissing a card removes the interruption,

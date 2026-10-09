@@ -29,6 +29,17 @@ function unrestIcon(announced = false) {
     if (announced) _soon = uri; else _unrest = uri
     return uri
 }
+let _now = null
+/** On the ground now (telegram_events.situations): a red diamond with an
+ *  exclamation — a kettle, a charge, a withdrawal, in the last hours. */
+function nowIcon() {
+    if (_now) return _now
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+      <rect x="7" y="7" width="18" height="18" transform="rotate(45 16 16)" fill="#E5484D" stroke="#0b1220" stroke-width="2.5"/>
+      <path d="M16 10.5v6.8" stroke="#0b1220" stroke-width="2.6"/><circle cx="16" cy="21" r="1.6" fill="#0b1220"/></svg>`
+    _now = `data:image/svg+xml;base64,${btoa(svg)}`
+    return _now
+}
 let _icon = null
 function icon() {
     if (_icon) return _icon
@@ -66,6 +77,22 @@ export default function GlobeTelegramLayer({ enabled = false, unrest = false, ho
         upcoming.forEach((a) => setEntity(a.id, "telegram", a))
         return () => upcoming.forEach((a) => deleteEntity(a.id))
     }, [upcoming])
+    // Live developments: with either layer on (a withdrawal is the front,
+    // a kettle is unrest), every minute.
+    const [situations, setSituations] = useState([])
+    useEffect(() => {
+        if (!enabled && !unrest) { setSituations([]); return undefined }
+        let live = true
+        const load = () => fetch(`${API_BASE}/api/telegram/situations`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d) setSituations(safeArray(d.situations)) }).catch(() => {})
+        load()
+        const iv = setInterval(load, 60_000)
+        return () => { live = false; clearInterval(iv) }
+    }, [enabled || unrest]) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        situations.forEach((a) => setEntity(a.id, "telegram", a))
+        return () => situations.forEach((a) => deleteEntity(a.id))
+    }, [situations])
     const arrivalsRef = useRef(null)
     const [arrivedAt, setArrivedAt] = useState({})
     const [nowMs, setNowMs] = useState(() => Date.now())
@@ -103,7 +130,7 @@ export default function GlobeTelegramLayer({ enabled = false, unrest = false, ho
         posts.forEach((p) => setEntity(p.id, "telegram", { ...p, thumb_url: p.thumb_url ? `${API_BASE}${p.thumb_url}` : null }))
         return () => posts.forEach((p) => deleteEntity(p.id))
     }, [posts])
-    if (!posts.length && !upcoming.length) return null
+    if (!posts.length && !upcoming.length && !situations.length) return null
     return (
         <>
             {posts.map((p) => {
@@ -117,6 +144,12 @@ export default function GlobeTelegramLayer({ enabled = false, unrest = false, ho
                                      distanceDisplayCondition: new DistanceDisplayCondition(0, 12_000_000), eyeOffset: new Cartesian3(0, 0, -60) }} />
                 )
             })}
+            {situations.map((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon) && (
+                <Entity key={a.id} id={a.id} position={Cartesian3.fromDegrees(a.lon, a.lat, 0)}
+                        billboard={{ image: nowIcon(), width: SIZE + 4, height: SIZE + 4,
+                                     heightReference: HeightReference.CLAMP_TO_GROUND,
+                                     distanceDisplayCondition: new DistanceDisplayCondition(0, 12_000_000), eyeOffset: new Cartesian3(0, 0, -70) }} />
+            ))}
             {upcoming.map((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon) && (
                 <Entity key={a.id} id={a.id} position={Cartesian3.fromDegrees(a.lon, a.lat, 0)}
                         billboard={{ image: unrestIcon(true), width: SIZE + 2, height: SIZE + 2,

@@ -29,6 +29,12 @@ export const KIND = {
     detector: { icon: "i-scan",    name: "Detector" },
     // Near something of yours (asset_watch.py): the card names the asset.
     asset:    { icon: "i-register", name: "Your asset" },
+    // Announced on Telegram for a time and place (event_watch.py): when it
+    // is called, and again shortly before it starts.
+    announcement: { icon: "i-clock", name: "Announced" },
+    // Happening on the ground now near what you watch: a kettle forming,
+    // reinforcements sent, a withdrawal.
+    live:     { icon: "i-alert",   name: "On the ground now" },
     feed:     { icon: "i-feed",    name: "Feed health" },
     system:   { icon: "i-gear",    name: "System" },
     // A CONNECTION THE SYSTEM FOUND, not an event that happened. Every
@@ -112,6 +118,9 @@ export function interrupts(n, now = Date.now()) {
         // A newly arrived relevant signal of high or critical severity.
         || (n.kind === "signal" && n.sev === "high")
         || n.kind === "surge" || n.kind === "fusion"
+        // A live development near what you watch, and a reminder that an
+        // announced gathering is about to start (both high or above).
+        || n.kind === "live" || (n.kind === "announcement" && n.sev === "high")
 }
 
 export function setMuted(v) {
@@ -184,6 +193,10 @@ export function pushNotification(n) {
         sev: SEV_ORDER.includes(n.sev) ? n.sev : "moderate",
         title: n.title || "",
         sub: n.sub || "",
+        // What is likely to happen there, and what to do — each names the
+        // place (telegram_events.py drops them otherwise).
+        expect: n.expect || "",
+        advice: n.advice || "",
         ref: n.ref || null,
         // What the reader can do from the card: "investigate" / "scan" for
         // new heat, "image" for an imagery signal.

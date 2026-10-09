@@ -677,9 +677,18 @@ const LANG_NAME = { ar: "Arabic", he: "Hebrew", ru: "Russian", uk: "Ukrainian", 
 
 function adaptTelegram(data = {}) {
     const point = pointOf(data)
+    // An announced gathering (telegram_events.announcements) or a live
+    // development (telegram_events.situations): what is likely and what to
+    // do lead, because that is why it is on the map.
+    const ahead = [
+        data.situation && data.happening ? data.happening : null,
+        data.starts_at ? `Starts ${data.when_label || data.starts_at}${data.tz ? ` (${data.tz.split("/").pop().replace(/_/g, " ")} time)` : ""}` : null,
+        data.expect ? `Likely: ${data.expect}` : null,
+        data.advice ? `Do: ${data.advice}` : null,
+    ].filter(Boolean).join("\n")
     return {
         identity: {
-            title: data.headline || "Telegram post",
+            title: data.headline || data.happening || "Telegram post",
             subtitle: ["Telegram", data.channel_title || data.channel, data.place, data.posted_at ? whenLabel(data.posted_at) : null]
                 .filter(Boolean).join(" · "),
             entityType: "telegram", subtype: null, sanctionsStatus: null,
@@ -687,12 +696,17 @@ function adaptTelegram(data = {}) {
         // The English rendering leads; the original follows, labelled with
         // its language, so a translation can always be checked.
         description: [
+            ahead || null,
             data.summary_en || null,
             data.text && data.lang && data.lang !== "en" ? `Original (${LANG_NAME[data.lang] || data.lang}):\n${data.text}` : (data.summary_en ? null : data.text),
         ].filter(Boolean).join("\n\n") || null,
         media: data.thumb_url ? { photoUrl: data.thumb_url, sourceLabel: data.media === "video" ? "Still from the video — play it under Sources" : "From the post" } : null,
         attributes: compact([
             attr("Verification", data.verification),
+            attr("Called by", data.organiser || null),
+            attr("About", data.cause || null),
+            attr("Who", data.actor || null),
+            attr("Live until", data.valid_until ? whenLabel(data.valid_until) : null),
             attr("Also reported by", (data.also_reported_by || []).join(", ") || null),
             attr("Event", data.event_type),
             // The model's English place name: the geocoder's address comes

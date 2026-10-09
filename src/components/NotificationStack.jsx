@@ -77,6 +77,8 @@ function Card({ n, onOpen, onAcknowledge, onBasket }) {
                 </div>
                 <b>{n.title}</b>
                 {n.sub && <span className="s"><Dots text={n.sub} /></span>}
+                {n.expect && <span className="nc-line"><em>Likely</em>{n.expect}</span>}
+                {n.advice && <span className="nc-line"><em>Do</em>{n.advice}</span>}
                 <div className="nc-acts">
                     {n.actions?.includes("investigate") && n.ref && (
                         <button className="btn sm primary" onClick={() => { investigate(n); dismissCard(n.id) }}>Investigate</button>

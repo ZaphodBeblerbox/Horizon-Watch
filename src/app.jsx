@@ -1050,6 +1050,7 @@ export default function App() {
                 // disagrees with a notification can see the rule that raised
                 // it rather than guessing at one.
                 sub: [i.reason, i.region].filter(Boolean).join(" · "),
+                expect: i.expect || "", advice: i.advice || "",
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
                 actions: i.actions || null, alertId: i.id, assetId: i.asset_id || null,
                 // WHEN IT HAPPENED, in the order the fields mean it.

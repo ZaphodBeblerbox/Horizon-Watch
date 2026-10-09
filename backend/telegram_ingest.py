@@ -680,7 +680,14 @@ def _when_label(start: str) -> str:
 
 def upcoming(days_ahead: int = 30) -> list[dict]:
     """Announced gatherings that have not happened yet, soonest first; one
-    per what, place and day however many channels carried it."""
+    per what, place and day however many channels carried it. Served from
+    telegram_events (every place a post names); the one-per-post reading
+    below is the fallback if that module fails."""
+    try:
+        import telegram_events
+        return telegram_events.announcements(days_ahead)
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[telegram] events unavailable, one-per-post fallback: {type(e).__name__}: {e}", flush=True)
     today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     con = _con()
     con.row_factory = sqlite3.Row
@@ -952,7 +959,11 @@ def run_once(hours: int = 6) -> dict:
     out = {"collected": new, "full_pass": full, **classify()}
     out["republished"] = republish_dropped()
     out["screened"] = screen_graphic()
-    out.update(read_announcements())
+    # Announced events (one per place, with reminders' times) and live
+    # developments: telegram_events.py. read_announcements below is the
+    # first, one-per-post reading, kept for its tests and history.
+    import telegram_events
+    out.update(telegram_events.run_once())
     # Prefetched only where videos are kept (the server's volume), so the
     # newest play the moment they are opened; on a laptop a video is fetched
     # when opened and gone half an hour later (the owner, 2026-10-06).

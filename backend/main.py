@@ -12030,6 +12030,33 @@ async def api_infra_signals(kind: str, lat: float, lon: float):
     return await loop.run_in_executor(_executor, _if.signals_near, kind, lat, lon)
 
 
+@app.get("/api/telegram/situations")
+async def api_telegram_situations():
+    """Developments on the ground read from Telegram that are still live — a
+    kettle forming, reinforcements sent, a withdrawal — each at its place,
+    with what is likely to follow and what to do there."""
+    import telegram_events as _te
+    loop = asyncio.get_event_loop()
+    return {"situations": await loop.run_in_executor(_executor, _te.situations)}
+
+
+async def _event_watch_loop():
+    """Every minute: push each new announcement, reminder and live
+    development to the devices of the users it concerns, once
+    (event_watch.sweep). In-app cards need no loop: /api/notifications
+    builds them per request."""
+    await asyncio.sleep(90)
+    while True:
+        try:
+            import event_watch as _ew
+            n = await asyncio.to_thread(_ew.sweep, _send_push)
+            if n:
+                print(f"[event-watch] pushed {n}", flush=True)
+        except Exception as e:                              # noqa: BLE001
+            print(f"[event-watch] error: {type(e).__name__}: {e}", flush=True)
+        await asyncio.sleep(60)
+
+
 @app.get("/api/telegram/upcoming")
 async def api_telegram_upcoming(days: int = Query(30, ge=1, le=120)):
     """Gatherings and collective actions announced on Telegram that have not
@@ -15801,9 +15828,15 @@ async def _outlook_refresh_loop():
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(_telegram_loop())
-    asyncio.create_task(_escalation_loop())
-    asyncio.create_task(_heat_watch_loop())
+    # Through _spawn, like every other loop: started with create_task they
+    # ran in BOTH processes of the web/worker split — two Telegram clients
+    # on one session (which Telegram revokes), and every heat, escalation
+    # and event notification raised twice. Seen 2026-10-10 as two
+    # "[telegram] error (occurrence 1)" lines per start.
+    _spawn(_telegram_loop)
+    _spawn(_event_watch_loop)
+    _spawn(_escalation_loop)
+    _spawn(_heat_watch_loop)
     global _BRIEFING_STORE
     loop = asyncio.get_event_loop()
     # The day's outlook — concrete, cited, resolvable forecasts for the Home
@@ -28176,6 +28209,17 @@ def api_get_notifications(
         out = mine + out
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] asset watch: {type(ex).__name__}: {ex}", flush=True)
+
+    # ── announced events and live developments that concern YOU ─────────
+    # (event_watch.py): when announced, shortly before they start, and
+    # while something is happening on the ground near what you watch.
+    try:
+        import event_watch as _ew
+        _u = _get_current_user(request)
+        _uid = str(_u.get("id")) if _u and _u.get("id") else None
+        out = [{**c, "title": _nc.plain(c["title"])} for c in _ew.notifications_for(_uid)] + out
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] event watch: {type(ex).__name__}: {ex}", flush=True)
 
     # SAY WHERE THE TIME WENT. This endpoint has now had four separate
     # causes of slowness — a missing index, an N+1 on AIS coverage, a

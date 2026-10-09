@@ -117,6 +117,9 @@ export default function NotificationTray({ open, onClose, onOpenItem = null }) {
                                 {n.sub && <span style={{
                                     display: "block", font: "400 10.5px var(--font)", color: "var(--txt-3)", marginTop: 1,
                                 }}>{n.sub}</span>}
+                                {n.advice && <span style={{
+                                    display: "block", font: "400 10.5px var(--font)", color: "var(--txt-2)", marginTop: 2,
+                                }}><b style={{ font: "500 9px var(--mono)", letterSpacing: ".08em", textTransform: "uppercase", color: "var(--txt-4)", marginRight: 6 }}>Do</b>{n.advice}</span>}
                             </span>
                             <span style={{ font: "9.5px var(--mono)", color: "var(--txt-4)" }}>{ago(n.ts)}</span>
                         </button>
