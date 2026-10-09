@@ -21,21 +21,15 @@
  * Reduced motion: no flight, the ground fades.
  */
 import { useEffect, useRef, useState } from "react"
+import { LETTER_PATHS, X_PATHS } from "../ui/wordmarkGeometry.js"
 
 const MIN_MS = 900
 const AFTER_AUTH_MS = 8000
 const HARD_CAP_MS = 20000
 
-// The word, every letter on one baseline and one cap height (the tab-bar
-// wordmark sets the two L's 2.6 units high and lets the X overshoot; here
-// the word is a plinth for the mark, so it sits level).
-const WORD = [
-    "M1.3 21.3 V1.3 H8 C11.6 1.3 12.7 3.5 12.7 6.2 C12.7 8.9 11.6 11 8 11 H1.3",
-    "M37.3 21.3 V1.3 H44 C47.6 1.3 48.7 3.5 48.7 6.2 C48.7 8.9 47.6 11 44 11 H37.3 M43.5 11 L49.8 21.3 M73.3 0 V20 H83 M88.8 0 V20 H98.5",
-    "M17.74 21.3 L23.3 1.3 H25.7 L31.26 21.3",
-    "M53.74 21.3 L59.3 1.3 H61.7 L67.26 21.3 M103.24 21.3 L108.8 1.3 H111.2 L116.76 21.3",
-    "M121.2 0 L134.8 21.3 M134.8 0 L121.2 21.3",
-]
+// The word, level (ui/wordmarkGeometry.js), without the echoes: the mark
+// above it carries them.
+const WORD = [...LETTER_PATHS, ...X_PATHS]
 // The mark above it (the #g-logo X): its back stroke, and the three
 // parallel stripes — its own leg and the two accents.
 const X_BACK = "M4 4 L15 20"
