@@ -1,4 +1,238 @@
-# Handoff — 2026-10-05
+# Handoff — 2026-10-09
+
+Written for the next session, whether an engineer or an agent. Everything
+here was checked against the live system on 2026-10-09. The 2026-10-05
+handoff further down is still valid wherever this section doesn't
+override it. Its gotchas especially still apply.
+
+## Where things stand
+
+- `main` = `origin/main` = **`7df2333`**. Railway (Horizon-Watch, project
+  "magnificent-charm") runs it and is healthy:
+  https://horizon-watch-production.up.railway.app
+- Desktop: **v1.1.6** is published, signed, with auto-update. The next
+  release must be **≥ 1.1.7**. `src-tauri/tauri.conf.json` still says 1.1.2;
+  that's fine, because the workflow stamps the version.
+- Telegram runs on the server, signed in as the server's account. Posts
+  are growing and the map shows 48 hours.
+- Data and disk:
+  - live DB `/app/data/akili.db`: ~42 GB on the Railway volume;
+  - local DB: ~4.8 GB;
+  - laptop free disk: ~6.3 GB.
+- Tests: 1,528 vitest and 1,082 pytest passing.
+- Untracked or modified files that must **not** be committed:
+  `backend/data/risk_band_state.json`, `backend/data/cable_details.json`,
+  `backend/test_sanctions_loader.py`.
+
+## Standing rules from the owner (current)
+
+- **Pushing and releases need an explicit request.** Commit locally only.
+  Push to `origin/main` (which deploys Railway) or cut a DMG only when the
+  owner asks for that specific push or release. They did so several times
+  this session; each time was a separate approval.
+- **Claude writes briefings and their decks, nothing else.** Every other
+  model job goes to OpenAI through `openai_gate.py`.
+- **No generic output and never "Unknown Location".** Forecasts must name an
+  actor, a place, an act, a criterion and a date.
+- **Don't paste `TELEGRAM_API_HASH`** into chat, commits or logs. Don't raise
+  key rotation.
+- **No media stored on the laptop** (temp files only, 30 minutes). The
+  server keeps media long-term.
+- **Data is per user** unless the user shares it: theaters, imagery scans,
+  layers, settings. A user's first login gives them a clean sheet:
+  - 0 theaters, no layers;
+  - the "Welcome to the new Parallax" card and the walkthrough, once only.
+- **Do NOT run `backend/reset_user_data.py --apply`** on live. The owner
+  first asked for a global reset, then cancelled it ("no thats good"). The
+  script stays as a dry-run tool.
+- **Super admins are only** `marc.lunau@`, `jakob.hentschel@` and
+  `hannes.kohnen@trifecta-technologies.com`. Users keep their companies.
+- **Keep the profile picture and header** (owner, 2026-10-09).
+- **Analytics page:** deliberately not rebuilt. The owner said "dont do
+  analytics".
+- **Locate** (footage geolocation) was removed on request. Don't rebuild it.
+- Use they/them for people.
+
+## How to run and operate
+
+**Local**
+- `./start.sh` starts the web process on :8000 and the worker
+  (`PARALLAX_ROLE=worker`) on :8090, the same split as Railway.
+  `process_role.py` decides which loops run where.
+- The frontend is `npm run dev` on :5173.
+  - The localhost page serves the service-worker-precached `dist`. Run
+    `npm run build` before any browser check.
+  - `vite build` passing is not a render check. Run `screensRender.test.jsx`.
+- Probe logins: `localshot@test.local` and `localshot2@test.local`,
+  password `localshot-pw`. Delete whatever probe data you create.
+- Don't `git stash` while the backend runs: `risk_band_state.json` is
+  rewritten live. Kill the old uvicorn before restarting.
+
+**Diagnostics**
+- `[loop-lag]` plus `loop_blame` show what blocked the event loop.
+- `[slow-request]` comes from `slow_requests.py` and logs anything over 5 s.
+- `kill -USR1 <pid>` dumps every thread's stack via faulthandler.
+
+**Pushing**
+- `git push` can hang at osxkeychain when the Mac is locked. Use:
+  ```
+  perl -e 'alarm 120; exec @ARGV' git -c credential.helper= \
+    -c 'credential.helper=!gh auth git-credential' push origin main
+  ```
+
+**Desktop release**
+- Command: `gh workflow run desktop-dmg.yml -f version=1.1.7`
+- What it does:
+  - builds `app,dmg`;
+  - signs with the GitHub secret `TAURI_SIGNING_PRIVATE_KEY` (local copy:
+    `~/.parallax-signing/parallax.key`);
+  - publishes `latest.json`, `.tar.gz`, `.sig` and the DMG to the
+    Horizon-Watch release. The installed app's updater reads
+    `releases/latest/download/latest.json`.
+
+**Railway**
+- `railway variables --kv` lists the variables.
+- `railway variable set K --stdin --skip-deploys` sets one without a deploy.
+- `railway ssh -- sh -c '...'` runs a command on the server (stdin works).
+
+**Telegram**
+- The session lives on the volume: `DATA_DIR/telegram/parallax.session`.
+- The laptop copy was moved to `backend/data/telegram/moved-to-server/`.
+  **Never reuse it.** Two clients on one session get it revoked.
+- To re-sign in: a super admin uses Settings › Feeds and health › Telegram
+  (phone number, then the code, then the 2FA password if asked).
+- Status: `GET /api/telegram/status`.
+
+## What was done this session (16 commits, `3bad606` → `7df2333`)
+
+**Situation reports (briefing engine, `backend/briefing/`)**
+- Trifecta-style report in de, en and fr. Pipeline:
+  spec → recipient profile → collect → research → write (Opus) → validate
+  → render (PDF plus an interactive reader plus a pptx deck).
+- The recipient's assets and their countries drive what is collected.
+- A rehearsal writer runs the whole pipeline without a model.
+- API: `/api/briefings2/*`. UI: Reports › Situation report.
+
+**Server stability**
+- Blocking work moved off the event loop: threat matrix, snapshot,
+  sessions, GDACS, alert writes.
+- Risk index: single-flight with stale-while-refresh.
+- Replay timeline bounded (limit 4000, 2-minute cache). It used to pull
+  34 MB.
+- Slow-request log and faulthandler added.
+- `PyMuPDF` and `matplotlib` added to requirements. Without them Railway
+  would crash on import.
+
+**Telegram**
+- Full 48-hour pass every 30 minutes and on the first pass (previously
+  only 6 hours were fetched).
+- Text reports with a precise place are published; old drops are
+  republished in batches.
+- Channels without a username: stored `c/<id>`, addressed `-100<id>`.
+- Video autoplay made robust: muted, then an explicit `play()`.
+- Sign-in from Settings (server has no terminal).
+
+**X posts in our own frame**
+- GeoConfirmed's cited posts render natively: author, text, photos, video.
+- Endpoints `GET /api/x/post/{id}` (cached a day) and `/api/x/video`
+  (proxy; only video.twimg.com, Range passed on).
+- Posts X marks sensitive open behind the same warning as Telegram.
+
+**Per-user data and first login**
+- Zones are owned and guarded; theaters are no longer seeded.
+- First login writes `startupLayers: {clean: true}`.
+- Walkthrough now covers Desk, Profile and Assets.
+
+**More on the map**
+- 48 h window, the new default.
+- Surface pool 300 (`SURFACE_POOL_MAX`), fusions 200, judged GDELT points
+  1,500.
+- **Global** theater: a fixed first tab. Double-click it to choose what it
+  shows (stored in settings `globalTheater`).
+
+**Home and Insight**
+- Most-urgent list: asset hits first, then the user's theaters and
+  interests; refreshed every 30 s.
+- Three Telegram videos from the three most breaking places for the user.
+- The brief turns at 05, 12 and 18, with wording by part of day ("what
+  happened overnight / this morning / this afternoon", "what today may
+  bring", "how the forecast did"). Logic in `src/home/dayPart.js`.
+- Insight › What happens next: "Yours" or "Everywhere", by the user's
+  countries and assets.
+
+**Mobile (v1.1)**
+- Five tabs: Home, Map, Desk, Messages, More. Code in `src/mobile/`.
+- Home: picture, header and greeting, urgent list, videos, brief.
+- Map: Leaflet with Esri tiles, theaters, 24/48/72 h, severity floor,
+  layers.
+- More: Assets, Alerts, Reports, Profile.
+
+**Settings persistence**
+- A saved default layer set now wins at launch over the session restore.
+  `applySession(…, {atLaunch})`.
+- Settings that can't reach the server are queued on the device
+  (`plx-settings-pending:<email>`) and sent later.
+- The last server profile is kept per account (`plx-profile:<email>`), so
+  an outage no longer loses the picture or layers.
+
+## Open items, in priority order
+
+1. **Situation reports can't be produced live yet.** Two blockers:
+   - The Anthropic key returns **401**, probably revoked after the public
+     leak. `llm.py` remembers a refusal for 15 minutes. Needs a new key in
+     Railway `ANTHROPIC_API_KEY` (the owner's decision).
+   - **The Railway server has no Node and no Chromium** (checked
+     2026-10-09: `which node` → nothing, no Playwright browsers).
+     `briefing/render.py:155` shells out to
+     `node tools/render_pdf.mjs`, so the PDF step will fail there even with
+     a valid key. Two fixes:
+     - add Node and Playwright Chromium to the build. There is no
+       Dockerfile; `railway.json` only sets the healthcheck, so a
+       `nixpacks.toml` or Dockerfile is needed;
+     - or render the PDF on the worker by another route.
+     Verify with the rehearsal writer first; it needs no key.
+2. **Startup contention in the web process.** For 2–3 minutes after boot,
+   model training, link prediction and similar work make sync endpoints
+   take minutes. Proposal: move that work to the worker and persist the
+   results.
+3. **Leaked keys in the public repo history.** Parked by the owner. Don't
+   raise rotation unprompted.
+4. **W: hybrid-warfare criticality.** The proposal is waiting on the owner.
+5. **Y: an unexplained Indonesia link.** Lead: the first feature in
+   `geo/countries.geojson` is Indonesia, so any fallback to `features[0]`
+   produces it.
+6. **Fusion titles that are only coordinates.** Fix at the source, where
+   the title is made.
+7. **Asset briefs sometimes give generic measures.**
+8. **U: full desktop UI rework.** Needs the owner's direction first.
+9. **Mobile follow-ups:**
+   - no clustering on the map;
+   - the map ignores the desktop default layers;
+   - reports can be read on mobile but not generated.
+10. **GDELT cache covers only ~2 days of history.**
+11. Older list items, from the 2026-10-05 section below: entity traversal,
+    online avatars, auto theme, detection stability, radar archives.
+
+## New gotchas
+
+- **The workspace session (auto-saved every minute) used to overwrite the
+  saved default layers at launch.** Fixed with `atLaunch`. If default
+  layers "don't apply" again, look there first.
+- **Concurrent settings PATCHes drop keys.** Two at once lost `welcome`.
+  Save sequentially.
+- **CARTO tiles now need an API key.** The mobile map uses Esri.
+- **Leaflet panes reach z-index 700.** The mobile map sits in an isolated
+  stacking context so the sheets (900/901) stay on top.
+- **The safety classifier blocks some actions without explicit owner
+  approval:** production pushes, mass deletes, moving credentials. Ask the
+  owner, then do it.
+- **Red tests may be stale tests.** A test with fixed dates
+  (`test_sync_cursor`) went red as the dates aged; it now uses relative
+  dates. Check for that before suspecting the code.
+
+---
+
+# Earlier handoff — 2026-10-05
 
 Written for the next session. Everything below was measured against the
 live system, not inferred.
