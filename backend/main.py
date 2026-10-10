@@ -13508,6 +13508,43 @@ async def _gps_interference_alert_loop():
         await asyncio.sleep(300)
 
 
+def _russia_loiter_cycle() -> list:
+    """One russia_loiter_watch pass — in a worker thread, never on the loop.
+    Independent of _AIS_LOITERING_ENABLED: it measures only the few
+    Russia-linked vessels, against coastlines prepared once."""
+    import russia_loiter_watch as _rlw
+    with _AIS_LOCK:
+        snap = [dict(v) for v in _AIS_VESSELS.values()]
+    watch = _rlw.default_watch()
+    alerts = watch.run_cycle(snap)
+    print(f"[russia-loiter] cycle: {watch.last_stats}")
+    return alerts
+
+
+async def _russia_loiter_loop():
+    """Russia-linked ships loitering within drone range of a European coast
+    (owner's rule, 2026-10-10 — see russia_loiter_watch.py). Every 5 min."""
+    if os.getenv("RUSSIA_LOITER_ENABLED", "true").strip().lower() in ("0", "false", "no"):
+        print("[russia-loiter] disabled via RUSSIA_LOITER_ENABLED")
+        return
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="russia-loiter")
+    await asyncio.sleep(240)          # let the AIS snapshot fill first
+    while True:
+        try:
+            if not HEAVY_FEEDS_PAUSED:
+                alerts = await asyncio.get_running_loop().run_in_executor(_pool, _russia_loiter_cycle)
+                for a in alerts:
+                    # THROUGH write_alert() — fusion feed, entity links, and
+                    # the notification feed all read what it writes.
+                    await _write_alert_off_loop(a)
+                    print(f"[russia-loiter] ALERT ({a['severity']}): {a['title']}")
+        except Exception as _e:                              # noqa: BLE001
+            import traceback as _tb
+            print(f"[russia-loiter] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}")
+        await asyncio.sleep(300)
+
+
 async def _global_adsb_cache_loop():
     """Poll ADS-B globally every 60s to populate _GLOBAL_ADSB_CACHE for anomaly detection."""
     global _GLOBAL_ADSB_CACHE
@@ -16389,6 +16426,7 @@ async def startup_event():
     _spawn(_weekly_snapshot_loop)
     _spawn(_global_adsb_cache_loop)
     _spawn(_gps_interference_alert_loop)
+    _spawn(_russia_loiter_loop)
 
     # WARM THE FINDINGS CACHE ONCE, IN THE BACKGROUND. The walk takes about
     # a minute, so whoever opens Ontology first would otherwise pay for it.

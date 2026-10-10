@@ -1055,6 +1055,9 @@ _HARD_AUTHORITIES = {
     if a.strip()
 }
 
+# russia_loiter_watch.ALERT_TYPE, repeated here so this module stays import-light.
+RUSSIA_LOITER_TYPE = "Russia-linked vessel loitering"
+
 # Alert families that are notification-worthy by their nature: each one is a
 # discrete, human-verified or multi-signal finding, not a continuous feed.
 _ALWAYS_NOTIFY = {
@@ -1242,6 +1245,14 @@ def notification_relevance(alert: dict) -> dict:
         return {"notify": v["notify"], "sev": v["sev"],
                 "reason": v["reason"] + _coverage_note(lat, lon)}
 
+    # A Russia-linked ship loitering within drone range of a European coast
+    # (russia_loiter_watch.py) is judged by its own strict rule — an
+    # identifier-confirmed link, hours of loitering, a measured distance —
+    # and says which link fired, so it always reaches people.
+    if k == RUSSIA_LOITER_TYPE.lower():
+        return {"notify": True, "sev": sev if sev in ("critical", "high") else "high",
+                "reason": raw.get("reason") or "Russia-linked vessel loitering within drone range of Europe"}
+
     # New heat near what matters (heat_watch.py) and imagery signals
     # (imagery_signals.py) are already judged by their own rules — each says
     # why it counted.
@@ -1288,6 +1299,10 @@ def notification_relevance(alert: dict) -> dict:
 
 def notification_kind(alert_type: Optional[str]) -> str:
     k = (alert_type or "").strip().lower()
+    if k == RUSSIA_LOITER_TYPE.lower():
+        # "signal", not "detector": a high signal takes the screen and can
+        # push (event_watch.interrupts); a high detector reading does not.
+        return "signal"
     if k.startswith("surge_"):
         return "escalate"           # a surge IS an escalation in coverage
     if k == "fusion_event":

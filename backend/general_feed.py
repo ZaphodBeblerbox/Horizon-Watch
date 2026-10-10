@@ -19,7 +19,8 @@ KINDS = ("signal", "geoconfirmed", "telegram")
 # Events, not detector readings: GPS degradation, position jumps and
 # chokepoint counts are thousands a day and would bury everything else.
 EVENT_TYPES = ("Multi-source agreement", "imminence", "Heat", "Imagery signal", "surge_velocity_spike", "surge_volume_surge",
-               "Sanctioned Vessel", "emergency_squawk", "military_aircraft")
+               "Sanctioned Vessel", "emergency_squawk", "military_aircraft",
+               "Russia-linked vessel loitering")
 _X = re.compile(r"https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/[^/\s]+/status/\d+", re.I)
 _URL = re.compile(r"https?://[^\s,]+")
 
