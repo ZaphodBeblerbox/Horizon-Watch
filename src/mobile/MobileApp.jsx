@@ -53,16 +53,17 @@ export default function MobileApp() {
             <LocationPrompt afterTour={false} />
             <LivePlayerHost />
             <SourceViewer />
-            <header className="m2-top">
+            {/* The map runs edge to edge (its own round controls carry the bell). */}
+            {tab !== "map" && <header className="m2-top">
                 {TITLES[tab] ? <span className="m2-title">{TITLES[tab]}</span> : <span className="m2-brand" style={{ flex: 1 }}>PARALLAX</span>}
                 <button className="m2-iconbtn" aria-label="Alerts" onClick={() => go("alerts")}>
                     <Icon id="g-bell" />{arr(notes).length > 0 && <span className="m2-badge">{Math.min(99, arr(notes).length)}</span>}
                 </button>
-            </header>
+            </header>}
             <main className="m2-body">
                 {/* Every screen stays mounted (the map keeps its place; a thread keeps its scroll); only one shows. */}
                 <Pane on={tab === "home"}><MHome onShowOnMap={showOnMap} onOpen={go} /></Pane>
-                <Pane on={tab === "map"}><MMap active={tab === "map"} focus={focus} /></Pane>
+                <Pane on={tab === "map"}><MMap active={tab === "map"} focus={focus} onOpen={go} alerts={arr(notes).length} /></Pane>
                 <Pane on={tab === "desk"}><MDesk active={tab === "desk"} onShowOnMap={showOnMap} /></Pane>
                 <Pane on={tab === "messages"}><MMessages active={tab === "messages"} /></Pane>
                 {tab === "assets" && <Pane on><MAssets onShowOnMap={showOnMap} initial={assetOpen} /></Pane>}

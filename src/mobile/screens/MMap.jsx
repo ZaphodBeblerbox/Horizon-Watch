@@ -18,6 +18,7 @@ import { useMine, usePoll, arr } from "../useMine.js"
 import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
 import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
+import { LiveNow } from "../../telegram/LivePlayer.jsx"
 
 // Esri's public base maps, credited as their terms ask (CARTO's now want a key).
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services"
@@ -48,7 +49,7 @@ const headingOf = (v) => (Number.isFinite(+v.heading) && +v.heading !== 511 ? +v
 const zoomFor = (height) => Math.max(2, Math.min(12, Math.round(Math.log2(40_000_000 / Math.max(50_000, height || 2_000_000)) + 1)))
 const tsOf = (x) => Date.parse(x.published_at || x.posted_at || x.created_at || x.updated_at || "") || null
 
-export default function MMap({ active, focus }) {
+export default function MMap({ active, focus, onOpen, alerts = 0 }) {
     const el = useRef(null)
     const map = useRef(null)
     const base = useRef(null)
@@ -62,7 +63,6 @@ export default function MMap({ active, focus }) {
     const [planes, setPlanes] = useState([])
     const [track, setTrack] = useState(null)       // the tapped ship or aircraft
     const tracks = useRef(null)
-    const [layersOpen, setLayersOpen] = useState(false)
     const [open, setOpen] = useState(null)
     const [theater, setTheater] = useState("global")
     const [zoom, setZoom] = useState(2)
@@ -93,8 +93,9 @@ export default function MMap({ active, focus }) {
         if (base.current) base.current.remove()
         const b = BASES[baseKey]
         base.current = L.layerGroup([
-            L.tileLayer(b.url, { attribution: b.attribution, maxZoom: b.maxZoom }),
-            L.tileLayer(b.labels, { maxZoom: b.maxZoom, pane: "labels", opacity: 0.9 }),
+            // HIGH RESOLUTION: on a Retina screen, the next zoom's tiles at half size
+            L.tileLayer(b.url, { attribution: b.attribution, maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, detectRetina: true }),
+            L.tileLayer(b.labels, { maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, pane: "labels", opacity: 0.9, detectRetina: true }),
         ]).addTo(map.current)
     }, [baseKey])
 
@@ -203,48 +204,152 @@ export default function MMap({ active, focus }) {
         const t = mine.theaters.find((x) => x.id === id)
         if (t?.view) map.current.setView([t.view.lat, t.view.lon], zoomFor(t.view.height), { animate: true })
     }
-    const locate = () => navigator.geolocation?.getCurrentPosition((pos) => map.current?.setView([pos.coords.latitude, pos.coords.longitude], 10, { animate: true }), () => {})
     const counts = points.reduce((c, p) => ({ ...c, [p._k]: (c[p._k] || 0) + 1 }), {})
+
+    // NEAR ME: where you are (location/liveShare.js), else ask the device
+    const nearMe = async () => {
+        let at = myPosition()
+        if (!at) {
+            try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); at = p; saveHere(p.lat, p.lon) } catch { return }
+        }
+        map.current?.setView([at.lat, at.lon], 9, { animate: true })
+    }
+    // SEARCH, like a tracker app's: places, ports, ships, signals (/api/search)
+    const [q, setQ] = useState("")
+    const [hits, setHits] = useState([])
+    useEffect(() => {
+        const t = q.trim()
+        if (t.length < 2) { setHits([]); return undefined }
+        const id = setTimeout(() => {
+            fetch(`${API_BASE}/api/search?q=${encodeURIComponent(t)}&limit=8`, { credentials: "include" })
+                .then((r) => (r.ok ? r.json() : [])).then((d) => {
+                    // a result named only by its date says what it is in its description
+                    const seen = new Set()
+                    setHits(arr(d).filter((h) => Number.isFinite(+h.lat) && !/^(rule|strategic_zone)$/i.test(h.type || "")).map((h) => {
+                        const dated = /^\d{1,2} [A-Z]{3} \d{4}$/.test(String(h.name || "").trim())
+                        const title = dated && h.description ? String(h.description).replace(/\s+/g, " ").trim().slice(0, 110) : (h.name || h.display_name)
+                        const subline = h.type === "geoconfirmed" ? ["Verified event", dated ? h.name : null, h.faction].filter(Boolean).join(" · ")
+                            : [h.type, h.country || h.category].filter(Boolean).join(" · ")
+                        return { ...h, _title: title, _sub: subline }
+                    }).filter((h) => { const k = h._title; if (seen.has(k)) return false; seen.add(k); return true }))
+                })
+                .catch(() => setHits([]))
+        }, 250)
+        return () => clearTimeout(id)
+    }, [q])
+    const goHit = (h) => {
+        setQ(""); setHits([])
+        map.current?.setView([+h.lat, +h.lon], /water|strait|sea|gulf|country/i.test(`${h.type || ""} ${h.category || ""}`) ? 6 : 11, { animate: true })
+    }
+    const streams = usePoll(active ? "/api/telegram/live" : null, 60_000, (d) => arr(d?.streams))
+    const [sheet, setSheet] = useState(null)        // "filters" | "time" | "live"
+    const LAYER_COLOR = { signals: "#5b9bff", telegram: "#e5e9f0", unrest: "#f97316", fusions: "#c084fc", assets: "#c9a227", ships: "#3fb6c6", aircraft: "#dfe3ea" }
+    const countOf = (k) => k === "ships" ? ships.length : k === "aircraft" ? planes.length : k === "assets" ? mine.assets.length
+        : k === "unrest" ? (counts.unrest || 0) + (counts.announced || 0) : counts[k === "signals" ? "signal" : k === "fusions" ? "fusion" : k] || 0
+    const timeLabel = `${hours} h`
 
     return (
         <div className="m2-map" data-screen-label="Phone map">
             {/* its own stacking layer: Leaflet's panes run up to z-index 700 and
                 would otherwise cover the sheets that open over the map */}
             <div ref={el} style={{ position: "absolute", inset: 0, zIndex: 0, isolation: "isolate" }} />
-            <div className="m2-mapbar">
-                <div className="m2-chips">
-                    <button className="m2-chip" aria-pressed={theater === "global"} onClick={() => goTheater("global")}><Icon id="g-globe" size={14} />Global</button>
-                    {mine.theaters.map((t) => <button key={t.id} className="m2-chip" aria-pressed={theater === t.id} onClick={() => goTheater(t.id)}>{t.name}</button>)}
-                </div>
-                <div className="m2-chips">
-                    {WINDOWS.map((h) => <button key={h} className="m2-chip" aria-pressed={hours === h} onClick={() => setHours(h)}>{h} h</button>)}
-                    {FLOORS.map(([k, l]) => <button key={k} className="m2-chip" aria-pressed={floor === k} onClick={() => setFloor(k)}>{l}</button>)}
-                </div>
-            </div>
-            {(on.ships || on.aircraft) && zoom < TRACK_ZOOM && (
-                <div className="m2-chip" style={{ position: "absolute", left: 12, bottom: 16, zIndex: 500 }}>Zoom in for ships and aircraft</div>
-            )}
-            {(on.ships || on.aircraft) && zoom >= TRACK_ZOOM && (
-                <div className="m2-chip" style={{ position: "absolute", left: 12, bottom: 16, zIndex: 500 }} data-testid="track-count">
-                    {on.ships ? `${ships.length} ships` : ""}{on.ships && on.aircraft ? " · " : ""}{on.aircraft ? `${planes.length} aircraft` : ""}
-                </div>
-            )}
-            <button className="m2-fab" style={{ bottom: 120 }} onClick={() => setLayersOpen(true)} aria-label="Layers"><Icon id="g-layers" /></button>
-            <button className="m2-fab" style={{ bottom: 68 }} onClick={() => setBaseKey(baseKey === "dark" ? "satellite" : "dark")} aria-label="Base map"><Icon id={baseKey === "dark" ? "g-sat" : "g-map"} /></button>
-            <button className="m2-fab" style={{ bottom: 16 }} onClick={locate} aria-label="Where I am"><Icon id="g-pin" /></button>
-            {layersOpen && (
-                <Sheet onClose={() => setLayersOpen(false)}>
-                    <div className="m2-eyebrow" style={{ marginBottom: 8 }}>Layers</div>
-                    <div className="m2-card">
-                        {LAYERS.map(([k, l]) => (
-                            <button key={k} className="m2-row" onClick={() => setOn({ ...on, [k]: !on[k] })} aria-pressed={!!on[k]}>
-                                <span className="m2-dot" style={{ background: on[k] ? "var(--acchi, #7aa7ff)" : "transparent", border: "1px solid var(--gline2, #555)" }} />
-                                <span className="m2-t">{l}</span>
-                                <span className="m2-when">{k === "ships" ? ships.length : k === "aircraft" ? planes.length : k === "assets" ? mine.assets.length : k === "unrest" ? (counts.unrest || 0) + (counts.announced || 0) : counts[k === "signals" ? "signal" : k === "fusions" ? "fusion" : k] || 0}</span>
+            <div className="m2-mapui">
+                {/* search, as a tracker app has it: one round bar on top */}
+                <label className="m2-search">
+                    <Icon id="g-search" size={18} />
+                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search places, ports, ships, signals" aria-label="Search the map" />
+                    {q && <button onClick={() => { setQ(""); setHits([]) }} aria-label="Clear" style={{ border: 0, background: "none", color: "var(--txt3)", fontSize: 18, cursor: "pointer" }}>×</button>}
+                </label>
+                <button className="m2-round" style={{ position: "absolute", right: 12, top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
+                        aria-label="Alerts" onClick={() => onOpen?.("alerts")}>
+                    <Icon id="g-bell" />{alerts > 0 && <span className="m2-badge">{Math.min(99, alerts)}</span>}
+                </button>
+                {hits.length > 0 && (
+                    <div className="m2-results" role="listbox">
+                        {hits.map((h, i) => (
+                            <button key={i} role="option" onClick={() => goHit(h)}>
+                                <Icon id={/ship|vessel/i.test(h.type || "") ? "g-ship" : /aircraft|flight/i.test(h.type || "") ? "g-plane" : "g-pin"} size={18} />
+                                <span style={{ minWidth: 0 }}>
+                                    <span className="m2-t" style={{ fontSize: 14.5 }}>{h._title}</span>
+                                    <span className="m2-sub">{h._sub}</span>
+                                </span>
                             </button>
                         ))}
                     </div>
-                    <div className="m2-sub" style={{ marginTop: 10 }}>Base map: {baseKey === "dark" ? "dark streets" : "satellite"} — switch with the button above the location button.</div>
+                )}
+                {/* round controls on the right (out of the way of search results) */}
+                {hits.length === 0 && <div className="m2-rstack" style={{ top: "calc(env(safe-area-inset-top, 0px) + 70px)" }}>
+                    <button className="m2-round" aria-label={baseKey === "dark" ? "Satellite map" : "Dark map"} onClick={() => setBaseKey(baseKey === "dark" ? "satellite" : "dark")}>
+                        <Icon id={baseKey === "dark" ? "g-sat" : "g-layers"} />
+                    </button>
+                    <button className="m2-round" aria-label="Whole world" onClick={() => goTheater("global")}><Icon id="g-globe" /></button>
+                    {mine.theaters.length > 0 && <button className="m2-round" aria-label="My theaters" onClick={() => setSheet("theaters")}><Icon id="g-tabs" /></button>}
+                </div>}
+                {/* what is in view, or how to see more */}
+                {(on.ships || on.aircraft) && (
+                    <div className="m2-pill" data-testid="track-count">
+                        {zoom < TRACK_ZOOM ? "Zoom in for ships and aircraft"
+                            : [on.ships && `${ships.length} ships`, on.aircraft && `${planes.length} aircraft`].filter(Boolean).join(" · ")}
+                    </div>
+                )}
+                {/* the widgets, round and labelled, along the bottom */}
+                <div className="m2-widgets">
+                    <button className="m2-widget" onClick={() => setSheet("filters")} data-testid="w-filters"><span><Icon id="g-tune" size={22} /></span>Filters</button>
+                    <button className="m2-widget" onClick={() => setSheet("time")}><span><Icon id="g-event" size={22} /></span>{timeLabel}</button>
+                    <button className="m2-widget" onClick={nearMe}><span><Icon id="g-pin" size={22} /></span>Near me</button>
+                    <button className="m2-widget" onClick={() => setSheet("live")}><span><Icon id="g-play" size={22} />{arr(streams).length > 0 && <span className="m2-badge">{arr(streams).length}</span>}</span>Live</button>
+                </div>
+            </div>
+
+            {sheet === "filters" && (
+                <Sheet onClose={() => setSheet(null)}>
+                    <div data-testid="m2-filters">
+                        <div className="m2-h">On the map</div>
+                        <div className="m2-tiles">
+                            {LAYERS.map(([k, l]) => (
+                                <button key={k} className="m2-tile" aria-pressed={!!on[k]} onClick={() => setOn({ ...on, [k]: !on[k] })}>
+                                    <i style={{ background: on[k] ? LAYER_COLOR[k] : "transparent", border: `2px solid ${LAYER_COLOR[k]}` }} />
+                                    <b>{l}</b><small>{countOf(k)}</small>
+                                </button>
+                            ))}
+                        </div>
+                        <div className="m2-h">How serious</div>
+                        <div className="m2-segs">
+                            {FLOORS.map(([k, l]) => <button key={k} aria-pressed={floor === k} onClick={() => setFloor(k)}>{l}</button>)}
+                        </div>
+                        <div className="m2-h">Base map</div>
+                        <div className="m2-basemaps">
+                            <button aria-pressed={baseKey === "dark"} onClick={() => setBaseKey("dark")} style={{ background: "linear-gradient(160deg,#2a2f3a,#12151b)" }}>Dark</button>
+                            <button aria-pressed={baseKey === "satellite"} onClick={() => setBaseKey("satellite")} style={{ background: "linear-gradient(160deg,#4d5a3a,#1f2c3d)" }}>Satellite</button>
+                        </div>
+                    </div>
+                </Sheet>
+            )}
+            {sheet === "time" && (
+                <Sheet onClose={() => setSheet(null)}>
+                    <div className="m2-h">Show the last</div>
+                    <div className="m2-segs">
+                        {[...WINDOWS, 168].map((h) => <button key={h} aria-pressed={hours === h} onClick={() => { setHours(h); setSheet(null) }}>{h === 168 ? "7 d" : `${h} h`}</button>)}
+                    </div>
+                </Sheet>
+            )}
+            {sheet === "theaters" && (
+                <Sheet onClose={() => setSheet(null)}>
+                    <div className="m2-h">Your theaters</div>
+                    <div className="m2-tiles">
+                        {mine.theaters.map((t) => (
+                            <button key={t.id} className="m2-tile" aria-pressed={theater === t.id} onClick={() => { goTheater(t.id); setSheet(null) }}>
+                                <i style={{ background: "var(--accdim)", border: "2px solid var(--acchi)" }} /><b>{t.name}</b><small />
+                            </button>
+                        ))}
+                    </div>
+                </Sheet>
+            )}
+            {sheet === "live" && (
+                <Sheet onClose={() => setSheet(null)}>
+                    <div className="m2-h">Live on Telegram now</div>
+                    {arr(streams).length === 0 ? <div className="m2-empty">No channel we read is live right now. You are told the moment one goes live.</div>
+                        : <LiveNow compact />}
                 </Sheet>
             )}
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={(s) => map.current?.setView([+s.lat, +s.lon], 11, { animate: true })} />}

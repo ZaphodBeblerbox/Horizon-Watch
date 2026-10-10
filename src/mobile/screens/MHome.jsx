@@ -17,7 +17,16 @@ import { slotOf, useFrozen } from "../../home/dayPart.js"
 import { getCurrentUser, subscribeAuth } from "../../state/authStore.js"
 import { greetingFor } from "../../data/greetings.js"
 import { useMine, usePoll, arr } from "../useMine.js"
-import { Row, SignalSheet, sevColor, when, ago } from "./common.jsx"
+import { Row, SignalSheet, sevColor, when, ago, Icon } from "./common.jsx"
+import { relevance } from "../../state/interests.js"
+import { hmZone } from "../../utils/clock.js"
+import { getSettings, subscribeSettings } from "../../state/settingsStore.js"
+
+function useHere() {
+    const [h, setH] = useState(() => getSettings()?.interests?.here || null)
+    useEffect(() => subscribeSettings((st) => setH(st?.interests?.here || null)), [])
+    return h
+}
 import API_BASE from "../../apiBase.js"
 
 const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
@@ -83,30 +92,52 @@ export default function MHome({ onShowOnMap, onOpen }) {
     }, [outlook, mine.w])
     const ahead = useFrozen(`m-ahead:${slot.key}`, aheadNow, (a) => mine.ready && a.length > 0)
 
-    // THE LEAD, as a front page has one: the most important story now —
-    // yours first, then the most severe and newest everywhere.
-    const lead = useMemo(() => {
-        if (urgent.length) return urgent[0]
-        return [...arr(surface)].sort((a, b) => (SEVR[a.severity_tier] ?? 9) - (SEVR[b.severity_tier] ?? 9)
-            || String(b.published_at || "").localeCompare(String(a.published_at || "")))[0] || null
-    }, [urgent, surface])
     // LE DIRECT: the newest Telegram posts, a swipe away.
     const live = usePoll("/api/telegram/feed?limit=12", 2 * 60_000, (d) => arr(d?.posts))
 
+    // FOR YOU: what is near you, your assets and in your theaters, each with why
+    const here = useHere()
+    const forYou = useMemo(() => urgent.map((u) => ({ ...u, _why: u._asset ? u.reason : relevance(u, mine.w).reason || u._why })).slice(0, 5), [urgent, mine.w])
+    const worldwide = useMemo(() => forYou.length ? [] : [...arr(surface)].sort((a, b) => (SEVR[a.severity_tier] ?? 9) - (SEVR[b.severity_tier] ?? 9)
+        || String(b.published_at || "").localeCompare(String(a.published_at || ""))).slice(0, 4), [forYou, surface])
+    const askHere = async () => {
+        try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); await saveHere(p.lat, p.lon) } catch { /* not allowed */ }
+    }
     const first = String(user?.name || user?.display_name || "").split(" ")[0]
     const greet = greetingFor(first, { seed })
     return (
         <div className="m2-scroll" data-screen-label="Phone home">
-            {lead && (
-                <button className="m2-lead" data-testid="m2-lead" onClick={() => setOpen(lead)}>
-                    {(lead.thumb_url || lead.image_url) && <img src={lead.thumb_url ? `${API_BASE}${lead.thumb_url}` : lead.image_url} alt="" />}
-                    <span className="m2-eyebrow" style={{ color: sevColor(lead.severity_tier || lead.sev) }}>
-                        {[lead._asset ? "near your asset" : urgent.length ? "for you" : "now", String(lead.location || lead.place || "").split(",").slice(0, 2).join(","), when(lead.published_at || lead.created_at)].filter(Boolean).join(" · ")}
-                    </span>
-                    <span className="m2-lead-h">{lead.headline || lead.title}</span>
-                    {(lead.context || lead.summary || lead.reason) && <span className="m2-sub" style={{ fontSize: 14, lineHeight: 1.45 }}>{String(lead.context || lead.summary || lead.reason).slice(0, 220)}</span>}
+            {/* WHO AND WHERE YOU ARE, then what is yours — the first thing you see */}
+            <div className="m2-hero">
+                <div className="m2-eyebrow">{greet.kicker}</div>
+                <h1>{greet.lead}</h1>
+                <span className="m2-sub">{new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })} · {hmZone(new Date())}</span>
+                <button className="m2-here" onClick={() => (here ? onShowOnMap?.({ lat: here.lat, lon: here.lon }) : askHere())}>
+                    <span style={{ width: 8, height: 8, borderRadius: 4, background: "#3b8cff", boxShadow: "0 0 8px #3b8cff" }} />
+                    {here ? (String(here.label || "Your location").split(",").slice(-2).join(",").trim()) : "Use my location"}
                 </button>
-            )}
+            </div>
+
+            <div className="m2-h" style={{ marginTop: 4 }}>{forYou.length ? "For you" : mine.has || here ? "Nothing near you — the most severe worldwide" : "Most severe right now"}</div>
+            <div className="m2-foryou" data-testid="m2-foryou">
+                {(forYou.length ? forYou : worldwide).map((u) => (
+                    <button key={u.id ?? u.title} className="m2-fy" onClick={() => (u._asset && u.asset_id ? onOpen?.("assets", { asset: u.asset_id }) : setOpen(u))}>
+                        <i style={{ background: sevColor(u.severity_tier || u.sev) }} />
+                        <span style={{ minWidth: 0 }}>
+                            <b>{u.headline || u.title}</b>
+                            <small>{u._why || [String(u.location || u.place || "").split(",").slice(0, 2).join(","), u.source].filter(Boolean).join(" · ")}</small>
+                        </span>
+                        <span className="m2-when">{ago(u.published_at || u.created_at || u.posted_at)}</span>
+                    </button>
+                ))}
+                {!forYou.length && !worldwide.length && <div className="m2-empty">{surface === null ? "Loading…" : "Nothing reported right now."}</div>}
+                {!mine.has && !here && (
+                    <div className="m2-sub" style={{ margin: "2px 2px 0", fontSize: 13 }}>
+                        Share your location, or add a theater or an asset, and this shows what concerns you first.
+                    </div>
+                )}
+            </div>
+            <button className="m2-cta" onClick={() => onOpen?.("map")} data-testid="m2-open-map"><Icon id="g-globe" size={22} />Open the map</button>
 
             <div style={{ padding: "0 16px" }}><LiveNow compact /></div>
             {arr(live).length > 0 && (
@@ -131,36 +162,6 @@ export default function MHome({ onShowOnMap, onOpen }) {
                     </div>
                 </section>
             )}
-            {/* WHO YOU ARE AND A WELCOME, as on the desktop: the header and
-                picture from the profile, the greeting for the time of day. */}
-            <div className="m2-card" style={{ overflow: "hidden", margin: "0 0 16px" }} data-screen-label="Phone welcome">
-                {user?.cover && <img src={user.cover} alt="" style={{ display: "block", width: "100%", height: 96, objectFit: "cover", objectPosition: user.cover_pos || "50% 50%" }} />}
-                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", marginTop: user?.cover ? -34 : 0 }}>
-                    {user?.avatar
-                        ? <img src={user.avatar} alt="" style={{ width: 56, height: 56, borderRadius: 28, objectFit: "cover", objectPosition: user.avatar_pos || "50% 50%", border: "2px solid var(--bg-0, #0f1115)", flex: "none" }} />
-                        : <span style={{ width: 56, height: 56, borderRadius: 28, display: "grid", placeItems: "center", background: user?.color || "#334", fontWeight: 700, fontSize: 18, border: "2px solid var(--bg-0, #0f1115)", flex: "none" }}>{user?.initials || "?"}</span>}
-                    <div style={{ minWidth: 0, alignSelf: "flex-end" }}>
-                        <div className="m2-eyebrow">{greet.kicker}</div>
-                        <div style={{ fontSize: 19, fontWeight: 650, lineHeight: 1.25 }}>{greet.lead}</div>
-                    </div>
-                </div>
-                <div className="m2-sub" style={{ padding: "0 14px 12px" }}>
-                    {mine.has ? `Built on your ${[mine.theaters.length && `${mine.theaters.length} theater${mine.theaters.length === 1 ? "" : "s"}`, mine.assets.length && `${mine.assets.length} asset${mine.assets.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ") || "interests"}. ${greet.sub || ""}`
-                        : "Nothing is yours yet — add a theater or an asset and Home follows them."}
-                </div>
-            </div>
-
-            <section className="m2-section" data-screen-label="Phone urgent">
-                <header><span className="m2-eyebrow">Most urgent for you</span><span className="m2-when">live · 30 s</span></header>
-                <div className="m2-card">
-                    {!mine.has ? <div className="m2-empty">Create a theater on the desktop or register an asset under More › Assets, and what concerns them appears here first.</div>
-                        : urgent.length === 0 ? <div className="m2-empty">{surface === null ? "Loading…" : "Nothing urgent in your theaters or near your assets right now."}</div>
-                        : urgent.map((u) => <Row key={u.id ?? u.title} s={u} title={u.headline || u.title}
-                            sub={u._asset ? u.reason : (u._why || u.location || "")} when={when(u.published_at || u.created_at)}
-                            onClick={() => (u._asset && u.asset_id ? onOpen?.("assets", { asset: u.asset_id }) : setOpen(u))} />)}
-                </div>
-            </section>
-
             {videos.length > 0 && (
                 <section className="m2-section" data-screen-label="Phone ground">
                     <header><span className="m2-eyebrow">From the ground</span><span className="m2-when">{mine.has ? "for you" : "worldwide"} · renewed {slot.part === "night" ? "tonight" : `this ${slot.part}`}</span></header>
