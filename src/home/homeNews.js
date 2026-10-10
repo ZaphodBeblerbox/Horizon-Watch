@@ -58,7 +58,7 @@ const SECTION = {
 }
 
 /** Announce what is new in one of Home's sections. Returns the new items. */
-export function announceNew(section, items, { idOf = (x) => x.id, titleOf = (x) => x.headline || x.title, placeOf = () => null } = {}) {
+export function announceNew(section, items, { idOf = (x) => x.id, titleOf = (x) => x.headline || x.title, whereOf = () => null } = {}) {
     if (!Array.isArray(items) || !items.length) return []
     const store = load()
     const fresh = newOnHome(section, items, idOf, store)
@@ -66,7 +66,7 @@ export function announceNew(section, items, { idOf = (x) => x.id, titleOf = (x) 
     if (!fresh.length) return fresh
     const first = fresh[0]
     const name = String(titleOf(first) || "").trim()
-    const where = placeOf(first)
+    const where = whereOf(first)
     pushNotification({
         id: `home:${section}:${fresh.map(idOf).join(",")}`.slice(0, 200),
         kind: "home",

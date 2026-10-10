@@ -346,11 +346,11 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
        (knowsYou), or the first fill would read as news. */
     useEffect(() => {
         if (!knowsYou) return
-        announceNew("ground", groundVideos, { titleOf: (v) => v.headline || v.summary_en, placeOf: (v) => v.place })
+        announceNew("ground", groundVideos, { titleOf: (v) => v.headline || v.summary_en, whereOf: (v) => v.place })
     }, [groundVideos, knowsYou])
     useEffect(() => {
         if (!knowsYou) return
-        announceNew("happened", overnight, { idOf: (s) => s.id ?? s.headline, titleOf: (s) => s.title || s.headline, placeOf: (s) => placeOf(s) })
+        announceNew("happened", overnight, { idOf: (s) => s.id ?? s.headline, titleOf: (s) => s.title || s.headline, whereOf: (s) => placeOf(s) })
     }, [overnight, knowsYou])
 
     /* Top scenario per board, with its own base rate kept alongside.

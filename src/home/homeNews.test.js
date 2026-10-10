@@ -23,7 +23,7 @@ describe("announceNew", () => {
         announceNew("ground", [{ id: "a", headline: "Old" }])
         expect(getNotifications().items.length).toBe(0)
         announceNew("ground", [{ id: "b", headline: "Strike on a depot", place: "Sanaa" }, { id: "a", headline: "Old" }],
-            { placeOf: (v) => v.place })
+            { whereOf: (v) => v.place })
         const items = getNotifications().items
         expect(items.length).toBe(1)
         expect(items[0].kind).toBe("home")
