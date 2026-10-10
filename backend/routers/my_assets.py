@@ -266,6 +266,16 @@ async def live(request: Request):
         lat, lon = float(b["lat"]), float(b["lon"])
         acc = float(b["accuracy"]) if b.get("accuracy") is not None else None
         moved = oa.live_position(_uid(user), lat, lon, acc)
+        if not moved:
+            # THE LOCATION BECOMES AN ASSET (owner, 2026-10-10): the first
+            # live position of someone with no linked person asset creates
+            # theirs — shared with the team, moved by every later position,
+            # and assessed like every other asset.
+            name = (user.get("name") or user.get("email") or "Me").split("@")[0]
+            oa.create(_uid(user), {"name": f"{name} (live)", "kind": "person", "lat": lat, "lon": lon, "shared": True,
+                                   "identifiers": {"user_id": _uid(user)}, "importance": "high",
+                                   "notes": "Created from this person's shared live location."})
+            moved = oa.live_position(_uid(user), lat, lon, acc)
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(400, f"a position is lat and lon: {e}")
     import asset_watch

@@ -94,3 +94,9 @@ def test_a_wrapped_chunk_becomes_an_hls_segment(tmp_path):
     s._segment(ff, _header(b"mp4") + src.read_bytes())
     assert s.error is None, s.error
     assert s.segments == ["s000000.ts"] and os.path.getsize(tmp_path / "s000000.ts") > 1000
+
+
+def test_record_call_once(db):
+    assert tl.record_call("kyivlive", "Real Kyiv", 9, 3) is True
+    assert tl.record_call("kyivlive", "Real Kyiv", 9, 3) is False
+    assert [s["id"] for s in tl.live_now()] == ["kyivlive:9"]

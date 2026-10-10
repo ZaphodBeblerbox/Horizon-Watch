@@ -12196,6 +12196,37 @@ def api_analytics_day(date: str, country: str = "", kind: str = ""):
     return {"alerts": _ad.day_detail(_akili_db_path(), date, country.strip().lower()[:3] or None, kind.strip()[:80] or None)}
 
 
+@app.get("/api/general")
+def api_general(before: str = "", limit: int = Query(40, ge=5, le=100), kinds: str = "signal,geoconfirmed,telegram"):
+    """What is generally happening, newest first (general_feed.py): serious
+    events, GeoConfirmed's verified events with their X posts, Telegram
+    posts — and the news signals of the surface pool — as one timeline.
+    `next` pages on."""
+    import general_feed as _gf
+    want = tuple(k for k in kinds.split(",") if k in _gf.KINDS) or _gf.KINDS
+    out = _gf.feed(_akili_db_path(), before or None, limit, want)
+    if "signal" in want:
+        cursor = (before or "9999").replace(" ", "T")[:19]
+        floor = out["items"][-1]["at"] if out["next"] else ""
+        with _SURFACE_POOL_LOCK:
+            pool = list(_SURFACE_POOL)
+        have = {i["headline"].strip().lower() for i in out["items"]}
+        for it in pool:
+            at = str(it.get("published_at") or "").replace(" ", "T")[:19]
+            head = (it.get("headline") or it.get("title") or "").strip()
+            if not at or not head or not (floor <= at < cursor) or head.lower() in have:
+                continue
+            if str(it.get("source_type") or "").startswith("telegram"):
+                continue                                   # Telegram comes as its own posts
+            have.add(head.lower())
+            out["items"].append({"id": f"news:{it.get('id')}", "kind": "signal", "at": at, "headline": head,
+                                 "text": (it.get("summary") or it.get("context") or "")[:400],
+                                 "severity": str(it.get("severity_tier") or "").lower(), "lat": it.get("lat"), "lon": it.get("lon"),
+                                 "place": it.get("location"), "source": it.get("source"), "url": it.get("url")})
+        out["items"].sort(key=lambda x: x["at"], reverse=True)
+    return out
+
+
 @app.get("/api/telegram/live")
 def api_telegram_live():
     """Livestreams on now in the channels we read (telegram_live.py)."""

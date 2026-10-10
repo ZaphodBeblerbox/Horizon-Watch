@@ -223,8 +223,14 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
     client = await _connected()
     try:
       joined = set()
+      live_now = []                         # channels and groups with a call or stream on
       async for d in client.iter_dialogs():
             ent = d.entity
+            # LIVE, FROM THE DIALOG LIST ITSELF: Telegram flags a channel or
+            # group whose call/stream is running (call_active). Cheaper and
+            # surer than waiting for the "started a live stream" message.
+            if d.is_channel and getattr(ent, "call_active", False):
+                live_now.append(ent)
             if not (d.is_channel and getattr(ent, "broadcast", False)):
                 continue
             chan = getattr(ent, "username", None) or f"c/{ent.id}"
@@ -278,6 +284,7 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
       # Streams still on? (a stream's end may come before its service message)
       try:
           import telegram_live
+          await telegram_live.note_active(client, live_now)
           await telegram_live.confirm_live(client)
       except Exception as e:                                   # noqa: BLE001
           print(f"[telegram-live] confirm failed: {type(e).__name__}: {e}", flush=True)
@@ -1092,8 +1099,36 @@ def _video_file(chan: str, msg_id: int) -> str:
     return os.path.join(VIDEO_DIR, f"{chan.replace('/', '_')}_{msg_id}.mp4")
 
 
+_SIDE = {"mtime": None, "string": None}
+
+
+def side_client():
+    """A Telegram client on an in-memory copy of the server's session, for
+    work that must not queue behind the collector (videos, livestreams).
+    The session file is read under the lock once (and again only when it
+    changes); after that each caller connects on its own. Videos used to
+    wait for the lock while the collector read every channel — up to two
+    minutes before a video started (2026-10-10)."""
+    if not on_server():
+        raise RuntimeError(SERVER_ONLY)
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+    try:
+        mtime = os.path.getmtime(SESSION + ".session")
+    except OSError:
+        mtime = None
+    if _SIDE["string"] is None or _SIDE["mtime"] != mtime:
+        with _SESSION_LOCK:
+            c = _client()
+            _SIDE["string"] = StringSession.save(c.session)
+            c.session.close()
+            _SIDE["mtime"] = mtime
+    return TelegramClient(StringSession(_SIDE["string"]), int(os.environ["TELEGRAM_API_ID"]), os.environ["TELEGRAM_API_HASH"])
+
+
 async def _download_video(chan: str, msg_id: int, path: str) -> str | None:
-    client = await _connected()
+    client = side_client()
+    await client.connect()
     try:
         m = await client.get_messages(_peer(chan), ids=msg_id)
         if not m or not m.file or not (m.file.mime_type or "").startswith("video"):
@@ -1115,8 +1150,11 @@ def video_path(chan: str, msg_id: int) -> tuple[str | None, str | None]:
     if os.path.exists(path) and os.path.getsize(path) > 0:
         os.utime(path)                       # still being watched: keep it a while
         return path, None
-    with _SESSION_LOCK:
-        got = asyncio.run(_download_video(chan, msg_id, path))
+    # not under the session lock: side_client() has its own copy
+    got = asyncio.run(_download_video(chan, msg_id, path + ".part"))
+    if got:
+        os.replace(got, path)                # whole files only: a half-download is never served
+        got = path
     return (got, None) if got else (None, f"no video, or larger than {VIDEO_MAX_MB} MB")
 
 

@@ -127,6 +127,52 @@ def note_action(channel: str, channel_title: str | None, msg, *, role: str = "ag
         con.close()
 
 
+async def note_active(client, entities) -> list[str]:
+    """Record the calls running in these channels/groups (dialogs flagged
+    call_active), whitelisted like every other Telegram signal: a channel
+    or group the registry marks "ignore" is not followed. The call itself
+    comes from the full channel (channels.getFullChannel)."""
+    from telethon.tl.functions.channels import GetFullChannelRequest
+    import telegram_ingest as ti
+    started = []
+    if not entities:
+        return started
+    con = _con()
+    try:
+        open_ids = {r[0] for r in con.execute("SELECT channel FROM telegram_livestreams WHERE ended_at IS NULL")}
+    finally:
+        con.close()
+    for ent in entities[:20]:
+        chan = getattr(ent, "username", None) or f"c/{ent.id}"
+        if chan in open_ids or ti.channel_info(chan)["role"] == "ignore":
+            continue
+        try:
+            full = await client(GetFullChannelRequest(ent))
+            call = getattr(full.full_chat, "call", None)
+        except Exception as e:                                 # noqa: BLE001
+            print(f"[telegram-live] {chan}: {type(e).__name__}: {e}", flush=True)
+            continue
+        if call is None:
+            continue
+        if record_call(chan, getattr(ent, "title", chan), call.id, call.access_hash):
+            started.append(chan)
+            print(f"[telegram-live] {chan} is live", flush=True)
+    return started
+
+
+def record_call(channel: str, title: str | None, call_id: int, access_hash: int, when: str | None = None) -> bool:
+    """A call seen running; True if it is new."""
+    con = _con()
+    try:
+        cur = con.execute("INSERT OR IGNORE INTO telegram_livestreams (id, channel, channel_title, call_id, access_hash, country_code, started_at)"
+                          " VALUES (?,?,?,?,?,?,?)", (f"{channel}:{call_id}", channel, title, call_id, access_hash,
+                                                       channel_country(con, channel), when or _now()))
+        con.commit()
+        return cur.rowcount > 0
+    finally:
+        con.close()
+
+
 async def confirm_live(client) -> int:
     """Ask Telegram whether each open stream is still on (phone.getGroupCall);
     a discarded call is closed. Returns how many are live."""
@@ -318,8 +364,6 @@ class Session:
                     _SESSIONS.pop(self.stream["id"], None)
 
     async def _pull(self):
-        from telethon import TelegramClient
-        from telethon.sessions import StringSession
         from telethon.tl.functions.phone import (GetGroupCallRequest, GetGroupCallStreamChannelsRequest,
                                                  JoinGroupCallRequest, LeaveGroupCallRequest)
         from telethon.tl.functions.upload import GetFileRequest
@@ -330,11 +374,7 @@ class Session:
         if not ff:
             raise RuntimeError("ffmpeg is not available on the server")
         # an in-memory copy of the server's session: the collector keeps its file
-        with ti._SESSION_LOCK:
-            file_client = ti._client()
-            sess = StringSession.save(file_client.session)
-            file_client.session.close()
-        client = TelegramClient(StringSession(sess), int(os.environ["TELEGRAM_API_ID"]), os.environ["TELEGRAM_API_HASH"])
+        client = ti.side_client()
         await client.connect()
         call = InputGroupCall(id=self.stream["call_id"], access_hash=self.stream["access_hash"])
         joined = False
