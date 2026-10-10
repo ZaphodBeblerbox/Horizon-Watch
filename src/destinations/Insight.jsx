@@ -29,6 +29,7 @@ import RiskRanking from "./RiskRanking.jsx"
 import WhatsNext from "../insight/WhatsNext.jsx"
 import WhatChanged from "../insight/WhatChanged.jsx"
 import TelegramMood from "../insight/TelegramMood.jsx"
+import StrikeTiming from "../insight/StrikeTiming.jsx"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 const ON = "var(--accdim)"
@@ -310,6 +311,8 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
         return (
             <>
                 <WhatsNext onOpenModule={onOpenModule} />
+                {/* Folded to one line; never a notification (strike_timing.py). */}
+                <StrikeTiming onOpenModule={onOpenModule} />
                 {/* WHICH BOARDS THIS THEATER IS ABOUT.
                     The in-scope row comes first and is the default; the rest
                     stay reachable, because a theater is where you are

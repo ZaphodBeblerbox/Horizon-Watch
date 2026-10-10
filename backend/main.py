@@ -12088,6 +12088,28 @@ def api_telegram_mood(country: str = "", days: int = Query(14, ge=7, le=60)):
     return {"countries": _ts.countries(days)}
 
 
+@app.get("/api/indicators/strike-timing")
+def api_strike_timing():
+    """The quiet indicators before a strike (strike_timing.py): the week,
+    US tankers airborne, command and reconnaissance aircraft, night flights
+    near Washington, heavy airlift. A panel, never a notification."""
+    import strike_timing as _st
+    return _st.indicators(_akili_db_path())
+
+
+async def _strike_timing_loop():
+    """A reading every half hour, so the indicators' own daily record (their
+    baseline) grows whether or not anyone opens the panel."""
+    await asyncio.sleep(240)
+    while True:
+        try:
+            import strike_timing as _st
+            await asyncio.to_thread(_st.indicators, _akili_db_path())
+        except Exception as e:                              # noqa: BLE001
+            print(f"[strike-timing] error: {type(e).__name__}: {e}", flush=True)
+        await asyncio.sleep(1800)
+
+
 @app.get("/api/telegram/situations")
 async def api_telegram_situations():
     """Developments on the ground read from Telegram that are still live — a
@@ -15894,6 +15916,7 @@ async def startup_event():
     _spawn(_telegram_loop)
     _spawn(_event_watch_loop)
     _spawn(_conflict_context_loop)
+    _spawn(_strike_timing_loop)
     _spawn(_escalation_loop)
     _spawn(_heat_watch_loop)
     global _BRIEFING_STORE
