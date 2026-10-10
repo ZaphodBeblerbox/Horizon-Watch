@@ -964,6 +964,12 @@ def run_once(hours: int = 6) -> dict:
     # first, one-per-post reading, kept for its tests and history.
     import telegram_events
     out.update(telegram_events.run_once())
+    # The mood per country (telegram_sentiment.py): each post rated once.
+    try:
+        import telegram_sentiment
+        out.update(telegram_sentiment.read_mood())
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[telegram] mood pass failed: {type(e).__name__}: {e}", flush=True)
     # Prefetched only where videos are kept (the server's volume), so the
     # newest play the moment they are opened; on a laptop a video is fetched
     # when opened and gone half an hour later (the owner, 2026-10-06).

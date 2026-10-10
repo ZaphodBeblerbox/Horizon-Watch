@@ -12077,6 +12077,17 @@ async def _conflict_context_loop():
         await asyncio.sleep(6 * 3600)
 
 
+@app.get("/api/telegram/mood")
+def api_telegram_mood(country: str = "", days: int = Query(14, ge=7, le=60)):
+    """The mood on Telegram (telegram_sentiment.py): without a country, every
+    country with enough rated posts, sharpest rise first; with one, its daily
+    index, the change, whom it is aimed at, and the posts calling to act."""
+    import telegram_sentiment as _ts
+    if country.strip():
+        return _ts.series(country.strip().lower()[:2], days)
+    return {"countries": _ts.countries(days)}
+
+
 @app.get("/api/telegram/situations")
 async def api_telegram_situations():
     """Developments on the ground read from Telegram that are still live — a

@@ -28,6 +28,7 @@ import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import RiskRanking from "./RiskRanking.jsx"
 import WhatsNext from "../insight/WhatsNext.jsx"
 import WhatChanged from "../insight/WhatChanged.jsx"
+import TelegramMood from "../insight/TelegramMood.jsx"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 const ON = "var(--accdim)"
@@ -125,7 +126,7 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
     const top = safeArray(ov?.top_signals)
 
     /* ── header ───────────────────────────────────────────────────── */
-    const TABS = [["What changed", "changes"], ["Risk ranking", "risk"], ["What happens next", "forecast"]]
+    const TABS = [["What changed", "changes"], ["Risk ranking", "risk"], ["What happens next", "forecast"], ["Mood on Telegram", "mood"]]
 
     const body = () => {
         /* THE OVERVIEW IS NOT THE WHOLE SCREEN.
@@ -137,6 +138,8 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
            will reach in normal use, not an exotic failure. */
         // What changed has its own endpoint and its own loading state.
         if (tab === "changes") return <WhatChanged />
+        // Its own endpoint too (telegram_sentiment.py).
+        if (tab === "mood") return <TelegramMood />
         if (tab !== "forecast") {
             if (err) {
                 return (
