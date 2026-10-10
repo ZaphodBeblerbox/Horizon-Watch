@@ -502,6 +502,14 @@ class Post(Base):
     created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     edited_at       = Column(DateTime, nullable=True)
     deleted_at      = Column(DateTime, nullable=True)
+    # WHO READS IT (the owner, 2026-10-10: your company by default, shared
+    # out on purpose). "company" — people of audience_company; "everyone" —
+    # every account; "people" — the author and shared_with (a JSON list of
+    # user ids). NULL is a post from before audiences: it was published to
+    # everyone and stays so. A reply follows its parent's audience.
+    audience        = Column(String, nullable=True)
+    audience_company = Column(String, nullable=True, index=True)  # normalised: lowercase, trimmed
+    shared_with     = Column(Text, nullable=True)
 
 
 class PostAck(Base):
@@ -2134,6 +2142,14 @@ def migrate_db():
             if col not in rsj_existing:
                 cur.execute(f'ALTER TABLE regional_scan_jobs ADD COLUMN {col} {typ}')
                 print(f'[db-migrate] regional_scan_jobs: added column {col}')
+
+    # posts: who reads them (desk audiences, 2026-10-10)
+    if 'posts' in tables:
+        p_existing = [row[1] for row in cur.execute('PRAGMA table_info(posts)').fetchall()]
+        for col, typ in (('audience', 'TEXT'), ('audience_company', 'TEXT'), ('shared_with', 'TEXT')):
+            if col not in p_existing:
+                cur.execute(f'ALTER TABLE posts ADD COLUMN {col} {typ}')
+                print(f'[db-migrate] posts: added column {col}')
 
     # regional_scan_detections new columns
     rsdet_new_cols = [

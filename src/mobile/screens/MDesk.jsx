@@ -8,10 +8,15 @@ import { useEffect, useRef, useState } from "react"
 import { Attachment } from "../../desk/deskAttachments.jsx"
 import { createPost, listPosts, listReplies, toggleAck, uploadDeskFile } from "../../lib/deskApi.js"
 import { Icon, when } from "./common.jsx"
+import { getCurrentUser } from "../../state/authStore.js"
+import { audienceLabel } from "../../desk/Desk.jsx"
 
 const URG = ["routine", "elevated", "high", "critical"]
 
-function Composer({ onPosted, parentId = null, placeholder = "What did you see? It goes to everyone on the desk." }) {
+function Composer({ onPosted, parentId = null, placeholder = null }) {
+    const me = getCurrentUser() || {}
+    // Your company by default (routers/desk.py); without one, everyone.
+    const [audience, setAudience] = useState(me.company ? "company" : "everyone")
     const [text, setText] = useState("")
     const [att, setAtt] = useState(null)
     const [urgency, setUrgency] = useState("routine")
@@ -35,14 +40,16 @@ function Composer({ onPosted, parentId = null, placeholder = "What did you see? 
         if (!text.trim() && !att) return
         setBusy(true)
         try {
-            await createPost({ body: text.trim(), attachment: att || undefined, urgency: parentId ? undefined : urgency, parent_id: parentId || undefined })
+            await createPost({ body: text.trim(), attachment: att || undefined, urgency: parentId ? undefined : urgency, parent_id: parentId || undefined,
+                               audience: parentId ? undefined : audience })
             setText(""); setAtt(null); setMsg(null); onPosted?.()
         } catch (e) { setMsg(e.message || "Could not post") }
         setBusy(false)
     }
     return (
         <div className="m2-card" style={{ padding: 12, marginBottom: 14 }}>
-            <textarea className="m2-input" rows={parentId ? 2 : 3} placeholder={placeholder} value={text} onChange={(e) => setText(e.target.value)} />
+            <textarea className="m2-input" rows={parentId ? 2 : 3} value={text} onChange={(e) => setText(e.target.value)}
+                      placeholder={placeholder || `What did you see? It goes to ${audience === "company" ? `${me.company} only` : "everyone on Parallax"}.`} />
             {att && <div style={{ marginTop: 8 }}><Attachment att={att} compact /><button className="m2-chip" style={{ marginTop: 6 }} onClick={() => setAtt(null)}>Remove</button></div>}
             <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
                 {!parentId && <>
@@ -51,6 +58,10 @@ function Composer({ onPosted, parentId = null, placeholder = "What did you see? 
                     <button className="m2-chip" onClick={here}><Icon id="g-pin" size={14} />Where I am</button>
                     <select className="m2-chip" value={urgency} onChange={(e) => setUrgency(e.target.value)} style={{ appearance: "none" }}>
                         {URG.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                    <select className="m2-chip" value={audience} onChange={(e) => setAudience(e.target.value)} style={{ appearance: "none" }} aria-label="Who reads this post">
+                        {me.company && <option value="company">{me.company}</option>}
+                        <option value="everyone">Everyone</option>
                     </select>
                 </>}
                 <span style={{ flex: 1 }} />
@@ -78,7 +89,7 @@ function PostCard({ p, onChanged }) {
                     : <span style={{ width: 30, height: 30, borderRadius: 15, display: "grid", placeItems: "center", background: who.color || "#334", fontSize: 12, fontWeight: 700 }}>{who.initials || "?"}</span>}
                 <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{who.name || "Someone"} {who.title && <span className="m2-when">{who.title}</span>}</div>
-                    <div className="m2-when">{when(p.created_at)}{p.theater ? ` · ${p.theater}` : ""}{p.urgency && p.urgency !== "routine" ? ` · ${p.urgency}` : ""}</div>
+                    <div className="m2-when">{when(p.created_at)}{p.theater ? ` · ${p.theater}` : ""}{p.urgency && p.urgency !== "routine" ? ` · ${p.urgency}` : ""}{p.audience ? ` · ${audienceLabel(p.audience)}` : ""}</div>
                 </div>
             </div>
             {p.body && <div style={{ fontSize: 15, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginBottom: 8 }}>{p.body}</div>}

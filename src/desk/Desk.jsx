@@ -26,6 +26,7 @@ import { getCurrentUser } from "../state/authStore.js"
 import { getActiveTheater, URGENCY } from "../state/filing.js"
 import PersonCard, { Face } from "../chat/PersonCard.jsx"
 import { toast } from "../ui/toast.js"
+import { chatPeople } from "../lib/chatApi.js"
 import Loading from "../ui/Loading.jsx"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import { fmtWhen } from "../utils/formatTime.js"
@@ -283,6 +284,64 @@ export default function Desk() {
     )
 }
 
+/* ── who reads it ────────────────────────────────────────────────────── */
+
+/** "Trifecta Technologies" / "Everyone on Parallax" / "Ana, Ben and 2 more". */
+export function audienceLabel(a, myCompany) {
+    if (!a || a.kind === "everyone") return "Everyone on Parallax"
+    if (a.kind === "company") return a.company || myCompany || "Your company"
+    const names = a.people || []
+    if (!names.length) return "Named people"
+    return names.length <= 2 ? names.join(" and ") : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`
+}
+
+function AudiencePicker({ me, audience, setAudience, shared, setShared }) {
+    const [people, setPeople] = useState(null)
+    const [q, setQ] = useState("")
+    useEffect(() => {
+        if (audience !== "people" || people) return
+        chatPeople().then((d) => setPeople(Array.isArray(d) ? d : [])).catch(() => setPeople([]))
+    }, [audience, people])
+    const chosen = (people || []).filter((p) => shared.includes(p.id))
+    const hits = q.trim()
+        ? (people || []).filter((p) => !shared.includes(p.id) && `${p.name} ${p.email} ${p.company || ""}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 6)
+        : []
+    const pill = { height: 30, background: "transparent", border: "1px solid var(--gline2)", color: "var(--txt2)", font: "inherit", fontSize: 12.5, borderRadius: 15, padding: "0 8px" }
+    return (
+        <>
+            <select value={audience} onChange={(e) => setAudience(e.target.value)} title="Who reads this post" style={pill}>
+                {me?.company && <option value="company">{me.company}</option>}
+                <option value="everyone">Everyone on Parallax</option>
+                <option value="people">Named people…</option>
+            </select>
+            {audience === "people" && (
+                <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                    {chosen.map((p) => (
+                        <span key={p.id} style={{ ...pill, display: "inline-flex", alignItems: "center", gap: 6, padding: "0 6px 0 10px", color: "var(--txt)" }}>
+                            {p.name}
+                            <button onClick={() => setShared(shared.filter((x) => x !== p.id))} title={`Remove ${p.name}`}
+                                    style={{ border: 0, background: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0 }}>✕</button>
+                        </span>
+                    ))}
+                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={people === null ? "Loading people…" : "Add a person"}
+                           style={{ ...pill, width: 140, padding: "0 10px", outline: "none" }} />
+                    {hits.length > 0 && (
+                        <div style={{ position: "absolute", top: 34, left: 0, zIndex: 20, minWidth: 240, background: "var(--glass)", backdropFilter: "blur(22px) saturate(1.15)", WebkitBackdropFilter: "blur(22px) saturate(1.15)", border: "1px solid var(--gline2)", boxShadow: "var(--gshadow)" }}>
+                            {hits.map((p) => (
+                                <button key={p.id} onClick={() => { setShared([...shared, p.id]); setQ("") }}
+                                        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 10px", border: 0, background: "none", color: "var(--txt)", cursor: "pointer", textAlign: "left", font: "inherit", fontSize: 12.5 }}>
+                                    <Face person={p} size={22} />
+                                    <span style={{ flex: 1, minWidth: 0 }}>{p.name}<span style={{ color: "var(--txt-3)" }}>{p.company ? ` · ${p.company}` : ""}</span></span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+        </>
+    )
+}
+
 /* ── writing one ─────────────────────────────────────────────────────── */
 
 function Composer({ onPublish, prefill = null, onPrefillUsed = () => {} }) {
@@ -291,6 +350,10 @@ function Composer({ onPublish, prefill = null, onPrefillUsed = () => {} }) {
     const [urgency, setUrgency] = useState("routine")
     const [theater, setTheater] = useState(() => getActiveTheater() || "")
     const [att, setAtt] = useState(null)              // one thing the post carries
+    // Who reads it: the company by default; an account without one has to
+    // choose, so it starts on everyone and says so.
+    const [audience, setAudience] = useState(() => (me?.company ? "company" : "everyone"))
+    const [shared, setShared] = useState([])
     const [picking, setPicking] = useState(null)      // which picker is open
     const [busy, setBusy] = useState(false)
     const fileRef = useRef(null)
@@ -309,7 +372,9 @@ function Composer({ onPublish, prefill = null, onPrefillUsed = () => {} }) {
         if (!body.trim() && !att) return
         setBusy(true)
         try {
-            await onPublish({ body: body.trim(), theater: theater.trim() || null, urgency, attachment: att || null })
+            if (audience === "people" && !shared.length) throw new Error("Add at least one person to share it with")
+            await onPublish({ body: body.trim(), theater: theater.trim() || null, urgency, attachment: att || null,
+                              audience, shared_with: audience === "people" ? shared : undefined })
             setBody(""); setAtt(null)
         } catch (e) {
             toast(e.message || "That did not publish", { icon: "i-alert" })
@@ -326,7 +391,7 @@ function Composer({ onPublish, prefill = null, onPrefillUsed = () => {} }) {
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 10 }}>
                 <textarea
                     ref={boxRef} value={body} onChange={(e) => setBody(e.target.value)}
-                    placeholder="What did you see? It goes to everyone on the desk."
+                    placeholder={`What did you see? It goes to ${audience === "company" ? `${me?.company} only` : audience === "everyone" ? "everyone on Parallax" : "the people you name"}.`}
                     rows={2}
                     onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go() } }}
                     style={{ resize: "vertical", minHeight: 52, padding: "4px 0", background: "transparent", border: 0, color: "var(--txt)", font: "400 16px/1.55 var(--font)", outline: "none" }}
@@ -351,6 +416,7 @@ function Composer({ onPublish, prefill = null, onPrefillUsed = () => {} }) {
                     <select value={urgency} onChange={(e) => setUrgency(e.target.value)} style={{ height: 30, background: "transparent", border: "1px solid var(--gline2)", color: SEV[urgency] || "var(--txt2)", font: "inherit", fontSize: 12.5, borderRadius: 15, padding: "0 8px" }}>
                         {URGENCY.map((u) => <option key={u} value={u}>{u}</option>)}
                     </select>
+                    <AudiencePicker me={me} audience={audience} setAudience={setAudience} shared={shared} setShared={setShared} />
                     <input value={theater} onChange={(e) => setTheater(e.target.value)} placeholder="Theater"
                         style={{ width: 160, height: 30, padding: "0 10px", background: "transparent", border: "1px solid var(--gline2)", color: "var(--txt2)", font: "inherit", fontSize: 12.5, outline: "none", borderRadius: 15 }} />
                     <div style={{ flex: 1 }} />
@@ -413,6 +479,12 @@ function Post({ post, meId, busy, canDelete, onAck, onDelete, onPerson }) {
                         <div style={{ flex: 1 }} />
                         {post.theater && (
                             <span style={{ ...EYE, fontSize: 9.5 }}>{post.theater}</span>
+                        )}
+                        {post.audience && (
+                            <span title={post.audience.kind === "people" ? `Shared with ${(post.audience.people || []).join(", ")}` : `Who reads this: ${audienceLabel(post.audience)}`}
+                                  style={{ ...EYE, fontSize: 9.5, color: post.audience.kind === "everyone" ? "var(--txt-3)" : "var(--txt-2)" }}>
+                                {post.audience.kind === "company" ? audienceLabel(post.audience) : post.audience.kind === "people" ? audienceLabel(post.audience) : "Everyone"}
+                            </span>
                         )}
                         {post.urgency && post.urgency !== "routine" && (
                             <span style={{
