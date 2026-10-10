@@ -102,19 +102,15 @@ _REGIONS: dict | None = None
 
 
 def regions_table() -> dict:
-    """The one-click regions of Settings › Your interests, read from the
-    frontend's own table (src/state/interests.js REGIONS) so the two cannot
-    disagree about which countries "Sahel" means."""
+    """The one-click regions of Settings › Your interests: the copy in
+    backend/seed (production deploys backend/ only), kept equal to the
+    frontend's src/state/interests.js REGIONS by test_seed_copies.py."""
     global _REGIONS
     if _REGIONS is None:
         import json as _json
-        import os
-        import re as _re
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "state", "interests.js")
+        from paths import SEED_DIR
         try:
-            src = open(path, encoding="utf-8").read()
-            body = _re.search(r"export const REGIONS = \{(.*?)\n\}", src, _re.S).group(1)
-            _REGIONS = {k: _json.loads(v) for k, v in _re.findall(r'"([^"]+)":\s*(\[[^\]]*\])', body)}
+            _REGIONS = _json.loads((SEED_DIR / "interest_regions.json").read_text(encoding="utf-8"))["regions"]
         except Exception as e:                                 # noqa: BLE001
             print(f"[event_watch] regions table unreadable: {type(e).__name__}: {e}", flush=True)
             _REGIONS = {}

@@ -13,7 +13,8 @@ import json
 import os
 import threading
 
-_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "public", "data", "world-countries.json")
+from paths import shared_data as _shared
+_PATH = str(_shared("world-countries.json"))   # backend/seed copy: production deploys backend/ only
 _LOCK = threading.Lock()
 _INDEX = None
 

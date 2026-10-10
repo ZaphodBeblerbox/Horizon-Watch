@@ -20841,8 +20841,9 @@ _SHIPPING_ROUTES_PATH    = _paths.seeded("shipping_routes.json")
 _DEPLOYMENTS_PATH        = _paths.seeded("deployments.json")
 print(f"[init] BASE_DIR={BASE_DIR} DATA_DIR={DATA_DIR} deployments_exists={_DEPLOYMENTS_PATH.exists()}")
 _MIL_ENRICHMENT_PATH     = _paths.seeded("military_enrichment.json")
-_CABLE_GEO_PATH          = BASE_DIR.parent / "public" / "data" / "cable-geo.json"
-_LANDING_GEO_PATH        = BASE_DIR.parent / "public" / "data" / "landing-point-geo.json"
+# backend/seed copies: production deploys backend/ alone, without ../public
+_CABLE_GEO_PATH          = _paths.shared_data("cable-geo.json")
+_LANDING_GEO_PATH        = _paths.shared_data("landing-point-geo.json")
 
 # ── Military enrichment ───────────────────────────────────────────────────────
 _MILITARY_ENRICHMENT: list = []

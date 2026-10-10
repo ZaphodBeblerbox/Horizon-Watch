@@ -233,8 +233,8 @@ def _iso_names() -> dict[str, str]:
     try:
         import json as _json
         import os as _os
-        path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-                             "public", "data", "world-countries.json")
+        from paths import shared_data
+        path = str(shared_data("world-countries.json"))   # backend/seed copy in production
         with open(path) as fh:
             for feat in (_json.load(fh).get("features") or []):
                 p = feat.get("properties") or {}

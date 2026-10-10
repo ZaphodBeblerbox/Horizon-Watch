@@ -87,3 +87,12 @@ def safe_filename(name: str | None, fallback: str = "upload") -> str:
     base = os.path.basename((name or "").replace("\\", "/")).strip().lstrip(".")
     clean = "".join(c if (c.isalnum() or c in "-_. ") else "_" for c in base).strip()
     return clean[:120] or fallback
+
+
+def shared_data(name: str) -> Path:
+    """A data file the frontend also uses (public/data/<name>). Railway
+    deploys backend/ alone, so ../public is not there in production: the
+    copy in backend/seed is read first (test_seed_copies.py keeps it equal
+    to the frontend's), the frontend's own file only as a local fallback."""
+    copy = SEED_DIR / name
+    return copy if copy.exists() else CODE_DIR.parent / "public" / "data" / name

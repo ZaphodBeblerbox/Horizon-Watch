@@ -1,0 +1,103 @@
+{
+ "_about": "Copy of src/state/interests.js REGIONS for the server, which deploys backend/ only. test_seed_copies.py keeps it equal.",
+ "regions": {
+  "Red Sea & Horn of Africa": [
+   "Yemen",
+   "Saudi Arabia",
+   "Eritrea",
+   "Djibouti",
+   "Somalia",
+   "Ethiopia",
+   "Sudan",
+   "Egypt"
+  ],
+  "Persian Gulf": [
+   "Iran",
+   "Iraq",
+   "Kuwait",
+   "Saudi Arabia",
+   "Bahrain",
+   "Qatar",
+   "United Arab Emirates",
+   "Oman"
+  ],
+  "Levant": [
+   "Israel",
+   "Palestine",
+   "Lebanon",
+   "Syria",
+   "Jordan"
+  ],
+  "Ukraine & Black Sea": [
+   "Ukraine",
+   "Russia",
+   "Moldova",
+   "Romania",
+   "Georgia",
+   "Turkey",
+   "Belarus"
+  ],
+  "Baltic & Nordics": [
+   "Estonia",
+   "Latvia",
+   "Lithuania",
+   "Poland",
+   "Finland",
+   "Sweden",
+   "Denmark",
+   "Norway",
+   "Germany"
+  ],
+  "Sahel": [
+   "Mali",
+   "Burkina Faso",
+   "Niger",
+   "Chad",
+   "Mauritania",
+   "Nigeria",
+   "Sudan"
+  ],
+  "Great Lakes": [
+   "Democratic Republic of the Congo",
+   "Rwanda",
+   "Uganda",
+   "Burundi",
+   "United Republic of Tanzania",
+   "Kenya",
+   "South Sudan"
+  ],
+  "Taiwan Strait & South China Sea": [
+   "Taiwan",
+   "China",
+   "Philippines",
+   "Vietnam",
+   "Malaysia",
+   "Japan"
+  ],
+  "Korean Peninsula": [
+   "North Korea",
+   "South Korea",
+   "Japan",
+   "China"
+  ],
+  "South Asia": [
+   "India",
+   "Pakistan",
+   "Afghanistan",
+   "Bangladesh",
+   "Myanmar",
+   "Sri Lanka",
+   "Nepal"
+  ],
+  "Latin America": [
+   "Venezuela",
+   "Colombia",
+   "Mexico",
+   "Brazil",
+   "Ecuador",
+   "Peru",
+   "Haiti",
+   "Cuba"
+  ]
+ }
+}
