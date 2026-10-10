@@ -139,9 +139,15 @@ def why(ev: dict, c: dict) -> tuple[str, str] | None:
         if d <= a["radius"]:
             near.append((d, a))
     if near:
-        d, a = min(near, key=lambda x: x[0])
+        near.sort(key=lambda x: x[0])
+        d, a = near[0]
         dist = "under 1 km" if d < 1 else f"{round(d)} km"
-        return f"{dist} from your {a['label']} {a['name']}", "asset"
+        if len(near) == 1:
+            return f"{dist} from your {a['label']} {a['name']}", "asset"
+        # several assets at one place: one card naming them all
+        names = [x[1]["name"] for x in near]
+        listed = ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) <= 4 else f"{', '.join(names[:3])} and {len(names) - 3} more"
+        return f"{dist} from your assets {listed}", "asset"
     for t in c["theaters"]:
         if km(t["lat"], t["lon"], lat, lon) <= t["reach"]:
             return f"in your theater {t['name']}", "theater"

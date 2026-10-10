@@ -61,7 +61,35 @@ def cards_for(asset: dict, sit: dict) -> list[dict]:
             "entity_id": asset["id"], "entity_name": asset["name"],
             "asset_id": asset["id"],
             "created_at": s.get("when"),
+            "_km": s.get("km"), "_dist": dist, "_title": title,
         })
+    return out
+
+
+def merge(cards: list[dict]) -> list[dict]:
+    """One card per signal, however many assets it is near (owner,
+    2026-10-10): two assets at one site are one event, not two
+    notifications. The card names every asset, nearest first."""
+    by: dict = {}
+    for c in cards:
+        key = str(c.get("signal_id") or c["id"])
+        by.setdefault(key, []).append(c)
+    out = []
+    for key, cs in by.items():
+        if len(cs) == 1:
+            out.append(cs[0]); continue
+        cs = sorted(cs, key=lambda c: c.get("_km") or 0)
+        first = cs[0]
+        names = [c["entity_name"] for c in cs]
+        listed = ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) <= 4 else f"{', '.join(names[:3])} and {len(names) - 3} more"
+        rank = ["critical", "high", "moderate", "low"]
+        out.append({**first,
+                    "id": f"asset:sig:{key}",
+                    "title": f"{first['_title']} — {first['_dist']} from {listed} (your assets)",
+                    "sev": min((c["sev"] for c in cs), key=lambda v: rank.index(v) if v in rank else 9),
+                    "reason": f"near {len(cs)} of your assets: {listed}",
+                    "entity_name": listed,
+                    "asset_ids": [c["asset_id"] for c in cs]})
     return out
 
 
@@ -75,6 +103,10 @@ def _rebuild(uid: str) -> None:
                 cards += cards_for(a, situation(a))
             except Exception as e:                       # noqa: BLE001 — one asset never blanks the rest
                 print(f"[asset_watch] {a.get('name')}: {type(e).__name__}: {e}", flush=True)
+        cards = merge(cards)
+        for c in cards:
+            for k in ("_km", "_dist", "_title"):
+                c.pop(k, None)
         cards.sort(key=lambda c: str(c.get("created_at") or ""), reverse=True)
         with _lock:
             _cache[uid] = (time.time(), cards[:30])
