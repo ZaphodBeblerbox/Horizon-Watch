@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest"
 import { agoLabel, fmtWhen, whenLabel } from "./formatTime.js"
+import { __setClock } from "./clock.js"
+
+// These pin the Zulu house format; local time is tested below.
+__setClock({ mode: "utc" })
 
 describe("fmtWhen", () => {
     it("writes a day-precision date without inventing a time", () => {
@@ -33,5 +37,17 @@ describe("ago and when", () => {
     it("pairs the clock time with it, and the date when older than a day", () => {
         expect(whenLabel("2026-10-06T11:50:00Z", now)).toBe("11:50Z · 2 h 10 min ago")
         expect(whenLabel("2026-10-04T09:10:00Z", now)).toBe("4 Oct 2026, 09:10Z · 2 d ago")
+    })
+})
+
+describe("local time", () => {
+    it("writes a moment in the reader's zone, a day unshifted", () => {
+        __setClock({ mode: "local", tz: "Europe/Paris" })
+        expect(fmtWhen("2026-10-05T14:32:00Z")).toBe("5 Oct 2026, 16:32")
+        expect(fmtWhen("2026-09-30T23:30:00Z")).toBe("1 Oct 2026, 01:30")
+        expect(fmtWhen("2026-10-05")).toBe("5 Oct 2026")
+        __setClock({ mode: "local", tz: "America/New_York" })
+        expect(fmtWhen("2026-10-05")).toBe("5 Oct 2026")
+        __setClock({ mode: "utc" })
     })
 })

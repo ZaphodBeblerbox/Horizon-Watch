@@ -1,3 +1,4 @@
+import { devicePosition, saveHere, forgetHere } from "./LocationPrompt.jsx"
 import { useState, useEffect, useCallback } from "react"
 import API_BASE from "../apiBase.js"
 import { getCurrentUser } from "../state/authStore.js"
@@ -10,6 +11,7 @@ import { useFreshness } from "./Freshness.jsx"
 import { getManualLocation, setManualLocation } from "../state/themeStore.js"
 import ThemeControl from "./ThemeControl.jsx"
 import ClosedNotificationsRow from "../notify/ClosedNotificationsRow.jsx"
+import LiveShareRow from "../location/LiveShareRow.jsx"
 
 /**
  * settingsSections.jsx — the sections of the Settings page
@@ -229,6 +231,15 @@ export function GeneralSection({ settings }) {
                     Show what's new
                 </button>
             </Row>
+
+            <SectionTitle>Time and place</SectionTitle>
+            <Row label="Times shown in" hint="Your local time, where this device is — or Zulu (UTC) everywhere, for comparing records across zones. The clock at the top always shows both.">
+                <Select value={getAtPath(settings, "general.timeDisplay") || "local"}
+                        options={[{ value: "local", label: "Local time" }, { value: "utc", label: "Zulu (UTC)" }]}
+                        onChange={(v) => updateSetting("general.timeDisplay", v)} />
+            </Row>
+            <HereRow settings={settings} />
+            <LiveShareRow Row={Row} Toggle={Toggle} />
 
             <SectionTitle>Locale</SectionTitle>
             <Row label="Timezone" hint={tzSaving ? "Saving…" : "Used for timestamps you set yourself elsewhere in the app."}>
@@ -550,5 +561,30 @@ export function SessionsSection() {
                 </div>
             ))}
         </div>
+    )
+}
+
+/** Where you are: what happens around it comes first (components/LocationPrompt.jsx). */
+function HereRow({ settings }) {
+    const here = settings?.interests?.here
+    const [busy, setBusy] = useState(false)
+    const [err, setErr] = useState(null)
+    const [typing, setTyping] = useState(false)
+    const btn = { height: 28, padding: "0 12px", border: "1px solid var(--gline2)", background: "transparent", color: "var(--txt2)", font: "inherit", fontSize: 12.5, cursor: "pointer", borderRadius: 0 }
+    return (
+        <Row label="Your location" hint={here ? `${here.label || `${here.lat}, ${here.lon}`} — what happens within 30 km comes first on Home and in your notifications.` : "Not shared. With it, what happens near you comes first on Home and in your notifications."}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                <div style={{ display: "flex", gap: 6 }}>
+                    <button style={btn} disabled={busy} onClick={async () => {
+                        setBusy(true); setErr(null)
+                        try { const p = await devicePosition(); await saveHere(p.lat, p.lon) } catch (e) { setErr(e.message); setTyping(true) } finally { setBusy(false) }
+                    }}>{busy ? "Finding you…" : here ? "Update from this device" : "Use my location"}</button>
+                    <button style={btn} onClick={() => setTyping((t) => !t)}>Type a city</button>
+                    {here && <button style={btn} onClick={() => forgetHere()}>Forget</button>}
+                </div>
+                {typing && <div style={{ width: 300 }}><PlacePicker label="Your city" placeholder="Paris, Dubai, Kyiv…" onPick={async (p) => { await saveHere(p.lat, p.lon, p.label || p.name); setTyping(false) }} /></div>}
+                {err && <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>{err}</span>}
+            </div>
+        </Row>
     )
 }

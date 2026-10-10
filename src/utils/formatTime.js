@@ -7,10 +7,12 @@
  * and toLocaleString turned that into midnight local time, which reads as
  * an observation at 00:00 that nobody made.
  *
- * The house format is "5 Oct 2026" for a day and "5 Oct 2026, 14:32Z" for
- * a moment. UTC always, because the console's clock is UTC and a reader
- * comparing two records must not have to know which zone each was in.
+ * The house format is "5 Oct 2026" for a day and "5 Oct 2026, 16:32" for
+ * a moment, in the reader's own zone — or "5 Oct 2026, 14:32Z" when they
+ * chose Zulu in Settings (utils/clock.js). A day stays the calendar day it
+ * names in every zone: it is never shifted to the evening before.
  */
+import { partsOf, timeMode } from "./clock.js"
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -37,9 +39,9 @@ export function fmtWhen(ts, { precision } = {}) {
         (typeof raw === "string" && (DATE_ONLY.test(raw) || /T00:00:00(\.0+)?(Z|[+-]00:?00)?$/.test(raw)))
         || (raw instanceof Date && midnight)))
     if (isDay) return day
-    const hh = String(d.getUTCHours()).padStart(2, "0")
-    const mm = String(d.getUTCMinutes()).padStart(2, "0")
-    return `${day}, ${hh}:${mm}Z`
+    const mode = timeMode()
+    const p = partsOf(d, mode)
+    return `${p.d} ${p.mo} ${p.y}, ${p.h}:${p.mi}${mode === "utc" ? "Z" : ""}`
 }
 
 /** "just now", "12 min ago", "2 h 10 min ago", "3 d ago" — UTC-safe. */

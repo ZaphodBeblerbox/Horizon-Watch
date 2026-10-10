@@ -2,6 +2,7 @@ import { Wordmark, Glyph } from "../ui/Wordmark.jsx"
 import Freshness from "./Freshness.jsx"
 import { useState, useEffect } from "react"
 import ThemeControl from "./ThemeControl.jsx"
+import { hmZone, zuluHm } from "../utils/clock.js"
 
 /**
  * TopBar.jsx — redesign Round 2, §2. Replaces AppHeader.jsx entirely: a
@@ -46,7 +47,7 @@ export default function TopBar({
         const t = setInterval(() => setNow(new Date()), 1000)
         return () => clearInterval(t)
     }, [])
-    const zulu = now.toUTCString().slice(17, 22) + "Z"
+    const zulu = `${hmZone(now, "local")} · ${zuluHm(now)}`
     const dateStr = now.toISOString().slice(0, 10)
 
     return (

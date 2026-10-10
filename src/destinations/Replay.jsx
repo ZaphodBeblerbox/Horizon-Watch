@@ -17,6 +17,7 @@ import Minimap from "../components/Minimap.jsx"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import Loading from "../ui/Loading.jsx"
 import { fmtWhen } from "../utils/formatTime.js"
+import { hm } from "../utils/clock.js"
 
 const API = API_BASE
 const WINDOW_HOURS = 168 // real bounded window — 7 days, matching Analytics' own shortest real "range" option
@@ -38,15 +39,10 @@ const GROUP_BYS = [
 ]
 const SPEEDS = [1, 4, 12]
 const TICK_MS = 40
-function fmtTickLabel(ms) {
-    const d = new Date(ms)
-    return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}Z`
-}
+function fmtTickLabel(ms) { return hm(ms) }
 function fmtCursorLabel(ms) {
     if (ms == null) return "—"
-    const d = new Date(ms)
-    const p = (n) => String(n).padStart(2, "0")
-    return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}Z`
+    return fmtWhen(ms, { precision: "minute" })
 }
 function timeAgoShort(ms, nowMs) {
     const diffMin = Math.floor((nowMs - ms) / 60000)

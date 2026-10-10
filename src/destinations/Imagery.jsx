@@ -30,6 +30,7 @@ import {
     AOI_CLASSES, fmtDate, SceneComparison,
 } from "../components/imagery/sceneComparison.jsx"
 import { acquisitions, changeHeadline, countSeries, DET_COLORS, fmtDay, groupDetections, noun } from "./imageryModel.js"
+import { hm } from "../utils/clock.js"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 const ON = "var(--accdim)"
@@ -58,7 +59,7 @@ const MODES = [["Scene", "scene"], ["Swipe", "swipe"], ["Side by side", "split"]
 const whenFull = (iso) => {
     if (!iso) return "—"
     const s = String(iso)
-    const hhmm = s.length > 10 ? `, ${s.slice(11, 16)}Z` : ""
+    const hhmm = s.length > 10 ? `, ${hm(s)}` : ""
     return `${fmtDay(s)} ${s.slice(0, 4)}${hhmm}`
 }
 

@@ -16,11 +16,9 @@
 import Dots from "../ui/Dots.jsx"
 import { useEffect, useState } from "react"
 import { subscribeNotifications, getNotifications, dismissCard, useDnd, KIND } from "../state/notificationStore.js"
+import { hm } from "../utils/clock.js"
 
-function zulu(ts) {
-    const d = new Date(ts)
-    return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}Z`
-}
+const zulu = (ts) => hm(ts)          // the reader's clock (utils/clock.js)
 
 /** Fly there and open the alert — for an imagery signal, its image. */
 function investigate(n) {

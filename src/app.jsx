@@ -165,6 +165,7 @@ import { playAlert, resumeAudio } from "./soundSystem.js"
 import HealthPanel from "./components/HealthPanel.jsx"
 import Insight from "./destinations/Insight.jsx"
 import Analytics from "./destinations/Analytics.jsx"
+import LocationPrompt from "./components/LocationPrompt.jsx"
 import { exportPdf } from "./print/printSurface.jsx"
 import { MODE_FRAME } from "./plx6/modeWindow.js"
 import { setActiveTheater } from "./state/filing.js"
@@ -200,6 +201,7 @@ import useOnlineUsers from "./state/useOnlineUsers.js"
 import SearchBar from "./search/SearchBar.jsx"
 import { decodeView, shareUrl } from "./state/shareLink.js"
 import { getCameraState as getShareCamera } from "./globe/cameraState.js"
+import { hmZone, zuluHm } from "./utils/clock.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -810,7 +812,7 @@ export default function App() {
         // re-evaluated on the same tick (A9.2) — one timer, not two.
         const tick = () => {
             const d = new Date()
-            setPlxClock(d.toISOString().slice(11, 16) + "Z")
+            setPlxClock(`${hmZone(d, "local")} · ${zuluHm(d)}`)
             setPlxHour(d.getHours() + d.getMinutes() / 60)
         }
         tick()
@@ -1998,6 +2000,7 @@ export default function App() {
                 }}
             />
             <Tutorial />
+            <LocationPrompt />
             <UpdateBanner />
             <ToastHost />
             {/* Voice everywhere: the map has its own bar; every other page
@@ -2160,7 +2163,7 @@ export default function App() {
                             if (r) setPlxMenuPos({ l: Math.round(r.left), t: Math.round(r.bottom + 2) })
                             setPlxMenu(plxMenu === v ? null : v)
                         }}
-                        savedAt={plxClock}
+                        savedAt={plxClock.split(" · ")[0].split(" ")[0]}
                         starred={favTheaters.has(theaterId)}
                         onStar={() => toggleFavTheater(theaterId)}
                         curTitle={(theaters.find((t) => t.id === theaterId) || {}).name || "Workspace"}

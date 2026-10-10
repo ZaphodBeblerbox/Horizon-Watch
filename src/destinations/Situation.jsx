@@ -62,6 +62,7 @@ import LayerSubGroup from "../components/LayerSubGroup.jsx"
 import LayerStatus from "../components/LayerStatus.jsx"
 import FlowsPanel from "../components/FlowsPanel.jsx"
 import { whenLabel } from "../utils/formatTime.js"
+import { hm } from "../utils/clock.js"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -1002,7 +1003,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         const start = (Math.floor(nowMs / step) + 1) * step - span
         const fmt = (t) => {
             const d = new Date(t)
-            return windowHours <= 72 ? `${d.toISOString().slice(11, 16)}Z ${d.getUTCDate()}/${d.getUTCMonth() + 1}`
+            return windowHours <= 72 ? `${hm(d)} ${d.getUTCDate()}/${d.getUTCMonth() + 1}`
                                      : `${d.getUTCDate()}/${d.getUTCMonth() + 1}`
         }
         const cols = Array.from({ length: n }, (_, i) => ({ key: String(i), from: start + i * step, to: start + (i + 1) * step, label: fmt(start + i * step), value: 0, counts: { 0: 0, 1: 0, 2: 0, 3: 0 }, rows: [] }))

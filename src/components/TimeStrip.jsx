@@ -26,6 +26,7 @@ import { safeArray } from "../utils/safeArray.js"
 const TIMELINE_START = "2022-01-01"
 import { publishArchiveState } from "../state/archiveState.js"
 import { fetchWithTimeout } from "../utils/fetchWithTimeout.js"
+import { fmtWhen } from "../utils/formatTime.js"
 import {
     CAT, CAT_KEYS, UNCATEGORISED, BUCKETS,
     foldBuckets, stackSegments, calendarTicks,
@@ -33,10 +34,7 @@ import {
     dayOffsetToMs, msToDayOffset,
 } from "./timeStripMath.js"
 
-const zulu = (ms) => {
-    const d = new Date(ms)
-    return `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}Z`
-}
+const zulu = (ms) => fmtWhen(ms, { precision: "minute" })      // the reader's clock
 const iso = (ms) => new Date(ms).toISOString().slice(0, 10)
 
 

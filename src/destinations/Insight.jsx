@@ -30,6 +30,7 @@ import WhatsNext from "../insight/WhatsNext.jsx"
 import WhatChanged from "../insight/WhatChanged.jsx"
 import TelegramMood from "../insight/TelegramMood.jsx"
 import StrikeTiming from "../insight/StrikeTiming.jsx"
+import { hm } from "../utils/clock.js"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 const ON = "var(--accdim)"
@@ -498,7 +499,7 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
                     ))}
                 </nav>
                 <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>
-                    {ov?.generated_at ? `generated ${ov.generated_at.slice(11, 16)}Z` : ""}
+                    {ov?.generated_at ? `generated ${hm(ov.generated_at)}` : ""}
                     {ov?.stale ? " · stale" : ""}
                 </span>
                 <div style={{ flex: 1 }} />

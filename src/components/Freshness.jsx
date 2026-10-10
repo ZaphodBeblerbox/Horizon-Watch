@@ -14,6 +14,7 @@
  */
 import { useEffect, useState } from "react"
 import { CACHE_EVENT } from "../lib/offlineCache.js"
+import { hm } from "../utils/clock.js"
 
 /** Past this many minutes the reading is amber rather than green. */
 export const STALE_MIN = 60
@@ -59,7 +60,7 @@ export function freshnessState(updatedAt, now = Date.now(), online = true, cache
         return {
             tone: "offline",
             text: known
-                ? `Server unreachable · showing data from ${zulu(at)} · ${ago(now - at.getTime())}`
+                ? `Server unreachable · showing data from ${hm(at)} · ${ago(now - at.getTime())}`
                 : "Server unreachable · showing stored data",
         }
     }
@@ -71,7 +72,7 @@ export function freshnessState(updatedAt, now = Date.now(), online = true, cache
     }
     const age = now - d.getTime()
     const stale = age >= STALE_MIN * 60000
-    const body = `Data as of ${zulu(d)} · ${ago(age)}`
+    const body = `Data as of ${hm(d)} · ${ago(age)}`
     if (!online) return { tone: "offline", text: `Offline · ${body}` }
     return { tone: stale ? "stale" : "fresh", text: body }
 }

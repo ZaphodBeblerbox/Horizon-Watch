@@ -40,6 +40,7 @@ import { whenLabel } from "../utils/formatTime.js"
 import { slotOf, useFrozen } from "../home/dayPart.js"
 import GroundReel from "../home/GroundReel.jsx"
 import { announceNew } from "../home/homeNews.js"
+import { hmZone } from "../utils/clock.js"
 export { slotOf }
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -211,7 +212,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
         () => greetingFor(firstName, { seed }), [firstName, seed, dayPart])
     const initials = ((firstName[0] || "G").toUpperCase()
         + (user?.display_name?.split(" ")[1]?.[0] || "U").toUpperCase())
-    const clock = new Date().toISOString().slice(11, 16) + "Z"
+    const clock = hmZone(new Date())
 
     /* WHAT IS FOR THIS USER (state/interests.js): their theaters' countries
        plus whatever they added in Settings. Decided here, at read time; the

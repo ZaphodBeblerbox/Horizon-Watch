@@ -165,6 +165,7 @@ export default defineConfig({
     test: {
         environment: "node",
         include: ["src/**/*.test.{js,jsx}"],
+        setupFiles: ["src/testSetup.js"],
     },
     optimizeDeps: {
         include: ["leaflet.vectorgrid"],
