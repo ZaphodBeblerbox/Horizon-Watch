@@ -1,0 +1,1488 @@
+{
+  "_about": "Baseline context for current wars and armed conflicts: who fights, why, and what is at stake. Durable facts only; who holds which town this week, casualty counts and the latest phase come from the system's own reports (conflict_context.py, 'where it stands now', cited and dated). Written into the repository and reviewed 2026-10-10; edit a copy in DATA_DIR/conflicts.json to correct it without a deploy. match_countries (when present) narrows which countries' reports count toward 'where it stands now' — a report anywhere in India is not about Kashmir; terms still match.",
+  "reviewed": "2026-10-10",
+  "conflicts": [
+    {
+      "id": "ukraine",
+      "name": "Russia–Ukraine war",
+      "countries": [
+        "ua",
+        "ru"
+      ],
+      "center": [
+        48.5,
+        35.5
+      ],
+      "radius_km": 900,
+      "since": "2022-02-24",
+      "sides_line": "Russia vs Ukraine",
+      "summary": "Russia's full-scale invasion of Ukraine, eight years after it annexed Crimea and backed separatists in the Donbas. A largely attritional front runs through Kharkiv, Donetsk, Zaporizhzhia and Kherson oblasts; both sides strike deep with drones and missiles, Russia mainly at Ukraine's energy grid and cities, Ukraine at refineries, airbases and logistics inside Russia.",
+      "factions": [
+        {
+          "name": "Russian Armed Forces",
+          "side": "Russia",
+          "leader": "President Vladimir Putin",
+          "backers": [
+            "North Korea (troops, artillery shells, missiles)",
+            "Iran (Shahed drone designs)",
+            "China (dual-use components)"
+          ],
+          "aims": "Keep and extend the annexed Donetsk, Luhansk, Zaporizhzhia and Kherson oblasts and Crimea; a neutral, disarmed Ukraine outside NATO.",
+          "holds": "Crimea, nearly all of Luhansk, most of Donetsk, much of Zaporizhzhia and Kherson oblasts south and east of the Dnipro."
+        },
+        {
+          "name": "Armed Forces of Ukraine",
+          "side": "Ukraine",
+          "leader": "President Volodymyr Zelensky",
+          "backers": [
+            "European states and the EU (arms, finance)",
+            "United Kingdom",
+            "United States (intelligence, weapons sales)"
+          ],
+          "aims": "Restore internationally recognised borders, or at least stop the advance with binding security guarantees.",
+          "holds": "The rest of Ukraine, including Kyiv, Kharkiv, Odesa, Dnipro and Zaporizhzhia city."
+        }
+      ],
+      "drivers": [
+        "Moscow's claim to a sphere of influence and its opposition to Ukraine's turn to the EU and NATO",
+        "The unresolved 2014 annexation of Crimea and war in the Donbas",
+        "Competing claims about Ukrainian nationhood"
+      ],
+      "stakes": [
+        "European security and the credibility of NATO's eastern flank",
+        "Black Sea shipping and grain exports through Odesa",
+        "Energy: strikes on power grids and refineries, Russian oil revenue and the shadow tanker fleet",
+        "Nuclear safety at the occupied Zaporizhzhia plant"
+      ],
+      "watch_terms": [
+        "Ukraine",
+        "Russia",
+        "Donetsk",
+        "Pokrovsk",
+        "Kharkiv",
+        "Zaporizhzhia",
+        "Kherson",
+        "Kursk",
+        "Crimea",
+        "Shahed"
+      ]
+    },
+    {
+      "id": "gaza",
+      "name": "Israel–Hamas war in Gaza",
+      "countries": [
+        "ps",
+        "il"
+      ],
+      "center": [
+        31.4,
+        34.4
+      ],
+      "radius_km": 120,
+      "since": "2023-10-07",
+      "sides_line": "Israel vs Hamas",
+      "summary": "War since Hamas's attack on southern Israel on 7 October 2023, which killed about 1,200 people and took some 250 hostages. Israel's ground and air campaign has destroyed most of Gaza and displaced nearly all of its two million people; ceasefire arrangements have alternated with renewed fighting.",
+      "factions": [
+        {
+          "name": "Israel Defense Forces",
+          "side": "Israel",
+          "leader": "Prime Minister Benjamin Netanyahu's government",
+          "backers": [
+            "United States (arms, diplomatic cover)"
+          ],
+          "aims": "Return of all hostages, destruction of Hamas's military and governing capacity, lasting security control over Gaza.",
+          "holds": "Security corridors and buffer zones inside Gaza; the extent changes with each phase."
+        },
+        {
+          "name": "Hamas (Izz ad-Din al-Qassam Brigades)",
+          "side": "Palestinian armed groups",
+          "leader": "Military and political leadership decimated since 2024; political bureau in Doha",
+          "backers": [
+            "Iran (funding, weapons know-how)",
+            "Qatar and Turkey (host political leaders)"
+          ],
+          "aims": "Survive as an armed movement, secure Israeli withdrawal and prisoner releases, keep a role in Gaza's governance.",
+          "holds": "Underground networks and parts of Gaza not held by Israeli forces."
+        },
+        {
+          "name": "Palestinian Islamic Jihad",
+          "side": "Palestinian armed groups",
+          "leader": "",
+          "backers": [
+            "Iran"
+          ],
+          "aims": "Armed struggle against Israel; fights alongside Hamas.",
+          "holds": ""
+        }
+      ],
+      "drivers": [
+        "Unresolved Israeli–Palestinian conflict: occupation, blockade, statehood",
+        "Hamas's armed rejection of Israel's existence",
+        "Israel's security doctrine after 7 October and the hostages"
+      ],
+      "stakes": [
+        "The remaining hostages and Palestinian prisoners",
+        "Famine and the humanitarian collapse in Gaza",
+        "Regional escalation through Hezbollah, the Houthis and Iran",
+        "Who governs and rebuilds Gaza; Saudi–Israeli normalisation"
+      ],
+      "watch_terms": [
+        "Gaza",
+        "Hamas",
+        "Rafah",
+        "Khan Younis",
+        "IDF",
+        "hostage",
+        "Qassam"
+      ],
+      "match_countries": [
+        "ps"
+      ]
+    },
+    {
+      "id": "lebanon",
+      "name": "Israel–Hezbollah conflict",
+      "countries": [
+        "lb",
+        "il"
+      ],
+      "center": [
+        33.3,
+        35.5
+      ],
+      "radius_km": 150,
+      "since": "2023-10-08",
+      "sides_line": "Israel vs Hezbollah",
+      "summary": "Hezbollah opened a front in solidarity with Hamas the day after 7 October; in autumn 2024 Israel escalated, killed Hassan Nasrallah and most of the group's command, and invaded southern Lebanon. A ceasefire from 27 November 2024 requires Hezbollah to leave the area south of the Litani; Israel keeps positions on the border and continues strikes it says target rearmament.",
+      "factions": [
+        {
+          "name": "Israel Defense Forces",
+          "side": "Israel",
+          "leader": "",
+          "backers": [
+            "United States"
+          ],
+          "aims": "Disarm Hezbollah at least south of the Litani so northern Israel's residents can stay home.",
+          "holds": "Several hilltop positions inside southern Lebanon."
+        },
+        {
+          "name": "Hezbollah",
+          "side": "Hezbollah",
+          "leader": "Secretary-General Naim Qassem",
+          "backers": [
+            "Iran (funding, missiles; supply route through Syria cut since Assad's fall)"
+          ],
+          "aims": "Keep its weapons and its place in Lebanese politics.",
+          "holds": "Political and social control across much of the south, the Bekaa and Beirut's southern suburbs."
+        },
+        {
+          "name": "Lebanese Armed Forces",
+          "side": "Lebanese state",
+          "leader": "President Joseph Aoun's government",
+          "backers": [
+            "United States",
+            "France",
+            "Qatar",
+            "Saudi Arabia"
+          ],
+          "aims": "Deploy south of the Litani and bring all weapons under state control.",
+          "holds": "Deploying in the south under the ceasefire mechanism."
+        }
+      ],
+      "drivers": [
+        "Hezbollah's role in Iran's regional alliance",
+        "Israel's demand for a disarmed border",
+        "A Lebanese state too weak to monopolise force"
+      ],
+      "stakes": [
+        "Hezbollah's disarmament and Lebanon's sovereignty",
+        "Displacement on both sides of the border",
+        "Iran's regional reach"
+      ],
+      "watch_terms": [
+        "Hezbollah",
+        "Lebanon",
+        "Litani",
+        "Nabatieh",
+        "Tyre",
+        "Dahieh",
+        "UNIFIL"
+      ],
+      "match_countries": [
+        "lb"
+      ]
+    },
+    {
+      "id": "yemen",
+      "name": "War in Yemen and the Red Sea",
+      "countries": [
+        "ye"
+      ],
+      "center": [
+        15.5,
+        45.5
+      ],
+      "radius_km": 700,
+      "since": "2014-09-21",
+      "sides_line": "Houthis vs the government and its allies",
+      "summary": "The Houthi movement took Sanaa in 2014; a Saudi-led coalition intervened in 2015. Front lines have been largely frozen since a 2022 truce, while the Houthis attack shipping in the Red Sea and Gulf of Aden and fire at Israel, drawing US and Israeli strikes. The anti-Houthi camp is itself split between the government and southern separatists.",
+      "factions": [
+        {
+          "name": "Ansar Allah (Houthis)",
+          "side": "Houthis",
+          "leader": "Abdul-Malik al-Houthi",
+          "backers": [
+            "Iran (missiles, drones, components)"
+          ],
+          "aims": "Rule Yemen; press Israel and its supporters through the Red Sea.",
+          "holds": "Sanaa, Hodeidah and most of the populous north-west."
+        },
+        {
+          "name": "Presidential Leadership Council and government forces",
+          "side": "Government",
+          "leader": "Rashad al-Alimi",
+          "backers": [
+            "Saudi Arabia"
+          ],
+          "aims": "Restore the internationally recognised government.",
+          "holds": "Marib, parts of Taiz, the east; seat in Aden."
+        },
+        {
+          "name": "Southern Transitional Council",
+          "side": "Southern separatists (within the government camp)",
+          "leader": "Aidarous al-Zubaidi",
+          "backers": [
+            "United Arab Emirates"
+          ],
+          "aims": "An independent South Yemen.",
+          "holds": "Aden and much of the south."
+        },
+        {
+          "name": "National Resistance and Giants Brigades",
+          "side": "Government camp, west coast",
+          "leader": "Tareq Saleh (National Resistance)",
+          "backers": [
+            "United Arab Emirates"
+          ],
+          "aims": "Hold the Red Sea coast from Bab el-Mandeb to Hodeidah's edge.",
+          "holds": "Mokha, Dhubab and the west coast south of Hodeidah."
+        },
+        {
+          "name": "Al-Qaeda in the Arabian Peninsula",
+          "side": "Jihadists",
+          "leader": "",
+          "backers": [],
+          "aims": "Insurgency against all sides.",
+          "holds": "Pockets in Abyan and Shabwa."
+        }
+      ],
+      "drivers": [
+        "The Houthi seizure of the state",
+        "Saudi–Iranian rivalry",
+        "Southern grievances and the push for secession",
+        "A divided central bank and economy"
+      ],
+      "stakes": [
+        "Shipping through Bab el-Mandeb and the Suez route",
+        "One of the world's worst humanitarian crises",
+        "US and Israeli strikes and the risk of wider war with Iran"
+      ],
+      "watch_terms": [
+        "Houthi",
+        "Yemen",
+        "Sanaa",
+        "Hodeidah",
+        "Marib",
+        "Taiz",
+        "Aden",
+        "Red Sea",
+        "Bab el-Mandeb",
+        "STC",
+        "Mokha",
+        "Dhubab"
+      ]
+    },
+    {
+      "id": "sudan",
+      "name": "Sudan civil war",
+      "countries": [
+        "sd"
+      ],
+      "center": [
+        14.5,
+        29.0
+      ],
+      "radius_km": 1100,
+      "since": "2023-04-15",
+      "sides_line": "SAF vs RSF",
+      "summary": "A war between the Sudanese Armed Forces and the paramilitary Rapid Support Forces, former partners in the 2021 coup, over who controls the state and its army. The army retook Khartoum in 2025 and governs from Port Sudan; the RSF dominates Darfur and parts of Kordofan and has set up a rival administration. Mass killings along ethnic lines, especially in Darfur.",
+      "factions": [
+        {
+          "name": "Sudanese Armed Forces (SAF)",
+          "side": "SAF",
+          "leader": "Gen. Abdel Fattah al-Burhan",
+          "backers": [
+            "Egypt",
+            "Turkey (drones)",
+            "Iran (drones)",
+            "Saudi Arabia (diplomatic)"
+          ],
+          "aims": "Defeat or absorb the RSF and keep the army at the centre of the state.",
+          "holds": "The north, east and centre, Khartoum, Port Sudan."
+        },
+        {
+          "name": "Rapid Support Forces (RSF)",
+          "side": "RSF",
+          "leader": "Gen. Mohamed Hamdan Dagalo (Hemedti)",
+          "backers": [
+            "United Arab Emirates (widely reported; denied)",
+            "Supply routes through Chad, Libya and the Central African Republic"
+          ],
+          "aims": "Power for itself and its allies; a rival government in the west.",
+          "holds": "Most of Darfur and parts of Kordofan."
+        },
+        {
+          "name": "Allied armed movements",
+          "side": "Mostly with SAF",
+          "leader": "",
+          "backers": [],
+          "aims": "Darfuri movements (Joint Forces) defending their communities, mostly alongside the army.",
+          "holds": "Parts of North Darfur."
+        }
+      ],
+      "drivers": [
+        "A power struggle between Burhan and Hemedti over integrating the RSF into the army",
+        "Gold and other resources financing both sides",
+        "The unresolved legacy of Darfur and the 2019 revolution"
+      ],
+      "stakes": [
+        "The world's largest displacement crisis and famine",
+        "Ethnic massacres in Darfur",
+        "Red Sea access and foreign naval bases",
+        "Proxy competition between the UAE, Egypt, Saudi Arabia and Turkey"
+      ],
+      "watch_terms": [
+        "Sudan",
+        "RSF",
+        "SAF",
+        "Darfur",
+        "El Fasher",
+        "Kordofan",
+        "El Obeid",
+        "Khartoum",
+        "Omdurman",
+        "Port Sudan",
+        "Hemedti",
+        "Burhan"
+      ]
+    },
+    {
+      "id": "sahel",
+      "name": "Central Sahel insurgency (Mali, Burkina Faso, Niger)",
+      "countries": [
+        "ml",
+        "bf",
+        "ne"
+      ],
+      "center": [
+        14.5,
+        0.0
+      ],
+      "radius_km": 1200,
+      "since": "2012-01-17",
+      "sides_line": "Juntas and Russia vs JNIM and Islamic State",
+      "summary": "Jihadist insurgencies that began in northern Mali in 2012 have spread across Mali, Burkina Faso and western Niger. Military juntas that took power between 2020 and 2023 expelled French and UN forces, left ECOWAS, formed the Alliance of Sahel States and turned to Russia. The al-Qaeda-linked JNIM blockades roads and towns; massacres of civilians by all sides are frequent.",
+      "factions": [
+        {
+          "name": "Alliance of Sahel States juntas",
+          "side": "Governments",
+          "leader": "Assimi Goïta (Mali), Ibrahim Traoré (Burkina Faso), Abdourahamane Tiani (Niger)",
+          "backers": [
+            "Russia (Africa Corps, formerly Wagner)",
+            "Turkey (drones)"
+          ],
+          "aims": "Regime survival and military victory; sovereignty from France and ECOWAS.",
+          "holds": "Capitals and garrison towns; large rural areas contested."
+        },
+        {
+          "name": "JNIM (Jama'at Nusrat al-Islam wal-Muslimin)",
+          "side": "Jihadists (al-Qaeda)",
+          "leader": "Iyad Ag Ghaly",
+          "backers": [],
+          "aims": "Islamic governance across the Sahel; strangle the juntas economically.",
+          "holds": "Wide rural areas of central and northern Mali and much of Burkina Faso."
+        },
+        {
+          "name": "Islamic State Sahel Province",
+          "side": "Jihadists (Islamic State)",
+          "leader": "",
+          "backers": [],
+          "aims": "A caliphate province in the tri-border area.",
+          "holds": "Ménaka and the Mali–Niger–Burkina tri-border area."
+        },
+        {
+          "name": "Azawad Liberation Front (FLA)",
+          "side": "Tuareg separatists",
+          "leader": "",
+          "backers": [],
+          "aims": "Autonomy or independence for northern Mali (Azawad).",
+          "holds": "Parts of the Kidal region and the north."
+        }
+      ],
+      "drivers": [
+        "Absent or abusive states in the periphery",
+        "Communal conflict between herders and farmers, and ethnic profiling of Fulani",
+        "Coups and the break with France, the UN and ECOWAS"
+      ],
+      "stakes": [
+        "Spread toward coastal states: Benin, Togo, Ghana, Côte d'Ivoire",
+        "Fuel and food blockades of cities",
+        "Gold mines and Russia's foothold in Africa",
+        "Migration routes north"
+      ],
+      "watch_terms": [
+        "Mali",
+        "Burkina",
+        "Niger",
+        "JNIM",
+        "Sahel",
+        "Bamako",
+        "Kidal",
+        "Ménaka",
+        "Ouagadougou",
+        "Africa Corps",
+        "Wagner",
+        "FLA",
+        "Azawad"
+      ]
+    },
+    {
+      "id": "drc",
+      "name": "War in eastern DR Congo",
+      "countries": [
+        "cd",
+        "rw"
+      ],
+      "center": [
+        -1.5,
+        29.0
+      ],
+      "radius_km": 500,
+      "since": "2021-11-01",
+      "sides_line": "M23/AFC (Rwanda-backed) vs Congo's army and allies",
+      "summary": "The M23 rebellion, revived in late 2021 with Rwandan troops and weapons according to UN experts, took Goma and Bukavu in early 2025 and runs a parallel administration in North and South Kivu. US- and Qatar-brokered agreements have not ended the fighting; dozens of other armed groups, including the IS-linked ADF, kill civilians across the east.",
+      "factions": [
+        {
+          "name": "M23 / Alliance Fleuve Congo (AFC)",
+          "side": "Rebels",
+          "leader": "Sultani Makenga (military), Corneille Nangaa (AFC)",
+          "backers": [
+            "Rwanda"
+          ],
+          "aims": "Control of the Kivus and a say in Kinshasa; protection of Congolese Tutsi.",
+          "holds": "Goma, Bukavu and large parts of North and South Kivu."
+        },
+        {
+          "name": "Armed Forces of the DRC (FARDC) and allies",
+          "side": "Government",
+          "leader": "President Félix Tshisekedi",
+          "backers": [
+            "Burundi (troops)",
+            "Wazalendo militias",
+            "FDLR (Rwandan Hutu armed group)"
+          ],
+          "aims": "Recover the territory and remove Rwandan influence.",
+          "holds": "Most of the rest of the east; front lines around the Kivus."
+        },
+        {
+          "name": "Allied Democratic Forces (ADF)",
+          "side": "Jihadists (Islamic State Central Africa)",
+          "leader": "",
+          "backers": [],
+          "aims": "Insurgency; massacres of civilians in North Kivu and Ituri.",
+          "holds": "Forests around Beni and in Ituri."
+        }
+      ],
+      "drivers": [
+        "Rwanda's security claims about the FDLR and its economic interests",
+        "Control of minerals: coltan, gold, tin",
+        "Land, citizenship and ethnic tensions in the Kivus"
+      ],
+      "stakes": [
+        "Critical minerals supply chains",
+        "A regional war drawing in Rwanda, Burundi and Uganda",
+        "Millions displaced"
+      ],
+      "watch_terms": [
+        "M23",
+        "AFC",
+        "Goma",
+        "Bukavu",
+        "Kivu",
+        "Uvira",
+        "Rwanda",
+        "FARDC",
+        "Wazalendo",
+        "ADF",
+        "Ituri",
+        "Beni"
+      ],
+      "match_countries": [
+        "cd"
+      ]
+    },
+    {
+      "id": "somalia",
+      "name": "Al-Shabaab insurgency in Somalia",
+      "countries": [
+        "so"
+      ],
+      "center": [
+        4.0,
+        45.5
+      ],
+      "radius_km": 800,
+      "since": "2006-01-01",
+      "sides_line": "Federal government and AU vs al-Shabaab",
+      "summary": "Al-Qaeda's Somali affiliate controls much of the rural south and centre and regularly attacks Mogadishu. The federal government, supported by an African Union mission, US air strikes and Turkey, has regained and lost ground; disputes with federal member states such as Jubaland and Puntland weaken the effort. An Islamic State branch is based in Puntland's mountains.",
+      "factions": [
+        {
+          "name": "Federal Government of Somalia",
+          "side": "Government",
+          "leader": "President Hassan Sheikh Mohamud",
+          "backers": [
+            "African Union mission (AUSSOM)",
+            "United States (air strikes, special forces)",
+            "Turkey",
+            "Qatar"
+          ],
+          "aims": "Defeat al-Shabaab and consolidate a federal state.",
+          "holds": "Mogadishu and major towns."
+        },
+        {
+          "name": "Al-Shabaab",
+          "side": "Jihadists (al-Qaeda)",
+          "leader": "Ahmed Diriye (Abu Ubaidah)",
+          "backers": [],
+          "aims": "An Islamic state across Somalia.",
+          "holds": "Much of rural Middle and Lower Shabelle, Jubba valley and central regions."
+        },
+        {
+          "name": "Islamic State Somalia",
+          "side": "Jihadists (Islamic State)",
+          "leader": "",
+          "backers": [],
+          "aims": "A base for the Islamic State's African operations.",
+          "holds": "Cal Miskaad mountains in Puntland, under Puntland offensive."
+        }
+      ],
+      "drivers": [
+        "State collapse since 1991 and clan politics",
+        "Federal–regional disputes",
+        "Al-Shabaab's taxation and shadow governance"
+      ],
+      "stakes": [
+        "Gulf of Aden shipping and a revival of piracy",
+        "Ethiopia–Somalia–Somaliland tensions over sea access",
+        "Turkish and Gulf influence"
+      ],
+      "watch_terms": [
+        "Somalia",
+        "al-Shabaab",
+        "Shabaab",
+        "Mogadishu",
+        "Puntland",
+        "Jubaland",
+        "AUSSOM",
+        "Somaliland"
+      ]
+    },
+    {
+      "id": "ethiopia",
+      "name": "Insurgencies in Ethiopia (Amhara, Oromia) and the Eritrea tension",
+      "countries": [
+        "et",
+        "er"
+      ],
+      "center": [
+        10.5,
+        39.0
+      ],
+      "radius_km": 700,
+      "since": "2023-08-01",
+      "sides_line": "Federal government vs Fano and OLA",
+      "summary": "After the 2020–2022 Tigray war, Amhara's Fano militias rose against the federal army in 2023 and the Oromo Liberation Army fights in Oromia. Prime Minister Abiy Ahmed's talk of Red Sea access raises fears of war with Eritrea, which is close to factions in Tigray.",
+      "factions": [
+        {
+          "name": "Ethiopian National Defense Force",
+          "side": "Federal government",
+          "leader": "Prime Minister Abiy Ahmed",
+          "backers": [
+            "Turkey and UAE (drones)"
+          ],
+          "aims": "Disarm regional forces and keep federal authority.",
+          "holds": "Cities and main roads."
+        },
+        {
+          "name": "Fano militias",
+          "side": "Amhara insurgents",
+          "leader": "Decentralised",
+          "backers": [],
+          "aims": "Defend Amhara interests; oppose Abiy's government.",
+          "holds": "Much of rural Amhara."
+        },
+        {
+          "name": "Oromo Liberation Army",
+          "side": "Oromo insurgents",
+          "leader": "",
+          "backers": [],
+          "aims": "Self-determination for Oromia.",
+          "holds": "Rural western and southern Oromia."
+        }
+      ],
+      "drivers": [
+        "Ethnic federalism and disputed territories",
+        "Disarmament of regional special forces after the Tigray war",
+        "Abiy's push for sea access"
+      ],
+      "stakes": [
+        "A new Ethiopia–Eritrea war",
+        "Food security and displacement",
+        "The Horn of Africa's balance and the Red Sea"
+      ],
+      "watch_terms": [
+        "Ethiopia",
+        "Amhara",
+        "Fano",
+        "Oromia",
+        "OLA",
+        "Tigray",
+        "TPLF",
+        "Eritrea",
+        "Gondar",
+        "Bahir Dar"
+      ]
+    },
+    {
+      "id": "myanmar",
+      "name": "Myanmar civil war",
+      "countries": [
+        "mm"
+      ],
+      "center": [
+        20.0,
+        96.0
+      ],
+      "radius_km": 900,
+      "since": "2021-02-01",
+      "sides_line": "Military junta vs resistance and ethnic armies",
+      "summary": "Since the 2021 coup, the military has fought pro-democracy People's Defence Forces and long-standing ethnic armed organisations, which made large gains from late 2023. The army retains the centre and the cities, relies on air strikes, and held elections in late 2025 that the opposition rejected.",
+      "factions": [
+        {
+          "name": "Myanmar military (State Administration Council and its successor)",
+          "side": "Junta",
+          "leader": "Senior Gen. Min Aung Hlaing",
+          "backers": [
+            "Russia (aircraft, arms)",
+            "China (diplomatic, pressure on border armies)"
+          ],
+          "aims": "Keep power and Myanmar's unity under military control.",
+          "holds": "Naypyidaw, Yangon, Mandalay and the central plains."
+        },
+        {
+          "name": "Arakan Army",
+          "side": "Ethnic armed organisation",
+          "leader": "Twan Mrat Naing",
+          "backers": [],
+          "aims": "Self-rule in Rakhine.",
+          "holds": "Most of Rakhine State."
+        },
+        {
+          "name": "Kachin Independence Army and northern armies (TNLA, MNDAA)",
+          "side": "Ethnic armed organisations",
+          "leader": "",
+          "backers": [],
+          "aims": "Autonomy; control of borders and resources.",
+          "holds": "Large areas of Kachin and northern Shan, varying under Chinese pressure."
+        },
+        {
+          "name": "National Unity Government and People's Defence Forces",
+          "side": "Pro-democracy resistance",
+          "leader": "",
+          "backers": [],
+          "aims": "End military rule; a federal democracy.",
+          "holds": "Rural areas of Sagaing, Magway and elsewhere."
+        }
+      ],
+      "drivers": [
+        "The 2021 coup",
+        "Decades of ethnic armed struggle for autonomy",
+        "Control of jade, rare earths and border trade"
+      ],
+      "stakes": [
+        "China's corridor and the Kyaukphyu port",
+        "Rare earth supply from Kachin",
+        "The Rohingya and refugees in Bangladesh",
+        "Scam compounds and narcotics on the borders"
+      ],
+      "watch_terms": [
+        "Myanmar",
+        "junta",
+        "Arakan Army",
+        "Rakhine",
+        "Kachin",
+        "Shan",
+        "Sagaing",
+        "Tatmadaw",
+        "NUG",
+        "PDF"
+      ]
+    },
+    {
+      "id": "syria",
+      "name": "Syria after Assad",
+      "countries": [
+        "sy"
+      ],
+      "center": [
+        35.0,
+        38.5
+      ],
+      "radius_km": 450,
+      "since": "2024-12-08",
+      "sides_line": "Transitional government vs rivals, with Israel and Turkey involved",
+      "summary": "Rebels led by Hayat Tahrir al-Sham ended Bashar al-Assad's rule in December 2024 after thirteen years of civil war. Ahmed al-Sharaa leads a transitional government seeking sanctions relief and recognition; violence against Alawites on the coast and Druze in Sweida, an unsettled deal with the Kurdish-led SDF, Israeli strikes and an Israeli buffer zone in the south, and Islamic State remnants test it.",
+      "factions": [
+        {
+          "name": "Transitional government and its army",
+          "side": "Damascus",
+          "leader": "President Ahmed al-Sharaa",
+          "backers": [
+            "Turkey",
+            "Qatar",
+            "Saudi Arabia"
+          ],
+          "aims": "One state and one army; recognition and reconstruction.",
+          "holds": "Damascus, Aleppo, Homs, Hama, Idlib and the coast."
+        },
+        {
+          "name": "Syrian Democratic Forces (SDF)",
+          "side": "Kurdish-led",
+          "leader": "Mazloum Abdi",
+          "backers": [
+            "United States (counter-IS partner)"
+          ],
+          "aims": "Keep self-rule in the north-east within an agreed integration.",
+          "holds": "The north-east east of the Euphrates, oil fields, IS detention camps."
+        },
+        {
+          "name": "Israel",
+          "side": "External",
+          "leader": "",
+          "backers": [],
+          "aims": "A demilitarised south and protection it claims for the Druze.",
+          "holds": "A buffer zone beyond the Golan line, including Mount Hermon."
+        },
+        {
+          "name": "Islamic State remnants",
+          "side": "Jihadists",
+          "leader": "",
+          "backers": [],
+          "aims": "Insurgency.",
+          "holds": "Cells in the central desert."
+        }
+      ],
+      "drivers": [
+        "The legacy of the civil war and sectarian revenge",
+        "Kurdish autonomy against centralisation",
+        "Israeli and Turkish security agendas"
+      ],
+      "stakes": [
+        "Sanctions relief and reconstruction",
+        "Israel–Syria security arrangements",
+        "Russia's bases at Hmeimim and Tartus",
+        "IS detainees and families in al-Hol"
+      ],
+      "watch_terms": [
+        "Syria",
+        "Damascus",
+        "Sharaa",
+        "SDF",
+        "Sweida",
+        "Latakia",
+        "Deir ez-Zor",
+        "Aleppo",
+        "Idlib",
+        "Alawite",
+        "Druze"
+      ]
+    },
+    {
+      "id": "israel_iran",
+      "name": "Israel–Iran confrontation",
+      "countries": [
+        "ir",
+        "il"
+      ],
+      "center": [
+        32.0,
+        45.0
+      ],
+      "radius_km": 1300,
+      "since": "2024-04-13",
+      "sides_line": "Israel (and the US) vs Iran",
+      "summary": "Decades of shadow war became direct exchanges in 2024. In June 2025 Israel struck Iran's nuclear sites, air defences and commanders for twelve days, the United States bombed Fordow, Natanz and Isfahan, and Iran answered with missile barrages before a ceasefire. UN sanctions were reimposed in September 2025; Iran's nuclear material and its cooperation with inspectors remain disputed.",
+      "factions": [
+        {
+          "name": "Israel",
+          "side": "Israel",
+          "leader": "Prime Minister Benjamin Netanyahu",
+          "backers": [
+            "United States"
+          ],
+          "aims": "Prevent an Iranian nuclear weapon; weaken Iran's regional network.",
+          "holds": ""
+        },
+        {
+          "name": "Islamic Republic of Iran (IRGC)",
+          "side": "Iran",
+          "leader": "Supreme Leader Ali Khamenei",
+          "backers": [
+            "Russia and China (diplomatic, economic)"
+          ],
+          "aims": "Regime survival, deterrence, keep enrichment.",
+          "holds": ""
+        }
+      ],
+      "drivers": [
+        "Iran's nuclear programme",
+        "Iran's support for Hezbollah, the Houthis and Iraqi militias",
+        "Israel's doctrine of pre-emption"
+      ],
+      "stakes": [
+        "Nuclear proliferation in the Middle East",
+        "Oil through the Strait of Hormuz",
+        "Gulf states' security and shipping"
+      ],
+      "watch_terms": [
+        "Iran",
+        "IRGC",
+        "Fordow",
+        "Natanz",
+        "Isfahan",
+        "enrichment",
+        "IAEA",
+        "Hormuz",
+        "Tehran"
+      ],
+      "match_countries": [
+        "ir"
+      ]
+    },
+    {
+      "id": "haiti",
+      "name": "Gang war in Haiti",
+      "countries": [
+        "ht"
+      ],
+      "center": [
+        18.9,
+        -72.5
+      ],
+      "radius_km": 200,
+      "since": "2021-07-07",
+      "sides_line": "Gang coalition vs police and international force",
+      "summary": "Since President Jovenel Moïse's assassination in 2021, gang coalitions have taken most of Port-au-Prince and pushed into the Artibonite. A Kenya-led mission did not turn the tide; a UN-authorised force was approved in 2025 to replace it. More than a million people are displaced.",
+      "factions": [
+        {
+          "name": "Viv Ansanm gang coalition",
+          "side": "Gangs",
+          "leader": "Jimmy 'Barbecue' Chérizier and others",
+          "backers": [
+            "Arms trafficked from the United States"
+          ],
+          "aims": "Territory, extortion and a political role.",
+          "holds": "Most of Port-au-Prince and main roads out of it."
+        },
+        {
+          "name": "Haitian National Police and the international force",
+          "side": "State",
+          "leader": "Transitional authorities",
+          "backers": [
+            "United States",
+            "Kenya and other contributors",
+            "UN"
+          ],
+          "aims": "Retake the capital and hold elections.",
+          "holds": "Parts of the capital and other cities."
+        }
+      ],
+      "drivers": [
+        "State collapse and elite capture",
+        "Weapons trafficking",
+        "Poverty and the absence of an elected government"
+      ],
+      "stakes": [
+        "Port and airport closures",
+        "Displacement and migration",
+        "Elections and a functioning state"
+      ],
+      "watch_terms": [
+        "Haiti",
+        "Port-au-Prince",
+        "Viv Ansanm",
+        "Cherizier",
+        "Barbecue",
+        "Artibonite",
+        "gang"
+      ]
+    },
+    {
+      "id": "nigeria",
+      "name": "Nigeria's insurgencies and banditry",
+      "countries": [
+        "ng"
+      ],
+      "center": [
+        11.0,
+        9.0
+      ],
+      "radius_km": 800,
+      "since": "2009-07-26",
+      "sides_line": "Nigerian forces vs ISWAP, Boko Haram and bandits",
+      "summary": "Jihadists of Islamic State West Africa Province and Boko Haram (JAS) fight in the north-east around Lake Chad; armed bandit gangs raid and kidnap across the north-west; farmer–herder and communal killings recur in the Middle Belt.",
+      "factions": [
+        {
+          "name": "Nigerian Armed Forces",
+          "side": "Government",
+          "leader": "President Bola Tinubu",
+          "backers": [
+            "Multinational Joint Task Force (Lake Chad states)"
+          ],
+          "aims": "Contain the insurgencies and banditry.",
+          "holds": "Cities and garrisons."
+        },
+        {
+          "name": "Islamic State West Africa Province (ISWAP)",
+          "side": "Jihadists (Islamic State)",
+          "leader": "",
+          "backers": [],
+          "aims": "Governance around Lake Chad.",
+          "holds": "Lake Chad islands and parts of Borno."
+        },
+        {
+          "name": "Boko Haram (JAS)",
+          "side": "Jihadists",
+          "leader": "",
+          "backers": [],
+          "aims": "Insurgency.",
+          "holds": "Sambisa forest and the Mandara mountains."
+        },
+        {
+          "name": "Bandit groups",
+          "side": "Criminal armed groups",
+          "leader": "",
+          "backers": [],
+          "aims": "Ransom, cattle and control of villages.",
+          "holds": "Rural Zamfara, Katsina, Sokoto, Kaduna."
+        }
+      ],
+      "drivers": [
+        "Poverty, land and climate pressure",
+        "Weak rural policing",
+        "Jihadist ideology and the Lake Chad economy"
+      ],
+      "stakes": [
+        "Mass kidnappings",
+        "Food production in the north",
+        "Spill-over into Niger, Chad and Cameroon"
+      ],
+      "watch_terms": [
+        "Nigeria",
+        "ISWAP",
+        "Boko Haram",
+        "Borno",
+        "Maiduguri",
+        "Zamfara",
+        "Katsina",
+        "bandits",
+        "Plateau",
+        "Benue"
+      ]
+    },
+    {
+      "id": "mozambique",
+      "name": "Insurgency in Cabo Delgado",
+      "countries": [
+        "mz"
+      ],
+      "center": [
+        -12.5,
+        40.0
+      ],
+      "radius_km": 300,
+      "since": "2017-10-05",
+      "sides_line": "Mozambique and Rwanda vs Islamic State Mozambique",
+      "summary": "An Islamic State-affiliated insurgency in Mozambique's northern province, near one of Africa's largest gas projects. Rwandan troops secure the gas area; attacks continue in the districts around it.",
+      "factions": [
+        {
+          "name": "Mozambican forces with Rwandan troops",
+          "side": "Government",
+          "leader": "President Daniel Chapo",
+          "backers": [
+            "Rwanda",
+            "EU training"
+          ],
+          "aims": "Secure the province and the LNG project.",
+          "holds": "Palma, Mocímboa da Praia and the gas peninsula."
+        },
+        {
+          "name": "Islamic State Mozambique",
+          "side": "Jihadists",
+          "leader": "",
+          "backers": [],
+          "aims": "Insurgency in Cabo Delgado and Niassa.",
+          "holds": "Mobile across rural districts."
+        }
+      ],
+      "drivers": [
+        "Marginalisation of the north and its youth",
+        "Resource wealth that bypasses locals"
+      ],
+      "stakes": [
+        "TotalEnergies' Mozambique LNG project",
+        "Displacement",
+        "Rwanda's regional military role"
+      ],
+      "watch_terms": [
+        "Mozambique",
+        "Cabo Delgado",
+        "Palma",
+        "Mocimboa",
+        "Macomia",
+        "LNG"
+      ]
+    },
+    {
+      "id": "libya",
+      "name": "Libya's divided state",
+      "countries": [
+        "ly"
+      ],
+      "center": [
+        29.0,
+        17.0
+      ],
+      "radius_km": 900,
+      "since": "2014-05-16",
+      "sides_line": "Tripoli government vs Haftar's east",
+      "summary": "Libya has had rival authorities since 2014: a UN-recognised government in Tripoli and Khalifa Haftar's forces controlling the east and south. Open war ended in 2020, but militias clash in Tripoli and foreign forces remain.",
+      "factions": [
+        {
+          "name": "Government of National Unity and Tripoli militias",
+          "side": "West",
+          "leader": "Prime Minister Abdul Hamid Dbeibah",
+          "backers": [
+            "Turkey"
+          ],
+          "aims": "Keep power in the west.",
+          "holds": "Tripoli and the north-west."
+        },
+        {
+          "name": "Libyan National Army",
+          "side": "East",
+          "leader": "Field Marshal Khalifa Haftar",
+          "backers": [
+            "Russia (Africa Corps)",
+            "United Arab Emirates",
+            "Egypt"
+          ],
+          "aims": "Rule all Libya.",
+          "holds": "Benghazi, the east, the south and most oil fields."
+        }
+      ],
+      "drivers": [
+        "Control of oil revenue and the central bank",
+        "Rival legitimacies since 2014",
+        "Foreign patrons"
+      ],
+      "stakes": [
+        "Oil exports",
+        "Migration to Europe",
+        "Russia's base network toward the Sahel and Sudan"
+      ],
+      "watch_terms": [
+        "Libya",
+        "Tripoli",
+        "Haftar",
+        "Benghazi",
+        "Dbeibah",
+        "Misrata",
+        "Sirte"
+      ]
+    },
+    {
+      "id": "pakistan",
+      "name": "Pakistan's insurgencies and the Afghan border",
+      "countries": [
+        "pk",
+        "af"
+      ],
+      "center": [
+        31.0,
+        68.0
+      ],
+      "radius_km": 800,
+      "since": "2007-12-01",
+      "sides_line": "Pakistan vs TTP and Baloch separatists",
+      "summary": "The Pakistani Taliban (TTP), sheltered in Afghanistan, wage a growing insurgency in Khyber Pakhtunkhwa; Baloch separatists, chiefly the BLA, attack security forces, Chinese projects and trains in Balochistan. Pakistan has struck inside Afghanistan and clashed with Taliban forces on the border.",
+      "factions": [
+        {
+          "name": "Pakistan Army and security forces",
+          "side": "Government",
+          "leader": "Field Marshal Asim Munir",
+          "backers": [
+            "China"
+          ],
+          "aims": "Defeat the TTP and separatists; force Kabul to act.",
+          "holds": ""
+        },
+        {
+          "name": "Tehrik-i-Taliban Pakistan (TTP)",
+          "side": "Jihadists",
+          "leader": "Noor Wali Mehsud",
+          "backers": [
+            "Sanctuary in Afghanistan"
+          ],
+          "aims": "Islamic rule in the tribal areas.",
+          "holds": "Influence in parts of Khyber Pakhtunkhwa."
+        },
+        {
+          "name": "Balochistan Liberation Army (BLA)",
+          "side": "Separatists",
+          "leader": "",
+          "backers": [],
+          "aims": "Independence for Balochistan.",
+          "holds": ""
+        }
+      ],
+      "drivers": [
+        "The Afghan Taliban's return in 2021",
+        "Baloch grievances over resources and repression",
+        "Militancy along the Durand Line"
+      ],
+      "stakes": [
+        "The China–Pakistan Economic Corridor and Gwadar",
+        "Pakistan–Afghanistan war risk"
+      ],
+      "watch_terms": [
+        "Pakistan",
+        "TTP",
+        "Balochistan",
+        "BLA",
+        "Khyber",
+        "Waziristan",
+        "Quetta",
+        "Peshawar",
+        "Durand",
+        "Afghan Taliban"
+      ],
+      "match_countries": [
+        "pk"
+      ]
+    },
+    {
+      "id": "kashmir",
+      "name": "India–Pakistan rivalry over Kashmir",
+      "countries": [
+        "in",
+        "pk"
+      ],
+      "center": [
+        34.0,
+        75.0
+      ],
+      "radius_km": 400,
+      "since": "1947-10-22",
+      "sides_line": "India vs Pakistan",
+      "summary": "Nuclear-armed neighbours divided by the Line of Control in Kashmir. After a militant attack on tourists at Pahalgam in April 2025, India struck targets in Pakistan in May and the two exchanged missile, drone and artillery fire for four days before a ceasefire; India suspended the Indus Waters Treaty.",
+      "factions": [
+        {
+          "name": "India",
+          "side": "India",
+          "leader": "Prime Minister Narendra Modi",
+          "backers": [],
+          "aims": "End cross-border militancy; full control of Jammu and Kashmir.",
+          "holds": "Jammu and Kashmir, Ladakh."
+        },
+        {
+          "name": "Pakistan",
+          "side": "Pakistan",
+          "leader": "",
+          "backers": [
+            "China"
+          ],
+          "aims": "Kashmir's status settled in its favour; deter India.",
+          "holds": "Azad Kashmir and Gilgit-Baltistan."
+        }
+      ],
+      "drivers": [
+        "The unresolved partition of Kashmir",
+        "Militant groups based in Pakistan",
+        "Water: the Indus Waters Treaty"
+      ],
+      "stakes": [
+        "Nuclear escalation",
+        "Water for Pakistan's agriculture"
+      ],
+      "watch_terms": [
+        "Kashmir",
+        "Line of Control",
+        "LoC",
+        "Pahalgam",
+        "Srinagar",
+        "Indus"
+      ],
+      "match_countries": []
+    },
+    {
+      "id": "colombia",
+      "name": "Colombia's armed conflict",
+      "countries": [
+        "co"
+      ],
+      "center": [
+        5.0,
+        -74.0
+      ],
+      "radius_km": 700,
+      "since": "1964-05-27",
+      "sides_line": "State vs ELN, FARC dissidents and the Clan del Golfo",
+      "summary": "Despite the 2016 FARC peace deal, the ELN guerrilla, FARC dissident factions and the Clan del Golfo fight the state and each other over coca, mining and smuggling routes. Fighting in Catatumbo in 2025 displaced tens of thousands.",
+      "factions": [
+        {
+          "name": "Colombian military and police",
+          "side": "Government",
+          "leader": "",
+          "backers": [
+            "United States (counternarcotics)"
+          ],
+          "aims": "Retake territory; negotiate where possible.",
+          "holds": ""
+        },
+        {
+          "name": "ELN",
+          "side": "Guerrilla",
+          "leader": "",
+          "backers": [
+            "Sanctuary in Venezuela"
+          ],
+          "aims": "Political and territorial control.",
+          "holds": "Catatumbo, Arauca, Chocó border areas."
+        },
+        {
+          "name": "FARC dissidents (EMC and others)",
+          "side": "Guerrilla factions",
+          "leader": "Néstor Gregorio Vera (Iván Mordisco), EMC",
+          "backers": [],
+          "aims": "Control of coca regions.",
+          "holds": "Cauca, Guaviare, Caquetá."
+        },
+        {
+          "name": "Clan del Golfo (EGC)",
+          "side": "Narco-paramilitary",
+          "leader": "",
+          "backers": [],
+          "aims": "Cocaine routes to the Caribbean.",
+          "holds": "Urabá and the north-west."
+        }
+      ],
+      "drivers": [
+        "Cocaine and illegal mining profits",
+        "State absence in the periphery",
+        "Unfinished peace processes"
+      ],
+      "stakes": [
+        "Cocaine supply",
+        "Venezuela border stability",
+        "Colombia's peace policy"
+      ],
+      "watch_terms": [
+        "Colombia",
+        "ELN",
+        "FARC",
+        "Catatumbo",
+        "Cauca",
+        "Clan del Golfo",
+        "Mordisco"
+      ]
+    },
+    {
+      "id": "mexico",
+      "name": "Mexico's cartel wars",
+      "countries": [
+        "mx"
+      ],
+      "center": [
+        24.0,
+        -104.0
+      ],
+      "radius_km": 1100,
+      "since": "2006-12-11",
+      "sides_line": "Cartels vs each other and the state",
+      "summary": "Cartels fight each other and the security forces; since September 2024 the Sinaloa Cartel has been at war with itself between the Chapitos and the Mayo Zambada faction, centred on Culiacán. The United States designated major cartels as terrorist organisations in 2025 and presses Mexico over fentanyl.",
+      "factions": [
+        {
+          "name": "Mexican Army, National Guard and police",
+          "side": "Government",
+          "leader": "President Claudia Sheinbaum",
+          "backers": [
+            "United States (intelligence)"
+          ],
+          "aims": "Reduce violence and fentanyl trafficking; avoid US unilateral action.",
+          "holds": ""
+        },
+        {
+          "name": "Sinaloa Cartel (Chapitos vs Mayos)",
+          "side": "Cartel",
+          "leader": "",
+          "backers": [],
+          "aims": "Control of Sinaloa and of trafficking routes.",
+          "holds": "Sinaloa and parts of the north-west."
+        },
+        {
+          "name": "Jalisco New Generation Cartel (CJNG)",
+          "side": "Cartel",
+          "leader": "Nemesio Oseguera (El Mencho)",
+          "backers": [],
+          "aims": "National dominance.",
+          "holds": "Jalisco and many states."
+        }
+      ],
+      "drivers": [
+        "US demand for drugs and the flow of US guns south",
+        "Fragmentation of cartels",
+        "Corruption"
+      ],
+      "stakes": [
+        "US–Mexico security relations and trade",
+        "Fentanyl",
+        "Violence against civilians and candidates"
+      ],
+      "watch_terms": [
+        "Mexico",
+        "Sinaloa",
+        "Culiacán",
+        "CJNG",
+        "Chapitos",
+        "cartel",
+        "Michoacán",
+        "Guerrero"
+      ]
+    },
+    {
+      "id": "cameroon",
+      "name": "Anglophone crisis in Cameroon",
+      "countries": [
+        "cm"
+      ],
+      "center": [
+        5.5,
+        10.0
+      ],
+      "radius_km": 300,
+      "since": "2017-10-01",
+      "sides_line": "Cameroon's army vs Ambazonian separatists",
+      "summary": "Separatists in Cameroon's two English-speaking regions declared 'Ambazonia' in 2017 after crackdowns on protests; fighting with the army, abductions and school closures continue. Boko Haram and ISWAP also attack in the Far North.",
+      "factions": [
+        {
+          "name": "Cameroonian Armed Forces",
+          "side": "Government",
+          "leader": "President Paul Biya",
+          "backers": [],
+          "aims": "Crush the separatists.",
+          "holds": "Towns."
+        },
+        {
+          "name": "Ambazonian separatist groups",
+          "side": "Separatists",
+          "leader": "Fragmented",
+          "backers": [
+            "Diaspora funding"
+          ],
+          "aims": "Independence for the Northwest and Southwest regions.",
+          "holds": "Rural areas of the two regions."
+        }
+      ],
+      "drivers": [
+        "Marginalisation of the anglophone minority",
+        "Repression of 2016 protests"
+      ],
+      "stakes": [
+        "Displacement and schooling",
+        "Cameroon's succession"
+      ],
+      "watch_terms": [
+        "Cameroon",
+        "Ambazonia",
+        "Bamenda",
+        "Buea",
+        "anglophone"
+      ]
+    },
+    {
+      "id": "south_sudan",
+      "name": "South Sudan's fraying peace",
+      "countries": [
+        "ss"
+      ],
+      "center": [
+        7.5,
+        30.5
+      ],
+      "radius_km": 600,
+      "since": "2013-12-15",
+      "sides_line": "Kiir's government vs Machar's SPLM-IO and militias",
+      "summary": "The 2018 deal that ended the civil war between President Salva Kiir and Riek Machar is unravelling: fighting with the White Army around Nasir in 2025 led to Machar's arrest, and Ugandan troops deployed to back Kiir.",
+      "factions": [
+        {
+          "name": "SSPDF and government",
+          "side": "Government",
+          "leader": "President Salva Kiir",
+          "backers": [
+            "Uganda (troops)"
+          ],
+          "aims": "Keep power; manage succession.",
+          "holds": "Juba and most towns."
+        },
+        {
+          "name": "SPLM-IO and allied militias (White Army)",
+          "side": "Opposition",
+          "leader": "Riek Machar (detained)",
+          "backers": [],
+          "aims": "Power-sharing and protection of Nuer communities.",
+          "holds": "Parts of Upper Nile and Jonglei."
+        }
+      ],
+      "drivers": [
+        "Elite rivalry between Kiir and Machar",
+        "Ethnic mobilisation (Dinka, Nuer)",
+        "Oil revenue"
+      ],
+      "stakes": [
+        "Return to full civil war",
+        "Oil exports through Sudan, disrupted by Sudan's war"
+      ],
+      "watch_terms": [
+        "South Sudan",
+        "Juba",
+        "Machar",
+        "Kiir",
+        "Nasir",
+        "Upper Nile",
+        "Jonglei",
+        "White Army"
+      ]
+    }
+  ]
+}

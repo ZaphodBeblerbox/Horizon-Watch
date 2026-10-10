@@ -26,6 +26,7 @@ import { captureElement } from "../capture/Capturable.jsx"
 import { saveForBriefing } from "../state/savedForBriefing.js"
 import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react"
 import API_BASE from "../apiBase.js"
+import ConflictContext from "../conflicts/ConflictContext.jsx"
 import { safeArray } from "../utils/safeArray.js"
 import GlobeView from "../components/GlobeView.jsx"
 import { GDELT_EVENT_TYPES } from "../globe/GlobeGdeltLayer.jsx"
@@ -2175,6 +2176,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     />
                 ) : !selected ? (
                     <div style={{ padding: 12 }}>
+                        {/* The wars in view, folded: open one for who fights,
+                            why, what is at stake and where it stands now. */}
+                        <ConflictContext near="camera" />
                         <div className="statgrid" style={{ marginBottom: 12 }}>
                             <div className="stat"><span className="value">{visibleRows.length}</span><span className="label">Signals in window</span></div>
                             <div className="stat"><span className="value">{legendCounts[0] + legendCounts[1]}</span><span className="label">Critical + high</span></div>

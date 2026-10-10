@@ -25,6 +25,7 @@ import OwnedAssetDetail from "../inspector/OwnedAssetDetail.jsx"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 import { shareToDesk } from "../desk/shareToDesk.js"
+import ConflictContext from "../conflicts/ConflictContext.jsx"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -657,6 +658,10 @@ export default function InspectorPanel({
 
             {/* Body */}
             <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-3) var(--space-4)" }}>
+                {/* The war this happened in, folded (conflicts/ConflictContext). */}
+                <ConflictContext label="Conflict context"
+                    countries={[data?.country_code, data?.location_country_code, data?.cc].filter((x) => typeof x === "string" && x.length === 2)}
+                    names={[data?.location_country, data?.country, countryDetail?.country].filter((x) => typeof x === "string")} />
                 {/* ── what drove this country's score, and what is happening
                     there now. Kept as two clearly separated lists because
                     they are not the same kind of thing: the drivers ARE the

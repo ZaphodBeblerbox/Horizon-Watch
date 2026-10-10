@@ -66,14 +66,18 @@ OUTLOOK = "outlook"
 # them, so this belongs here, under the one monthly cap.
 FUSION = "fusion"
 
+# "Where it stands now" for each war in seed/conflicts.json, written only
+# from the system's own recent reports and citing them (conflict_context.py).
+CONTEXT = "context"
+
 KNOWN_PURPOSES = frozenset({
-    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION,
+    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT,
     "constellation",      # filling gaps between entities in the graph
     "summarise",          # a one-line precis of a long wire report
     "translate",
 })
 
-_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION})
+_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT})
 
 DEFAULT_MODEL = "gpt-4o-mini"
 

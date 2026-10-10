@@ -12043,6 +12043,32 @@ async def api_infra_signals(kind: str, lat: float, lon: float):
     return await loop.run_in_executor(_executor, _if.signals_near, kind, lat, lon)
 
 
+@app.get("/api/conflicts")
+def api_conflicts(countries: str = "", ids: str = ""):
+    """The current wars: who fights, why, what is at stake, and where each
+    stands now (conflict_context.py). countries=sd,ss / ids=sudan,yemen."""
+    import conflict_context as _cc
+    cs = {c.strip().lower() for c in countries.split(",") if c.strip()} or None
+    ii = {c.strip().lower() for c in ids.split(",") if c.strip()} or None
+    return {"conflicts": _cc.conflicts(cs, ii)}
+
+
+async def _conflict_context_loop():
+    """'Where it stands now' for each war, from the signal pool, every six
+    hours; only conflicts whose reports changed cost a model call."""
+    await asyncio.sleep(180)
+    while True:
+        try:
+            import conflict_context as _cc
+            with _SURFACE_POOL_LOCK:
+                pool = list(_SURFACE_POOL)
+            out = await asyncio.to_thread(_cc.refresh, pool)
+            print(f"[conflict-context] {out}", flush=True)
+        except Exception as e:                              # noqa: BLE001
+            print(f"[conflict-context] error: {type(e).__name__}: {e}", flush=True)
+        await asyncio.sleep(6 * 3600)
+
+
 @app.get("/api/telegram/situations")
 async def api_telegram_situations():
     """Developments on the ground read from Telegram that are still live — a
@@ -15848,6 +15874,7 @@ async def startup_event():
     # "[telegram] error (occurrence 1)" lines per start.
     _spawn(_telegram_loop)
     _spawn(_event_watch_loop)
+    _spawn(_conflict_context_loop)
     _spawn(_escalation_loop)
     _spawn(_heat_watch_loop)
     global _BRIEFING_STORE
