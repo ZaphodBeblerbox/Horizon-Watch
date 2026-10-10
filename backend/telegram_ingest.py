@@ -168,6 +168,37 @@ async def _connected():
     return client
 
 
+JOIN_PER_PASS = 2
+
+
+async def _join_registered(client, joined: set) -> list:
+    """Join channels the registry marks join: true that this account has
+    not joined yet — a few a pass, stopping at the first FloodWait, so a
+    channel added to telegram_channels.json is read without anyone logging
+    in to Telegram by hand."""
+    from telethon.errors import FloodWaitError
+    from telethon.tl.functions.channels import JoinChannelRequest
+    try:
+        with open(CHANNELS_FILE) as fh:
+            reg = json.load(fh)
+    except Exception:                                          # noqa: BLE001
+        return []
+    want = [k for k, v in reg.items() if isinstance(v, dict) and v.get("join") and not k.startswith("c/")
+            and k.lower() not in joined]
+    done = []
+    for name in want[:JOIN_PER_PASS]:
+        try:
+            await client(JoinChannelRequest(name))
+            done.append(name)
+            print(f"[telegram] joined {name}", flush=True)
+        except FloodWaitError as e:
+            print(f"[telegram] join paused: Telegram asks to wait {e.seconds}s", flush=True)
+            break
+        except Exception as e:                                 # noqa: BLE001
+            print(f"[telegram] could not join {name}: {type(e).__name__}: {e}", flush=True)
+    return done
+
+
 async def _collect(hours: int = LOOKBACK_HOURS) -> int:
     from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
     cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)
@@ -176,11 +207,13 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
     new = 0
     client = await _connected()
     try:
+      joined = set()
       async for d in client.iter_dialogs():
             ent = d.entity
             if not (d.is_channel and getattr(ent, "broadcast", False)):
                 continue
             chan = getattr(ent, "username", None) or f"c/{ent.id}"
+            joined.add(chan.lower())
             info = channel_info(chan)
             if info["role"] == "ignore":
                 continue                      # joined, judged useless (telegram_channels.json)
@@ -215,6 +248,8 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                     (chan, m.id, getattr(ent, "title", chan), m.date.isoformat(), text[:4000], media, thumb, m.views,
                      info["role"], info["party"]))
                 new += 1
+      # Registered channels not joined yet: joined now, read next pass.
+      await _join_registered(client, joined)
     finally:
         await client.disconnect()
     con.commit(); con.close()

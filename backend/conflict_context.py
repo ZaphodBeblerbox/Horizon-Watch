@@ -246,3 +246,48 @@ def conflicts(countries: set[str] | None = None, ids: set[str] | None = None) ->
                     "trend_sources": s.get("trend_sources") or [], "as_of": s.get("as_of"),
                     "n_reports": s.get("n_reports"), "built_at": s.get("built_at"), "daily": s.get("daily") or []})
     return out
+
+
+def conflict_at(lat, lon) -> dict | None:
+    """The current war whose area contains this point (nearest centre), or
+    None. Used by the notification gate (live_notifications) and the
+    significance score (main._score_significance): the watched-zone
+    geography was drawn around the Red Sea and the Gulf, and a battle in
+    Darfur, the Kivus or the Sahel scored as if it were nowhere."""
+    try:
+        lat, lon = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None
+    import math
+    best = None
+    for c in baseline()["conflicts"]:
+        ctr = c.get("center")
+        if not ctr:
+            continue
+        r = math.radians
+        h = (math.sin(r(lat - ctr[0]) / 2) ** 2
+             + math.cos(r(ctr[0])) * math.cos(r(lat)) * math.sin(r(lon - ctr[1]) / 2) ** 2)
+        d = 12742 * math.asin(math.sqrt(min(1.0, h)))
+        if d <= (c.get("radius_km") or 0) and (best is None or d < best[0]):
+            best = (d, c)
+    return best[1] if best else None
+
+
+VIOLENT_TYPES = {"explosion", "missile", "armed_clash"}
+
+
+def war_signal(item: dict, event_type: str | None = None) -> dict | None:
+    """The war this signal is part of: inside its area AND about it — the
+    classifier calls it violence, or the headline names one of the war's
+    sides or places. Being in Nigeria is not enough: an unemployment
+    figure from Abuja is not news from the war."""
+    c = conflict_at(item.get("lat"), item.get("lon"))
+    if not c:
+        return None
+    if (event_type or "") in VIOLENT_TYPES:
+        return c
+    head = f"{item.get('headline') or ''} {item.get('title') or ''}"
+    terms = [t for t in c.get("watch_terms") or [] if len(t) > 3]
+    if terms and re.search(r"\b(" + "|".join(re.escape(t) for t in terms) + r")\b", head, re.I):
+        return c
+    return None

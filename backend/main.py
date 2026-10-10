@@ -1258,6 +1258,17 @@ def _score_significance(item: dict, classification: dict, profile: dict | None, 
     if recent_count >= 2:
         score += 10
 
+    # Part of a current war (seed/conflicts.json: inside its area and about
+    # it — violence, or naming its sides or places) counts like a focus region:
+    # without it the empty shared profile left Darfur, the Kivus and the
+    # Sahel to score as if they were nowhere — 5% of the pool was Africa.
+    try:
+        import conflict_context as _cc
+        if _cc.war_signal(item, classification.get("type")):
+            score += 15
+    except Exception:                                        # noqa: BLE001
+        pass
+
     # Penalty for low classifier confidence
     if classification.get("confidence", 1.0) < 0.6:
         score -= 20
@@ -9164,7 +9175,10 @@ def _build_surface_pool() -> list:
     # 300, not 50 (the owner, 2026-10-07: as many interesting signals as
     # possible on the map). The map filters by its own time window; Home
     # and the lists take their own top slices.
-    return deduped[:SURFACE_POOL_MAX]
+    # A floor for Africa (regional_floor.py): a busy week elsewhere used to
+    # push it off the end of the pool (5% of it, 2026-10-10).
+    import regional_floor as _rf
+    return _rf.apply_floor(deduped, SURFACE_POOL_MAX, int(os.getenv("SURFACE_AFRICA_FLOOR", "45")))
 
 
 # ── Auto-brief helpers ────────────────────────────────────────────────────────

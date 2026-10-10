@@ -83,6 +83,16 @@ def _place_of(lat, lon) -> str | None:
     return p.get("zone") or p.get("chokepoint") or (p.get("waters") if p.get("watched") else None)
 
 
+def _conflict_of(lat, lon) -> str | None:
+    """The current war this point is in (conflict_context.conflict_at)."""
+    try:
+        import conflict_context as _cc
+        c = _cc.conflict_at(lat, lon)
+        return c["name"] if c else None
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
 def gdelt_items(hours: int = 48, limit: int = 40) -> list[dict]:
     """Drawable, conflictual GDELT pins as notifications."""
     out = []
@@ -111,15 +121,17 @@ def gdelt_items(hours: int = 48, limit: int = 40) -> list[dict]:
             # trade dispute while keeping the Moscow drone barrage, North
             # Korean missile launches and Hormuz.
             place = _place_of(pin.get("lat"), pin.get("lon"))
-            if not place:
+            war = None if place else _conflict_of(pin.get("lat"), pin.get("lon"))
+            if not place and not war:
                 continue
             g = pin.get("goldstein")
             out.append({
                 "id": f"gdelt-{pin['id']}",
                 "title": pin["title"],
                 "sev": _sev_from_goldstein(g),
-                "reason": (f"Reported in {pin.get('judged_where') or place} · "
-                           f"{pin.get('mentions') or 0} news mentions"),
+                "reason": (f"Reported in {pin.get('judged_where') or place or pin.get('location_name')}"
+                           + (f" · in the area of the {war}" if war else "")
+                           + f" · {pin.get('mentions') or 0} news mentions"),
                 "notify": True,
                 "kind": "signal",
                 "source": "Wire Reports",

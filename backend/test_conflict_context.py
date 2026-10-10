@@ -69,3 +69,18 @@ def test_an_empty_rebuild_keeps_the_last_good_picture(monkeypatch, tmp_path):
     cc.refresh(sig, only={"sudan"})
     got = cc.conflicts(ids={"sudan"})[0]
     assert got["now"][0]["text"] == "RSF fighters shelled El Fasher overnight" and got["n_reports"] == 2
+
+
+def test_a_point_in_a_war_is_found_and_one_far_away_is_not():
+    assert cc.conflict_at(13.63, 25.35)["id"] == "sudan"          # El Fasher
+    assert cc.conflict_at(-1.68, 29.22)["id"] == "drc"            # Goma
+    assert cc.conflict_at(48.85, 2.35) is None                    # Paris
+    assert cc.conflict_at(None, 2) is None
+
+
+def test_a_war_signal_is_in_the_area_and_about_the_war():
+    at_kano = {"lat": 12.0, "lon": 8.5}
+    assert cc.war_signal({**at_kano, "headline": "Bandits raid villages in Katsina"})["id"] == "nigeria"
+    assert cc.war_signal({**at_kano, "headline": "Gunmen attack a market"}, "armed_clash")["id"] == "nigeria"
+    assert cc.war_signal({**at_kano, "headline": "Unemployment falls 5% on stable power"}) is None
+    assert cc.war_signal({"lat": 48.8, "lon": 2.3, "headline": "Bomb in Paris"}, "explosion") is None

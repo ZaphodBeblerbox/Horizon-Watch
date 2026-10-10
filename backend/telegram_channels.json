@@ -1,5 +1,5 @@
 {
-  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator. ignore = joined but not read (quotes, tributes, no events). Official channels are statements: never map pins; in the Inbox, cited on events, and notified when they claim an attack. read_for: announcements = read mainly for what it says WILL happen (dated gatherings and actions → /api/telegram/upcoming); every channel's posts are read for announcements too.",
+  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator. ignore = joined but not read (quotes, tributes, no events). Official channels are statements: never map pins; in the Inbox, cited on events, and notified when they claim an attack. read_for: announcements = read mainly for what it says WILL happen (dated gatherings and actions → /api/telegram/upcoming); every channel's posts are read for announcements too. join: true = the server joins this channel itself (two a pass, telegram_ingest._join_registered); checked to exist and post before it was added.",
   "YemenWrath": {
     "role": "official",
     "party": "Houthi forces (Ansar Allah)",
@@ -155,5 +155,40 @@
     "role": "outlet",
     "party": null,
     "lang": "fr"
+  },
+  "sahelscopeml223": {
+    "role": "local",
+    "party": null,
+    "lang": "fr",
+    "join": true,
+    "note": "Sahel scoop ml — Mali news; added 2026-10-10 for Africa coverage (3.3K subscribers, daily)"
+  },
+  "PresCouncilSudan": {
+    "role": "official",
+    "party": "RSF-led Tasis government (Sudan)",
+    "lang": "ar",
+    "join": true,
+    "note": "presidential council of the RSF's rival government — its own statements; added 2026-10-10"
+  },
+  "africaninitiativefr": {
+    "role": "partisan",
+    "party": "Russian state-linked (African Initiative)",
+    "lang": "fr",
+    "join": true,
+    "note": "Africa news from the Russian state-linked African Initiative, French edition; added 2026-10-10"
+  },
+  "africaninitiativeen": {
+    "role": "partisan",
+    "party": "Russian state-linked (African Initiative)",
+    "lang": "en",
+    "join": true,
+    "note": "same, English edition; added 2026-10-10"
+  },
+  "GaroweOnline": {
+    "role": "outlet",
+    "party": null,
+    "lang": "en",
+    "join": true,
+    "note": "Somali news outlet (Puntland); added 2026-10-10 — Somalia blocks Telegram since 2023, so Somali channels are few"
   }
 }
