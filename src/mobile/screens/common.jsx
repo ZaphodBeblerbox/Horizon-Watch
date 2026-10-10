@@ -5,6 +5,7 @@
  */
 import SourceLink from "../../components/SourceLink.jsx"
 import { useState } from "react"
+import { createPortal } from "react-dom"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
 import XPost, { xPostId } from "../../components/XPost.jsx"
 import { createPost } from "../../lib/deskApi.js"
@@ -25,17 +26,22 @@ export function Icon({ id, size = 20 }) {
     return <svg width={size} height={size} aria-hidden focusable="false"><use href={`#${id}`} /></svg>
 }
 
-/** A bottom sheet: slides up when it opens and back down before it closes. */
+/** A bottom sheet: slides up when it opens and back down before it closes.
+ *  Rendered at the top of the phone app (the .m2 root), above the map and
+ *  the tab bar — a sheet opened from the map used to sit inside the map's
+ *  layer, under the tab bar, and could not be scrolled to its end. */
 export function Sheet({ onClose, children }) {
     const [closing, setClosing] = useState(false)
     const close = () => { if (closing) return; setClosing(true); setTimeout(() => onClose?.(), 210) }
-    return <>
+    const host = (typeof document !== "undefined" && document.querySelector(".m2")) || (typeof document !== "undefined" ? document.body : null)
+    const sheet = <>
         <div className={`m2-sheet-back${closing ? " closing" : ""}`} onClick={close} />
         <div className={`m2-sheet${closing ? " closing" : ""}`} role="dialog">
             <div className="m2-grip" onClick={close} />
             {children}
         </div>
     </>
+    return host ? createPortal(sheet, host) : sheet
 }
 
 /** What a signal is, in the form the desk takes. */

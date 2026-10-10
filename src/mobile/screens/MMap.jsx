@@ -4,14 +4,14 @@
  *
  *   theaters     Global and the user's own, one tap to go there
  *   filters      the last 24 / 48 / 72 hours; all, high and up, or critical
- *   layers       news and verified events, Telegram footage, unrest and
- *                protests, fusions, your assets — each switched on its own
+ *   layers       every desktop layer, with the desktop's icons and groups
+ *                (../mapLayers.js), plus live ships and aircraft
  *   a point      opens its sheet: footage, cited X posts, share to the desk
  *
  * Base maps: Esri's dark grey canvas and satellite imagery, each with its
  * place-name layer, credited on the map as their terms ask.
  */
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { useMine, usePoll, arr } from "../useMine.js"
@@ -19,9 +19,8 @@ import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
 import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
-import { getShapeMarkerDataUri } from "../../globe/entityIcons.js"
+import { PHONE_LAYERS, layerGroups } from "../mapLayers.js"
 
-const SEV_HEX = { critical: "#E5484D", significant: "#F5A524", high: "#F5A524", elevated: "#F5A524", moderate: "#8FB4E8", medium: "#8FB4E8", low: "#9AA9BC" }
 
 // Esri's public base maps, credited as their terms ask (CARTO's now want a key).
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services"
@@ -34,10 +33,13 @@ const BASES = {
 const WINDOWS = [24, 48, 72]
 const FLOORS = [["all", "All"], ["high", "High +"], ["critical", "Critical"]]
 const RANK = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
-export const LAYERS = [
-    ["signals", "News & verified"], ["telegram", "Telegram footage"], ["unrest", "Unrest & protests"], ["fusions", "Fusions"], ["assets", "My assets"],
-    ["ships", "Ships (AIS, live)"], ["aircraft", "Aircraft (ADS-B, live)"],
-]
+// EVERY DESKTOP LAYER (owner, 2026-10-10), the desktop's icons and groups:
+// ../mapLayers.js. Live ships and aircraft are the phone's own, below.
+export const LAYERS = [...PHONE_LAYERS.map((l) => [l.key, l.label]), ["ships", "Ships (AIS, live)"], ["aircraft", "Aircraft (ADS-B, live)"]]
+const LIVE_ICON = {
+    ships: "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 16 16"><path d="M8 1 L12.5 14 L8 11.5 L3.5 14 Z" fill="#3fb6c6" stroke="rgba(0,0,0,.6)"/></svg>'),
+    aircraft: "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path d="M12 2c.8 0 1.3.7 1.3 1.6v5.6l7.7 4.5v2l-7.7-2.3v4.9l2.2 1.6V21L12 20.1 8.5 21v-1.1l2.2-1.6v-4.9L3 15.7v-2l7.7-4.5V3.6C10.7 2.7 11.2 2 12 2z" fill="#dfe3ea" stroke="rgba(0,0,0,.6)" stroke-width=".8"/></svg>'),
+}
 // LIVE TRACKS, the way MarineTraffic and Flightradar show them: what is in
 // view, from zoom 5 in, an icon turned to its heading, a sheet on tap.
 // Ships teal, aircraft pale; amber marks a military aircraft or a
@@ -60,7 +62,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const [baseKey, setBaseKey] = useState("dark")
     const [hours, setHours] = useState(48)
     const [floor, setFloor] = useState("all")
-    const [on, setOn] = useState({ signals: true, telegram: true, unrest: true, fusions: true, assets: true, ships: true, aircraft: true })
+    const [on, setOn] = useState(() => ({ ...Object.fromEntries(PHONE_LAYERS.map((l) => [l.key, !!l.defaultOn])), ships: true, aircraft: true }))
+    const [feats, setFeats] = useState({})        // layer key → its features in view
     const [bounds, setBounds] = useState(null)
     const [ships, setShips] = useState([])
     const [planes, setPlanes] = useState([])
@@ -70,11 +73,6 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const [theater, setTheater] = useState("global")
     const [zoom, setZoom] = useState(2)
     const mine = useMine()
-
-    // the map is the app's background now: its points load either way, more slowly behind other screens
-    const surface = usePoll("/api/surface", active ? 60_000 : 5 * 60_000, (d) => arr(d?.items ?? d))
-    const posts = usePoll(`/api/telegram/posts?hours=${hours}`, active ? 2 * 60_000 : 10 * 60_000, (d) => arr(d?.posts))
-    const fusions = usePoll("/api/fusions?status=active&limit=200", active ? 2 * 60_000 : 10 * 60_000, (d) => arr(d))
 
     // the map itself, once
     useEffect(() => {
@@ -89,6 +87,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         el.current._m2map = map.current            // reachable for browser checks
         group.current = L.layerGroup().addTo(map.current)
         tracks.current = L.layerGroup().addTo(map.current)
+        setBounds(map.current.getBounds())
     }, [])
     // visible again after another tab: Leaflet must re-measure
     useEffect(() => { if (active && map.current) setTimeout(() => map.current.invalidateSize(), 60) }, [active])
@@ -103,22 +102,22 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         ]).addTo(map.current)
     }, [baseKey])
 
-    const points = useMemo(() => {
-        const cutoff = Date.now() - hours * 3600_000
-        const maxRank = floor === "critical" ? 0 : floor === "high" ? 1 : 9
-        const ok = (x) => Number.isFinite(+x.lat) && Number.isFinite(+x.lon) && (!tsOf(x) || tsOf(x) >= cutoff)
-            && (RANK[String(x.severity_tier || x.severity || "").toLowerCase()] ?? 3) <= maxRank
-        const out = []
-        if (on.signals) for (const s of arr(surface)) if (ok(s) && s.source_type !== "telegram_announcement") out.push({ ...s, _k: "signal" })
-        for (const p of arr(posts)) {
-            const unrest = p.event_type === "unrest"
-            if (!ok(p) || (unrest ? !on.unrest : !on.telegram)) continue
-            out.push({ ...p, _k: unrest ? "unrest" : "telegram" })
+    // LOAD what is on, for the view: after a pan, and again every few minutes
+    // (more slowly while the map is only the background)
+    useEffect(() => {
+        if (!bounds) return undefined
+        let live = true
+        const b = { south: bounds.getSouth(), north: bounds.getNorth(), west: bounds.getWest(), east: bounds.getEast() }
+        const run = () => {
+            for (const l of PHONE_LAYERS) {
+                if (!on[l.key] || zoom < (l.minZoom || 0)) { setFeats((f) => (f[l.key]?.length ? { ...f, [l.key]: [] } : f)); continue }
+                l.load({ bounds: b, zoom, hours }).then((x) => { if (live) setFeats((f) => ({ ...f, [l.key]: Array.isArray(x) ? x : [] })) }).catch(() => {})
+            }
         }
-        if (on.unrest) for (const s of arr(surface)) if (s.source_type === "telegram_announcement" && Number.isFinite(+s.lat)) out.push({ ...s, _k: "announced" })
-        if (on.fusions) for (const f of arr(fusions)) if (ok(f)) out.push({ ...f, headline: f.title, _k: "fusion" })
-        return out
-    }, [surface, posts, fusions, on, hours, floor])
+        const first = setTimeout(run, 250)
+        const t = setInterval(run, active ? 2 * 60_000 : 10 * 60_000)
+        return () => { live = false; clearTimeout(first); clearInterval(t) }
+    }, [bounds, zoom, hours, on, active])
 
     // THE BLUE DOT: where you are (location/liveShare.js), above everything
     const [me, setMe] = useState(() => myPosition())
@@ -135,35 +134,40 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         }).addTo(map.current)
     }, [me])
 
-    // draw
+    // DRAW: areas under lines under points, each with the desktop's own image
     useEffect(() => {
         const g = group.current
         if (!g) return
         g.clearLayers()
-        for (const p of points) {
-            // THE DESKTOP'S SHAPES (globe/entityIcons.js): reports and news a
-            // diamond, a verified event or fusion a square, a warning or an
-            // announced gathering a triangle — coloured by severity.
-            const color = p._k === "unrest" || p._k === "announced" ? "#f97316" : SEV_HEX[String(p.severity_tier || p.severity || "").toLowerCase()] || "#8FB4E8"
-            const shape = p._k === "fusion" || /geoconfirmed/i.test(p.source_type || "") ? "square"
-                : p._k === "announced" || p._k === "unrest" || /alert|derived/i.test(p.source_type || "") ? "triangle" : "diamond"
-            const z = map.current?.getZoom?.() ?? 3
-            const size = (p.severity_tier === "critical" ? 18 : 15) + (z >= 6 ? 4 : 0)
-            const m = L.marker([+p.lat, +p.lon], {
-                icon: L.icon({ iconUrl: getShapeMarkerDataUri({ shape, color, size, invert: p._k === "announced", strokeWidth: 1.5 }), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
-                keyboard: false, zIndexOffset: p.severity_tier === "critical" ? 500 : 0,
-            })
-            m.on("click", () => setOpen(p))
-            m.addTo(g)
+        const maxRank = floor === "critical" ? 0 : floor === "high" ? 1 : 9
+        const tap = (f, l) => () => setOpen({ ...(f.raw || {}), headline: f.title || l.label, title: f.title || l.label, location: f.sub,
+                                               severity_tier: f.severity || f.raw?.severity_tier, lat: f.lat ?? f.raw?.lat, lon: f.lon ?? f.raw?.lon })
+        const order = { areas: 0, lines: 1, points: 2 }
+        for (const l of [...PHONE_LAYERS].sort((a, c) => order[a.kind] - order[c.kind])) {
+            if (!on[l.key]) continue
+            for (const f of feats[l.key] || []) {
+                if (l.kind === "areas") {
+                    if (!f.rings) continue
+                    const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, interactive: !!f.title })
+                    if (f.title) a.on("click", tap(f, l))
+                    a.addTo(g)
+                } else if (l.kind === "lines") {
+                    if (!f.coords) continue
+                    const ln = L.polyline(f.coords, { color: f.color, weight: f.weight || 2, dashArray: f.dash || undefined, opacity: 0.85, interactive: !!f.title })
+                    if (f.title) ln.on("click", tap(f, l))
+                    ln.addTo(g)
+                } else {
+                    if (!Number.isFinite(+f.lat) || !Number.isFinite(+f.lon) || !f.iconUri) continue
+                    if (f.severity && (RANK[String(f.severity).toLowerCase()] ?? 3) > maxRank) continue
+                    const w = f.iconWidth || f.size || 16, h = f.iconHeight || f.size || 16
+                    L.marker([+f.lat, +f.lon], {
+                        icon: L.icon({ iconUrl: f.iconUri, iconSize: [w, h], iconAnchor: f.iconAnchor || [w / 2, h / 2] }),
+                        keyboard: false, zIndexOffset: f.severity === "critical" ? 500 : 0,
+                    }).on("click", tap(f, l)).addTo(g)
+                }
+            }
         }
-        if (on.assets) for (const a of mine.assets) {
-            if (!Number.isFinite(+a.lat)) continue
-            L.circle([+a.lat, +a.lon], { radius: (+a.radius_km || 20) * 1000, color: "#7aa7ff", weight: 1, fillOpacity: 0.05, dashArray: "4 4" }).addTo(g)
-            L.marker([+a.lat, +a.lon], { icon: L.divIcon({ className: "", html: '<div class="m2-pin" style="width:14px;height:14px;background:#7aa7ff"></div>', iconSize: [14, 14] }) })
-                .on("click", () => setOpen({ headline: a.name, location: a.address || a.country, lat: a.lat, lon: a.lon, summary: `${a.kind_label || a.kind} · watch radius ${a.radius_km} km` }))
-                .addTo(g)
-        }
-    }, [points, on.assets, mine.assets, zoom >= 6])
+    }, [feats, on, floor])
 
     // live tracks in view: after a pan (debounced) and every 15 s
     useEffect(() => {
@@ -213,7 +217,6 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const t = mine.theaters.find((x) => x.id === id)
         if (t?.view) map.current.setView([t.view.lat, t.view.lon], zoomFor(t.view.height), { animate: true })
     }
-    const counts = points.reduce((c, p) => ({ ...c, [p._k]: (c[p._k] || 0) + 1 }), {})
 
     // NEAR ME: where you are (location/liveShare.js), else ask the device
     const nearMe = async () => {
@@ -252,9 +255,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     }
     const streams = usePoll(active ? "/api/telegram/live" : null, 60_000, (d) => arr(d?.streams))
     const [sheet, setSheet] = useState(null)        // "filters" | "time" | "live"
-    const LAYER_COLOR = { signals: "#5b9bff", telegram: "#e5e9f0", unrest: "#f97316", fusions: "#c084fc", assets: "#c9a227", ships: "#3fb6c6", aircraft: "#dfe3ea" }
-    const countOf = (k) => k === "ships" ? ships.length : k === "aircraft" ? planes.length : k === "assets" ? mine.assets.length
-        : k === "unrest" ? (counts.unrest || 0) + (counts.announced || 0) : counts[k === "signals" ? "signal" : k === "fusions" ? "fusion" : k] || 0
+    const countOf = (k) => k === "ships" ? ships.length : k === "aircraft" ? planes.length : (feats[k] || []).length
+    const tooFar = (l) => zoom < (l.minZoom || 0)
     const timeLabel = `${hours} h`
 
     return (
@@ -313,15 +315,20 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             {sheet === "filters" && (
                 <Sheet onClose={() => setSheet(null)}>
                     <div data-testid="m2-filters">
-                        <div className="m2-h">On the map</div>
-                        <div className="m2-tiles">
-                            {LAYERS.map(([k, l]) => (
-                                <button key={k} className="m2-tile" aria-pressed={!!on[k]} onClick={() => setOn({ ...on, [k]: !on[k] })}>
-                                    <i style={{ background: on[k] ? LAYER_COLOR[k] : "transparent", border: `2px solid ${LAYER_COLOR[k]}` }} />
-                                    <b>{l}</b><small>{countOf(k)}</small>
-                                </button>
-                            ))}
-                        </div>
+                        {[...layerGroups(), { group: "Live", layers: [{ key: "ships", label: "Ships (AIS, live)", legendIcon: LIVE_ICON.ships, minZoom: TRACK_ZOOM },
+                                                                    { key: "aircraft", label: "Aircraft (ADS-B, live)", legendIcon: LIVE_ICON.aircraft, minZoom: TRACK_ZOOM }] }].map(({ group: gname, layers }) => (
+                            <div key={gname}>
+                                <div className="m2-h">{gname}</div>
+                                <div className="m2-tiles">
+                                    {layers.map((l) => (
+                                        <button key={l.key} className="m2-tile" aria-pressed={!!on[l.key]} onClick={() => setOn((o) => ({ ...o, [l.key]: !o[l.key] }))} data-layer={l.key}>
+                                            <img src={l.legendIcon} alt="" />
+                                            <b>{l.label}</b><small>{on[l.key] ? (tooFar(l) ? "zoom in" : countOf(l.key)) : ""}</small>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
                         <div className="m2-h">How serious</div>
                         <div className="m2-segs">
                             {FLOORS.map(([k, l]) => <button key={k} aria-pressed={floor === k} onClick={() => setFloor(k)}>{l}</button>)}

@@ -242,3 +242,9 @@
    the status bar on every tab, the map's included. */
 .m2-top { background: #0a0d12 !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 .m2::before { content: ""; position: fixed; left: 0; right: 0; top: 0; height: env(safe-area-inset-top, 0px); background: #0a0d12; z-index: 950; pointer-events: none; }
+
+/* sheets scroll by touch, and the scroll stays in the sheet */
+.m2-sheet { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y;
+            max-height: calc(88vh - env(safe-area-inset-top, 0px)); padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); }
+.m2-tile img { width: 26px; height: 26px; object-fit: contain; display: block; }
+.m2-tile[aria-pressed="false"] img { opacity: .45; filter: grayscale(.6); }
