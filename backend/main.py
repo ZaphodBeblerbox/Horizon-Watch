@@ -12191,6 +12191,8 @@ async def api_telegram_video(chan: str, msg_id: int):
         chan = f"c/{m_id.group(1)}"
     elif not re.fullmatch(r"[A-Za-z0-9_]{3,64}", chan):
         raise HTTPException(400, "bad channel")
+    if not _tg.on_server():
+        raise HTTPException(503, _tg.SERVER_ONLY)
     loop = asyncio.get_event_loop()
     path, why = await loop.run_in_executor(_executor, _tg.video_path, chan, msg_id)
     if not path:
@@ -12236,6 +12238,8 @@ async def api_telegram_login_start(request: Request):
     """Send a sign-in code to the Telegram account behind this phone number."""
     _require_super_admin(request)
     import telegram_ingest as _tg
+    if not _tg.on_server():
+        raise HTTPException(503, _tg.SERVER_ONLY)
     body = await request.json()
     return await asyncio.get_event_loop().run_in_executor(_executor, _tg.login_start, str(body.get("phone") or ""))
 
@@ -12245,6 +12249,8 @@ async def api_telegram_login_code(request: Request):
     """Finish signing in: the code, and the two-step password if Telegram asks."""
     _require_super_admin(request)
     import telegram_ingest as _tg
+    if not _tg.on_server():
+        raise HTTPException(503, _tg.SERVER_ONLY)
     body = await request.json()
     return await asyncio.get_event_loop().run_in_executor(
         _executor, _tg.login_code, str(body.get("code") or ""), body.get("password") or None)
@@ -12314,6 +12320,10 @@ async def _telegram_loop():
     """Collect and classify every minute, once someone has logged in.
     Off the event loop: Telethon runs its own loop inside run_once."""
     import telegram_ingest as _tg
+    if not _tg.on_server():
+        # Never on the laptop: one session, on the server (telegram_ingest.on_server).
+        print("[telegram] not started — Telegram runs on the deployed server only", flush=True)
+        return
     await asyncio.sleep(60)
     while True:
         try:

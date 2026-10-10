@@ -139,8 +139,20 @@ def _con():
     return con
 
 
+def on_server() -> bool:
+    """TELEGRAM RUNS ON THE DEPLOYED SERVER ONLY (the owner, 2026-10-10).
+    One account, one session: a second client on the laptop risks Telegram
+    revoking it, and the laptop keeps no media. Railway sets its own
+    RAILWAY_* variables; TELEGRAM_LOCAL=1 allows a deliberate local test."""
+    return bool(os.getenv("RAILWAY_ENVIRONMENT_ID") or os.getenv("RAILWAY_ENVIRONMENT_NAME")
+                or os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("TELEGRAM_LOCAL") == "1")
+
+
+SERVER_ONLY = "Telegram runs on the server only — open this on the deployed app"
+
+
 def configured() -> bool:
-    return bool(os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH"))
+    return on_server() and bool(os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH"))
 
 
 def logged_in() -> bool:
@@ -148,6 +160,9 @@ def logged_in() -> bool:
 
 
 def _client():
+    # the one place a Telegram connection is made
+    if not on_server():
+        raise RuntimeError(SERVER_ONLY)
     from telethon import TelegramClient
     os.makedirs(MEDIA_DIR, exist_ok=True)
     return TelegramClient(SESSION, int(os.environ["TELEGRAM_API_ID"]), os.environ["TELEGRAM_API_HASH"])
