@@ -12117,7 +12117,7 @@ def api_strike_timing():
     US tankers airborne, command and reconnaissance aircraft, night flights
     near Washington, heavy airlift. A panel, never a notification."""
     import strike_timing as _st
-    return _st.indicators(_akili_db_path())
+    return _st.cached(_akili_db_path())
 
 
 async def _strike_timing_loop():
@@ -12127,10 +12127,11 @@ async def _strike_timing_loop():
     while True:
         try:
             import strike_timing as _st
-            await asyncio.to_thread(_st.indicators, _akili_db_path())
+            data = await asyncio.to_thread(_st.indicators, _akili_db_path())
+            _st._cache.update(at=time.time(), data=data)
         except Exception as e:                              # noqa: BLE001
             print(f"[strike-timing] error: {type(e).__name__}: {e}", flush=True)
-        await asyncio.sleep(1800)
+        await asyncio.sleep(300)
 
 
 @app.get("/api/telegram/situations")

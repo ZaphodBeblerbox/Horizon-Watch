@@ -115,8 +115,17 @@ def _baseline(con, key: str, before_day: str, days: int = 28):
 
 
 def _hist(con, since: str):
-    return con.execute("SELECT icao24, callsign, aircraft_type, lat, lon, timestamp FROM aircraft_history"
-                       " WHERE timestamp >= ?", (since,)).fetchall()
+    """Only the rows the indicators read: US military addresses (the
+    (icao24, timestamp) index serves the range) of the types watched, or
+    anywhere near Washington. Reading every position of the last 40 hours
+    into Python took over a minute on the production database."""
+    types = sorted(TANKERS | set(C2ISR) | AIRLIFT)
+    marks = ",".join("?" * len(types))
+    return con.execute(
+        "SELECT icao24, callsign, aircraft_type, lat, lon, timestamp FROM aircraft_history"
+        " WHERE icao24 >= 'ae0000' AND icao24 <= 'afffff' AND timestamp >= ?"
+        f" AND (UPPER(aircraft_type) IN ({marks}) OR (lat BETWEEN 38.3 AND 39.45 AND lon BETWEEN -77.8 AND -76.3))",
+        [since, *types]).fetchall()
 
 
 def tankers(rows, now: _dt.datetime) -> dict:
@@ -215,3 +224,26 @@ def indicators(db_path: str, now: _dt.datetime | None = None) -> dict:
     return {"generated_at": now.isoformat(), "indicators": out, "elevated": len(up),
             "summary": (f"{len(up)} of {len(out)} indicators elevated: {', '.join(up)}." if up else f"None of the {len(out)} indicators is elevated."),
             "note": "Indicators, not a forecast; shown quietly and never notified."}
+
+
+# A reading is kept and served; a page view never waits on the database.
+import threading as _threading
+import time as _time
+_cache: dict = {"at": 0.0, "data": None}
+_refreshing = _threading.Lock()
+FRESH_S = 300
+
+
+def cached(db_path: str) -> dict:
+    """The last reading; refreshed in the background once it is five
+    minutes old. Only the very first call computes inline."""
+    if _cache["data"] is None:
+        _cache.update(at=_time.time(), data=indicators(db_path))
+    elif _time.time() - _cache["at"] > FRESH_S and _refreshing.acquire(blocking=False):
+        def _run():
+            try:
+                _cache.update(at=_time.time(), data=indicators(db_path))
+            finally:
+                _refreshing.release()
+        _threading.Thread(target=_run, name="strike-timing", daemon=True).start()
+    return _cache["data"]
