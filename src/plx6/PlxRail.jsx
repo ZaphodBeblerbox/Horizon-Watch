@@ -33,6 +33,7 @@ export const RAIL_HUE = {
     desk: "#C08AD8", briefings: "#7F9CC4", analytics: "#4CAF7A", fusion: "#D16BA5",
     work: "#8FA3BF", layers: "#2BB3A3", imagery: "#7C9CE8", selection: "#9AA9BC",
     timeline: "#4CAF7A", files: "#8FA3BF", settings: "#9AA9BC", assets: "#C9A227",
+    stats: "#6FB7C9",
 }
 
 /** The effective rail list — Part C marks `railModes` ▶ EFFECTIVE as the
@@ -48,6 +49,8 @@ export const RAIL_MODES = [
     ["desk",      "Desk · what the team has seen",             "#g-feed"],
     ["briefings", "Reports · brief, deck, document · D",       "#g-report"],
     ["analytics", "Insight · changes, risk, forecast",         "#g-orb"],
+    /* Charts of everything recorded: alerts, traffic, Telegram, the wars. */
+    ["stats",     "Analytics · charts of everything",          "#g-pie"],
     /* Asset register removed. It listed sources, not assets — the screen
        behind it was Sources.jsx, which is a feed inventory, so the rail
        entry promised a register of what you protect and opened something

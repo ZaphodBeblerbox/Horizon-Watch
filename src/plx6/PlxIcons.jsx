@@ -35,6 +35,7 @@ export default function PlxIcons() {
             <symbol id="g-ship" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M3.5 14.5l1.8 5a1.6 1.6 0 001.5 1h10.4a1.6 1.6 0 001.5-1l1.8-5z"></path><path d="M6 14.5V9h12v5.5M12 9V5.5M9.5 5.5h5"></path></symbol>
             <symbol id="g-plane" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M12 2.5l1.6 6.4 7.4 3.4v1.8l-7.4-1.8-.7 4.4 2.7 2v1.3L12 19l-3.6.9v-1.3l2.7-2-.7-4.4L3 14v-1.8l7.4-3.4z"></path></symbol>
             <symbol id="g-event" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></symbol>
+            <symbol id="g-pie" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M11 4a8 8 0 1 0 8 8h-8z"></path><path d="M14 2a8 8 0 0 1 8 8h-8z"></path></symbol>
             <symbol id="g-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 17l5-5 4 3 8-8"></path><path d="M15 7h5v5"></path></symbol>
             <symbol id="g-asset" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l7.5 3v5.6c0 4.4-3.1 7.6-7.5 9.4-4.4-1.8-7.5-5-7.5-9.4V6z"></path><path d="M12 8.2l3 3.3-3 3.3-3-3.3z"></path></symbol>
             <symbol id="g-brief" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 3.5h8.5L19 8v12.5H6z"></path><path d="M14 3.5V8h5M9 12h7M9 15h7M9 18h4"></path></symbol>

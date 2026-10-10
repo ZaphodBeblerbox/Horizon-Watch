@@ -6,9 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server"
 import Home from "./Home.jsx"
 import Assets from "./Assets.jsx"
 import Settings from "./Settings.jsx"
+import Analytics from "./Analytics.jsx"
 
 describe("main screens render", () => {
-    for (const [name, C] of [["Home", Home], ["Assets", Assets], ["Settings", Settings]]) {
+    for (const [name, C] of [["Home", Home], ["Assets", Assets], ["Settings", Settings], ["Analytics", Analytics]]) {
         it(name, () => { expect(() => renderToStaticMarkup(<C />)).not.toThrow() })
     }
 })

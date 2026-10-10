@@ -66,7 +66,7 @@ const MODULE_TO_TAB_TYPE = {
     situation: "situation", dossiers: "dossiers", generate: "generate",
     replay: "replay", ontology: "ontology", imagery: "imagery",
     forecast: "forecast", cases: "cases", caseWork: "work", team: "team", editor: "editor",
-    chat: "chat", desk: "desk", settings: "settings",
+    chat: "chat", desk: "desk", settings: "settings", stats: "stats",
 }
 /* Reverse, so the rail lights the right button for whatever tab is open.
    Forecast resolves to `analytics` because Insight is one surface with
@@ -133,6 +133,7 @@ const TAB_TYPE_TO_MODULE = {
     assets: "assets", cases: "work",
     dossiers: "dossiers", generate: "generate", replay: "replay",
     imagery: "imagery", team: "team", editor: "editor", settings: "settings",
+    stats: "stats",
 }
 // Mode, not modules (§7.1) — which real module keys a tab type routes to
 // belongs to which mode's rail. Opening a tab whose module is work-mode
@@ -163,6 +164,7 @@ import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
 import { playAlert, resumeAudio } from "./soundSystem.js"
 import HealthPanel from "./components/HealthPanel.jsx"
 import Insight from "./destinations/Insight.jsx"
+import Analytics from "./destinations/Analytics.jsx"
 import { exportPdf } from "./print/printSurface.jsx"
 import { MODE_FRAME } from "./plx6/modeWindow.js"
 import { setActiveTheater } from "./state/filing.js"
@@ -223,6 +225,8 @@ const KNOWN_TAB_TYPES = new Set([
     "profile", "home", "settings", "assets",
     // Messages, and the desk feed.
     "chat", "desk",
+    // Analytics: charts of everything recorded (destinations/Analytics.jsx).
+    "stats",
 ])
 
 function defaultTabs() {
@@ -2574,6 +2578,13 @@ export default function App() {
                 {/* The answer to "explain the situation in X". Mounted
                     always and empty until something is explained. */}
                 <ExplanationPanel />
+
+                {/* Analytics — charts of everything the console records. */}
+                {tabs.some(t => t.type === "stats") && (
+                    <div style={modeLayer(activeTabType === "stats")}>
+                        <Analytics />
+                    </div>
+                )}
 
                 {/* The desk feed — observations published to everyone. */}
                 {tabs.some(t => t.type === "desk") && (

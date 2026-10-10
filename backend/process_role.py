@@ -51,6 +51,7 @@ WORKER_ONLY = frozenset({
     "_prune_history_loop",
     "_daily_db_purge_loop",
     "_wal_checkpoint_loop",
+    "_analytics_daily_loop",        # folds alerts into alert_daily (Analytics page)
     # Enrichment and ingest — all DB-backed.
     "_vessel_resolution_loop",      # walks 33,000+ vessels
     "_graph_bootstrap_loop",

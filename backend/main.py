@@ -11635,6 +11635,16 @@ def _prune_history_once() -> str:
     # in the app (sessions, theaters, alerts, snapshots) wait out the 30 s
     # busy timeout and fail "database is locked" (seen 2026-10-10, 56 times
     # in one run after a restart).
+    # The long-term activity record first (activity_rollup.py): it stopped
+    # on 5 October because only a one-off clean-up ever wrote it.
+    try:
+        import activity_rollup as _ar
+        rolled = _ar.roll_missing_days(_akili_db_path())
+        if rolled:
+            print(f"[activity] rolled {len(rolled)} day(s) into activity_daily: {rolled[0]}…{rolled[-1]}", flush=True)
+    except Exception as _are:                                # noqa: BLE001
+        print(f"[activity] roll-up failed: {type(_are).__name__}: {_are}", flush=True)
+
     def _batched(model):
         n = 0
         while True:
@@ -12132,6 +12142,38 @@ async def _strike_timing_loop():
         except Exception as e:                              # noqa: BLE001
             print(f"[strike-timing] error: {type(e).__name__}: {e}", flush=True)
         await asyncio.sleep(300)
+
+
+async def _analytics_daily_loop():
+    """Keeps alert_daily (analytics_dashboard.py) current: today and
+    yesterday every five minutes, and any missing day up to 92 back."""
+    import analytics_dashboard as _ad
+    await asyncio.sleep(90)
+    while True:
+        try:
+            await asyncio.to_thread(_ad.refresh_daily, _akili_db_path())
+        except Exception as e:                              # noqa: BLE001
+            print(f"[analytics] daily refresh error: {type(e).__name__}: {e}", flush=True)
+        await asyncio.sleep(300)
+
+
+@app.get("/api/analytics/dashboard")
+def api_analytics_dashboard(days: int = Query(30, ge=7, le=90), country: str = "", kind: str = ""):
+    """The Analytics page (analytics_dashboard.py): counted in SQL, kept five
+    minutes per view."""
+    import analytics_dashboard as _ad
+    return _ad.cached(_akili_db_path(), days, country.strip().lower()[:3] or None, kind.strip()[:80] or None)
+
+
+@app.get("/api/analytics/day")
+def api_analytics_day(date: str, country: str = "", kind: str = ""):
+    """One day's most serious alerts, for a click on the chart."""
+    import analytics_dashboard as _ad
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "date is YYYY-MM-DD")
+    return {"alerts": _ad.day_detail(_akili_db_path(), date, country.strip().lower()[:3] or None, kind.strip()[:80] or None)}
 
 
 @app.get("/api/telegram/situations")
@@ -15951,6 +15993,7 @@ async def startup_event():
     _spawn(_event_watch_loop)
     _spawn(_conflict_context_loop)
     _spawn(_strike_timing_loop)
+    _spawn(_analytics_daily_loop)
     _spawn(_escalation_loop)
     _spawn(_heat_watch_loop)
     global _BRIEFING_STORE
