@@ -18,7 +18,7 @@
  * because they are defined by shape rather than by colour.
  */
 
-import { WORD_VIEWBOX, LETTER_PATHS, X_PATHS, ECHO_PATHS } from "./wordmarkGeometry.js"
+import { WORD_VIEWBOX, LETTER_PATHS, X_PATHS, ECHO_PATHS, ECHO_STROKE } from "./wordmarkGeometry.js"
 
 /** The clip id must be unique per document, so each instance makes one. */
 let _n = 0
@@ -35,7 +35,7 @@ export function Wordmark({ className = "wm", title = "PARALLAX" }) {
             <g clipPath={`url(#${id})`} fill="none" stroke="currentColor"
                strokeWidth="2.6" strokeLinecap="butt" strokeLinejoin="miter">
                 <path d={[...LETTER_PATHS, ...X_PATHS].join(" ")} />
-                <path className="echo" d={ECHO_PATHS.join(" ")} />
+                <path className="echo" d={ECHO_PATHS.join(" ")} strokeWidth={ECHO_STROKE} />
             </g>
         </svg>
     )

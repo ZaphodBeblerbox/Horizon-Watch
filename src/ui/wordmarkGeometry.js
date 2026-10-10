@@ -24,3 +24,13 @@ export const LETTER_PATHS = [
 ]
 export const X_PATHS = ["M121.2 0 L134.8 21.3", "M134.8 0 L121.2 21.3"]
 export const ECHO_PATHS = ["M139 0 L131.15 12.3", "M143.2 0 L139.18 6.3"]
+
+/* EVERY RENDERING CUTS THE STROKES AT THE TWO LINES (2026-10-10: "PARALLAX
+   still looks misaligned"). A butt-capped diagonal ends square to itself,
+   so the Λ legs, the R's leg and the X poke past the baseline and the cap
+   line unless the drawing is cut flat at y 0 and y 21.3 — only one of the
+   four renderers did. And the stripes are thinner than the letters: drawn
+   at the letters' 2.6 they read as heavy blue bars. */
+export const WORD_CLIP = { x: -20, y: 0, width: 190, height: 21.3 }
+export const LETTER_STROKE = 2.6
+export const ECHO_STROKE = 1.7

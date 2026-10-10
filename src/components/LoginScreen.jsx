@@ -12,6 +12,8 @@ import { useState } from "react"
 import { login } from "../state/authStore.js"
 import { requestAccess } from "../lib/adminApi.js"
 import { ParallaxMark } from "../print/PageFrame.jsx"
+import PlxWordmark from "../plx6/PlxWordmark.jsx"
+import { TrifectaLine } from "../plx6/LaunchIntro.jsx"
 
 const FADE_MS = 620
 
@@ -96,12 +98,9 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
                 <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}>
                     <LoginMark />
                 </div>
-                <div style={{
-                    font: "400 11px var(--font)", color: "var(--txt-3, #b5b9c3)",
-                    textAlign: "center", letterSpacing: ".1em", textTransform: "uppercase",
-                    marginBottom: 12,
-                }}>
-                    Trifecta Technologies
+                {/* by Trifecta Technologies, as on the opener: the knot and the name on one line */}
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+                    <TrifectaLine size={0.85} />
                 </div>
 
                 {/* SAY THAT THE SERVER IS NOT THERE. Without this the form
@@ -220,21 +219,13 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
     )
 }
 
-/* The Echo X at title size, with the wordmark under it. ParallaxMark is
-   built for a document line, so this lays the two out vertically instead of
-   scaling a lockup that was designed to sit inline. */
+/* The PARALLAX wordmark — the same level drawing as the opener and the
+   header (ui/wordmarkGeometry.js), ending in the Parallax X — not the word
+   set in type beside a separate X. */
 function LoginMark() {
     return (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-            <svg width="58" height="58" viewBox="0 0 24 24" fill="none"
-                 strokeWidth="2.2" strokeLinecap="butt" aria-hidden="true">
-                <path stroke="var(--txt, #f2f3f6)" d="M3 4L14 20M14 4L3 20" />
-                <path stroke="var(--acc-hi, #a0b2d2)" d="M18 4L12.5 12M22 4L19.25 8" />
-            </svg>
-            <span style={{
-                font: "700 19px var(--font)", color: "var(--txt, #f2f3f6)",
-                letterSpacing: ".22em", textTransform: "uppercase", lineHeight: 1,
-            }}>Parallax</span>
+        <div aria-label="Parallax" style={{ width: 230, height: 34, margin: "4px 0 6px", color: "var(--txt, #f2f3f6)" }}>
+            <PlxWordmark />
         </div>
     )
 }

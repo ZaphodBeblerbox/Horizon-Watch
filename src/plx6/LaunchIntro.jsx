@@ -19,7 +19,7 @@
  * Reduced motion: shorter fades.
  */
 import { useEffect, useRef, useState } from "react"
-import { LETTER_PATHS, X_PATHS, ECHO_PATHS } from "../ui/wordmarkGeometry.js"
+import { LETTER_PATHS, X_PATHS, ECHO_PATHS, WORD_CLIP, ECHO_STROKE, WORD_VIEWBOX } from "../ui/wordmarkGeometry.js"
 
 const MIN_MS = 1100        // the fade-in finishes before the fade-out starts
 const AFTER_AUTH_MS = 8000
@@ -90,10 +90,13 @@ export default function LaunchIntro() {
             pointerEvents: exiting ? "none" : "auto", overflow: "hidden",
         }}>
             <div ref={logo} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "min(4.5vh, 40px)", opacity: 0 }}>
-                <svg viewBox="-1 -1 146 23.3" role="img" aria-label="Parallax" style={{ width: "min(70vw, 560px)", display: "block", overflow: "visible" }}
+                <svg viewBox={WORD_VIEWBOX} role="img" aria-label="Parallax" style={{ width: "min(70vw, 560px)", display: "block", overflow: "visible" }}
                      fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="butt" strokeLinejoin="miter">
-                    {WORD.map((d) => <path key={d} d={d} />)}
-                    {ECHO_PATHS.map((d) => <path key={d} d={d} stroke="var(--acchi, #a0b2d2)" />)}
+                    <defs><clipPath id="plx-intro-clip"><rect {...WORD_CLIP} /></clipPath></defs>
+                    <g clipPath="url(#plx-intro-clip)">
+                        {WORD.map((d) => <path key={d} d={d} />)}
+                        {ECHO_PATHS.map((d) => <path key={d} d={d} stroke="var(--acchi, #a0b2d2)" strokeWidth={ECHO_STROKE} />)}
+                    </g>
                 </svg>
                 <TrifectaLine />
             </div>
