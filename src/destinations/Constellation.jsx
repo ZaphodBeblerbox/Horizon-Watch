@@ -242,9 +242,26 @@ export default function Constellation({ theater = "", onOpenModule = () => {} })
         } finally { setLoadingHood(false) }
     }, [absorb])
 
+    // OPENED ON A NODE from the sidebar's "See detail" (EntityLinksPanel):
+    // same id, same model, more room. Pending if this page was not open,
+    // an event if it was.
+    const bootstrapped = useRef(false)
+    useEffect(() => {
+        const go = (f) => {
+            if (!f?.id) return
+            bootstrapped.current = true
+            window.__plxOntologyFocus = null
+            setView("trace")
+            walkTo(f.id, f.label)
+        }
+        go(window.__plxOntologyFocus)
+        const on = (e) => go(e.detail)
+        window.addEventListener("akili:ontology-focus", on)
+        return () => window.removeEventListener("akili:ontology-focus", on)
+    }, [walkTo])
+
     // Open on a country that actually has signals on it today, so the first
     // screen is about what is happening rather than whatever sorts first.
-    const bootstrapped = useRef(false)
     useEffect(() => {
         if (bootstrapped.current || !signals.length) return
         const counts = new Map()

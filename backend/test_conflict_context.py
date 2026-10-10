@@ -49,3 +49,23 @@ def test_only_cited_sentences_survive_and_cite_numbers_are_not_shown():
     assert [s["id"] for s in out["now"][0]["sources"]] == ["r0", "r1"]
     assert out["trend_why"] == "Shelling intensified" and out["trend_sources"][0]["id"] == "r0"
     assert cc.checked({"now": []}, reports) is None
+
+
+def test_reports_per_day_cover_the_window():
+    reps = [{"id": "a", "headline": "h", "when": NOW - dt.timedelta(days=1), "source": "s", "url": None},
+            {"id": "b", "headline": "h2", "when": NOW - dt.timedelta(days=1), "source": "s", "url": None}]
+    d = cc.daily(reps, NOW)
+    assert len(d) == cc.WINDOW_DAYS and d[-1]["date"] == "2026-10-10"
+    assert d[-2]["n"] == 2 and len(d[-2]["reports"]) == 2 and sum(x["n"] for x in d) == 2
+
+
+def test_an_empty_rebuild_keeps_the_last_good_picture(monkeypatch, tmp_path):
+    monkeypatch.setattr(cc, "_STATE", tmp_path / "s.json")
+    sig = [{"id": "x", "headline": "RSF shells El Fasher", "published_at": dt.datetime.now(dt.timezone.utc).isoformat()}]
+    monkeypatch.setattr(cc, "_ask", lambda c, r: {"now": [{"text": "RSF fighters shelled El Fasher overnight", "cites": [1]}]})
+    cc.refresh(sig, only={"sudan"})
+    sig.append({"id": "y", "headline": "RSF statement on Darfur", "published_at": dt.datetime.now(dt.timezone.utc).isoformat()})
+    monkeypatch.setattr(cc, "_ask", lambda c, r: {"now": []})
+    cc.refresh(sig, only={"sudan"})
+    got = cc.conflicts(ids={"sudan"})[0]
+    assert got["now"][0]["text"] == "RSF fighters shelled El Fasher overnight" and got["n_reports"] == 2

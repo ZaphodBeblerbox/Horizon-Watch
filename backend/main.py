@@ -12062,6 +12062,14 @@ async def _conflict_context_loop():
             import conflict_context as _cc
             with _SURFACE_POOL_LOCK:
                 pool = list(_SURFACE_POOL)
+            # Telegram's two weeks as well: the surface pool holds the
+            # newest few hundred items, and a war reported mostly on
+            # Telegram (Sudan, the Sahel) would otherwise look quiet.
+            try:
+                import telegram_ingest as _tg
+                pool += await asyncio.to_thread(_tg.as_surface_items, 24 * 14)
+            except Exception as _te:                        # noqa: BLE001
+                print(f"[conflict-context] telegram unavailable: {_te}", flush=True)
             out = await asyncio.to_thread(_cc.refresh, pool)
             print(f"[conflict-context] {out}", flush=True)
         except Exception as e:                              # noqa: BLE001

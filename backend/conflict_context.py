@@ -79,7 +79,7 @@ def _when(sig: dict) -> _dt.datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=_dt.timezone.utc)
 
 
-def reports_for(conflict: dict, signals: list[dict], now: _dt.datetime | None = None) -> list[dict]:
+def reports_for(conflict: dict, signals: list[dict], now: _dt.datetime | None = None, limit: int | None = MAX_REPORTS) -> list[dict]:
     """This conflict's reports from the last two weeks, newest first: in one
     of its countries, or naming one of its sides or places."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
@@ -105,7 +105,22 @@ def reports_for(conflict: dict, signals: list[dict], now: _dt.datetime | None = 
                     "source": s.get("source") or s.get("source_type"), "place": s.get("location") or s.get("place"),
                     "url": s.get("url") or s.get("link")})
     out.sort(key=lambda r: r["when"], reverse=True)
-    return out[:MAX_REPORTS]
+    return out if limit is None else out[:limit]
+
+
+def daily(reports: list[dict], now: _dt.datetime | None = None) -> list[dict]:
+    """Reports per day over the window, oldest first, each with its first
+    few headlines — the chart in the conflict card, and what a click on a
+    day lists."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    days = [(now - _dt.timedelta(days=WINDOW_DAYS - 1 - i)).strftime("%Y-%m-%d") for i in range(WINDOW_DAYS)]
+    by = {d: [] for d in days}
+    for r in reports:
+        d = r["when"].strftime("%Y-%m-%d")
+        if d in by:
+            by[d].append(r)
+    return [{"date": d, "n": len(by[d]),
+             "reports": [{"headline": r["headline"], "url": r["url"], "source": r["source"]} for r in by[d][:6]]} for d in days]
 
 
 SYSTEM = """You write "where it stands now" for one armed conflict for an intelligence console.
@@ -176,14 +191,18 @@ def refresh(signals: list[dict], only: set[str] | None = None) -> dict:
     for c in baseline()["conflicts"]:
         if only and c["id"] not in only:
             continue
-        reports = reports_for(c, signals, now)
+        every = reports_for(c, signals, now, limit=None)
+        reports = every[:MAX_REPORTS]
         digest = hashlib.sha1("|".join(r["id"] for r in reports).encode()).hexdigest()
         prev = state.get(c["id"]) or {}
+        # The day counts cost nothing and move with every report: always.
+        prev["daily"] = daily(every, now)
+        state[c["id"]] = prev
         if prev.get("digest") == digest and prev.get("built_at"):
             skipped += 1
             continue
         if not reports:
-            state[c["id"]] = {"digest": digest, "built_at": now.isoformat(), "now": None, "n_reports": 0}
+            state[c["id"]] = {"digest": digest, "built_at": now.isoformat(), "now": None, "n_reports": 0, "daily": prev["daily"]}
             empty += 1
             continue
         try:
@@ -192,8 +211,13 @@ def refresh(signals: list[dict], only: set[str] | None = None) -> dict:
             print(f"[conflict-context] {c['id']}: {type(e).__name__}: {e}", flush=True)
             failed += 1
             continue
-        state[c["id"]] = {"digest": digest, "built_at": now.isoformat(), "n_reports": len(reports),
-                          "as_of": reports[0]["when"].strftime("%Y-%m-%dT%H:%MZ"), **(got or {"now": None})}
+        if not got and prev.get("now"):
+            # Nothing usable this time: keep the last good picture, with
+            # its own date, rather than replace it with nothing.
+            state[c["id"]] = {**prev, "digest": digest, "n_reports": len(reports)}
+        else:
+            state[c["id"]] = {"digest": digest, "built_at": now.isoformat(), "n_reports": len(reports), "daily": prev["daily"],
+                              "as_of": reports[0]["when"].strftime("%Y-%m-%dT%H:%MZ"), **(got or {"now": None})}
         built += 1
     with _lock:
         _save_state(state)
@@ -220,5 +244,5 @@ def conflicts(countries: set[str] | None = None, ids: set[str] | None = None) ->
                     "now": [{**n, "text": re.sub(r"\s*\[\d+\]", "", n.get("text") or "")} for n in s["now"]] if s.get("now") else None,
                     "trend": s.get("trend"), "trend_why": s.get("trend_why"),
                     "trend_sources": s.get("trend_sources") or [], "as_of": s.get("as_of"),
-                    "n_reports": s.get("n_reports"), "built_at": s.get("built_at")})
+                    "n_reports": s.get("n_reports"), "built_at": s.get("built_at"), "daily": s.get("daily") or []})
     return out

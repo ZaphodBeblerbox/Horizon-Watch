@@ -27,6 +27,7 @@ import { saveForBriefing } from "../state/savedForBriefing.js"
 import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react"
 import API_BASE from "../apiBase.js"
 import ConflictContext from "../conflicts/ConflictContext.jsx"
+import Columns, { BarList } from "../charts/Columns.jsx"
 import { safeArray } from "../utils/safeArray.js"
 import GlobeView from "../components/GlobeView.jsx"
 import { GDELT_EVENT_TYPES } from "../globe/GlobeGdeltLayer.jsx"
@@ -983,6 +984,61 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     }, [visibleRows])
 
     const newestCritical = useMemo(() => visibleRows.filter((r) => r.severityRank <= 1).slice(0, 6), [visibleRows])
+
+    /* THE OVERVIEW'S CHARTS. Signals over the window, stacked by severity,
+       and the regions as bars — both clickable: a column lists its signals
+       below the chart, a region flies the map there and lists its own. */
+    const SEV_PARTS = [
+        { key: "3", label: "Low", color: "var(--sev-low)" },
+        { key: "2", label: "Moderate", color: "var(--sev-moderate)" },
+        { key: "1", label: "High", color: "var(--sev-high)" },
+        { key: "0", label: "Critical", color: "var(--sev-critical)" },
+    ]
+    const timeColumns = useMemo(() => {
+        // Boundaries fixed to the clock (multiples of the step), so the
+        // 30-second tick does not move a signal into the next column
+        // between hovering one and clicking it.
+        const n = 24, span = windowHours * 3600000, step = span / n
+        const start = (Math.floor(nowMs / step) + 1) * step - span
+        const fmt = (t) => {
+            const d = new Date(t)
+            return windowHours <= 72 ? `${d.toISOString().slice(11, 16)}Z ${d.getUTCDate()}/${d.getUTCMonth() + 1}`
+                                     : `${d.getUTCDate()}/${d.getUTCMonth() + 1}`
+        }
+        const cols = Array.from({ length: n }, (_, i) => ({ key: String(i), from: start + i * step, to: start + (i + 1) * step, label: fmt(start + i * step), value: 0, counts: { 0: 0, 1: 0, 2: 0, 3: 0 }, rows: [] }))
+        for (const r of visibleRows) {
+            const t = r.publishedAt ? Date.parse(r.publishedAt) : NaN
+            if (!Number.isFinite(t) || t < start) continue
+            const c = cols[Math.min(n - 1, Math.floor((t - start) / step))]
+            c.value += 1; c.counts[r.severityRank in c.counts ? r.severityRank : 2] += 1; c.rows.push(r)
+        }
+        return cols.map((c) => ({ ...c, parts: Object.entries(c.counts).map(([key, value]) => ({ key, value })) }))
+    }, [visibleRows, windowHours, nowMs])
+    const [overviewPick, setOverviewPick] = useState(null)   // {kind: "time"|"region", key}
+    const pickedRows = useMemo(() => {
+        if (!overviewPick) return null
+        if (overviewPick.kind === "time") return timeColumns.find((c) => c.key === overviewPick.key)?.rows || []
+        return visibleRows.filter((r) => (r.aoi || "Unknown") === overviewPick.key)
+    }, [overviewPick, timeColumns, visibleRows])
+    // A Telegram post opens its own panel: headline, then the video or
+    // photo, then the translation; anything else selects the row.
+    const openOverviewRow = (r) => {
+        if (r.raw?.source_type === "telegram") {
+            const d = r.raw
+            window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
+                entityType: "telegram", entityId: d.id,
+                data: { ...d, thumb_url: d.thumb_url && !d.thumb_url.startsWith("http") ? `${API_BASE}${d.thumb_url}` : d.thumb_url },
+            } }))
+            return
+        }
+        setInspectorPopup(null); setSelected(r)
+    }
+    const flyToRegion = (name) => {
+        const pts = visibleRows.filter((r) => (r.aoi || "Unknown") === name && Number.isFinite(+r.lat) && Number.isFinite(+r.lon))
+        if (!pts.length) return
+        const lat = pts.reduce((a, r) => a + +r.lat, 0) / pts.length, lon = pts.reduce((a, r) => a + +r.lon, 0) / pts.length
+        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat, lon, altitude: 900_000 } }))
+    }
 
     const handleAddToBriefing = (row) => {
         addToBriefing(row.id, row.title)
@@ -2185,15 +2241,40 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             <div className="stat"><span className="value">{byRegion.length}</span><span className="label">Regions touched</span></div>
                         </div>
                         <div className="card">
+                            <span className="lbl">Signals over the last {timeWindow}</span>
+                            <Columns data={timeColumns} parts={SEV_PARTS} height={84}
+                                     selected={overviewPick?.kind === "time" ? overviewPick.key : null}
+                                     onSelect={(k) => setOverviewPick(k == null ? null : { kind: "time", key: k })}
+                                     tip={(c) => `signals from ${c.label}`} label="Signals over time, by severity" />
+                        </div>
+                        <div className="card">
                             <span className="lbl">By region</span>
                             {byRegion.length === 0 ? (
                                 <div style={{ font: "400 12px var(--font)", color: "var(--txt-4)" }}>No real region data in this window.</div>
-                            ) : byRegion.map(([name, count]) => (
-                                <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", font: "400 12px var(--font)", color: "var(--txt-2)" }}>
-                                    <span>{name}</span><span style={{ font: "400 11.5px var(--mono)", color: "var(--txt-3)" }}>{count}</span>
-                                </div>
-                            ))}
+                            ) : (
+                                <BarList rows={byRegion.map(([name, count]) => ({ key: name, label: name, value: count, title: `${name}: ${count} signals — click to go there` }))}
+                                         selected={overviewPick?.kind === "region" ? overviewPick.key : null}
+                                         onSelect={(k) => { setOverviewPick(k == null ? null : { kind: "region", key: k }); if (k) flyToRegion(k) }} />
+                            )}
                         </div>
+                        {pickedRows && (
+                            <div className="card" data-testid="overview-picked">
+                                <span className="lbl" style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <span>{overviewPick.kind === "time" ? `From ${timeColumns.find((c) => c.key === overviewPick.key)?.label}` : overviewPick.key} · {pickedRows.length}</span>
+                                    <button onClick={() => setOverviewPick(null)} style={{ border: 0, background: "none", color: "var(--txt-3)", cursor: "pointer", font: "inherit" }}>clear</button>
+                                </span>
+                                {pickedRows.slice(0, 8).map((r) => (
+                                    <div key={r.id} className="evrow" onClick={() => openOverviewRow(r)} style={{ cursor: "pointer" }}>
+                                        <span className={`dia ${SEV_CLASS_BY_RANK[r.severityRank] || "moderate"}`} />
+                                        <div>
+                                            <div className="title">{r.title}</div>
+                                            <div className="meta">{r.aoi && <span>{r.aoi}</span>}<span className="time">{whenLabel(r.publishedAt, nowMs) || timeAgoLabel(r.publishedAt, nowMs)}</span></div>
+                                        </div>
+                                    </div>
+                                ))}
+                                {pickedRows.length > 8 && <div style={{ font: "400 11px var(--font)", color: "var(--txt-4)", paddingTop: 4 }}>and {pickedRows.length - 8} more</div>}
+                            </div>
+                        )}
                         <div style={{ marginTop: 12 }}>
                             <SeverityLegend legendCounts={legendCounts} />
                         </div>
@@ -2204,19 +2285,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             ) : newestCritical.map((r) => (
                                 <div key={r.id} className="evrow"
                                      style={{ background: tintBackground(r.severityRank, r.publishedAt, nowMs) }}
-                                     onClick={() => {
-                                         // A Telegram post opens its own panel: headline, then
-                                         // the video or photo, then the translation.
-                                         if (r.raw?.source_type === "telegram") {
-                                             const d = r.raw
-                                             window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
-                                                 entityType: "telegram", entityId: d.id,
-                                                 data: { ...d, thumb_url: d.thumb_url && !d.thumb_url.startsWith("http") ? `${API_BASE}${d.thumb_url}` : d.thumb_url },
-                                             } }))
-                                             return
-                                         }
-                                         setInspectorPopup(null); setSelected(r)
-                                     }}>
+                                     onClick={() => openOverviewRow(r)}>
                                     <span className={`dia ${SEV_CLASS_BY_RANK[r.severityRank] || "moderate"}`} />
                                     <div>
                                         <div className="title">{r.title}</div>

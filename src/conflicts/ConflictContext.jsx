@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { fmtWhen } from "../utils/formatTime.js"
+import Columns from "../charts/Columns.jsx"
 
 let cache = null, loading = null, loadedAt = 0
 async function loadConflicts() {
@@ -98,6 +99,30 @@ function Sources({ sources }) {
     )
 }
 
+function Daily({ days }) {
+    const [pick, setPick] = useState(null)
+    if (!days?.some((d) => d.n)) return null
+    const fmt = (iso) => new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
+    const chosen = days.find((d) => d.date === pick)
+    return (
+        <div style={{ marginTop: 6 }}>
+            <Columns data={days.map((d) => ({ key: d.date, label: fmt(d.date), value: d.n }))} height={44}
+                     selected={pick} onSelect={setPick} tip={(x) => `reports on ${x.label}`} label="Reports per day, last two weeks" />
+            {chosen && (
+                <div style={{ margin: "6px 0 0", borderLeft: "1px solid var(--gline)", paddingLeft: 8 }}>
+                    {chosen.reports.map((r, i) => (
+                        <div key={i} style={{ font: "400 11px/1.45 var(--font)", color: "var(--txt-2)", padding: "2px 0" }}>
+                            {r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>{r.headline}</a> : r.headline}
+                            {r.source && <span style={{ font: "400 10px var(--mono)", color: "var(--txt-4)" }}> · {r.source}</span>}
+                        </div>
+                    ))}
+                    {chosen.n > chosen.reports.length && <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-4)" }}>and {chosen.n - chosen.reports.length} more</div>}
+                </div>
+            )}
+        </div>
+    )
+}
+
 function Conflict({ c, open, onToggle }) {
     const since = c.since ? new Date(c.since).getFullYear() : null
     return (
@@ -119,6 +144,9 @@ function Conflict({ c, open, onToggle }) {
                 <div style={{ padding: "0 0 12px 18px" }}>
                     <p style={{ ...T.body, margin: 0 }}>{c.summary}</p>
 
+                    <div style={T.sub}>Reports in our feeds · last two weeks</div>
+                    <Daily days={c.daily} />
+
                     <div style={T.sub}>Where it stands now{c.as_of ? ` · ${fmtWhen(c.as_of)}` : ""}</div>
                     {c.now?.length ? (
                         <ul style={{ margin: 0, paddingLeft: 16 }}>
@@ -127,7 +155,11 @@ function Conflict({ c, open, onToggle }) {
                             ))}
                         </ul>
                     ) : (
-                        <div style={{ ...T.body, color: "var(--txt-4)" }}>No report in our feeds about this conflict in the last two weeks.</div>
+                        <div style={{ ...T.body, color: "var(--txt-4)" }}>
+                            {c.daily?.some((d) => d.n)
+                                ? "Too few reports for a picture yet — read them by day above."
+                                : "No report in our feeds about this conflict in the last two weeks."}
+                        </div>
                     )}
                     {c.trend_why && <div style={{ ...T.body, marginTop: 4, color: "var(--txt-3)" }}><b style={{ color: TREND[c.trend] }}>{c.trend}</b> — {c.trend_why}<Sources sources={c.trend_sources} /></div>}
 
