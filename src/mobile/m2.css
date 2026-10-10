@@ -235,3 +235,10 @@
 .m2-bg .m2-pill { bottom: calc(env(safe-area-inset-bottom, 0px) + 156px); }
 .m2-nav { background: rgba(10, 13, 18, .78); backdrop-filter: blur(22px) saturate(1.2); -webkit-backdrop-filter: blur(22px) saturate(1.2); }
 .m2-top { background: rgba(10, 13, 18, .62); }
+
+/* THE STATUS BAR STRIP IS SOLID (2026-10-10): on the Home Screen app iOS draws
+   the clock and battery over our page (black-translucent), and glass there read
+   as a blurred-out top bar. The header is opaque, and a solid strip sits under
+   the status bar on every tab, the map's included. */
+.m2-top { background: #0a0d12 !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.m2::before { content: ""; position: fixed; left: 0; right: 0; top: 0; height: env(safe-area-inset-top, 0px); background: #0a0d12; z-index: 950; pointer-events: none; }

@@ -1517,6 +1517,11 @@ def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> lis
                 vapid_private_key=_VAPID_KEY,
                 # a copy: pywebpush writes "aud" and "exp" into the dict it is given
                 vapid_claims=dict(_VAPID_CLAIMS),
+                # kept a day for a phone that is asleep or offline (a TTL of 0
+                # lets Apple and Google drop it at once), and sent as urgent so
+                # a phone saving power still shows it
+                ttl=86400,
+                headers={"Urgency": "high"},
             )
             report.append({"service": service, "ok": True, "status": getattr(r, "status_code", None)})
         except Exception as e:

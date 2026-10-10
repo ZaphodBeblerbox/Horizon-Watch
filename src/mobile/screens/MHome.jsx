@@ -121,6 +121,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
                     <span style={{ width: 8, height: 8, borderRadius: 4, background: "#3b8cff", boxShadow: "0 0 8px #3b8cff" }} />
                     {here ? (String(here.label || "Your location").split(",").slice(-2).join(",").trim()) : "Use my location"}
                 </button>
+                <AlertsOffer />
                 {iosBrowser && (
                     <div className="m2-ios" data-testid="m2-ios-push">
                         <span style={{ fontSize: 20, lineHeight: 1 }}>🔔</span>
@@ -219,6 +220,40 @@ export default function MHome({ onShowOnMap, onOpen }) {
             </section>
 
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
+        </div>
+    )
+}
+
+
+/** ONCE, ON THE PHONE APP: turn on alerts. iPhone shows the permission
+ *  prompt only from a tap, so it is a button — on Home, where it is seen,
+ *  not only in Settings. Gone when alerts are on, blocked, or dismissed. */
+function AlertsOffer() {
+    const [st, setSt] = useState(null)
+    const [busy, setBusy] = useState(false)
+    const [msg, setMsg] = useState(null)
+    const [hidden, setHidden] = useState(() => { try { return localStorage.getItem("m2.alertsOffer") === "no" } catch { return false } })
+    useEffect(() => { import("../../notify/closedNotifications.js").then((m) => m.closedNotifyStatus()).then(setSt).catch(() => {}) }, [])
+    if (hidden || !st || st.platform !== "web" || st.on || st.blocked) return null
+    const on = async () => {
+        setBusy(true); setMsg(null)
+        const m = await import("../../notify/closedNotifications.js")
+        const r = await m.enableClosedNotify()
+        setBusy(false)
+        if (r.ok) { setSt({ ...st, on: true }); return }
+        setMsg(r.error === "blocked" ? "Alerts are blocked for Parallax — allow them in the phone's Settings › Notifications." : `Not turned on: ${r.error}`)
+    }
+    return (
+        <div className="m2-ios" data-testid="m2-alerts-offer">
+            <span style={{ fontSize: 20, lineHeight: 1 }}>🔔</span>
+            <span style={{ flex: 1 }}>
+                <b style={{ color: "var(--txt)" }}>Get alerts on this phone</b> — what concerns you, even with Parallax closed.
+                {msg && <span style={{ display: "block", marginTop: 4, color: "var(--txt)" }}>{msg}</span>}
+                <span style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button className="m2-btn" style={{ height: 34, borderRadius: 17 }} disabled={busy} onClick={on}>{busy ? "Turning on…" : "Turn on alerts"}</button>
+                    <button className="m2-btn ghost" style={{ height: 34, borderRadius: 17 }} onClick={() => { try { localStorage.setItem("m2.alertsOffer", "no") } catch { /* private */ } setHidden(true) }}>Not now</button>
+                </span>
+            </span>
         </div>
     )
 }
