@@ -107,6 +107,8 @@ const modeLayer = (on) => ({
     position: "absolute", inset: 0, zIndex: 22,
     minWidth: 0,
     display: on ? "flex" : "none",
+    // every screen arrives with a short fade, never a cut (index.css plx-fade-in)
+    animation: on ? "plx-fade-in .22s cubic-bezier(.2,.8,.2,1)" : undefined,
 })
 const canvasLayer = (on, chrome) => ({
     position: "absolute",

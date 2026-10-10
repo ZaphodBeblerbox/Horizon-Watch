@@ -17,7 +17,7 @@ import { getSettings, subscribeSettings, updateSetting, settingsFromServer } fro
 import { getCurrentUser } from "../state/authStore.js"
 import PlacePicker from "../search/PlacePicker.jsx"
 import { getManualLocation, setManualLocation } from "../state/themeStore.js"
-import { resumeSharing } from "../location/liveShare.js"
+import { resumeSharing, startSharing } from "../location/liveShare.js"
 
 /** The device's position, or an error saying why not. */
 export function devicePosition(timeoutMs = 12000) {
@@ -70,7 +70,7 @@ export async function forgetHere() {
 const BTN = { height: 30, padding: "0 14px", border: "1px solid var(--gline2)", background: "transparent", color: "var(--txt2)", font: "inherit", fontSize: 12.5, cursor: "pointer", borderRadius: 0 }
 const PRIMARY = { ...BTN, background: "var(--accdim)", color: "var(--txt)", border: "1px solid var(--acchi)" }
 
-export default function LocationPrompt({ afterTour = true }) {
+export default function LocationPrompt({ afterTour = true, live = false }) {
     const [due, setDue] = useState(false)
     const [busy, setBusy] = useState(false)
     const [err, setErr] = useState(null)
@@ -109,6 +109,14 @@ export default function LocationPrompt({ afterTour = true }) {
     }, [])
 
     if (!due) return null
+    // THE PHONE ASKS FOR LIVE LOCATION (owner, 2026-10-10): shared with the
+    // team while Parallax is open, and kept on an asset linked to this person.
+    const goLive = async () => {
+        setBusy(true); setErr(null)
+        try { const p = await devicePosition(); setDue(false); startSharing(); await saveHere(p.lat, p.lon) }
+        catch (e) { setErr(`${e.message} You can type your city instead.`); setTyping(true) }
+        finally { setBusy(false) }
+    }
     const useDevice = async () => {
         setBusy(true); setErr(null)
         try { const p = await devicePosition(); setDue(false); await saveHere(p.lat, p.lon) }
@@ -117,14 +125,17 @@ export default function LocationPrompt({ afterTour = true }) {
     }
     return (
         <div role="dialog" aria-label="Your location" data-testid="location-prompt"
-             style={{ position: "fixed", right: 16, bottom: 16, zIndex: 5800, width: 380, maxWidth: "calc(100vw - 32px)",
+             style={{ position: "fixed", right: 16, bottom: typeof window !== "undefined" && window.innerWidth < 640 ? "calc(env(safe-area-inset-bottom, 0px) + 84px)" : 16,
+                      zIndex: 5800, width: 380, maxWidth: "calc(100vw - 32px)", borderRadius: typeof window !== "undefined" && window.innerWidth < 640 ? 20 : 0,
+                      animation: "plx-fade-in .3s ease",
                       background: "var(--bar, #161a22)", border: "1px solid var(--gline2, #333)", boxShadow: "var(--gshadow)",
                       padding: "16px 18px 14px", color: "var(--txt)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)" }}>
             <div style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)", marginBottom: 8 }}>Where you are</div>
-            <h2 style={{ margin: "0 0 8px", fontFamily: "var(--mz-font-body)", fontWeight: 600, fontSize: 16 }}>Show what matters near you?</h2>
+            <h2 style={{ margin: "0 0 8px", fontFamily: "var(--mz-font-body)", fontWeight: 600, fontSize: 16 }}>{live ? "Share where you are?" : "Show what matters near you?"}</h2>
             <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.55, color: "var(--txt2)" }}>
-                With your location, what happens around you comes first on Home and in your notifications, and times are shown on
-                your clock. It is kept with your account, used for nothing else, and you can change or remove it in Settings.
+                {live
+                    ? "Sharing your live location puts what happens around you first, and lets your team follow you as an asset — threats near you are assessed as you move. It is shared while Parallax is open; turn it off any time in Profile."
+                    : "With your location, what happens around you comes first on Home and in your notifications, and times are shown on your clock. It is kept with your account, used for nothing else, and you can change or remove it in Settings."}
             </p>
             {typing && (
                 <div style={{ marginBottom: 10 }}>
@@ -137,7 +148,8 @@ export default function LocationPrompt({ afterTour = true }) {
                 <button style={BTN} onClick={() => { updateSetting("locationAsked", true); syncClock(); setDue(false) }}>Not now</button>
                 <span style={{ flex: 1 }} />
                 {!typing && <button style={BTN} onClick={() => setTyping(true)}>Type my city</button>}
-                <button style={PRIMARY} disabled={busy} onClick={useDevice} data-testid="location-use">{busy ? "Finding you…" : "Use my location"}</button>
+                {live && <button style={BTN} disabled={busy} onClick={useDevice}>Just once</button>}
+                <button style={PRIMARY} disabled={busy} onClick={live ? goLive : useDevice} data-testid="location-use">{busy ? "Finding you…" : live ? "Share live location" : "Use my location"}</button>
             </div>
         </div>
     )

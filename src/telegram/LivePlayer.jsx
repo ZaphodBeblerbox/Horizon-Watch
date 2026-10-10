@@ -66,7 +66,7 @@ function LivePlayer({ id, title, onClose }) {
         <div role="dialog" aria-label="Telegram livestream" data-testid="live-player"
              onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
              style={{ position: "fixed", inset: 0, zIndex: 2100, background: "rgba(5,8,14,.7)", display: "grid", placeItems: "center", padding: 16 }}>
-            <div style={{ width: "min(1100px, 100%)", background: "var(--glass, rgba(14,18,32,.96))", border: "1px solid var(--gline2)", boxShadow: "var(--gshadow)" }}>
+            <div style={{ width: "min(1100px, 100%)", animation: "plx-scale-in .25s cubic-bezier(.2,.8,.2,1)", background: "var(--glass, rgba(14,18,32,.96))", border: "1px solid var(--gline2)", boxShadow: "var(--gshadow)" }}>
                 <header style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid var(--gline)" }}>
                     <span style={{ font: "700 10px var(--mono)", letterSpacing: ".12em", color: "#fff", background: "#E5484D", padding: "2px 6px" }}>LIVE</span>
                     <b style={{ flex: 1, minWidth: 0, font: "600 14px var(--font)", color: "var(--txt)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title || "Telegram livestream"}</b>

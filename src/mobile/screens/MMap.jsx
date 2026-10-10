@@ -19,6 +19,9 @@ import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
 import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
+import { getShapeMarkerDataUri } from "../../globe/entityIcons.js"
+
+const SEV_HEX = { critical: "#E5484D", significant: "#F5A524", high: "#F5A524", elevated: "#F5A524", moderate: "#8FB4E8", medium: "#8FB4E8", low: "#9AA9BC" }
 
 // Esri's public base maps, credited as their terms ask (CARTO's now want a key).
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services"
@@ -49,7 +52,7 @@ const headingOf = (v) => (Number.isFinite(+v.heading) && +v.heading !== 511 ? +v
 const zoomFor = (height) => Math.max(2, Math.min(12, Math.round(Math.log2(40_000_000 / Math.max(50_000, height || 2_000_000)) + 1)))
 const tsOf = (x) => Date.parse(x.published_at || x.posted_at || x.created_at || x.updated_at || "") || null
 
-export default function MMap({ active, focus, onOpen, alerts = 0 }) {
+export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true }) {
     const el = useRef(null)
     const map = useRef(null)
     const base = useRef(null)
@@ -68,9 +71,10 @@ export default function MMap({ active, focus, onOpen, alerts = 0 }) {
     const [zoom, setZoom] = useState(2)
     const mine = useMine()
 
-    const surface = usePoll(active ? "/api/surface" : null, 60_000, (d) => arr(d?.items ?? d))
-    const posts = usePoll(active ? `/api/telegram/posts?hours=${hours}` : null, 2 * 60_000, (d) => arr(d?.posts))
-    const fusions = usePoll(active ? "/api/fusions?status=active&limit=200" : null, 2 * 60_000, (d) => arr(d))
+    // the map is the app's background now: its points load either way, more slowly behind other screens
+    const surface = usePoll("/api/surface", active ? 60_000 : 5 * 60_000, (d) => arr(d?.items ?? d))
+    const posts = usePoll(`/api/telegram/posts?hours=${hours}`, active ? 2 * 60_000 : 10 * 60_000, (d) => arr(d?.posts))
+    const fusions = usePoll("/api/fusions?status=active&limit=200", active ? 2 * 60_000 : 10 * 60_000, (d) => arr(d))
 
     // the map itself, once
     useEffect(() => {
@@ -137,12 +141,17 @@ export default function MMap({ active, focus, onOpen, alerts = 0 }) {
         if (!g) return
         g.clearLayers()
         for (const p of points) {
-            const color = p._k === "unrest" || p._k === "announced" ? "#f97316" : sevColor(p.severity_tier || p.severity)
+            // THE DESKTOP'S SHAPES (globe/entityIcons.js): reports and news a
+            // diamond, a verified event or fusion a square, a warning or an
+            // announced gathering a triangle — coloured by severity.
+            const color = p._k === "unrest" || p._k === "announced" ? "#f97316" : SEV_HEX[String(p.severity_tier || p.severity || "").toLowerCase()] || "#8FB4E8"
+            const shape = p._k === "fusion" || /geoconfirmed/i.test(p.source_type || "") ? "square"
+                : p._k === "announced" || p._k === "unrest" || /alert|derived/i.test(p.source_type || "") ? "triangle" : "diamond"
             const z = map.current?.getZoom?.() ?? 3
-            const r = (p._k === "fusion" ? 6 : p.severity_tier === "critical" ? 5.5 : 4) + (z >= 6 ? 2 : 0)
-            const m = L.circleMarker([+p.lat, +p.lon], {
-                radius: r, color: p._k === "telegram" && p.media === "video" ? "#ffffff" : "rgba(0,0,0,.55)", weight: p._k === "announced" ? 2 : 1.5,
-                fillColor: color, fillOpacity: p._k === "announced" ? 0 : 0.9,
+            const size = (p.severity_tier === "critical" ? 18 : 15) + (z >= 6 ? 4 : 0)
+            const m = L.marker([+p.lat, +p.lon], {
+                icon: L.icon({ iconUrl: getShapeMarkerDataUri({ shape, color, size, invert: p._k === "announced", strokeWidth: 1.5 }), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+                keyboard: false, zIndexOffset: p.severity_tier === "critical" ? 500 : 0,
             })
             m.on("click", () => setOpen(p))
             m.addTo(g)
@@ -253,7 +262,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0 }) {
             {/* its own stacking layer: Leaflet's panes run up to z-index 700 and
                 would otherwise cover the sheets that open over the map */}
             <div ref={el} style={{ position: "absolute", inset: 0, zIndex: 0, isolation: "isolate" }} />
-            <div className="m2-mapui">
+            {chrome && <div className="m2-mapui">
                 {/* search, as a tracker app has it: one round bar on top */}
                 <label className="m2-search">
                     <Icon id="g-search" size={18} />
@@ -299,7 +308,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0 }) {
                     <button className="m2-widget" onClick={nearMe}><span><Icon id="g-pin" size={22} /></span>Near me</button>
                     <button className="m2-widget" onClick={() => setSheet("live")}><span><Icon id="g-play" size={22} />{arr(streams).length > 0 && <span className="m2-badge">{arr(streams).length}</span>}</span>Live</button>
                 </div>
-            </div>
+            </div>}
 
             {sheet === "filters" && (
                 <Sheet onClose={() => setSheet(null)}>

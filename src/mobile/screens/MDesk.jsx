@@ -4,6 +4,7 @@
  * so), and the words. A tick says you have seen a post; comments discuss it.
  * Same posts as the desktop Desk (routers/desk.py).
  */
+import GeneralFeed from "../../general/GeneralFeed.jsx"
 import SourceLink from "../../components/SourceLink.jsx"
 import { useEffect, useRef, useState } from "react"
 import { Attachment } from "../../desk/deskAttachments.jsx"
@@ -230,14 +231,17 @@ export default function MDesk({ active, onShowOnMap }) {
         <div className="m2-scroll" data-screen-label="Phone desk" style={{ paddingTop: 0 }}>
             <div className="m2-seg" role="tablist">
                 <button role="tab" aria-selected={tab === "team"} onClick={() => setTab("team")}>Team</button>
-                <button role="tab" aria-selected={tab === "telegram"} onClick={() => setTab("telegram")}>Telegram</button>
+                <button role="tab" aria-selected={tab === "general"} onClick={() => setTab("general")}>General</button>
             </div>
             {tab === "team" ? (<>
                 <Composer onPosted={load} />
                 {posts === null ? <div className="m2-empty">Loading the desk…</div>
                     : posts.length === 0 ? <div className="m2-empty">Nothing on the desk yet. What you post goes to your company unless you choose otherwise.</div>
                     : posts.map((p) => <PostCard key={p.id} p={p} onChanged={load} />)}
-            </>) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
+            </>) : tab === "general" ? (
+                // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
+                <div key="general" style={{ animation: "m2-pane-in .25s ease" }}><GeneralFeed compact onMap={(it) => onShowOnMap?.(it)} /></div>
+            ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
         </div>
     )
 }

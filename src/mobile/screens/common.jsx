@@ -25,11 +25,14 @@ export function Icon({ id, size = 20 }) {
     return <svg width={size} height={size} aria-hidden focusable="false"><use href={`#${id}`} /></svg>
 }
 
+/** A bottom sheet: slides up when it opens and back down before it closes. */
 export function Sheet({ onClose, children }) {
+    const [closing, setClosing] = useState(false)
+    const close = () => { if (closing) return; setClosing(true); setTimeout(() => onClose?.(), 210) }
     return <>
-        <div className="m2-sheet-back" onClick={onClose} />
-        <div className="m2-sheet" role="dialog">
-            <div className="m2-grip" />
+        <div className={`m2-sheet-back${closing ? " closing" : ""}`} onClick={close} />
+        <div className={`m2-sheet${closing ? " closing" : ""}`} role="dialog">
+            <div className="m2-grip" onClick={close} />
             {children}
         </div>
     </>

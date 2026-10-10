@@ -132,8 +132,9 @@ export default function OntologyOverlay({ start, onClose }) {
         <div data-testid="ontology-overlay" role="dialog" aria-modal="true" aria-label={`Ontology of ${here.label || graph?.root?.label || ""}`}
              onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
              style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(5,8,14,.55)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
-                      display: "flex", alignItems: "stretch", justifyContent: "center", padding: "min(4vh, 36px) min(3vw, 40px)" }}>
-            <div style={{ flex: 1, maxWidth: 1500, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0,
+                      display: "flex", alignItems: "stretch", justifyContent: "center", padding: "min(4vh, 36px) min(3vw, 40px)",
+                      animation: "plx-fade-in .2s ease" }}>
+            <div style={{ flex: 1, maxWidth: 1500, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, animation: "plx-scale-in .25s cubic-bezier(.2,.8,.2,1)",
                           background: "var(--glass, rgba(14,18,32,.94))", border: "1px solid var(--gline2)", boxShadow: "var(--gshadow)",
                           backdropFilter: "blur(22px) saturate(1.15)", WebkitBackdropFilter: "blur(22px) saturate(1.15)" }}>
                 <header style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 18px", borderBottom: "1px solid var(--gline)" }}>

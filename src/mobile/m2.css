@@ -190,3 +190,48 @@
 .m2-cta { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; height: 56px; margin: 14px 0 22px; border: 0; border-radius: 28px;
           background: var(--acc); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; box-shadow: 0 8px 24px rgba(61, 123, 240, .35); }
 .m2-results button svg { flex: none; }
+
+/* ── PHONE v3 (2026-10-10): the map behind everything, glass over it, motion ─ */
+.m2-bg { position: absolute; inset: 0; z-index: 0; }
+.m2-bg[data-under="true"] { pointer-events: none; }
+.m2-bg[data-under="true"] .leaflet-control-attribution { display: none; }
+.m2-body { z-index: 1; }
+.m2-top, .m2-nav { position: relative; z-index: 6; }
+.m2-pane { position: absolute; inset: 0; background: rgba(10, 13, 18, .64); backdrop-filter: blur(22px) saturate(1.15); -webkit-backdrop-filter: blur(22px) saturate(1.15);
+           animation: m2-pane-in .28s cubic-bezier(.2, .8, .2, 1); }
+@keyframes m2-pane-in { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+.m2-sheet { animation: m2-sheet-in .3s cubic-bezier(.2, .8, .2, 1); }
+.m2-sheet-back { animation: m2-back-in .25s ease; }
+.m2-sheet.closing { animation: m2-sheet-out .22s ease-in forwards; }
+.m2-sheet-back.closing { animation: m2-back-out .22s ease-in forwards; }
+@keyframes m2-sheet-in { from { transform: translateY(100%) } to { transform: none } }
+@keyframes m2-sheet-out { from { transform: none } to { transform: translateY(100%) } }
+@keyframes m2-back-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes m2-back-out { from { opacity: 1 } to { opacity: 0 } }
+.m2-results { animation: m2-back-in .18s ease; }
+.m2-mapui { animation: m2-back-in .25s ease; }
+.m2-round, .m2-widget > span:first-child, .m2-tile, .m2-fy, .m2-cta, .m2-chip { transition: transform .12s ease, background .18s ease, border-color .18s ease; }
+.m2-round:active, .m2-widget:active > span:first-child, .m2-tile:active, .m2-fy:active, .m2-cta:active, .m2-chip:active { transform: scale(.96); }
+.m2-card, .m2-fy { background: rgba(255, 255, 255, .05); }
+
+/* For you: no coloured border — the severity is a diamond beside the time */
+.m2-fy { grid-template-columns: minmax(0, 1fr) auto; padding: 12px 14px; }
+.m2-fy .m2-sev { display: inline-block; width: 8px; height: 8px; transform: rotate(45deg); margin-right: 6px; vertical-align: 1px; }
+.m2-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; align-items: center; }
+.m2-hero .m2-avatar { grid-row: 1 / span 2; width: 58px; height: 58px; border-radius: 29px; object-fit: cover; display: grid; place-items: center;
+                      font-weight: 700; font-size: 19px; border: 2px solid rgba(255, 255, 255, .14); }
+.m2-hero h1 { margin: 0; }
+.m2-hero > .m2-sub, .m2-hero > .m2-here, .m2-hero > .m2-ios { grid-column: 1 / -1; }
+.m2-brand svg { color: var(--txt); }
+.m2-ahead { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 10px; align-items: start; width: 100%; text-align: left; padding: 12px 14px;
+            border: 0; border-top: 1px solid var(--gline); background: transparent; cursor: pointer; }
+.m2-ahead:first-child { border-top: 0; }
+.m2-ahead b { font-size: 15px; font-weight: 700; line-height: 1.3; }
+.m2-ios { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: rgba(91, 155, 255, .12);
+          border: 1px solid rgba(91, 155, 255, .35); font-size: 13px; line-height: 1.45; color: var(--txt2); }
+
+/* the map now runs under the tab bar: its controls sit above it */
+.m2-bg .m2-widgets { bottom: calc(env(safe-area-inset-bottom, 0px) + 72px); }
+.m2-bg .m2-pill { bottom: calc(env(safe-area-inset-bottom, 0px) + 156px); }
+.m2-nav { background: rgba(10, 13, 18, .78); backdrop-filter: blur(22px) saturate(1.2); -webkit-backdrop-filter: blur(22px) saturate(1.2); }
+.m2-top { background: rgba(10, 13, 18, .62); }

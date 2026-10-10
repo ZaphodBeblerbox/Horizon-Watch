@@ -12205,26 +12205,29 @@ def api_general(before: str = "", limit: int = Query(40, ge=5, le=100), kinds: s
     import general_feed as _gf
     want = tuple(k for k in kinds.split(",") if k in _gf.KINDS) or _gf.KINDS
     out = _gf.feed(_akili_db_path(), before or None, limit, want)
+    items = list(out["items"])
     if "signal" in want:
+        # the surface pool's news, merged BEFORE the page is cut: a page is
+        # `limit` items, whatever their source
         cursor = (before or "9999").replace(" ", "T")[:19]
-        floor = out["items"][-1]["at"] if out["next"] else ""
         with _SURFACE_POOL_LOCK:
             pool = list(_SURFACE_POOL)
-        have = {i["headline"].strip().lower() for i in out["items"]}
+        have = {i["headline"].strip().lower() for i in items}
         for it in pool:
             at = str(it.get("published_at") or "").replace(" ", "T")[:19]
             head = (it.get("headline") or it.get("title") or "").strip()
-            if not at or not head or not (floor <= at < cursor) or head.lower() in have:
+            if not at or not head or not at < cursor or head.lower() in have:
                 continue
             if str(it.get("source_type") or "").startswith("telegram"):
                 continue                                   # Telegram comes as its own posts
             have.add(head.lower())
-            out["items"].append({"id": f"news:{it.get('id')}", "kind": "signal", "at": at, "headline": head,
-                                 "text": (it.get("summary") or it.get("context") or "")[:400],
-                                 "severity": str(it.get("severity_tier") or "").lower(), "lat": it.get("lat"), "lon": it.get("lon"),
-                                 "place": it.get("location"), "source": it.get("source"), "url": it.get("url")})
-        out["items"].sort(key=lambda x: x["at"], reverse=True)
-    return out
+            items.append({"id": f"news:{it.get('id')}", "kind": "signal", "at": at, "headline": head,
+                          "text": (it.get("summary") or it.get("context") or "")[:400],
+                          "severity": str(it.get("severity_tier") or "").lower(), "lat": it.get("lat"), "lon": it.get("lon"),
+                          "place": it.get("location"), "source": it.get("source"), "url": it.get("url")})
+    items.sort(key=lambda x: x["at"], reverse=True)
+    page = items[:limit]
+    return {"items": page, "next": page[-1]["at"] if len(page) == limit else None}
 
 
 @app.get("/api/telegram/live")

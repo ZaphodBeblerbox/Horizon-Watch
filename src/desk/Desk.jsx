@@ -17,6 +17,8 @@
  * second person saying "I have the ADS-B for that window"; the fourth
  * nested reply is a conversation, and there is a chat for that.
  */
+import GeneralFeed from "../general/GeneralFeed.jsx"
+import { attachmentFor } from "../mobile/screens/common.jsx"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
     listPosts, createPost, deletePost, toggleAck, whoAcked, listReplies,
@@ -152,6 +154,9 @@ export default function Desk() {
         return () => window.removeEventListener("akili:share-to-desk", h)
     }, [])
 
+    // TEAM OR GENERAL (owner, 2026-10-10): the team's posts, or what is
+    // generally happening — signals, verified events, Telegram — as a timeline.
+    const [view, setView] = useState(() => (window.__plxDeskView === "general" ? "general" : "team"))
     const [carries, setCarries] = useState(null)       // filter by what a post carries
     const [author, setAuthor] = useState(null)         // filter by who wrote it
     const shown = (posts || []).filter((p) =>
@@ -188,7 +193,15 @@ export default function Desk() {
                 <aside style={{ ...SIDE, borderRight: "1px solid var(--gline)" }}>
                     <div>
                         <div style={{ fontSize: 22, fontWeight: 600 }}>Desk</div>
-                        <div style={{ fontSize: 12.5, color: "var(--txt3)", marginTop: 2 }}>what the team has seen</div>
+                        <div style={{ fontSize: 12.5, color: "var(--txt3)", marginTop: 2 }}>{view === "general" ? "what is generally happening" : "what the team has seen"}</div>
+                    </div>
+                    <div role="tablist" data-testid="desk-views" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", padding: 3, borderRadius: 12, background: "rgba(255,255,255,.05)" }}>
+                        {[["team", "Team"], ["general", "General"]].map(([k, l]) => (
+                            <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
+                                    style={{ height: 32, border: 0, borderRadius: 9, cursor: "pointer", font: "inherit", fontSize: 13.5, fontWeight: 600,
+                                             background: view === k ? "var(--acc, #3d7bf0)" : "transparent", color: view === k ? "#fff" : "var(--txt2)",
+                                             transition: "background .2s ease, color .2s ease" }}>{l}</button>
+                        ))}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                         <span style={{ ...EYE, marginBottom: 6 }}>Carrying</span>
@@ -217,7 +230,17 @@ export default function Desk() {
 
                 {/* MIDDLE: the feed */}
                 <main style={{ minWidth: 0, overflow: "auto" }}>
-                    <div style={{ maxWidth: 760, margin: "0 auto", padding: "18px 20px 60px" }}>
+                    {view === "general" ? (
+                        <div key="general" style={{ maxWidth: 680, margin: "0 auto", padding: "14px 20px 60px", animation: "plx-fade-in .25s ease" }}>
+                            <GeneralFeed
+                                onMap={(it) => {
+                                    window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "situation" } }))
+                                    setTimeout(() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: +it.lat, lon: +it.lon, altitude: 250_000 } })), 300)
+                                }}
+                                onShare={(it) => { setPrefill({ attachment: attachmentFor(it), body: "" }); setView("team") }} />
+                        </div>
+                    ) : (
+                    <div key="team" style={{ maxWidth: 760, margin: "0 auto", padding: "18px 20px 60px", animation: "plx-fade-in .25s ease" }}>
                         <Composer onPublish={publish} prefill={prefill} onPrefillUsed={() => { setPrefill(null); window.__plxDeskShare = null }} />
                         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 0" }}>
                             <span style={EYE}>{filtered ? `${shown.length} matching` : "Latest"}</span>
@@ -244,6 +267,7 @@ export default function Desk() {
                             />
                         ))}
                     </div>
+                    )}
                 </main>
 
                 {/* RIGHT: who, and what was confirmed */}

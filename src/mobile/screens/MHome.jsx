@@ -100,6 +100,8 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const forYou = useMemo(() => urgent.map((u) => ({ ...u, _why: u._asset ? u.reason : relevance(u, mine.w).reason || u._why })).slice(0, 5), [urgent, mine.w])
     const worldwide = useMemo(() => forYou.length ? [] : [...arr(surface)].sort((a, b) => (SEVR[a.severity_tier] ?? 9) - (SEVR[b.severity_tier] ?? 9)
         || String(b.published_at || "").localeCompare(String(a.published_at || ""))).slice(0, 4), [forYou, surface])
+    const iosBrowser = (() => { try { const { platform } = window.__plxClosedNotify || {}; return platform === "ios-browser" } catch { return false } })()
+        || (typeof navigator !== "undefined" && /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !window.matchMedia?.("(display-mode: standalone)").matches)
     const askHere = async () => {
         try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); await saveHere(p.lat, p.lon) } catch { /* not allowed */ }
     }
@@ -109,25 +111,34 @@ export default function MHome({ onShowOnMap, onOpen }) {
         <div className="m2-scroll" data-screen-label="Phone home">
             {/* WHO AND WHERE YOU ARE, then what is yours — the first thing you see */}
             <div className="m2-hero">
-                <div className="m2-eyebrow">{greet.kicker}</div>
-                <h1>{greet.lead}</h1>
+                {user?.avatar
+                    ? <img className="m2-avatar" src={user.avatar} alt="" style={{ objectPosition: user.avatar_pos || "50% 50%" }} />
+                    : <span className="m2-avatar" style={{ background: user?.color || "#334" }}>{user?.initials || "?"}</span>}
+                <div style={{ alignSelf: "end" }} className="m2-eyebrow">{greet.kicker}</div>
+                <h1 style={{ alignSelf: "start" }}>{greet.lead}</h1>
                 <span className="m2-sub">{new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })} · {hmZone(new Date())}</span>
                 <button className="m2-here" onClick={() => (here ? onShowOnMap?.({ lat: here.lat, lon: here.lon }) : askHere())}>
                     <span style={{ width: 8, height: 8, borderRadius: 4, background: "#3b8cff", boxShadow: "0 0 8px #3b8cff" }} />
                     {here ? (String(here.label || "Your location").split(",").slice(-2).join(",").trim()) : "Use my location"}
                 </button>
+                {iosBrowser && (
+                    <div className="m2-ios" data-testid="m2-ios-push">
+                        <span style={{ fontSize: 20, lineHeight: 1 }}>🔔</span>
+                        <span><b style={{ color: "var(--txt)" }}>Alerts on your iPhone.</b> Apple sends web alerts only to apps on the Home Screen: tap
+                            <b> Share</b> <span aria-hidden>⎋</span>, then <b>Add to Home Screen</b>, open Parallax from there and turn on alerts in Profile.</span>
+                    </div>
+                )}
             </div>
 
             <div className="m2-h" style={{ marginTop: 4 }}>{forYou.length ? "For you" : mine.has || here ? "Nothing near you — the most severe worldwide" : "Most severe right now"}</div>
             <div className="m2-foryou" data-testid="m2-foryou">
                 {(forYou.length ? forYou : worldwide).map((u) => (
                     <button key={u.id ?? u.title} className="m2-fy" onClick={() => (u._asset && u.asset_id ? onOpen?.("assets", { asset: u.asset_id }) : setOpen(u))}>
-                        <i style={{ background: sevColor(u.severity_tier || u.sev) }} />
                         <span style={{ minWidth: 0 }}>
                             <b>{u.headline || u.title}</b>
                             <small>{u._why || [String(u.location || u.place || "").split(",").slice(0, 2).join(","), u.source].filter(Boolean).join(" · ")}</small>
                         </span>
-                        <span className="m2-when">{ago(u.published_at || u.created_at || u.posted_at)}</span>
+                        <span className="m2-when"><i className="m2-sev" style={{ background: sevColor(u.severity_tier || u.sev) }} />{ago(u.published_at || u.created_at || u.posted_at)}</span>
                     </button>
                 ))}
                 {!forYou.length && !worldwide.length && <div className="m2-empty">{surface === null ? "Loading…" : "Nothing reported right now."}</div>}
@@ -143,13 +154,15 @@ export default function MHome({ onShowOnMap, onOpen }) {
             {arr(live).length > 0 && (
                 <section className="m2-section" data-screen-label="Phone live">
                     <header><span className="m2-eyebrow">Live from Telegram</span><span className="m2-when" style={{ flex: 1 }}>newest first</span>
-                        <button className="m2-chip" onClick={() => { window.__m2DeskTab = "telegram"; onOpen?.("desk") }}>All posts</button></header>
+                        <button className="m2-chip" onClick={() => { window.__m2DeskTab = "general"; onOpen?.("desk") }}>All posts</button></header>
                     <div className="m2-hscroll m2-live">
                         {arr(live).map((t) => (
                             <button key={t.id} className="m2-card m2-tap" onClick={() => setOpen(t)} style={{ textAlign: "left", padding: 0, cursor: "pointer", width: "72%", height: 236, overflow: "hidden", display: "flex", flexDirection: "column" }}>
                                 {/* the same top band on every card, so the strip is even:
                                     the picture, or the place on a tint */}
-                                {t.thumb_url
+                                {t.media === "video"
+                                    ? <span style={{ display: "block", height: 120, overflow: "hidden", background: "#000" }} onClick={(e) => e.stopPropagation()}><TelegramMedia post={t} maxHeight="120px" radius="0" /></span>
+                                    : t.thumb_url
                                     ? <img src={`${API_BASE}${t.thumb_url}`} alt="" style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }} />
                                     : <span style={{ height: 120, display: "flex", alignItems: "flex-end", padding: "10px 12px", background: "linear-gradient(160deg, rgba(122,167,255,.16), rgba(122,167,255,.03))",
                                                      fontSize: 17, fontWeight: 650, color: "var(--txt2, #c3c7cf)" }}>{String(t.place || t.channel_title || "Telegram").split(",")[0]}</span>}
@@ -194,13 +207,12 @@ export default function MHome({ onShowOnMap, onOpen }) {
                 <div className="m2-card">
                     {ahead.length === 0 ? <div className="m2-empty">{outlook === null ? "Loading…" : "Nothing specific enough to forecast right now."}</div>
                         : ahead.map((o, i) => (
-                            <button key={i} className="m2-row" onClick={() => o.lat != null && onShowOnMap?.({ lat: o.lat, lon: o.lon, headline: o.statement })}>
-                                <span className="m2-when" style={{ color: o.probability >= 60 ? "var(--red, #e5484d)" : "var(--amber, #f5a623)", alignSelf: "baseline" }}>{o.probability}%</span>
+                            <button key={i} className="m2-ahead" onClick={() => o.lat != null && onShowOnMap?.({ lat: o.lat, lon: o.lon, headline: o.statement })}>
+                                <b style={{ color: o.probability >= 60 ? "var(--red, #e5484d)" : "var(--amber, #f5a623)", fontVariantNumeric: "tabular-nums" }}>{o.probability}%</b>
                                 <span style={{ minWidth: 0 }}>
                                     <span className="m2-t">{[o.place, o.statement].filter(Boolean).join(" · ")}</span>
                                     <span className="m2-sub">{[o.because, o.resolves_by && `by ${o.resolves_by}`].filter(Boolean).join(" · ")}</span>
                                 </span>
-                                <span />
                             </button>
                         ))}
                 </div>
