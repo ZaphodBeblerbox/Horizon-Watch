@@ -348,7 +348,7 @@ def push_body(card: dict) -> str:
 
 # What pops up on screen (src/state/notificationStore.js interrupts()) is
 # what goes to a closed app: the same rule, so the two cannot disagree.
-INTERRUPT_KINDS = {"escalate", "assign", "rfi", "telegram", "surge", "fusion", "live"}
+INTERRUPT_KINDS = {"escalate", "assign", "rfi", "telegram", "surge", "fusion", "live", "livestream"}
 
 
 def interrupts(card: dict) -> bool:
@@ -358,6 +358,7 @@ def interrupts(card: dict) -> bool:
 
 
 PUSH_SINGLES = 2      # pushed one by one per sweep; the rest go as one "and N more"
+APP_NAME = "Parallax"
 
 
 def _own(card: dict) -> bool:
@@ -371,7 +372,8 @@ def worth_pushing(card: dict, c: dict) -> bool:
     theaters or countries — or is critical — earns a buzz. Measured
     2026-10-10: without this one sweep sent eleven Yemen frontline changes
     at once to a user who watches Paris."""
-    if _own(card) or card.get("sev") == "critical":
+    # a channel we read going live is rare and for everyone (telegram_live.py)
+    if _own(card) or card.get("sev") == "critical" or card.get("kind") == "livestream":
         return True
     return why(card, c) is not None
 
@@ -381,12 +383,15 @@ def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
     the rest as one summary, so a burst is one buzz, not twelve."""
     rank = {"critical": 0, "high": 1}
     cards = sorted(cards, key=lambda x: (rank.get(x.get("sev"), 2), str(x.get("created_at") or "")))
-    out = [(x["title"], push_body(x), {"id": x["id"], "kind": x.get("kind"), "severity": x.get("sev"),
-                                       "lat": x.get("lat"), "lon": x.get("lon")}) for x in cards[:PUSH_SINGLES]]
+    # WHAT A CLOSED APP SHOWS (owner, 2026-10-10): the Parallax X, the app's
+    # name and the headline — nothing else. The data says where a click goes.
+    out = [(APP_NAME, str(x["title"])[:180], {"id": x["id"], "kind": x.get("kind"), "severity": x.get("sev"),
+                                              "lat": x.get("lat"), "lon": x.get("lon"),
+                                              "asset_id": x.get("asset_id"), "livestream_id": x.get("livestream_id")})
+           for x in cards[:PUSH_SINGLES]]
     rest = cards[PUSH_SINGLES:]
     if rest:
-        heads = "; ".join(str(x["title"])[:60] for x in rest[:3])
-        out.append((f"And {len(rest)} more on Parallax", heads + (" …" if len(rest) > 3 else ""),
+        out.append((APP_NAME, f"{len(rest)} more: " + "; ".join(str(x["title"])[:60] for x in rest[:2]) + (" …" if len(rest) > 2 else ""),
                     {"id": "more:" + rest[0]["id"], "kind": "signal"}))
     return out
 

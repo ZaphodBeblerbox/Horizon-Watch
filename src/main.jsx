@@ -65,13 +65,16 @@ if (typeof window !== 'undefined') window.__parallaxDesktop = isDesktop()
 
 // OPENED FROM A NOTIFICATION with the app closed (public/sw-push.js opens
 // /?focus=lat,lon): fly there once the map has drawn.
+// The signal itself is opened (app.jsx, plx:open-notification), not just
+// its place: ?signal=id&focus=lat,lon&live=stream&asset=id&h=headline.
 try {
-    const f = new URLSearchParams(window.location.search).get('focus')
-    const [lat, lon] = (f || '').split(',').map(Number)
-    if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        const go = () => window.dispatchEvent(new CustomEvent('akili:fly-to', { detail: { lat, lon, altitude: 40_000 } }))
-        if (window.__plxMapReady) setTimeout(go, 300)
-        else window.addEventListener('plx:map-ready', () => setTimeout(go, 300), { once: true })
+    const q = new URLSearchParams(window.location.search)
+    const [lat, lon] = (q.get('focus') || '').split(',').map(Number)
+    if (q.get('signal') || q.get('live') || q.get('asset') || (Number.isFinite(lat) && Number.isFinite(lon))) {
+        window.__plxPendingOpen = {
+            id: q.get('signal') || null, lat: Number.isFinite(lat) ? lat : null, lon: Number.isFinite(lon) ? lon : null,
+            livestreamId: q.get('live') || null, assetId: q.get('asset') || null, title: q.get('h') || '',
+        }
         window.history.replaceState(null, '', window.location.pathname + window.location.hash)
     }
 } catch { /* a bad link opens the app as usual */ }
@@ -94,16 +97,11 @@ try {
             if (!supported) return
             navigator.serviceWorker.addEventListener('message', (event) => {
                 if (event.data?.type !== 'NOTIFICATION_CLICK') return
-                // An event card carries its place; an alert its id.
-                if (Number.isFinite(event.data.lat) && Number.isFinite(event.data.lon)) {
-                    window.dispatchEvent(new CustomEvent('akili:fly-to', {
-                        detail: { lat: event.data.lat, lon: event.data.lon, altitude: 40_000 },
-                    }))
-                } else if (event.data.eventId) {
-                    window.dispatchEvent(new CustomEvent('akili:open-alert', {
-                        detail: { id: event.data.eventId },
-                    }))
-                }
+                const d = event.data
+                window.dispatchEvent(new CustomEvent('plx:open-notification', { detail: {
+                    id: d.eventId || null, lat: Number.isFinite(d.lat) ? d.lat : null, lon: Number.isFinite(d.lon) ? d.lon : null,
+                    livestreamId: d.livestreamId || null, assetId: d.assetId || null, title: d.headline || '',
+                } }))
             })
         }).catch((e) => console.warn('[push] unavailable:', e?.message || e))
     }

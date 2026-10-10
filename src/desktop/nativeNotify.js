@@ -10,11 +10,35 @@
  *
  * Opt-in per device: the "desktopNotify" flag in this machine's storage,
  * set by the "Notify me when Parallax is closed" control.
+ *
+ * WHAT IT SHOWS (owner, 2026-10-10): the app's icon (the Parallax X, which
+ * macOS takes from the bundle), "Parallax", and the headline — nothing else.
+ * CLICKING IT brings Parallax forward. Tauri gives a desktop notification no
+ * click callback, so the app coming forward within CLICK_WINDOW_MS of a
+ * notification is taken as that click, and the notification's own signal is
+ * opened (app.jsx, plx:open-notification).
  */
 import { isDesktop } from "../apiBase.js"
 import { setOffScreenHandler } from "../state/notificationStore.js"
 
 const KEY = "plx-desktop-notify"
+const CLICK_WINDOW_MS = 2 * 60_000
+let lastShown = null                 // {item, at}
+
+function openLastOnReturn() {
+    if (!lastShown || Date.now() - lastShown.at > CLICK_WINDOW_MS) return
+    const { item } = lastShown
+    lastShown = null
+    window.dispatchEvent(new CustomEvent("plx:open-notification", { detail: {
+        id: item.alertId || item.id, lat: item.ref?.lat ?? null, lon: item.ref?.lon ?? null,
+        livestreamId: item.livestreamId || null, assetId: item.assetId || null, title: item.title || "",
+    } }))
+}
+
+/** The notification's text: the headline only. */
+export function nativeContent(item) {
+    return { title: "Parallax", body: String(item?.title || "").slice(0, 220) }
+}
 
 export function desktopNotifyOn() {
     try { return localStorage.getItem(KEY) === "1" } catch { return false }
@@ -47,11 +71,16 @@ export function disableDesktopNotify() {
 /** Called once at start; does nothing unless the user turned it on. */
 export function installNativeNotify() {
     if (!isDesktop() || !desktopNotifyOn()) return
+    if (!window.__plxNotifyReturn) {
+        window.__plxNotifyReturn = true
+        window.addEventListener("focus", openLastOnReturn)
+        document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") openLastOnReturn() })
+    }
     setOffScreenHandler(async (item) => {
         try {
             const n = await plugin()
-            const body = [item.advice || item.expect, item.sub].filter(Boolean).join(" · ")
-            n.sendNotification({ title: item.title, body: body.slice(0, 220) })
+            n.sendNotification(nativeContent(item))
+            lastShown = { item, at: Date.now() }
         } catch { /* the plugin is missing in an older build: stay quiet */ }
     })
 }

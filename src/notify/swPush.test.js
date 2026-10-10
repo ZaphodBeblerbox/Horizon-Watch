@@ -18,12 +18,12 @@ function load({ windows = [] } = {}) {
 const push = (obj) => ({ data: { json: () => obj, text: () => JSON.stringify(obj) } })
 
 describe("sw-push.js", () => {
-    it("shows the push when no Parallax window is in front", async () => {
+    it("shows the push when no Parallax window is in front: the app's name, the X and the headline", async () => {
         const sw = load()
-        await sw.fire("push", push({ title: "Police are kettling protesters on Boulevard Saint-Germain", body: "Leave by Rue du Bac", id: "now:x", kind: "live", lat: 48.85, lon: 2.32 }))
+        await sw.fire("push", push({ title: "Parallax", body: "Police are kettling protesters on Boulevard Saint-Germain", id: "now:x", kind: "live", lat: 48.85, lon: 2.32 }))
         expect(sw.shown).toHaveLength(1)
-        expect(sw.shown[0][0]).toMatch(/Saint-Germain/)
-        expect(sw.shown[0][1]).toMatchObject({ body: "Leave by Rue du Bac", tag: "now:x", requireInteraction: true })
+        expect(sw.shown[0][0]).toBe("Parallax")
+        expect(sw.shown[0][1]).toMatchObject({ body: "Police are kettling protesters on Boulevard Saint-Germain", icon: "/icon-192.png", tag: "now:x", requireInteraction: true })
     })
     it("leaves it to the app when a window is focused", async () => {
         const w = { focused: true, visibilityState: "visible", postMessage: vi.fn() }
@@ -32,9 +32,14 @@ describe("sw-push.js", () => {
         expect(sw.shown).toHaveLength(0)
         expect(w.postMessage).toHaveBeenCalledWith({ type: "PUSH_WHILE_OPEN", id: "a" })
     })
-    it("opens the app at the place when clicked with nothing open", async () => {
+    it("opens the app on the signal when clicked with nothing open", async () => {
         const sw = load()
         await sw.fire("notificationclick", { notification: { close() {}, data: { eventId: "a", lat: 48.85, lon: 2.32 } } })
-        expect(sw.clients.openWindow).toHaveBeenCalledWith("/?focus=48.85,2.32")
+        expect(sw.clients.openWindow).toHaveBeenCalledWith("/?signal=a&focus=48.85%2C2.32")
+    })
+    it("opens a livestream to play it", async () => {
+        const sw = load()
+        await sw.fire("notificationclick", { notification: { close() {}, data: { eventId: "live:k", livestreamId: "k" } } })
+        expect(sw.clients.openWindow).toHaveBeenCalledWith("/?signal=live%3Ak&live=k")
     })
 })

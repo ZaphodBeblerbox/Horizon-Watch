@@ -22,15 +22,17 @@ self.addEventListener('push', (event) => {
             wins.forEach((w) => w.postMessage({ type: 'PUSH_WHILE_OPEN', id: data.id }))
             return
         }
-        await self.registration.showNotification(data.title || 'Parallax', {
-            body: data.body || '',
+        // The Parallax X, the app's name, the headline (event_watch.bundle).
+        await self.registration.showNotification('Parallax', {
+            body: data.body || data.title || '',
             icon: '/icon-192.png',
             badge: '/icon-192.png',
             tag: data.id || 'parallax',
             renotify: true,
             requireInteraction: critical,
             vibrate: critical ? [300, 100, 300, 100, 300] : [200, 100, 200],
-            data: { url: data.url || '/', eventId: data.id, lat: data.lat, lon: data.lon },
+            data: { url: data.url || '/', eventId: data.id, lat: data.lat, lon: data.lon,
+                    livestreamId: data.livestream_id || null, assetId: data.asset_id || null, headline: data.body || '' },
         })
     })())
 })
@@ -40,7 +42,8 @@ self.addEventListener('notificationclick', (event) => {
     const d = event.notification.data || {}
     event.waitUntil((async () => {
         const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true })
-        const msg = { type: 'NOTIFICATION_CLICK', eventId: d.eventId, lat: d.lat, lon: d.lon }
+        const msg = { type: 'NOTIFICATION_CLICK', eventId: d.eventId, lat: d.lat, lon: d.lon,
+                      livestreamId: d.livestreamId, assetId: d.assetId, headline: d.headline }
         for (const w of wins) {
             if (w.url.startsWith(self.location.origin) && 'focus' in w) {
                 await w.focus()
@@ -48,8 +51,13 @@ self.addEventListener('notificationclick', (event) => {
                 return
             }
         }
-        // Closed: open it where the notification points.
-        const q = Number.isFinite(d.lat) && Number.isFinite(d.lon) ? `?focus=${d.lat},${d.lon}` : ''
-        if (clients.openWindow) await clients.openWindow(`/${q}`)
+        // Closed: open Parallax on the signal itself (src/main.jsx reads these).
+        const p = new URLSearchParams()
+        if (d.eventId) p.set('signal', d.eventId)
+        if (Number.isFinite(d.lat) && Number.isFinite(d.lon)) p.set('focus', `${d.lat},${d.lon}`)
+        if (d.livestreamId) p.set('live', d.livestreamId)
+        if (d.assetId) p.set('asset', d.assetId)
+        if (d.headline) p.set('h', d.headline.slice(0, 160))
+        if (clients.openWindow) await clients.openWindow(`/${p.toString() ? `?${p}` : ''}`)
     })())
 })
