@@ -10,6 +10,7 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, AIS_CAP } from "./isMobile.js"
 import { safeCartesian, vesselHeading, bearingBetween } from "./markerOrientation.js"
 import { createMotion, VESSEL, live as liveMotion } from "./smoothMotion.js"
+import { shipIcon, headingBillboard } from "./farIcons.js"
 import { familyFor as hullFor, modelUrl as hullUrl,
          headingRadiansFromDegrees as hullHeadingFrom } from "./vesselModels.js"
 
@@ -35,7 +36,7 @@ const aisLat = (v) => v.lat
 const aisLon = (v) => v.lon ?? v.lng
 
 export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
-                                        pinnedMmsi = null }) {
+                                        pinnedMmsi = null, near = true }) {
     // See GlobeADSBLayer's pin comment: locking the camera onto a vessel
     // zooms in far enough that the viewport query can stop returning it,
     // and the hull the operator is watching is the one that disappears.
@@ -227,8 +228,10 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
                 // vessels were drawn as placeholders. A placeholder among
                 // 3D hulls reads as a rendering fault, so the overflow is
                 // no longer drawn and the count is reported instead.
-                const hull = hullMmsis.has(mmsiStr) ? hullFor(v) : null
-                if (!hull) return null
+                // Far out every vessel is an icon (farIcons.js); close in,
+                // the budget's nearest are hulls.
+                const hull = near && hullMmsis.has(mmsiStr) ? hullFor(v) : null
+                if (near && !hull) return null
                 const hullAngle = hull
                     ? hullHeadingFrom(usableHdg ?? 0) : null
 
@@ -242,6 +245,13 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
                     return (m && safeCartesian(m.lon, m.lat, 0)) || reported
                 }
                 const position = new CallbackProperty(at, false)
+
+                if (!near) {
+                    return (
+                        <Entity id={`ais-${v.mmsi}`} key={v.mmsi} position={position}
+                                billboard={headingBillboard(shipIcon(sanctioned ? "#FF453A" : "#8fb4e8"), usableHdg ?? 0, 14)} />
+                    )
+                }
 
                 return (
                     <Entity

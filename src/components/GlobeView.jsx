@@ -51,6 +51,9 @@ import DrawModeBanner           from "./DrawModeBanner.jsx"
 import API_BASE from "../apiBase.js"
 import { isMobile } from "../globe/isMobile.js"
 
+// Camera altitude below which ships and aircraft are 3D models (farIcons.js).
+const MODEL_ALT = 350_000
+
 const API = API_BASE
 
 // Catches WebGL context loss and other Cesium render errors on mobile —
@@ -271,6 +274,9 @@ export default function GlobeView({
     const [watchlistedIcaos, setWatchlistedIcaos] = useState(new Set())
     const [aircraft, setAircraft] = useState([])
     const [viewBounds, setViewBounds] = useState(null)
+    // NEAR OR FAR (farIcons.js): 3D models for ships and aircraft only below
+    // MODEL_ALT; icons above it. Flips only when the camera crosses it.
+    const [nearView, setNearView] = useState(false)
     // How many aircraft the server may return for one viewport. The
     // point is not to draw every aircraft on earth, it is to draw what
     // is in front of you, immediately.
@@ -985,6 +991,8 @@ export default function GlobeView({
                 return
             }
             const update = () => {
+                const camH = viewer.camera.positionCartographic?.height
+                if (Number.isFinite(camH)) setNearView((prev) => (prev === camH < MODEL_ALT ? prev : camH < MODEL_ALT))
                 const rect = viewer.camera.computeViewRectangle()
                 if (!rect) return
                 const w = CesiumMath.toDegrees(rect.west)
@@ -1230,8 +1238,8 @@ export default function GlobeView({
                     Mediterranean rather than discovering it by panning. */}
                 <GlobeGpsInterferenceLayer enabled={gpsInterferenceEnabled} />
 
-                {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} sanctionedMmsis={sanctionedMmsis} pinnedMmsi={pinnedMmsi} />}
-                {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} watchlistedIcaos={watchlistedIcaos} pinnedIcao={pinnedIcao} />}
+                {aisEnabled  && <GlobeAISLayer  vessels={aisData}   viewBounds={viewBounds} near={nearView} sanctionedMmsis={sanctionedMmsis} pinnedMmsi={pinnedMmsi} />}
+                {adsbEnabled && <GlobeADSBLayer aircraft={adsbData} viewBounds={viewBounds} near={nearView} watchlistedIcaos={watchlistedIcaos} pinnedIcao={pinnedIcao} />}
                 <GlobeTrackLayer aisEnabled={aisEnabled} adsbEnabled={adsbEnabled}
                                  vessels={vessels} aircraft={aircraft} />
                 {/* The clicked contact's whole recent path — aircraft at

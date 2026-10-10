@@ -10,6 +10,7 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { safeCartesian } from "./markerOrientation.js"
 import { createMotion, AIRCRAFT, live as liveMotion } from "./smoothMotion.js"
+import { planeIcon, headingBillboard } from "./farIcons.js"
 import { familyForDrawing, isSurfaceVehicle, modelUrl, modelHeadingRadians } from "./aircraftModels.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
@@ -66,7 +67,7 @@ const DR_RENDER_MS = 33
 const DESKTOP_ADSB_CAP = 800
 
 export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
-                                        pinnedIcao = null }) {
+                                        pinnedIcao = null, near = true }) {
 
     // Where each aircraft is drawn between reports: continued along its
     // track, eased onto each new report instead of snapping (smoothMotion.js).
@@ -328,6 +329,15 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
                 // placeholder among 3D airframes reads as a rendering
                 // fault, not as an aircraft, so the overflow is now simply
                 // not drawn and the count is reported instead.
+                // Far out every aircraft is an icon (farIcons.js); close in,
+                // the budget's nearest are airframes.
+                if (!near) {
+                    const fill = watchlisted ? "#F5A524" : classification === "military" ? "#e0b45a" : "#c9d4e3"
+                    return (
+                        <Entity id={`adsb-${icao}`} key={icao || `${lat}-${lon}`} position={position}
+                                billboard={headingBillboard(planeIcon(fill), Number.isFinite(motionRef.current.get(icao)?.track) ? motionRef.current.get(icao).track : track, 15)} />
+                    )
+                }
                 const family = modelled.get(icao) || null
                 if (!family) return null
                 const orientation = family ? new CallbackProperty(() => {
