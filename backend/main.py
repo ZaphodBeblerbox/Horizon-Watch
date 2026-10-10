@@ -1178,7 +1178,7 @@ HIGH_CONFIDENCE_SOURCES  = {
     # Official / authoritative conflict sources
     "UN News", "Relief Web",
     # Investigative / analysis — verified methodology
-    "Bellingcat", "ISW", "War on the Rocks", "Defense One",
+    "Bellingcat", "ISW", "War on the Rocks", "Defense One", "RUSI",
 }
 MEDIUM_CONFIDENCE_SOURCES = {
     "BBC Africa", "BBC World", "Al Jazeera", "Guardian Africa",
@@ -1189,6 +1189,10 @@ MEDIUM_CONFIDENCE_SOURCES = {
     "New Arab",
     # State-affiliated — capped at medium regardless of specificity
     "TASS", "VOA News", "Radio Free Europe", "Ukrinform",
+    # A side in the war, or advocacy-leaning — strong on the facts of
+    # Ukraine, capped at medium; public broadcasters of the Baltics too
+    "Ukrainska Pravda", "Euromaidan Press", "Kyiv Post", "New Voice of Ukraine",
+    "LSM Latvia", "LRT Lithuania", "Notes from Poland", "UK Defence Journal",
     # Tabloid / opinion-heavy — capped at medium regardless of specificity
     "Bild", "Fox News",
 }
@@ -28370,8 +28374,63 @@ def _telegram_report_cards(hours: int, cap: int = 25) -> list:
             "lat": p.get("lat"), "lon": p.get("lon"), "country_code": p.get("country_code"),
             "region": p.get("place"), "created_at": p.get("posted_at"), "source": "telegram",
         })
+    # OFFICIAL STATEMENTS, as the desktop raises them: a claimed strike,
+    # attack, interception or seizure, at most one per party every 12 hours
+    last_by_party: dict = {}
+    for st in sorted(_tg.statements(hours), key=lambda x: str(x.get("posted_at") or "")):
+        if not st.get("important"):
+            continue
+        party = st.get("party") or st.get("channel")
+        ts = _parse_iso_loose(st.get("posted_at"))
+        prev = last_by_party.get(party)
+        if ts is None or (prev is not None and (ts - prev).total_seconds() < 12 * 3600):
+            continue
+        last_by_party[party] = ts
+        cards.append({
+            "id": st["id"], "kind": "telegram", "sev": "critical",
+            "title": _nc.plain(st.get("headline") or "Official statement"),
+            "reason": " · ".join(x for x in (f"{party} — official statement", st.get("place")) if x),
+            "lat": st.get("cite_lat"), "lon": st.get("cite_lon"), "country_code": st.get("country_code"),
+            "region": st.get("place"), "created_at": st.get("posted_at"), "source": "telegram",
+        })
     _TG_CARDS_CACHE[hours] = (time.monotonic(), cards)
     return [dict(c) for c in cards]
+
+
+def _parse_iso_loose(v):
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _surface_signal_cards(hours: int, cap: int = 40) -> list:
+    """The live signals the desktop announces from /api/surface (app.jsx,
+    LIVE SIGNALS), with the desktop's ids and severities, so the phone gets
+    them too (owner, 2026-10-10: the phone gets what the desktop gets)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    with _SURFACE_POOL_LOCK:
+        pool = list(_SURFACE_POOL)
+    out = []
+    for it in pool:
+        if not isinstance(it, dict) or not it.get("id") or str(it.get("source_type") or "").startswith("telegram"):
+            continue
+        tier = it.get("severity_tier")
+        if tier not in ("critical", "significant"):
+            continue                                    # only what takes the desktop's screen
+        at = _parse_iso_loose(it.get("published_at") or it.get("created_at"))
+        if at is None or at < cutoff:
+            continue
+        out.append({
+            "id": f"sig-{it['id']}", "kind": "signal", "sev": "critical" if tier == "critical" else "high",
+            "title": it.get("headline") or "New signal",
+            "reason": " · ".join(str(x) for x in (it.get("location") or it.get("location_country"), it.get("source")) if x),
+            "lat": it.get("lat"), "lon": it.get("lon"), "country_code": it.get("country_code"),
+            "region": it.get("location"), "created_at": at.isoformat(), "source": it.get("source"),
+        })
+    out.sort(key=lambda o: o["created_at"], reverse=True)
+    return out[:cap]
 
 
 def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, include_silent: bool = False) -> list:
@@ -28565,6 +28624,11 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
         out = [c for c in _telegram_report_cards(min(hours, 24)) if c["id"] not in _have] + out
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] telegram: {type(ex).__name__}: {ex}", flush=True)
+    try:
+        _have = {o.get("id") for o in out}
+        out = [c for c in _surface_signal_cards(min(hours, 24)) if c["id"] not in _have] + out
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] surface signals: {type(ex).__name__}: {ex}", flush=True)
 
     # ── announced events and live developments that concern YOU ─────────
     # (event_watch.py): when announced, shortly before they start, and

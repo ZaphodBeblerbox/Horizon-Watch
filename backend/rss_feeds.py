@@ -248,6 +248,17 @@ EUROPE_EXPANDED_FEEDS = [
     ("EU Reporter", "https://www.eureporter.co/feed/"),
     ("Kyiv Independent", "https://kyivindependent.com/rss"),
     ("Ukrinform", "https://www.ukrinform.net/rss/block-lastnews"),
+    # Ukraine and the eastern flank in English (owner, 2026-10-10). The
+    # governments' own sites block feed readers or have no feed (NATO,
+    # Estonia, Finland, Lithuania, Poland's gov.pl: checked 2026-10-10), so
+    # their statements arrive through these; each address checked live.
+    ("Ukrainska Pravda", "https://www.pravda.com.ua/eng/rss/"),
+    ("Euromaidan Press", "https://euromaidanpress.com/feed/"),
+    ("Kyiv Post", "https://www.kyivpost.com/feed"),
+    ("New Voice of Ukraine", "https://english.nv.ua/rss/all.xml"),
+    ("LSM Latvia", "https://eng.lsm.lv/rss/"),
+    ("LRT Lithuania", "https://www.lrt.lt/en/news-in-english?rss"),
+    ("Notes from Poland", "https://notesfrompoland.com/feed/"),
     ("BNE IntelliNews", "https://www.intellinews.com/rss/"),
     ("Balkan Insight News", "https://balkaninsight.com/feed/"),
     ("Prague Morning", "https://www.praguemorning.cz/feed/"),
@@ -327,6 +338,8 @@ AMERICAS_EXPANDED_FEEDS = [
 # GLOBAL WIRES / BUSINESS / ENERGY / SECURITY (+30)
 # ----------------
 GLOBAL_EXPANDED_FEEDS = [
+    ("RUSI", "https://www.rusi.org/rss/latest-commentary.xml"),
+    ("UK Defence Journal", "https://ukdefencejournal.org.uk/feed/"),
     ("Reuters Business", "https://feeds.reuters.com/reuters/businessNews"),
     ("Reuters Energy", "https://feeds.reuters.com/reuters/environment"),
     ("Reuters Top News", "https://feeds.reuters.com/reuters/topNews"),

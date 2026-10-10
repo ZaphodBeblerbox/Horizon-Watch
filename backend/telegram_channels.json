@@ -190,5 +190,33 @@
     "lang": "en",
     "join": true,
     "note": "Somali news outlet (Puntland); added 2026-10-10 — Somalia blocks Telegram since 2023, so Somali channels are few"
+  },
+  "SBUkr": {
+    "role": "official",
+    "party": "Ukraine — Security Service (SBU)",
+    "lang": "uk",
+    "join": true,
+    "note": "Ukraine's own statements; checked to exist and post 2026-10-10 (t.me/s preview); added at the owner's request"
+  },
+  "DIUkraine": {
+    "role": "official",
+    "party": "Ukraine — Defence Intelligence (HUR)",
+    "lang": "uk",
+    "join": true,
+    "note": "Ukraine's own statements; checked to exist and post 2026-10-10 (t.me/s preview); added at the owner's request"
+  },
+  "kpszsu": {
+    "role": "official",
+    "party": "Ukraine — Air Force",
+    "lang": "uk",
+    "join": true,
+    "note": "Ukraine's own statements; checked to exist and post 2026-10-10 (t.me/s preview); added at the owner's request"
+  },
+  "GeneralStaffZSU": {
+    "role": "official",
+    "party": "Ukraine — General Staff",
+    "lang": "uk",
+    "join": true,
+    "note": "Ukraine's own statements; checked to exist and post 2026-10-10 (t.me/s preview); added at the owner's request"
   }
 }

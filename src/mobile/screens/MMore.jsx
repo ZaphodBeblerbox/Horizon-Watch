@@ -271,10 +271,10 @@ export function MSettings() {
             {/* WHAT A NOTIFICATION IS — the server's one rule (event_watch.notifies),
                 the same on this phone and the desktop app */}
             <div className="m2-sub" data-testid="notify-rule" style={{ margin: "4px 4px 14px", lineHeight: 1.5 }}>
-                With Parallax closed, this phone and the desktop app notify you of the same things: anything critical, and
-                escalations, surges, fusions, Telegram reports, live developments and high-severity signals that touch your
-                assets, where you are, your theaters or your countries. A channel going live always notifies. Everything else
-                waits in Alerts.
+                With Parallax closed, this phone gets the same notifications as the desktop app: whatever would pop up on the
+                desktop's screen — anything critical, escalations, surges, fusions, high-severity signals, Telegram reports,
+                official claims of a strike, live developments and a channel going live. A burst arrives as two
+                notifications and one "N more". Everything else waits in Alerts.
             </div>
             <Group title="Location">
                 <HereRowPhone />

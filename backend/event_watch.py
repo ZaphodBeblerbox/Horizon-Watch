@@ -380,11 +380,12 @@ def worth_pushing(card: dict, c: dict) -> bool:
 
 def notifies(card: dict, c: dict) -> bool:
     """WHAT A NOTIFICATION IS — the one rule for every device with the app
-    closed (phone push, the desktop app's macOS notification): something
-    that would take the screen (interrupts) AND concerns this user — their
-    assets, where they are, their theaters, their countries — or is
-    critical, or a channel we read going live (worth_pushing)."""
-    return interrupts(card) and worth_pushing(card, c)
+    closed (phone push, the desktop app's macOS notification): whatever
+    would take the desktop's screen (interrupts). THE PHONE GETS WHAT THE
+    DESKTOP GETS (owner, 2026-10-10), so relevance (worth_pushing) no
+    longer narrows it; a burst is still bundled (bundle) into two pushes
+    and an "N more". `c` is kept for callers and for a narrower rule later."""
+    return interrupts(card)
 
 
 def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
