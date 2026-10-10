@@ -129,3 +129,4 @@ openai==1.109.1
 telethon==1.45.0
 PyMuPDF==1.28.2
 matplotlib==3.10.8
+imageio-ffmpeg==0.5.1

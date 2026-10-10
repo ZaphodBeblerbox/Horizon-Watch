@@ -22,7 +22,7 @@ import { useChrome } from "./state/useChrome.js"
 import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayManager.js"
 import NotificationStack from "./components/NotificationStack.jsx"
 import NotificationTray from "./components/NotificationTray.jsx"
-import { pushNotification, unreadCount as notifUnread, subscribeNotifications } from "./state/notificationStore.js"
+import { pushNotification, unreadCount as notifUnread, subscribeNotifications, getNotifications } from "./state/notificationStore.js"
 import { subscribeLive } from "./state/liveEvents.js"
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
@@ -166,6 +166,7 @@ import HealthPanel from "./components/HealthPanel.jsx"
 import Insight from "./destinations/Insight.jsx"
 import Analytics from "./destinations/Analytics.jsx"
 import LocationPrompt from "./components/LocationPrompt.jsx"
+import LivePlayerHost, { watchLive } from "./telegram/LivePlayer.jsx"
 import { exportPdf } from "./print/printSurface.jsx"
 import { MODE_FRAME } from "./plx6/modeWindow.js"
 import { setActiveTheater } from "./state/filing.js"
@@ -1058,7 +1059,8 @@ export default function App() {
                 sub: [i.reason, i.region].filter(Boolean).join(" · "),
                 expect: i.expect || "", advice: i.advice || "",
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
-                actions: i.actions || null, alertId: i.id, assetId: i.asset_id || null,
+                actions: i.actions || (i.livestream_id ? ["watch"] : null), alertId: i.id, assetId: i.asset_id || null,
+                livestreamId: i.livestream_id || null,
                 // WHEN IT HAPPENED, in the order the fields mean it.
                 // created_at is when the ROW was written, which for a
                 // backfilled or late-ingested event is now — and an event
@@ -1668,6 +1670,34 @@ export default function App() {
         }, at ? 1700 : 300)
     }, [openTab])
 
+    /* A NOTIFICATION CLICKED OUTSIDE THE APP (web push, the desktop app's
+       macOS notification, or a cold start from one: main.jsx) opens the
+       signal it was about — the same as clicking its card in here: the
+       tray's own item when there is one, else what the notification
+       carried; a livestream starts playing. */
+    const openFromOutside = useCallback((d) => {
+        if (!d) return
+        if (d.livestreamId) { watchLive(d.livestreamId, d.title || ""); return }
+        const own = d.id ? getNotifications().items.find((x) => x.id === d.id || x.alertId === d.id) : null
+        openNotificationItem(own || {
+            id: d.id, alertId: d.id, assetId: d.assetId || null, title: d.title || "", sev: "moderate", kind: "signal",
+            ref: d.lat != null && d.lon != null ? { lat: d.lat, lon: d.lon } : null,
+        })
+    }, [openNotificationItem])
+    useEffect(() => {
+        const h = (e) => openFromOutside(e.detail)
+        window.addEventListener("plx:open-notification", h)
+        // opened cold from one: once the map has drawn
+        const pending = window.__plxPendingOpen
+        if (pending) {
+            window.__plxPendingOpen = null
+            const go = () => setTimeout(() => openFromOutside(pending), 400)
+            if (window.__plxMapReady) go()
+            else window.addEventListener("plx:map-ready", go, { once: true })
+        }
+        return () => window.removeEventListener("plx:open-notification", h)
+    }, [openFromOutside])
+
 
     // Reverse direction — real deep links from non-map destinations (e.g.
     // NewsPage's "jump to location", Watchlists' entity chips) need the map
@@ -2001,6 +2031,7 @@ export default function App() {
             />
             <Tutorial />
             <LocationPrompt />
+            <LivePlayerHost />
             <UpdateBanner />
             <ToastHost />
             {/* Voice everywhere: the map has its own bar; every other page

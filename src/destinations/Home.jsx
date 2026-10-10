@@ -20,6 +20,7 @@
  * instead of drawing ticks it cannot justify. Theaters and assets are the
  * spec's first-run defaults until those models land.
  */
+import { LiveNow } from "../telegram/LivePlayer.jsx"
 import { EXPOSURE } from "./Assets.jsx"
 import Dots from "../ui/Dots.jsx"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -631,6 +632,8 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                         )}
                     </div>
 
+                    {/* Telegram channels live now (telegram/LivePlayer.jsx) */}
+                    <LiveNow />
                     {/* ── From the ground: one video at a time, the next when it ends ── */}
                     {groundVideos.length > 0 && (
                         <div data-screen-label="From the ground" style={{ display: "flex", flexDirection: "column", gap: 10 }}>

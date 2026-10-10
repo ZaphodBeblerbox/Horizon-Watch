@@ -235,6 +235,16 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
             async for m in client.iter_messages(ent, limit=PER_CHANNEL):
                 if m.date < cutoff:
                     break
+                # A channel going live posts a service message, not text:
+                # telegram_live.py records it (start, or end with duration).
+                if getattr(m, "action", None) is not None:
+                    try:
+                        import telegram_live
+                        if telegram_live.note_action(chan, getattr(ent, "title", chan), m, role=info["role"]) == "started":
+                            print(f"[telegram-live] {chan} went live", flush=True)
+                    except Exception as e:                     # noqa: BLE001
+                        print(f"[telegram-live] {chan}: {type(e).__name__}: {e}", flush=True)
+                    continue
                 text = (m.message or "").strip()
                 if not text or (chan, m.id) in have:
                     continue
@@ -265,6 +275,12 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                 new += 1
       # Registered channels not joined yet: joined now, read next pass.
       await _join_registered(client, joined)
+      # Streams still on? (a stream's end may come before its service message)
+      try:
+          import telegram_live
+          await telegram_live.confirm_live(client)
+      except Exception as e:                                   # noqa: BLE001
+          print(f"[telegram-live] confirm failed: {type(e).__name__}: {e}", flush=True)
     finally:
         await client.disconnect()
     con.commit(); con.close()

@@ -10,6 +10,7 @@
  *                         afternoon) and what may follow, the user's first;
  *                         both turn at 05, 12 and 18 (home/dayPart.js)
  */
+import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { useEffect, useMemo, useRef, useState } from "react"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
 import { slotOf, useFrozen } from "../../home/dayPart.js"
@@ -107,6 +108,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
                 </button>
             )}
 
+            <div style={{ padding: "0 16px" }}><LiveNow compact /></div>
             {arr(live).length > 0 && (
                 <section className="m2-section" data-screen-label="Phone live">
                     <header><span className="m2-eyebrow">Live from Telegram</span><span className="m2-when" style={{ flex: 1 }}>newest first</span>

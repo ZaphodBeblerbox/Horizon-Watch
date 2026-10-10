@@ -25,6 +25,7 @@ import { Icon, Sheet } from "./screens/common.jsx"
 import { usePoll, arr } from "./useMine.js"
 import useOnlineUsers from "../state/useOnlineUsers.js"
 import LocationPrompt from "../components/LocationPrompt.jsx"
+import LivePlayerHost from "../telegram/LivePlayer.jsx"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
@@ -49,6 +50,7 @@ export default function MobileApp() {
         <div className="m2" data-screen-label="Phone">
             <PlxIcons />
             <LocationPrompt afterTour={false} />
+            <LivePlayerHost />
             <header className="m2-top">
                 {TITLES[tab] ? <span className="m2-title">{TITLES[tab]}</span> : <span className="m2-brand" style={{ flex: 1 }}>PARALLAX</span>}
                 <button className="m2-iconbtn" aria-label="Alerts" onClick={() => go("alerts")}>

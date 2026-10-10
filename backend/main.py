@@ -12196,6 +12196,40 @@ def api_analytics_day(date: str, country: str = "", kind: str = ""):
     return {"alerts": _ad.day_detail(_akili_db_path(), date, country.strip().lower()[:3] or None, kind.strip()[:80] or None)}
 
 
+@app.get("/api/telegram/live")
+def api_telegram_live():
+    """Livestreams on now in the channels we read (telegram_live.py)."""
+    import telegram_live as _tl
+    return {"streams": _tl.live_now()}
+
+
+@app.get("/api/telegram/live/{stream_id}/index.m3u8")
+def api_telegram_live_playlist(stream_id: str):
+    """The live playlist. The first request starts pulling the stream; it
+    stops when nobody has asked for 45 s. Telegram runs on the server only."""
+    import telegram_live as _tl
+    import telegram_ingest as _ti
+    if not _ti.on_server():
+        raise HTTPException(503, _ti.SERVER_ONLY)
+    s = _tl.watch(stream_id)
+    if not s:
+        raise HTTPException(404, "this livestream has ended")
+    if s.status == "failed":
+        raise HTTPException(502, f"could not open the stream: {s.error}")
+    return Response(s.m3u8(), media_type="application/vnd.apple.mpegurl",
+                    headers={"Cache-Control": "no-store", "X-Stream-Status": s.status})
+
+
+@app.get("/api/telegram/live/{stream_id}/{segment}")
+def api_telegram_live_segment(stream_id: str, segment: str):
+    import telegram_live as _tl
+    p = _tl.segment_path(stream_id, segment)
+    if not p:
+        raise HTTPException(404, "segment gone")
+    from fastapi.responses import FileResponse
+    return FileResponse(p, media_type="video/mp2t", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/telegram/situations")
 async def api_telegram_situations():
     """Developments on the ground read from Telegram that are still live — a
@@ -28379,6 +28413,14 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
         # down with it.
         print(f"[notifications] live sources: {type(ex).__name__}: {ex}")
     _timings["live_sources"] = round(time.monotonic() - _t_live, 2)
+
+    # ── Telegram livestreams on now (telegram_live.py): "Click to watch" ──
+    try:
+        import telegram_live as _tl
+        _have = {o.get("id") for o in out}
+        out = [c for c in _tl.notifications() if c["id"] not in _have] + out
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] livestreams: {type(ex).__name__}: {ex}", flush=True)
 
     # ── what is near YOUR assets (asset_watch.py) ─────────────────────────
     # Per user, so it comes last and from a cache: a card for a signal the

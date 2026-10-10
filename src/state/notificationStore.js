@@ -51,6 +51,9 @@ export const KIND = {
     // Something added to the home screen (home/homeNews.js): new footage,
     // new items under what happened while you were away.
     home:     { icon: "i-home",    name: "New on Home" },
+    // A channel we read went live on Telegram (telegram_live.py): the start
+    // is the signal; Watch plays it.
+    livestream: { icon: "i-feed",  name: "Live on Telegram" },
 }
 
 /** Display severity vocabulary — the same four the diamond uses everywhere. */
@@ -126,6 +129,7 @@ export function interrupts(n, now = Date.now()) {
         || n.kind === "live" || (n.kind === "announcement" && n.sev === "high")
         // New on Home, unless Home is what you are looking at already.
         || (n.kind === "home" && !n.onHome)
+        || n.kind === "livestream"
 }
 
 export function setMuted(v) {
@@ -216,6 +220,7 @@ export function pushNotification(n) {
         alertId: n.alertId || null,
         assetId: n.assetId || null,
         onHome: !!n.onHome,
+        livestreamId: n.livestreamId || null,
         read: !fresh,
     }
     if (state.items.some((x) => x.id === item.id)) return false   // never double-raise
