@@ -2,16 +2,23 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { readFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 
 // Real package.json version, exposed for the new top bar's subtitle and the
 // status bar's build string (redesign Round 2 — "real build/version string,
 // real not fabricated") — never a hand-typed literal that can drift from
 // the actual package version.
 const pkgVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url))).version
+// WHICH BUILD IS THIS (2026-10-10): a phone running a cached copy looks like a
+// fix that did not ship. The commit and time are shown in Profile/Settings.
+let gitShort = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || '').slice(0, 7)
+if (!gitShort) { try { gitShort = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch { gitShort = 'local' } }
+const buildStamp = `${gitShort} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`
 
 export default defineConfig({
     define: {
         __APP_VERSION__: JSON.stringify(pkgVersion),
+        __PLX_BUILD__: JSON.stringify(buildStamp),
     },
     plugins: [
         react(),

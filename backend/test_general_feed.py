@@ -19,7 +19,7 @@ def _db(tmp_path):
         ("a2", "gps_interference", "GPS degraded", "high", 1, 2, "x", "", "gps", "2026-10-10 13:00:00.1"),
     ])
     c.execute("INSERT INTO geoconfirmed_placemarks VALUES ('g1','','30 MAR','Strike on a depot','2026-10-10 00:00:00.0',1,2,'X',"
-              "'https://x.com/someone/status/123 more','ua','2026-10-10')")
+              "'https://x.com/someone/status/123 more','ua','2026-10-10 11:00:00')")
     c.execute("INSERT INTO telegram_posts VALUES ('chan',5,'Chan','2026-10-10T14:00:00+00:00','Drone hits Sanaa','',''"
               ",'video',NULL,'Sanaa','ye',15,44,'strike','local',0,1,NULL)")
     c.commit(); c.close()
@@ -29,6 +29,7 @@ def _db(tmp_path):
 def test_one_timeline(tmp_path):
     d = g.feed(_db(tmp_path), limit=5)
     assert [i["kind"] for i in d["items"]] == ["telegram", "signal", "geoconfirmed"]
+    assert d["items"][-1]["event_date"] == "2026-10-10"
     gc = d["items"][-1]
     assert gc["headline"] == "Strike on a depot" and gc["x_url"] == "https://x.com/someone/status/123"
     assert all(i["headline"] != "GPS degraded" for i in d["items"])      # readings are not events

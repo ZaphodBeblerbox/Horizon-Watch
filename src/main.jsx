@@ -159,6 +159,9 @@ try {
                 swRegistration = registration
                 if (registration.waiting) activateWaitingWorkerAndReload()
                 const check = () => registration.update().catch(() => {})
+                // at once too: a phone opening Parallax from its Home Screen
+                // otherwise ran the cached build until a later check
+                check()
                 setInterval(check, 30 * 60 * 1000)
                 document.addEventListener('visibilitychange', () => {
                     if (document.visibilityState === 'visible') check()

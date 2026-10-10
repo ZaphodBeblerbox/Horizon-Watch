@@ -103,7 +103,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const iosBrowser = (() => { try { const { platform } = window.__plxClosedNotify || {}; return platform === "ios-browser" } catch { return false } })()
         || (typeof navigator !== "undefined" && /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !window.matchMedia?.("(display-mode: standalone)").matches)
     const askHere = async () => {
-        try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); await saveHere(p.lat, p.lon) } catch { /* not allowed */ }
+        try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); await saveHere(p.lat, p.lon, p.label || null) } catch (e) { window.alert(e.message) }
     }
     const first = String(user?.name || user?.display_name || "").split(" ")[0]
     const greet = greetingFor(first, { seed })

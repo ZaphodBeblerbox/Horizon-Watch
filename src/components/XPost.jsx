@@ -15,23 +15,31 @@ import { whenLabel } from "../utils/formatTime.js"
 const STATUS = /(?:x|twitter)\.com\/[^/?#]+\/status(?:es)?\/(\d+)/i
 export const xPostId = (url) => (STATUS.exec(String(url || "")) || [])[1] || null
 
-function Video({ v }) {
+function Video({ v, active = true }) {
     const ref = useRef(null)
     const held = useRef(false)
+    const act = useRef(active)
+    act.current = active
+    useEffect(() => {
+        const el = ref.current
+        if (!el) return
+        if (active) start(el)
+        else if (!el.paused) el.pause()
+    }, [active]) // eslint-disable-line react-hooks/exhaustive-deps
     const start = (el) => {
-        if (!el || held.current) return
+        if (!el || held.current || !act.current) return
         el.muted = true; el.defaultMuted = true
         const p = el.play(); if (p && p.catch) p.catch(() => {})
     }
     // through our server: X's video host refuses players on other sites
     const src = `${API_BASE}/api/x/video?u=${encodeURIComponent(v.mp4)}`
-    return <video ref={ref} src={src} poster={v.poster || undefined} autoPlay muted loop playsInline preload="auto"
+    return <video ref={ref} src={src} poster={v.poster || undefined} autoPlay={active} muted loop playsInline preload={active ? "auto" : "metadata"}
         onLoadedData={(e) => start(e.currentTarget)}
         onClick={(e) => { const el = e.currentTarget; if (el.paused) { held.current = false; start(el) } else { held.current = true; el.pause() } }}
         style={{ display: "block", width: "100%", maxHeight: "60vh", objectFit: "contain", background: "#000", cursor: "pointer" }} />
 }
 
-export default function XPost({ url }) {
+export default function XPost({ url, active = true }) {
     const id = xPostId(url)
     const [post, setPost] = useState(undefined)          // undefined = loading, null = unavailable
     const [shown, setShown] = useState(false)
@@ -71,7 +79,7 @@ export default function XPost({ url }) {
                 </div>
             ) : (
                 <div>
-                    {post.videos.map((v) => <Video key={v.mp4} v={v} />)}
+                    {post.videos.map((v) => <Video key={v.mp4} v={v} active={active} />)}
                     {post.photos.length > 0 && (
                         <div style={{ display: "grid", gridTemplateColumns: post.photos.length > 1 ? "1fr 1fr" : "1fr", gap: 2 }}>
                             {post.photos.map((p) => <a key={p} href={`${p}?name=large`} target="_blank" rel="noreferrer">

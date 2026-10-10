@@ -18,7 +18,10 @@ self.addEventListener('push', (event) => {
     const critical = data.severity === 'critical' || data.kind === 'live'
     event.waitUntil((async () => {
         const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true })
-        if (wins.some((w) => w.focused && w.visibilityState === 'visible')) {
+        // On iPhone a push that shows nothing counts against the site and
+        // Safari cancels the subscription after a few: there it always shows.
+        const ios = /iPhone|iPad|iPod/.test(self.navigator?.userAgent || '')
+        if (!ios && wins.some((w) => w.focused && w.visibilityState === 'visible')) {
             wins.forEach((w) => w.postMessage({ type: 'PUSH_WHILE_OPEN', id: data.id }))
             return
         }

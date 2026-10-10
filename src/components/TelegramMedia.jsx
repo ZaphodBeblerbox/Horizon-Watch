@@ -65,7 +65,7 @@ export function videoSrc(post) {
    sound on stays on from one video to the next. */
 export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(--radius)",
                                         onEnded = null, onProgress = null, onUnplayable = null,
-                                        muted: mutedProp = undefined, onMutedChange = null }) {
+                                        muted: mutedProp = undefined, onMutedChange = null, active = true }) {
     const v = useRef(null)
     const [failed, setFailed] = useState(false)
     const [paused, setPaused] = useState(false)
@@ -75,6 +75,15 @@ export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(
     const [shown, setShown] = useState(false)
     // Paused by the reader: then nothing restarts it on its own.
     const heldRef = useRef(false)
+    // ACTIVE: a list (the Desk's General feed) plays only the post in view.
+    const activeRef = useRef(active)
+    activeRef.current = active
+    useEffect(() => {
+        const el = v.current
+        if (!el) return
+        if (active) { if (el.paused && !heldRef.current) { el.muted = true; const p = el.play(); if (p?.catch) p.catch(() => {}) } }
+        else if (!el.paused) el.pause()
+    }, [active])
     useEffect(() => { setFailed(false); setPaused(false); if (mutedProp === undefined) setMutedOwn(true); setShown(false); heldRef.current = false }, [post?.id]) // eslint-disable-line react-hooks/exhaustive-deps
     // React sets `muted` as a property after the element exists and never
     // writes the attribute, and browsers (Safari first) then refuse to
@@ -82,7 +91,7 @@ export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(
     // called as soon as there is enough to play.
     useEffect(() => { if (v.current) v.current.muted = muted }, [muted])
     const start = (el) => {
-        if (!el || heldRef.current) return
+        if (!el || heldRef.current || !activeRef.current) return
         el.muted = muted
         el.defaultMuted = true
         const p = el.play()
@@ -101,7 +110,7 @@ export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(
         return (
             <div style={{ position: "relative", background: "#000", borderRadius: radius, overflow: "hidden" }}>
                 <video ref={v} key={src} src={src} poster={still || undefined}
-                       autoPlay muted={muted} loop={!onEnded} playsInline preload="auto"
+                       autoPlay={active} muted={muted} loop={!onEnded} playsInline preload={active ? "auto" : "metadata"}
                        onError={() => setFailed(true)}
                        onEnded={onEnded || undefined}
                        onTimeUpdate={onProgress ? (e) => { const el = e.currentTarget; if (el.duration) onProgress(el.currentTime / el.duration) } : undefined}

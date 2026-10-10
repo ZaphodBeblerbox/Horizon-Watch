@@ -241,6 +241,9 @@ export function GeneralSection({ settings }) {
             <HereRow settings={settings} />
             <LiveShareRow Row={Row} Toggle={Toggle} />
 
+            <div style={{ margin: "6px 0 14px", font: "400 11px var(--mono, monospace)", color: "var(--txt4)" }} data-testid="build-stamp">
+                Parallax {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : ""} · build {typeof __PLX_BUILD__ !== "undefined" ? __PLX_BUILD__ : "?"}
+            </div>
             <SectionTitle>Locale</SectionTitle>
             <Row label="Timezone" hint={tzSaving ? "Saving…" : "Used for timestamps you set yourself elsewhere in the app."}>
                 <Select value={timezone} onChange={saveTimezone} options={tzOptions.map(tz => ({ value: tz, label: tz }))} />
@@ -577,7 +580,7 @@ function HereRow({ settings }) {
                 <div style={{ display: "flex", gap: 6 }}>
                     <button style={btn} disabled={busy} onClick={async () => {
                         setBusy(true); setErr(null)
-                        try { const p = await devicePosition(); await saveHere(p.lat, p.lon) } catch (e) { setErr(e.message); setTyping(true) } finally { setBusy(false) }
+                        try { const p = await devicePosition(); await saveHere(p.lat, p.lon, p.label || null) } catch (e) { setErr(e.message); setTyping(true) } finally { setBusy(false) }
                     }}>{busy ? "Finding you…" : here ? "Update from this device" : "Use my location"}</button>
                     <button style={btn} onClick={() => setTyping((t) => !t)}>Type a city</button>
                     {here && <button style={btn} onClick={() => forgetHere()}>Forget</button>}

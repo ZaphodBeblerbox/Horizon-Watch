@@ -14,6 +14,7 @@ import { getCurrentUser, logout } from "../../state/authStore.js"
 import IssueReader from "../../reports/IssueReader.jsx"
 import { usePoll, arr, getJSON } from "../useMine.js"
 import { Icon, Row, Sheet, SignalSheet, sevColor, when } from "./common.jsx"
+import { getSettings, subscribeSettings } from "../../state/settingsStore.js"
 import LiveShareRow from "../../location/LiveShareRow.jsx"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
 
@@ -206,9 +207,33 @@ export function MProfile() {
             <div className="m2-card" style={{ padding: "4px 14px", marginBottom: 14 }}>
                 <ClosedNotificationsRow Row={PhoneRow} Toggle={PhoneToggle} />
                 <LiveShareRow Row={PhoneRow} Toggle={PhoneToggle} />
+                <HereRowPhone />
             </div>
             <div className="m2-sub" style={{ marginBottom: 14, lineHeight: 1.5 }}>Your picture, header, theaters and interests are set on the desktop under Profile and Settings; the phone follows them.</div>
             <button className="m2-btn ghost" onClick={() => logout().then(() => window.location.reload())}>Sign out</button>
+            {/* which build this phone is running: a cached copy looks like a fix that did not ship */}
+            <div className="m2-sub" data-testid="build-stamp" style={{ marginTop: 18, fontFamily: "var(--mz-font-mono, monospace)", fontSize: 11 }}>
+                Parallax {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : ""} · build {typeof __PLX_BUILD__ !== "undefined" ? __PLX_BUILD__ : "?"}
+            </div>
         </div>
+    )
+}
+
+/** Where you are, on the phone: use the device's location, or forget it. */
+function HereRowPhone() {
+    const [here, setHere] = useState(() => getSettings()?.interests?.here || null)
+    useEffect(() => subscribeSettings((st) => setHere(st?.interests?.here || null)), [])
+    const [busy, setBusy] = useState(false)
+    const [err, setErr] = useState(null)
+    const use = async () => {
+        setBusy(true); setErr(null)
+        try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); await saveHere(p.lat, p.lon, p.label || null) }
+        catch (e) { setErr(e.message) } finally { setBusy(false) }
+    }
+    return (
+        <PhoneRow label="Your location" hint={<>{here ? `${here.label || `${here.lat}, ${here.lon}`} — what happens within 30 km comes first.` : "Not shared yet."}
+            {err && <span style={{ display: "block", color: "var(--red, #e5484d)", marginTop: 4 }}>{err}</span>}</>}>
+            <button className="m2-chip" disabled={busy} onClick={use}>{busy ? "Finding…" : here ? "Update" : "Use my location"}</button>
+        </PhoneRow>
     )
 }

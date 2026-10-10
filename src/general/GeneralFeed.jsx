@@ -49,6 +49,17 @@ function sourceName(it) {
 }
 
 export function GeneralItem({ it, onMap, onShare, compact = false }) {
+    // ONLY THE POST IN VIEW PLAYS (owner, 2026-10-10): the video starts when
+    // most of it is on screen and stops when it scrolls away.
+    const media = useRef(null)
+    const [inView, setInView] = useState(false)
+    useEffect(() => {
+        const el = media.current
+        if (!el || typeof IntersectionObserver === "undefined") return undefined
+        const io = new IntersectionObserver(([e]) => setInView(e.isIntersecting && e.intersectionRatio >= 0.6), { threshold: [0, 0.6, 1] })
+        io.observe(el)
+        return () => io.disconnect()
+    }, [])
     const place = String(it.place || "").split(",").slice(0, 2).join(",")
     const kindLabel = it.kind === "geoconfirmed" ? "verified" : it.kind === "telegram" ? (it.role === "official" ? "official" : "Telegram") : (it.severity || "signal")
     return (
@@ -66,11 +77,11 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
                 {it.text && <div style={{ fontSize: 14, lineHeight: 1.5, marginTop: 4, color: "var(--txt2)", overflowWrap: "anywhere",
                                           display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.text}</div>}
                 {it.kind === "telegram" && (it.media === "video" || it.media === "photo") && (
-                    <div style={{ marginTop: 10, borderRadius: 14, overflow: "hidden", border: "1px solid var(--gline)" }}>
-                        <TelegramMedia post={{ ...it, id: it.id }} maxHeight={compact ? "300px" : "420px"} radius="0" />
+                    <div ref={media} style={{ marginTop: 10, borderRadius: 14, overflow: "hidden", border: "1px solid var(--gline)" }}>
+                        <TelegramMedia post={{ ...it, id: it.id }} maxHeight={compact ? "300px" : "420px"} radius="0" active={inView} />
                     </div>
                 )}
-                {it.x_url && <div style={{ marginTop: 10 }}><XPost url={it.x_url} /></div>}
+                {it.x_url && <div ref={it.media === "video" ? undefined : media} style={{ marginTop: 10 }}><XPost url={it.x_url} active={inView} /></div>}
                 <div style={{ display: "flex", gap: 22, marginTop: 8, alignItems: "center", fontSize: 13 }}>
                     {Number.isFinite(+it.lat) && it.lat !== null && (
                         <button onClick={() => onMap?.(it)} style={ACT}>On the map</button>

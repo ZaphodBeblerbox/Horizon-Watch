@@ -125,7 +125,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Parallax" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <!-- solid 180 px square: iPhone rounds the corners itself and fills transparent ones with black -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <!-- Leaflet's stylesheet used to be pulled from unpkg here. Nothing in
          this app uses Leaflet — the map is Cesium — so it was a network
          request on every start that could only ever fail offline and buy

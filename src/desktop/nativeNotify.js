@@ -85,3 +85,17 @@ export function installNativeNotify() {
         } catch { /* the plugin is missing in an older build: stay quiet */ }
     })
 }
+
+/** A test, in `delayMs` (time to switch to another app): the same call a
+ *  real notification makes. Resolves with what happened. */
+export async function testNativeNotify(delayMs = 5000) {
+    if (!isDesktop()) return { ok: false, error: "not the desktop app" }
+    await new Promise((ok) => setTimeout(ok, delayMs))
+    try {
+        const n = await plugin()
+        await n.sendNotification(nativeContent({ title: "Test notification — notifications reach this Mac." }))
+        return { ok: true }
+    } catch (e) {
+        return { ok: false, error: e?.message || String(e) }
+    }
+}

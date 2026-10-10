@@ -12,20 +12,39 @@
  * dialog (the welcome, a walkthrough).
  */
 import { useEffect, useState } from "react"
-import API_BASE from "../apiBase.js"
+import API_BASE, { isDesktop } from "../apiBase.js"
 import { getSettings, subscribeSettings, updateSetting, settingsFromServer } from "../state/settingsStore.js"
 import { getCurrentUser } from "../state/authStore.js"
 import PlacePicker from "../search/PlacePicker.jsx"
 import { getManualLocation, setManualLocation } from "../state/themeStore.js"
 import { resumeSharing, startSharing } from "../location/liveShare.js"
 
-/** The device's position, or an error saying why not. */
+/** Roughly where this connection is (city level), from the server. */
+export async function connectionPosition() {
+    const r = await fetch(`${API_BASE}/api/geo/ip`, { credentials: "include" })
+    const d = r.ok ? await r.json() : null
+    if (!d?.available) throw new Error("Your location could not be found from this connection.")
+    return { lat: d.lat, lon: d.lon, label: d.label, approximate: true }
+}
+
+/** The device's position, or an error saying why not.
+ *  THE DESKTOP APP'S WEB VIEW NEVER ANSWERS A PAGE'S LOCATION REQUEST (wry
+ *  0.55 implements no geolocation permission on macOS — 2026-10-10), so
+ *  there the position comes from the connection, city level; a browser that
+ *  refuses or cannot find one falls back to the same. */
 export function devicePosition(timeoutMs = 12000) {
+    if (isDesktop()) return connectionPosition()
     return new Promise((resolve, reject) => {
-        if (typeof navigator === "undefined" || !navigator.geolocation) { reject(new Error("This device cannot give its location.")); return }
+        if (typeof navigator === "undefined" || !navigator.geolocation) { connectionPosition().then(resolve, reject); return }
         navigator.geolocation.getCurrentPosition(
             (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
-            (e) => reject(new Error(e.code === 1 ? "Location was not allowed." : "The location could not be found.")),
+            (e) => {
+                if (e.code === 1) {
+                    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent)
+                    reject(new Error(ios ? "Location is off for this app. On iPhone: Settings › Privacy & Security › Location Services › Safari Websites (or Parallax) › While Using."
+                                         : "Location was not allowed for this site — allow it in the browser's site settings."))
+                } else connectionPosition().then(resolve, () => reject(new Error("The location could not be found.")))
+            },
             { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: 30 * 60_000 })
     })
 }
@@ -50,7 +69,7 @@ export function syncClock() {
 }
 
 /** Save where the user is (and sync the clock). */
-export async function saveHere(lat, lon, label = null) {
+export async function saveHere(lat, lon, label = null, approximate = false) {
     const here = { lat: +(+lat).toFixed(4), lon: +(+lon).toFixed(4), label: label || (await placeName(lat, lon)), radius_km: 30, at: new Date().toISOString() }
     const interests = { ...(getSettings()?.interests || {}), here }
     await updateSetting("interests", interests)
@@ -113,13 +132,13 @@ export default function LocationPrompt({ afterTour = true, live = false }) {
     // team while Parallax is open, and kept on an asset linked to this person.
     const goLive = async () => {
         setBusy(true); setErr(null)
-        try { const p = await devicePosition(); setDue(false); startSharing(); await saveHere(p.lat, p.lon) }
+        try { const p = await devicePosition(); setDue(false); if (!p.approximate) startSharing(); await saveHere(p.lat, p.lon, p.label || null) }
         catch (e) { setErr(`${e.message} You can type your city instead.`); setTyping(true) }
         finally { setBusy(false) }
     }
     const useDevice = async () => {
         setBusy(true); setErr(null)
-        try { const p = await devicePosition(); setDue(false); await saveHere(p.lat, p.lon) }
+        try { const p = await devicePosition(); setDue(false); await saveHere(p.lat, p.lon, p.label || null) }
         catch (e) { setErr(`${e.message} You can type your city instead.`); setTyping(true) }
         finally { setBusy(false) }
     }

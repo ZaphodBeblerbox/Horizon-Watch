@@ -29,6 +29,7 @@ def _con(db_path: str):
     con.row_factory = sqlite3.Row
     try:
         con.execute("CREATE INDEX IF NOT EXISTS ix_telegram_posts_posted ON telegram_posts (posted_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS ix_gc_placemarks_ingested ON geoconfirmed_placemarks (ingested_at)")
     except sqlite3.OperationalError:
         pass
     return con
@@ -66,8 +67,11 @@ def _signals(con, before: str, limit: int) -> list[dict]:
 def _geoconfirmed(con, before: str, limit: int) -> list[dict]:
     try:
         rows = con.execute(
+            # by when it was PUBLISHED (ingested), not the event's day: a day
+            # carries no time, so every verified event sorted at midnight,
+            # beneath everything else that day, and never reached the top
             "SELECT id, title, name, description, date, latitude, longitude, faction, original_source, theatre_slug, ingested_at"
-            " FROM geoconfirmed_placemarks WHERE date < ? ORDER BY date DESC, ingested_at DESC LIMIT ?", (before.replace("T", " "), limit)).fetchall()
+            " FROM geoconfirmed_placemarks WHERE ingested_at < ? ORDER BY ingested_at DESC LIMIT ?", (before.replace("T", " "), limit)).fetchall()
     except sqlite3.OperationalError:
         return []
     out = []
@@ -76,7 +80,7 @@ def _geoconfirmed(con, before: str, limit: int) -> list[dict]:
         x = _X.search(src)
         text = re.sub(r"\s+", " ", (r["description"] or "")).strip()
         head = (r["title"] or "").strip() or text[:140] or r["name"]
-        out.append({"id": f"gc:{r['id']}", "kind": "geoconfirmed", "at": _iso(r["date"]), "headline": head,
+        out.append({"id": f"gc:{r['id']}", "kind": "geoconfirmed", "at": _iso(r["ingested_at"] or r["date"]), "event_date": str(r["date"] or "")[:10], "headline": head,
                     "text": text if text != head else "", "lat": r["latitude"], "lon": r["longitude"],
                     "source": "GeoConfirmed", "faction": r["faction"], "theatre": r["theatre_slug"],
                     "x_url": x.group(0) if x else None,

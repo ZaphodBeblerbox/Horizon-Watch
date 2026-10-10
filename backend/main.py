@@ -1487,14 +1487,15 @@ async def push_unsubscribe(request: Request):
         db.commit()
     return {"status": "unsubscribed"}
 
-def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> None:
+def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> list:
     """Send a Web Push notification to every endpoint this user has.
 
     Every endpoint, not one: a person with a laptop and a phone expects the
     alert on whichever they are holding.
     """
+    report = []                       # per device: {service, ok, status, error}
     if not _WEBPUSH_OK:
-        return
+        return [{"ok": False, "error": "push is not set up on the server (pywebpush)"}]
     from database import PushSubscription, get_db as _gdb_push
     import json as _j
 
@@ -1502,21 +1503,25 @@ def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> Non
         rows = db.query(PushSubscription).filter(PushSubscription.user_id == uid).all()
         subs = [(r.id, _j.loads(r.subscription)) for r in rows]
     if not subs:
-        return
+        return report
 
     payload = _j.dumps({"title": title, "body": body, **(data or {})})
     dead = []
     for row_id, sub in subs:
+        ep = str(sub.get("endpoint") or "")
+        service = "Apple" if "push.apple.com" in ep else "Google" if "googleapis" in ep else "Mozilla" if "mozilla" in ep else "Microsoft" if "notify.windows" in ep else "push service"
         try:
-            webpush(
+            r = webpush(
                 subscription_info=sub,
                 data=payload,
                 vapid_private_key=_VAPID_KEY,
                 # a copy: pywebpush writes "aud" and "exp" into the dict it is given
                 vapid_claims=dict(_VAPID_CLAIMS),
             )
+            report.append({"service": service, "ok": True, "status": getattr(r, "status_code", None)})
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
+            report.append({"service": service, "ok": False, "status": status, "error": str(e)[:200]})
             # 410 Gone / 404 mean the browser threw the subscription away.
             # Keeping it means retrying a dead endpoint on every alert
             # forever.
@@ -1529,6 +1534,39 @@ def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> Non
             db.query(PushSubscription).filter(PushSubscription.id.in_(dead)).delete(
                 synchronize_session=False)
             db.commit()
+    return report
+
+
+@app.post("/api/push/test")
+def api_push_test(request: Request):
+    """Send this user a test notification on every device they turned
+    notifications on for, and say what each push service answered — so a
+    notification that never arrives can be told apart from one never sent."""
+    user = _require_current_user(request)
+    rep = _send_push(str(user["id"]), "Parallax", "Test notification — notifications reach this device.",
+                     {"id": f"test:{int(time.time())}", "kind": "system"})
+    return {"devices": len(rep), "report": rep}
+
+
+@app.get("/api/geo/ip")
+def api_geo_ip(request: Request):
+    """Roughly where the caller is, from their connection (city level): for
+    the desktop app, whose web view cannot ask the system for a location."""
+    import requests as _rq
+    ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (request.client.host if request.client else "")
+    if not ip or ip.startswith(("127.", "10.", "192.168.", "::1")):
+        return {"available": False, "why": "no public address to place"}
+    for url in (f"https://ipwho.is/{ip}", f"http://ip-api.com/json/{ip}"):
+        try:
+            d = _rq.get(url, timeout=6).json()
+        except Exception:                                    # noqa: BLE001
+            continue
+        lat, lon = d.get("latitude", d.get("lat")), d.get("longitude", d.get("lon"))
+        if lat is not None and lon is not None:
+            city = d.get("city"); country = d.get("country")
+            return {"available": True, "lat": float(lat), "lon": float(lon), "approximate": True,
+                    "label": ", ".join(x for x in (city, country) if x) or None}
+    return {"available": False, "why": "the location services did not answer"}
 
 def _broadcast_push(title: str, body: str, data: dict | None = None) -> None:
     """Send a push notification to all subscribed users (background thread)."""

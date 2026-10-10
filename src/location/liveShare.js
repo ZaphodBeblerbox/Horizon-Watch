@@ -15,7 +15,7 @@
  * browsers stop location when the page is hidden; a native app is needed
  * for that. Turning the switch off stops it at once.
  */
-import API_BASE from "../apiBase.js"
+import API_BASE, { isDesktop } from "../apiBase.js"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 
 const KEY = "plx.liveShare"
@@ -82,6 +82,19 @@ function onFix(pos) {
 }
 
 function startWatch() {
+    // THE DESKTOP APP has no GPS route (its web view answers no location
+    // request): it shares where its connection is, every ten minutes.
+    if (isDesktop()) {
+        if (watchId != null) return
+        const tick = () => import("../components/LocationPrompt.jsx").then((m) => m.connectionPosition())
+            .then((p) => onFix({ coords: { latitude: p.lat, longitude: p.lon, accuracy: 5000 } }))
+            .catch((e) => { lastError = e.message; emit() })
+        tick()
+        watchId = setInterval(tick, 10 * 60_000)
+        startWatch.desktop = true
+        emit()
+        return
+    }
     if (watchId != null || typeof navigator === "undefined" || !navigator.geolocation) return
     watchId = navigator.geolocation.watchPosition(onFix, (e) => {
         lastError = e.code === 1 ? "location not allowed on this device" : "location unavailable"
@@ -93,7 +106,9 @@ function startWatch() {
 }
 
 function stopWatch() {
-    if (watchId != null) navigator.geolocation.clearWatch(watchId)
+    if (watchId != null && startWatch.desktop) clearInterval(watchId)
+    else if (watchId != null) navigator.geolocation.clearWatch(watchId)
+    startWatch.desktop = false
     watchId = null
     clearInterval(startWatch.iv)
     live = null
