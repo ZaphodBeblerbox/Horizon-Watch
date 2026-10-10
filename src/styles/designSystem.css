@@ -1381,3 +1381,8 @@ table.grid .dim { color: var(--txt-4); }
 [data-screen-label="Profile"] textarea::placeholder {
     color: var(--txt4, var(--txt-4)); font-style: italic; opacity: 1;
 }
+
+/* Home's ground reel (src/home/GroundReel.jsx): the next story slides in. */
+@keyframes plx-reel-in   { from { transform: translateX(14%); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes plx-reel-back { from { transform: translateX(-14%); opacity: 0 } to { transform: none; opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .plx-reel-slide { animation-duration: .01s !important } }

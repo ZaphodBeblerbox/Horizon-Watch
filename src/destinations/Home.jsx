@@ -38,6 +38,7 @@ import { THEATER_SCOPE } from "../data/theaterScope.js"
 import { whenLabel } from "../utils/formatTime.js"
 
 import { slotOf, useFrozen } from "../home/dayPart.js"
+import GroundReel from "../home/GroundReel.jsx"
 export { slotOf }
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -300,12 +301,16 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
             const h = Math.sin((b.lat - a.lat) * r / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin((b.lon - a.lon) * r / 2) ** 2
             return 12742 * Math.asin(Math.sqrt(h))
         }
+        // Three by default; beyond them, more only while it is urgent:
+        // critical footage, or footage from what this user watches.
         const out = []
         for (const v of ranked) {
             const at = { lat: +v.lat, lon: +v.lon }
             if (out.some((o) => kmTo(at, { lat: +o.lat, lon: +o.lon }) < 30)) continue
+            const urgent = v.severity_tier === "critical" || mine.has(v.id)
+            if (out.length >= 3 && !urgent) continue
             out.push({ ...v, _mine: mine.has(v.id) })
-            if (out.length === 3) break
+            if (out.length === 8) break
         }
         return out
     }, [tgPosts, w, iso2Name])
@@ -611,18 +616,16 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                         )}
                     </div>
 
-                    {/* ── From the ground: three stories on video ─────────── */}
+                    {/* ── From the ground: one video at a time, the next when it ends ── */}
                     {groundVideos.length > 0 && (
                         <div data-screen-label="From the ground" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                                 <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }}>From the ground</span>
-                                <span style={{ fontSize: 11.5, color: "var(--txt4)" }}>the {groundVideos.length === 1 ? "most breaking story" : `${groundVideos.length} most breaking stories`} {split.hasInterests ? "for you" : "worldwide"} · renewed {slot.part === "night" ? "tonight" : `this ${slot.part}`}</span>
+                                <span style={{ fontSize: 11.5, color: "var(--txt4)" }}>the {groundVideos.length === 1 ? "most breaking story" : `${groundVideos.length} most breaking stories, one after another`} {split.hasInterests ? "for you" : "worldwide"} · renewed {slot.part === "night" ? "tonight" : `this ${slot.part}`}</span>
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,300px),1fr))", gap: 12 }}>
-                                {groundVideos.map((v) => (
-                                    <div key={v.id} style={{ display: "flex", flexDirection: "column", border: "1px solid var(--gline)", background: "var(--glass2)", minWidth: 0 }}>
-                                        <TelegramMedia post={v} maxHeight="260px" radius="0" />
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px 12px", minWidth: 0 }}>
+                            <GroundReel videos={groundVideos} renderInfo={(v, at, n) => (
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 14px 14px", minWidth: 0 }}>
+                                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>{at + 1} / {n}</span>
                                             <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase",
                                                            color: v.severity_tier === "critical" ? "var(--red)" : "var(--txt3)" }}>
                                                 {whenLabel(v.posted_at || v.published_at)} · <bdi>{v.channel_title || v.source || v.channel}</bdi>{v._mine ? " · yours" : ""}
@@ -636,9 +639,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                                             }} style={{ alignSelf: "flex-start", height: 28, padding: "0 12px", border: 0, background: "var(--acc)", color: "var(--mz-cream)",
                                                         font: "inherit", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Show on the map</button>
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
+                            )} />
                         </div>
                     )}
 

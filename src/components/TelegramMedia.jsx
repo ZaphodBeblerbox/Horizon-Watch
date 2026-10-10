@@ -59,15 +59,23 @@ export function videoSrc(post) {
     return `${API_BASE}/api/telegram/video/${encodeURIComponent(c)}/${mid}`
 }
 
-export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(--radius)" }) {
+/* onEnded: play once and report the end (Home's reel moves on) instead of
+   looping. onProgress(fraction) and onUnplayable() serve the same reel.
+   muted/onMutedChange: the caller may hold the sound setting, so turning
+   sound on stays on from one video to the next. */
+export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(--radius)",
+                                        onEnded = null, onProgress = null, onUnplayable = null,
+                                        muted: mutedProp = undefined, onMutedChange = null }) {
     const v = useRef(null)
     const [failed, setFailed] = useState(false)
     const [paused, setPaused] = useState(false)
-    const [muted, setMuted] = useState(true)
+    const [mutedOwn, setMutedOwn] = useState(true)
+    const muted = mutedProp === undefined ? mutedOwn : mutedProp
+    const setMuted = (f) => { const next = typeof f === "function" ? f(muted) : f; if (onMutedChange) onMutedChange(next); else setMutedOwn(next) }
     const [shown, setShown] = useState(false)
     // Paused by the reader: then nothing restarts it on its own.
     const heldRef = useRef(false)
-    useEffect(() => { setFailed(false); setPaused(false); setMuted(true); setShown(false); heldRef.current = false }, [post?.id])
+    useEffect(() => { setFailed(false); setPaused(false); if (mutedProp === undefined) setMutedOwn(true); setShown(false); heldRef.current = false }, [post?.id]) // eslint-disable-line react-hooks/exhaustive-deps
     // React sets `muted` as a property after the element exists and never
     // writes the attribute, and browsers (Safari first) then refuse to
     // autoplay. So muted is forced on the element itself and play() is
@@ -81,6 +89,11 @@ export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(
         if (p && p.catch) p.catch(() => {})
     }
     const still = abs(post?.thumb_url)
+    // Nothing to play: say so once, so a reel can move on. A video behind
+    // the graphic-content warning is not unplayable — it waits for the reader.
+    const covered = warnFor(post) && !shown
+    const unplayable = !covered && (post?.media !== "video" || !videoSrc(post) || failed)
+    useEffect(() => { if (unplayable && onUnplayable) onUnplayable() }, [unplayable, post?.id]) // eslint-disable-line react-hooks/exhaustive-deps
     if (warnFor(post) && !shown) return <SensitiveCover still={still} maxHeight={maxHeight} radius={radius} onShow={() => setShown(true)} />
     const src = post?.media === "video" ? videoSrc(post) : null
 
@@ -88,8 +101,10 @@ export default function TelegramMedia({ post, maxHeight = "60vh", radius = "var(
         return (
             <div style={{ position: "relative", background: "#000", borderRadius: radius, overflow: "hidden" }}>
                 <video ref={v} key={src} src={src} poster={still || undefined}
-                       autoPlay muted={muted} loop playsInline preload="auto"
+                       autoPlay muted={muted} loop={!onEnded} playsInline preload="auto"
                        onError={() => setFailed(true)}
+                       onEnded={onEnded || undefined}
+                       onTimeUpdate={onProgress ? (e) => { const el = e.currentTarget; if (el.duration) onProgress(el.currentTime / el.duration) } : undefined}
                        onLoadedData={(e) => start(e.currentTarget)} onCanPlay={(e) => { if (e.currentTarget.paused) start(e.currentTarget) }}
                        onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
                        onClick={() => { const el = v.current; if (!el) return; if (el.paused) { heldRef.current = false; start(el) } else { heldRef.current = true; el.pause() } }}
