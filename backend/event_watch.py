@@ -88,6 +88,14 @@ def concern_of(uid: str) -> dict:
             u = db.query(User).filter(User.id == uid).first()
             interests = ((u.settings or {}).get("interests") or {}) if u else {}
             c["countries"] = {str(x).strip().lower() for x in (interests.get("countries") or []) if x}
+            # where the user is (asked once in the app): watched like an asset
+            here = interests.get("here") or {}
+            try:
+                c["assets"].append({"lat": float(here["lat"]), "lon": float(here["lon"]),
+                                    "radius": max(5.0, float(here.get("radius_km") or 30)),
+                                    "name": "where you are", "label": "", "me": True})
+            except (KeyError, TypeError, ValueError):
+                pass
             regions = regions_table()
             for r in interests.get("regions") or []:
                 c["countries"] |= {x.lower() for x in regions.get(r, [])}
@@ -143,6 +151,8 @@ def why(ev: dict, c: dict) -> tuple[str, str] | None:
         d, a = near[0]
         dist = "under 1 km" if d < 1 else f"{round(d)} km"
         if len(near) == 1:
+            if a.get("me"):
+                return f"{dist} from where you are", "asset"
             return f"{dist} from your {a['label']} {a['name']}", "asset"
         # several assets at one place: one card naming them all
         names = [x[1]["name"] for x in near]

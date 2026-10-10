@@ -14,6 +14,7 @@ import { getCurrentUser, logout } from "../../state/authStore.js"
 import IssueReader from "../../reports/IssueReader.jsx"
 import { usePoll, arr, getJSON } from "../useMine.js"
 import { Icon, Row, Sheet, SignalSheet, sevColor, when } from "./common.jsx"
+import LiveShareRow from "../../location/LiveShareRow.jsx"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
 
 const EXPOSURE = { high: ["High exposure", "#E5484D"], elevated: ["Elevated", "#F5A524"], low: ["Low", "#8FB4E8"], quiet: ["Quiet", "#4CAF7A"], unknown: ["No position", "#9AA9BC"] }
@@ -204,6 +205,7 @@ export function MProfile() {
             </div>
             <div className="m2-card" style={{ padding: "4px 14px", marginBottom: 14 }}>
                 <ClosedNotificationsRow Row={PhoneRow} Toggle={PhoneToggle} />
+                <LiveShareRow Row={PhoneRow} Toggle={PhoneToggle} />
             </div>
             <div className="m2-sub" style={{ marginBottom: 14, lineHeight: 1.5 }}>Your picture, header, theaters and interests are set on the desktop under Profile and Settings; the phone follows them.</div>
             <button className="m2-btn ghost" onClick={() => logout().then(() => window.location.reload())}>Sign out</button>

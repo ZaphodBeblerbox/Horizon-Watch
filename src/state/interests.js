@@ -84,6 +84,12 @@ export function watched(saved = {}, theaters = [], countries = [], assets = []) 
         return at && Number.isFinite(+at.lat) && Number.isFinite(+at.lon) && +a.radius_km > 0
             ? { name: a.name, kind: a.kind_label || "asset", key: a.kind || "", lat: +at.lat, lon: +at.lon, radius: +a.radius_km } : null
     }).filter(Boolean)
+    // WHERE YOU ARE (asked once, components/LocationPrompt.jsx): what happens
+    // around you is yours, like an asset's surroundings.
+    const here = saved?.here
+    if (here && Number.isFinite(+here.lat) && Number.isFinite(+here.lon)) {
+        placed.push({ name: "where you are", kind: "your location", key: "", lat: +here.lat, lon: +here.lon, radius: +here.radius_km || 30 })
+    }
     return { countries: why, topics: new Set(saved?.topics || []), assets: placed }
 }
 

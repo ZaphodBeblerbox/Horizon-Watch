@@ -15,9 +15,9 @@
          what the location is actually for rather than "this app would
          like to use your location". -->
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Parallax uses your location to set local time and to follow the real sunrise and sunset where you are, so the map and the interface match the light outside. It is never sent anywhere.</string>
+    <string>Parallax uses your location to put what happens near you first, to show times on your local clock and to follow the real sunrise and sunset where you are. It is kept with your account and used for nothing else.</string>
 
     <key>NSLocationUsageDescription</key>
-    <string>Parallax uses your location to set local time and to follow the real sunrise and sunset where you are. It is never sent anywhere.</string>
+    <string>Parallax uses your location to put what happens near you first and to show times on your local clock. It is kept with your account and used for nothing else.</string>
 </dict>
 </plist>

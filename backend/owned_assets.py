@@ -81,7 +81,9 @@ KINDS: dict[str, dict] = {
     "subsea_cable":      {"label": "Subsea cable / landing", "group": "Telecoms", "radius": 30, "moves": False, "ids": []},
     "port":              {"label": "Port terminal",       "group": "Transport", "radius": 30,  "moves": False, "ids": []},
     "airport":           {"label": "Airport",             "group": "Transport", "radius": 30,  "moves": False, "ids": []},
-    "person":            {"label": "Person",              "group": "People",    "radius": 15,  "moves": False, "ids": []},
+    # A person can be linked to a team member (identifiers.user_id): their
+    # phone, with their consent, moves the asset (live_position below).
+    "person":            {"label": "Person",              "group": "People",    "radius": 15,  "moves": True,  "ids": ["user_id"]},
     "team":              {"label": "Team",                "group": "People",    "radius": 20,  "moves": False, "ids": []},
 }
 IMPORTANCE = ("critical", "high", "normal")
@@ -105,6 +107,10 @@ CREATE TABLE IF NOT EXISTS owned_assets (
     created_at  TEXT, updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_owned_assets_owner ON owned_assets (owner_id);
+CREATE TABLE IF NOT EXISTS owned_asset_track (
+    asset_id TEXT NOT NULL, at TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, accuracy_m REAL
+);
+CREATE INDEX IF NOT EXISTS ix_owned_asset_track ON owned_asset_track (asset_id, at);
 CREATE TABLE IF NOT EXISTS owned_asset_briefs (
     asset_id    TEXT NOT NULL,
     signals_key TEXT NOT NULL,
@@ -177,7 +183,7 @@ def clean(body: dict, partial: bool = False) -> dict:
             out[f] = (str(body.get(f) or "").strip() or None) if body.get(f) is not None else None
     if "identifiers" in body:
         ids = body.get("identifiers") or {}
-        allowed = {"mmsi", "imo", "icao", "registration", "plate"}
+        allowed = {"mmsi", "imo", "icao", "registration", "plate", "user_id"}
         out["identifiers"] = {k: str(v).strip() for k, v in ids.items() if k in allowed and str(v or "").strip()}
         if "mmsi" in out["identifiers"] and not out["identifiers"]["mmsi"].isdigit():
             raise ValueError("an MMSI is nine digits")
@@ -255,6 +261,52 @@ def delete(asset_id: str, user_id: str) -> bool:
     return cur.rowcount > 0
 
 
+# ── people who share where they are ──────────────────────────────────────
+# A team member who turns on "Share my live location" on their phone sends
+# its position while the app is open (src/location/liveShare.js). Every
+# person asset linked to them (identifiers.user_id) moves there; each move
+# is kept for seven days as a trail; the assessment of what is near them is
+# redone at once (asset_watch.invalidate). Nothing is sent without that
+# switch, and turning it off stops it.
+TRACK_KEEP_DAYS = 7
+LIVE_FRESH_S = 15 * 60
+
+
+def linked_to(user_id: str) -> list[dict]:
+    con = _con()
+    rows = con.execute("SELECT * FROM owned_assets WHERE kind='person' AND json_extract(identifiers, '$.user_id') = ?",
+                       (str(user_id),)).fetchall()
+    con.close()
+    return [_row(r) for r in rows]
+
+
+def live_position(user_id: str, lat: float, lon: float, accuracy_m: float | None = None) -> list[dict]:
+    """Move every person asset linked to this user; returns them."""
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError("position out of range")
+    now = _now()
+    con = _con()
+    rows = con.execute("SELECT id, owner_id FROM owned_assets WHERE kind='person' AND json_extract(identifiers, '$.user_id') = ?",
+                       (str(user_id),)).fetchall()
+    for r in rows:
+        con.execute("UPDATE owned_assets SET lat=?, lon=?, updated_at=? WHERE id=?", (lat, lon, now, r["id"]))
+        con.execute("INSERT INTO owned_asset_track (asset_id, at, lat, lon, accuracy_m) VALUES (?,?,?,?,?)",
+                    (r["id"], now, lat, lon, accuracy_m))
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=TRACK_KEEP_DAYS)).isoformat()
+    con.execute("DELETE FROM owned_asset_track WHERE at < ?", (cutoff,))
+    con.commit(); con.close()
+    return [{"id": r["id"], "owner_id": r["owner_id"]} for r in rows]
+
+
+def track(asset_id: str, hours: int = 24) -> list[dict]:
+    since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
+    con = _con()
+    rows = con.execute("SELECT at, lat, lon, accuracy_m FROM owned_asset_track WHERE asset_id=? AND at >= ? ORDER BY at",
+                       (asset_id, since)).fetchall()
+    con.close()
+    return [dict(r) for r in rows]
+
+
 # ── where it is ──────────────────────────────────────────────────────────
 
 def _iso(t):
@@ -282,6 +334,13 @@ def position(asset: dict, live_vessel=None, live_aircraft=None) -> dict | None:
         if a and a.get("lat") is not None and a.get("lon") is not None:
             return {"lat": float(a["lat"]), "lon": float(a["lon"]), "as_of": _iso(a.get("last_seen")), "source": "ADS-B, live",
                     "altitude_ft": a.get("alt_baro") or a.get("altitude"), "heading": a.get("track")}
+    if ids.get("user_id") and asset.get("lat") is not None and asset.get("lon") is not None:
+        try:
+            age = (_dt.datetime.now(_dt.timezone.utc) - _dt.datetime.fromisoformat(str(asset.get("updated_at")))).total_seconds()
+        except (TypeError, ValueError):
+            age = 1e9
+        return {"lat": asset["lat"], "lon": asset["lon"], "as_of": asset.get("updated_at"),
+                "source": "their phone, live" if age <= LIVE_FRESH_S else "their phone, last shared"}
     if asset.get("lat") is not None and asset.get("lon") is not None:
         moves = KINDS.get(asset["kind"], {}).get("moves")
         return {"lat": asset["lat"], "lon": asset["lon"], "as_of": asset.get("updated_at"),

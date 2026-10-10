@@ -28,6 +28,7 @@ import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeTelegramLayer        from "../globe/GlobeTelegramLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
 import GlobeAssetsLayer          from "../globe/GlobeAssetsLayer.jsx"
+import GlobeMeLayer              from "../globe/GlobeMeLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
 import GlobeWarMapLayer          from "../globe/GlobeWarMapLayer.jsx"
@@ -1199,6 +1200,7 @@ export default function GlobeView({
                 <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={Math.max(48, signalWindowHours || 48)} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
                 <GlobeAssetsLayer enabled={assetsEnabled} />
+                <GlobeMeLayer />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
                 <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds}
                                       onStatus={onFacilityStatus} />

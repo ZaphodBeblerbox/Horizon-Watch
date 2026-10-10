@@ -17,6 +17,7 @@ import "leaflet/dist/leaflet.css"
 import { useMine, usePoll, arr } from "../useMine.js"
 import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
+import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
 
 // Esri's public base maps, credited as their terms ask (CARTO's now want a key).
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services"
@@ -113,6 +114,21 @@ export default function MMap({ active, focus }) {
         if (on.fusions) for (const f of arr(fusions)) if (ok(f)) out.push({ ...f, headline: f.title, _k: "fusion" })
         return out
     }, [surface, posts, fusions, on, hours, floor])
+
+    // THE BLUE DOT: where you are (location/liveShare.js), above everything
+    const [me, setMe] = useState(() => myPosition())
+    useEffect(() => subscribeMyPosition(setMe), [])
+    const meMarker = useRef(null)
+    useEffect(() => {
+        if (!map.current) return
+        meMarker.current?.remove()
+        meMarker.current = null
+        if (!me) return
+        meMarker.current = L.marker([me.lat, me.lon], {
+            icon: L.divIcon({ className: "", html: `<div class="m2-me${me.live ? " live" : ""}" title="You"></div>`, iconSize: [18, 18] }),
+            keyboard: false, zIndexOffset: 1000, interactive: false,
+        }).addTo(map.current)
+    }, [me])
 
     // draw
     useEffect(() => {

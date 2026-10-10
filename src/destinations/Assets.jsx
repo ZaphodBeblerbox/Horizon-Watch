@@ -135,7 +135,10 @@ function AssetForm({ kinds, initial, onSaved, onCancel }) {
                 </div>
                 {kind && kind.ids.length > 0 && (
                     <div style={{ display: "grid", gridTemplateColumns: `repeat(${kind.ids.length}, minmax(0,1fr))`, gap: 12 }}>
-                        {kind.ids.map((k) => (
+                        {kind.ids.map((k) => k === "user_id" ? (
+                            <label key={k}><span style={LABEL}>Team member — their phone can share its live location</span>
+                                <MemberSelect value={f.identifiers?.[k] || ""} onChange={(v) => setId(k, v)} /></label>
+                        ) : (
                             <label key={k}><span style={LABEL}>{{ mmsi: "MMSI — followed live on AIS", imo: "IMO number", icao: "ICAO hex — followed live on ADS-B", registration: "Registration", plate: "Plate" }[k]}</span>
                                 <input style={INPUT} value={f.identifiers?.[k] || ""} onChange={(e) => setId(k, e.target.value)} /></label>
                         ))}
@@ -461,5 +464,19 @@ export default function Assets() {
                 </div>
             </div>
         </section>
+    )
+}
+
+/** A person asset linked to a team member: picked by name, never typed. */
+function MemberSelect({ value, onChange }) {
+    const [users, setUsers] = useState([])
+    useEffect(() => {
+        fetch(`${API_BASE}/api/users`, { credentials: "include" }).then((r) => (r.ok ? r.json() : [])).then((d) => setUsers(Array.isArray(d) ? d : (d.users || []))).catch(() => {})
+    }, [])
+    return (
+        <select style={INPUT} value={value} onChange={(e) => onChange(e.target.value)}>
+            <option value="">Not linked</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+        </select>
     )
 }

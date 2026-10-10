@@ -119,6 +119,13 @@ def _rebuild(uid: str) -> None:
             _running.discard(uid)
 
 
+def invalidate(uid: str) -> None:
+    """Reassess this user's assets at the next read: one of them moved."""
+    with _lock:
+        if uid in _cache:
+            _cache[uid] = (0.0, _cache[uid][1])
+
+
 def notifications_for(uid: str | None) -> list[dict]:
     """The last cards for this user; schedules a rebuild when they are stale."""
     if not uid:

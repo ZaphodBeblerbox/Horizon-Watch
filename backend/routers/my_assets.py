@@ -256,6 +256,32 @@ def situation(asset: dict) -> dict:
     return {"asset": asset, "position": at, "signals": ranked, "exposure": oa.exposure(ranked), "analogues": elsewhere}
 
 
+@router.post("/live")
+async def live(request: Request):
+    """This user's phone, sharing where it is (with their consent): moves the
+    person assets linked to them and has what is near them reassessed."""
+    user = _me(request)
+    b = await request.json()
+    try:
+        lat, lon = float(b["lat"]), float(b["lon"])
+        acc = float(b["accuracy"]) if b.get("accuracy") is not None else None
+        moved = oa.live_position(_uid(user), lat, lon, acc)
+    except (KeyError, TypeError, ValueError) as e:
+        raise HTTPException(400, f"a position is lat and lon: {e}")
+    import asset_watch
+    for owner in {m["owner_id"] for m in moved} | {_uid(user)}:
+        asset_watch.invalidate(owner)
+    return {"linked": len(moved)}
+
+
+@router.get("/{asset_id}/track")
+def asset_track(asset_id: str, request: Request, hours: int = 24):
+    user = _me(request)
+    if not oa.get(asset_id, _uid(user)):
+        raise HTTPException(404, "no such asset")
+    return {"track": oa.track(asset_id, max(1, min(168, hours)))}
+
+
 @router.get("/reverse")
 async def reverse(lat: float, lon: float):
     """The address at a clicked point (placing an asset on the map)."""
