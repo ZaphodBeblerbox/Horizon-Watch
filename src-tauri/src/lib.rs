@@ -9,12 +9,19 @@ mod fnkey {
   extern "C" {
     fn CGEventSourceFlagsState(state_id: i32) -> u64;
   }
-  // kCGEventSourceStateCombinedSessionState, kCGEventFlagMaskSecondaryFn
+  // kCGEventSourceStateCombinedSessionState, kCGEventSourceStateHIDSystemState,
+  // kCGEventFlagMaskSecondaryFn
   const COMBINED_SESSION_STATE: i32 = 0;
+  const HID_SYSTEM_STATE: i32 = 1;
   const FLAG_SECONDARY_FN: u64 = 0x0080_0000;
 
+  // BOTH STATES (2026-10-10: the X did not light in 1.1.13). With fn set to
+  // start dictation, macOS takes the key before the session sees it, so
+  // the session's state never says fn is held; the hardware's state does.
   pub fn held() -> bool {
-    unsafe { CGEventSourceFlagsState(COMBINED_SESSION_STATE) & FLAG_SECONDARY_FN != 0 }
+    unsafe {
+      (CGEventSourceFlagsState(HID_SYSTEM_STATE) | CGEventSourceFlagsState(COMBINED_SESSION_STATE)) & FLAG_SECONDARY_FN != 0
+    }
   }
 }
 
