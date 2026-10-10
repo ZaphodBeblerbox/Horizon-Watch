@@ -103,3 +103,6 @@ backend/data/military_enrichment.json
 backend/data/shipping_routes.json
 backend/data/oim_tiles/
 backend/data/infra_detail/
+
+# conflict_context.py state: where each war stands now, rebuilt every six hours
+backend/data/conflict_context.json
