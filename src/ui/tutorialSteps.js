@@ -219,7 +219,7 @@ export const WHATS_NEW = [
     {
         where: "Home",
         title: "Footage with its headline",
-        body: "From the ground plays one video at a time, the most breaking first, with its headline large above it; the next slides in when it ends.",
+        body: "From the ground plays one video at a time, the most breaking first, with its headline large above it; the next slides in when it ends. When new footage or a new story reaches Home, a notification says so — as a card when you are elsewhere in the app, in the tray always.",
         target: '[data-testid="ground-reel"]',
         go: () => nav("home"),
     },

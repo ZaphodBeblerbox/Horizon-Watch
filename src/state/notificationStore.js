@@ -48,6 +48,9 @@ export const KIND = {
     // kinetic events with a precise place reach here, so each one is worth
     // a card while it is fresh.
     telegram: { icon: "i-feed", name: "Telegram · local report" },
+    // Something added to the home screen (home/homeNews.js): new footage,
+    // new items under what happened while you were away.
+    home:     { icon: "i-home",    name: "New on Home" },
 }
 
 /** Display severity vocabulary — the same four the diamond uses everywhere. */
@@ -121,6 +124,8 @@ export function interrupts(n, now = Date.now()) {
         // A live development near what you watch, and a reminder that an
         // announced gathering is about to start (both high or above).
         || n.kind === "live" || (n.kind === "announcement" && n.sev === "high")
+        // New on Home, unless Home is what you are looking at already.
+        || (n.kind === "home" && !n.onHome)
 }
 
 export function setMuted(v) {
@@ -210,6 +215,7 @@ export function pushNotification(n) {
         actions: Array.isArray(n.actions) ? n.actions : null,
         alertId: n.alertId || null,
         assetId: n.assetId || null,
+        onHome: !!n.onHome,
         read: !fresh,
     }
     if (state.items.some((x) => x.id === item.id)) return false   // never double-raise

@@ -39,6 +39,7 @@ import { whenLabel } from "../utils/formatTime.js"
 
 import { slotOf, useFrozen } from "../home/dayPart.js"
 import GroundReel from "../home/GroundReel.jsx"
+import { announceNew } from "../home/homeNews.js"
 export { slotOf }
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -338,6 +339,19 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
             .slice(0, 4)
     }, [surface, split, slot])
     const overnight = useFrozen(`happened:${slot.key}`, overnightNow, (a) => knowsYou && a.length > 0 && a.length >= Math.min(4, overnightNow.length))
+
+    /* NEW ON HOME (owner, 2026-10-10): footage or an item added here is
+       announced once — in the tray always, as a card only when Home is not
+       on screen (home/homeNews.js). Only once the sections are settled
+       (knowsYou), or the first fill would read as news. */
+    useEffect(() => {
+        if (!knowsYou) return
+        announceNew("ground", groundVideos, { titleOf: (v) => v.headline || v.summary_en, placeOf: (v) => v.place })
+    }, [groundVideos, knowsYou])
+    useEffect(() => {
+        if (!knowsYou) return
+        announceNew("happened", overnight, { idOf: (s) => s.id ?? s.headline, titleOf: (s) => s.title || s.headline, placeOf: (s) => placeOf(s) })
+    }, [overnight, knowsYou])
 
     /* Top scenario per board, with its own base rate kept alongside.
        A FORECAST WITHOUT ITS BASE RATE IS NOT A FORECAST. The model's

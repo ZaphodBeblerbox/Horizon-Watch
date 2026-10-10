@@ -86,6 +86,9 @@ function Card({ n, onOpen, onAcknowledge, onBasket }) {
                     {n.actions?.includes("scan") && n.ref && (
                         <button className="btn sm" onClick={() => { scanHere(n); dismissCard(n.id) }}>Scan</button>
                     )}
+                    {n.actions?.includes("home") && (
+                        <button className="btn sm primary" onClick={() => { window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "home" } })); dismissCard(n.id) }}>See it on Home</button>
+                    )}
                     {n.actions?.includes("image") && (
                         <button className="btn sm primary" onClick={() => { investigate(n); dismissCard(n.id) }}>Show the image</button>
                     )}
