@@ -1063,6 +1063,8 @@ export default function App() {
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
                 actions: i.actions || (i.livestream_id ? ["watch"] : null), alertId: i.id, assetId: i.asset_id || null,
                 livestreamId: i.livestream_id || null,
+                // reaches a closed app only when the server says so (event_watch.notifies)
+                push: i.push === true,
                 // WHEN IT HAPPENED, in the order the fields mean it.
                 // created_at is when the ROW was written, which for a
                 // backfilled or late-ingested event is now — and an event

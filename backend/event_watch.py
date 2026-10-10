@@ -378,6 +378,15 @@ def worth_pushing(card: dict, c: dict) -> bool:
     return why(card, c) is not None
 
 
+def notifies(card: dict, c: dict) -> bool:
+    """WHAT A NOTIFICATION IS — the one rule for every device with the app
+    closed (phone push, the desktop app's macOS notification): something
+    that would take the screen (interrupts) AND concerns this user — their
+    assets, where they are, their theaters, their countries — or is
+    critical, or a channel we read going live (worth_pushing)."""
+    return interrupts(card) and worth_pushing(card, c)
+
+
 def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
     """(title, body, data) to send: the first PUSH_SINGLES as themselves,
     the rest as one summary, so a burst is one buzz, not twelve."""
@@ -416,7 +425,7 @@ def sweep(send, feed=None) -> int:
             due = []
             for card in (feed(str(uid)) if feed else cards_for(str(uid), now)):
                 created = _utc(card.get("created_at"))
-                if not created or created < fresh_after or not interrupts(card) or not worth_pushing(card, c):
+                if not created or created < fresh_after or not notifies(card, c):
                     continue
                 cur = con.execute("INSERT OR IGNORE INTO event_pushes (user_id, item_id, sent_at) VALUES (?,?,?)",
                                   (str(uid), card["id"], _iso(now)))

@@ -28334,7 +28334,44 @@ def api_get_notifications(
     """The notification feed for whoever is asking — see _notification_feed."""
     _u = _get_current_user(request)
     _uid = str(_u.get("id")) if _u and _u.get("id") else None
-    return _notification_feed(_uid, limit=limit, hours=hours, include_silent=include_silent)
+    items = _notification_feed(_uid, limit=limit, hours=hours, include_silent=include_silent)
+    # WHAT A NOTIFICATION IS, decided once (event_watch.notifies): `push`
+    # marks what reaches a closed app — the phone's push and the desktop
+    # app's macOS notification alike — so the two devices cannot disagree.
+    try:
+        import event_watch as _ew
+        _c = _ew.concern_of(_uid) if _uid else None
+        for it in items:
+            it["push"] = bool(_c is not None and _ew.notifies(it, _c))
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] push flag: {type(ex).__name__}: {ex}", flush=True)
+    return items
+
+
+_TG_CARDS_CACHE: dict = {}
+
+
+def _telegram_report_cards(hours: int, cap: int = 25) -> list:
+    """Fresh located Telegram reports as notification cards, the same for
+    everyone, so cached for a minute (the push sweep asks per user)."""
+    hit = _TG_CARDS_CACHE.get(hours)
+    if hit and time.monotonic() - hit[0] < 60:
+        return [dict(c) for c in hit[1]]
+    import telegram_ingest as _tg
+    import notification_context as _nc
+    cards = []
+    for p in _tg.published(hours)[:cap]:
+        official = p.get("role") == "official"
+        cards.append({
+            "id": p["id"], "kind": "telegram",
+            "sev": "critical" if p.get("severity_tier") == "critical" else "high" if official else "moderate",
+            "title": _nc.plain(p.get("headline") or "Telegram report"),
+            "reason": " · ".join(x for x in (p.get("channel_title") or p.get("channel"), p.get("place")) if x),
+            "lat": p.get("lat"), "lon": p.get("lon"), "country_code": p.get("country_code"),
+            "region": p.get("place"), "created_at": p.get("posted_at"), "source": "telegram",
+        })
+    _TG_CARDS_CACHE[hours] = (time.monotonic(), cards)
+    return [dict(c) for c in cards]
 
 
 def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, include_silent: bool = False) -> list:
@@ -28518,6 +28555,16 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
         out = mine + out
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] asset watch: {type(ex).__name__}: {ex}", flush=True)
+
+    # ── Telegram local reports (telegram_ingest.published) ─────────────
+    # They took the screen on the desktop from a poll of their own and so
+    # never reached a phone (owner, 2026-10-10). In the feed, they are
+    # judged by the one rule (event_watch.notifies) like everything else.
+    try:
+        _have = {o.get("id") for o in out}
+        out = [c for c in _telegram_report_cards(min(hours, 24)) if c["id"] not in _have] + out
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] telegram: {type(ex).__name__}: {ex}", flush=True)
 
     # ── announced events and live developments that concern YOU ─────────
     # (event_watch.py): when announced, shortly before they start, and

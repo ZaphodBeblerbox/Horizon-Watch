@@ -242,15 +242,31 @@ export function pushNotification(n) {
         assetId: n.assetId || null,
         onHome: !!n.onHome,
         livestreamId: n.livestreamId || null,
+        // WHAT A NOTIFICATION IS (owner, 2026-10-10): with the app closed,
+        // only what the server marks `push` (event_watch.notifies) — the
+        // same rule as the phone's push, so the desktop and the phone get
+        // the same notifications. Cards on screen are unchanged.
+        push: n.push === true,
         read: !fresh,
     }
-    if (state.items.some((x) => x.id === item.id)) return false   // never double-raise
+    const had = state.items.find((x) => x.id === item.id)
+    if (had) {
+        // the feed's copy of something a local poll raised first: it may
+        // carry the push mark the first copy did not
+        if (item.push && !had.push) {
+            had.push = true
+            if (!n.silent && fresh && !onScreen() && offScreenHandler && interrupts(had)) {
+                try { offScreenHandler(had) } catch { /* never break the tray */ }
+            }
+        }
+        return false                                               // never double-raise
+    }
     state.items = [item, ...state.items].slice(0, 500)
 
     const raised = !n.silent && fresh && onScreen() && interrupts(item)
     if (raised) state.cards = [...state.cards, item]
     if (raised) soundFor(item)
-    if (!n.silent && fresh && !onScreen() && offScreenHandler && interrupts(item)) {
+    if (!n.silent && fresh && !onScreen() && offScreenHandler && item.push && interrupts(item)) {
         try { offScreenHandler(item) } catch { /* a notification that fails must not break the tray */ }
     }
     notify()

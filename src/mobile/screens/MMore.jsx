@@ -268,6 +268,14 @@ export function MSettings() {
                     <PhoneRow label="Moderate"><PhoneToggle value={!!st.soundElevated} onChange={(v) => set("soundElevated", v)} /></PhoneRow>
                 </>}
             </Group>
+            {/* WHAT A NOTIFICATION IS — the server's one rule (event_watch.notifies),
+                the same on this phone and the desktop app */}
+            <div className="m2-sub" data-testid="notify-rule" style={{ margin: "4px 4px 14px", lineHeight: 1.5 }}>
+                With Parallax closed, this phone and the desktop app notify you of the same things: anything critical, and
+                escalations, surges, fusions, Telegram reports, live developments and high-severity signals that touch your
+                assets, where you are, your theaters or your countries. A channel going live always notifies. Everything else
+                waits in Alerts.
+            </div>
             <Group title="Location">
                 <HereRowPhone />
                 <LiveShareRow Row={PhoneRow} Toggle={PhoneToggle} />

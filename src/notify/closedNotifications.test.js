@@ -30,13 +30,32 @@ describe("notifications with Parallax closed", () => {
         const had = globalThis.document
         globalThis.document = { visibilityState: "hidden" }
         try {
-            pushNotification({ id: "now:x", kind: "live", sev: "high", title: "Police are kettling protesters", ts: Date.now() })
-            pushNotification({ id: "sig:y", kind: "signal", sev: "moderate", title: "Routine", ts: Date.now() })
+            pushNotification({ id: "now:x", kind: "live", sev: "high", title: "Police are kettling protesters", ts: Date.now(), push: true })
+            pushNotification({ id: "sig:y", kind: "signal", sev: "moderate", title: "Routine", ts: Date.now(), push: true })
         } finally {
             if (had === undefined) delete globalThis.document; else globalThis.document = had
             setOffScreenHandler(null)
         }
         expect(seen).toHaveBeenCalledTimes(1)
         expect(seen.mock.calls[0][0].title).toBe("Police are kettling protesters")
+    })
+
+    it("notifies a closed app only of what the server marks push — the phone's rule", () => {
+        const seen = vi.fn()
+        setOffScreenHandler(seen)
+        const had = globalThis.document
+        globalThis.document = { visibilityState: "hidden" }
+        try {
+            // a local poll's copy, unmarked: no notification
+            pushNotification({ id: "tg-a-1", kind: "telegram", sev: "moderate", title: "Strike far away", ts: Date.now() })
+            expect(seen).toHaveBeenCalledTimes(0)
+            // the feed's copy of the same report, marked: it notifies, once
+            pushNotification({ id: "tg-a-1", kind: "telegram", sev: "moderate", title: "Strike far away", ts: Date.now(), push: true })
+            pushNotification({ id: "tg-a-1", kind: "telegram", sev: "moderate", title: "Strike far away", ts: Date.now(), push: true })
+        } finally {
+            if (had === undefined) delete globalThis.document; else globalThis.document = had
+            setOffScreenHandler(null)
+        }
+        expect(seen).toHaveBeenCalledTimes(1)
     })
 })
