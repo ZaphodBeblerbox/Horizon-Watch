@@ -19,13 +19,17 @@ import MDesk from "./screens/MDesk.jsx"
 import MMessages from "./screens/MMessages.jsx"
 import { MAssets, MAlerts, MReports, MProfile } from "./screens/MMore.jsx"
 import FootageTab from "./tabs/FootageTab.jsx"
+import ConflictContext from "../conflicts/ConflictContext.jsx"
+import TelegramMood from "../insight/TelegramMood.jsx"
 import { Icon, Sheet } from "./screens/common.jsx"
 import { usePoll, arr } from "./useMine.js"
 import useOnlineUsers from "../state/useOnlineUsers.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
-const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["reports", "Reports", "g-report"], ["footage", "Footage", "g-play"], ["profile", "Profile", "g-user"]]
-const TITLES = { home: null, map: "Map", desk: "Desk", messages: "Messages", assets: "Assets", alerts: "Alerts", reports: "Situation reports", footage: "Footage", profile: "Profile" }
+const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
+              ["reports", "Reports", "g-report"], ["footage", "Footage", "g-play"], ["profile", "Profile", "g-user"]]
+const TITLES = { home: null, map: "Map", desk: "Desk", messages: "Messages", assets: "Assets", alerts: "Alerts", conflicts: "Conflicts", mood: "Mood on Telegram",
+                 reports: "Situation reports", footage: "Footage", profile: "Profile" }
 
 export default function MobileApp() {
     const [tab, setTab] = useState("home")
@@ -53,10 +57,13 @@ export default function MobileApp() {
                 {/* Every screen stays mounted (the map keeps its place; a thread keeps its scroll); only one shows. */}
                 <Pane on={tab === "home"}><MHome onShowOnMap={showOnMap} onOpen={go} /></Pane>
                 <Pane on={tab === "map"}><MMap active={tab === "map"} focus={focus} /></Pane>
-                <Pane on={tab === "desk"}><MDesk active={tab === "desk"} /></Pane>
+                <Pane on={tab === "desk"}><MDesk active={tab === "desk"} onShowOnMap={showOnMap} /></Pane>
                 <Pane on={tab === "messages"}><MMessages active={tab === "messages"} /></Pane>
                 {tab === "assets" && <Pane on><MAssets onShowOnMap={showOnMap} initial={assetOpen} /></Pane>}
                 {tab === "alerts" && <Pane on><MAlerts onShowOnMap={showOnMap} onOpen={go} /></Pane>}
+                {/* The wars and the mood, as on the desktop (conflicts/, insight/). */}
+                {tab === "conflicts" && <Pane on><div className="m2-scroll"><ConflictContext all label="Current wars" max={30} /></div></Pane>}
+                {tab === "mood" && <Pane on><div className="m2-scroll"><TelegramMood /></div></Pane>}
                 {tab === "reports" && <Pane on><MReports /></Pane>}
                 {tab === "footage" && <Pane on><div className="m2-scroll" style={{ padding: 0 }}><FootageTab onShowOnMap={(lat, lon) => showOnMap({ lat, lon })} /></div></Pane>}
                 {tab === "profile" && <Pane on><MProfile /></Pane>}

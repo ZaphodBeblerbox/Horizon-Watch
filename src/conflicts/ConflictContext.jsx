@@ -190,14 +190,21 @@ function Conflict({ c, open, onToggle }) {
     )
 }
 
-export default function ConflictContext({ near = null, countries = [], names = [], label = "Conflicts here", max = 5 }) {
-    const [all, setAll] = useState(cache)
+export default function ConflictContext({ near = null, countries = [], names = [], label = "Conflicts here", max = 5, all = false }) {
+    const [allList, setAll] = useState(cache)
     const [open, setOpen] = useState(readOpen)
     const [more, setMore] = useState(false)
     const cam = useCamera(near === "camera")
     useEffect(() => { let live = true; loadConflicts().then((d) => { if (live) setAll(d) }); return () => { live = false } }, [])
-    const list = useMemo(() => (near === "camera" ? conflictsNear(all, cam) : conflictsIn(all, countries, names)),
-        [all, cam, near, countries.join(","), names.join(",")]) // eslint-disable-line react-hooks/exhaustive-deps
+    // every war (the phone's Conflicts screen), the reader's countries first
+    const everything = all
+    const list = useMemo(() => {
+        if (everything) {
+            const mine = new Set(conflictsIn(allList, countries, names).map((c) => c.id))
+            return [...(allList || [])].sort((a, b) => mine.has(b.id) - mine.has(a.id))
+        }
+        return near === "camera" ? conflictsNear(allList, cam) : conflictsIn(allList, countries, names)
+    }, [allList, cam, near, everything, countries.join(","), names.join(",")]) // eslint-disable-line react-hooks/exhaustive-deps
     if (!list.length) return null
     const shown = more ? list : list.slice(0, max)
     const toggle = (id) => setOpen((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); writeOpen(n); return n })

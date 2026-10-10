@@ -68,3 +68,28 @@
 .m2-bubble > div { max-width: 78%; padding: 8px 11px; font-size: 14px; line-height: 1.4; background: rgba(255,255,255,.06); overflow-wrap: anywhere; }
 .m2-bubble.me { justify-content: flex-end; }
 .m2-bubble.me > div { background: var(--accdim, rgba(122,167,255,.2)); }
+
+/* Desk as a feed (screens/MDesk.jsx): face column, one-line head, actions row. */
+.m2-seg { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: 1fr 1fr; margin: 0 -14px 12px;
+          background: var(--bar, rgba(20,23,29,.92)); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+          border-bottom: 1px solid var(--gline, rgba(255,255,255,.08)); }
+.m2-seg button { height: 46px; border: 0; background: transparent; font-size: 14px; font-weight: 600; color: var(--txt3, #8a909b); cursor: pointer; position: relative; }
+.m2-seg button[aria-selected="true"] { color: var(--txt, #fff); }
+.m2-seg button[aria-selected="true"]::after { content: ""; position: absolute; left: 30%; right: 30%; bottom: 0; height: 3px; border-radius: 2px; background: var(--acchi, #7aa7ff); }
+.m2-post { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--gline, rgba(255,255,255,.08)); }
+.m2-post-head { display: flex; align-items: baseline; gap: 5px; min-width: 0; font-size: 14px; }
+.m2-post-head b { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.m2-post-head span { color: var(--txt4, #6b7280); font-size: 13px; white-space: nowrap; }
+.m2-post-body { font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3px; }
+.m2-post-acts { display: flex; gap: 22px; margin-top: 8px; align-items: center; }
+.m2-post-acts button, .m2-post-acts a { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; border: 0; background: none; padding: 0;
+                                        color: var(--txt3, #8a909b); font-size: 13px; cursor: pointer; text-decoration: none; }
+.m2-post-acts button[aria-pressed="true"] { color: var(--green, #4b8b5a); }
+
+/* Home's lead story (screens/MHome.jsx): the front page's one big headline. */
+.m2-lead { display: flex; flex-direction: column; gap: 6px; width: 100%; text-align: left; border: 0; background: transparent; padding: 0 0 16px;
+           margin-bottom: 16px; border-bottom: 1px solid var(--gline, rgba(255,255,255,.08)); cursor: pointer; }
+.m2-lead img { width: calc(100% + 28px); margin: -14px -14px 6px; height: 200px; object-fit: cover; display: block; }
+.m2-lead-h { font-size: 25px; font-weight: 700; line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.m2-hscroll.m2-live { align-items: flex-start; }
+.m2-clamp4 { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }

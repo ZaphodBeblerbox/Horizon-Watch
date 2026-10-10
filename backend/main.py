@@ -12024,6 +12024,15 @@ async def api_telegram_posts(hours: int = Query(72, ge=1, le=720), statements: b
     return out
 
 
+@app.get("/api/telegram/feed")
+async def api_telegram_feed(before: str = "", limit: int = Query(40, ge=5, le=100)):
+    """Every relevant Telegram post, newest first, paged by `before`
+    (telegram_ingest.feed) — the phone's chronological feed."""
+    import telegram_ingest as _tg
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _tg.feed, before or None, limit)
+
+
 @app.get("/api/infra/features")
 async def api_infra_features(west: float, south: float, east: float, north: float, zoom: int = Query(8, ge=1, le=20)):
     """Infrastructure in view, from OpenInfraMap's vector tiles, at the

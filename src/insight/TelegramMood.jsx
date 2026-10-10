@@ -43,7 +43,7 @@ export default function TelegramMood() {
     const calls = s ? (day ? s.calls.filter((c) => String(c.posted_at).slice(0, 10) === day) : s.calls) : []
     const sources = s ? Object.entries(s.sources).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} from ${ROLE[k] || k}`).join(", ") : ""
     return (
-        <div data-testid="telegram-mood" style={{ display: "grid", gridTemplateColumns: "minmax(220px, 300px) minmax(0, 1fr)", gap: 24, alignItems: "start" }}>
+        <div data-testid="telegram-mood" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))", gap: 24, alignItems: "start" }}>
             <div>
                 <div style={{ ...EYEBROW, marginBottom: 8 }}>Countries · two-week index</div>
                 <BarList rows={list.map((c) => ({ key: c.country, label: `${c.name}${c.change != null ? `  ${signed(c.change)}` : ""}`, value: c.index_window ?? 0,

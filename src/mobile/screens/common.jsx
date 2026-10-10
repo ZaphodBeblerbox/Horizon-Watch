@@ -13,6 +13,12 @@ export const SEV = { critical: "var(--red, #e5484d)", significant: "var(--amber,
     elevated: "var(--amber, #f5a623)", moderate: "#7aa7ff", medium: "#7aa7ff", low: "var(--txt4, #6b7280)" }
 export const sevColor = (s) => SEV[String(s || "").toLowerCase()] || "var(--txt4, #6b7280)"
 export const when = (ts) => (ts ? whenLabel(ts) : "")
+/** A feed's time: "2 d", "14 min" — the relative part only. */
+export const ago = (ts) => {
+    const full = when(ts)
+    const rel = full.split(" · ").pop() || full
+    return rel.replace(/ ago$/, "")
+}
 
 export function Icon({ id, size = 20 }) {
     return <svg width={size} height={size} aria-hidden focusable="false"><use href={`#${id}`} /></svg>

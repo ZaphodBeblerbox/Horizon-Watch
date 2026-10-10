@@ -877,6 +877,39 @@ def published(hours: int = 72) -> list[dict]:
     return out
 
 
+def feed(before: str | None = None, limit: int = 40) -> dict:
+    """Every relevant post, newest first, for reading in order (the phone's
+    Desk › Telegram): not only those with a precise place, which is the
+    map's rule. Paged by `before` (an ISO time). A post judged irrelevant,
+    and channels marked ignore, are left out; a graphic one says so."""
+    limit = max(5, min(100, limit))
+    con = _con()
+    con.row_factory = sqlite3.Row
+    q = ("SELECT * FROM telegram_posts WHERE classified=1 AND (relevant=1 OR role='official')"
+         " AND COALESCE(role,'') != 'ignore'")
+    args: list = []
+    if before:
+        q += " AND posted_at < ?"
+        args.append(before)
+    rows = con.execute(q + " ORDER BY posted_at DESC LIMIT ?", args + [limit]).fetchall()
+    con.close()
+    out = [{
+        "id": f"tg-{r['channel']}-{r['msg_id']}", "headline": r["headline"], "text": r["text"],
+        "summary_en": r["summary_en"], "lang": r["lang"],
+        "channel": r["channel"], "channel_title": r["channel_title"], "posted_at": r["posted_at"],
+        "event_type": r["event_type"], "place": r["place"], "lat": r["lat"], "lon": r["lon"],
+        "country_code": r["country_code"], "media": r["media"],
+        "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
+        "url": None if r["channel"].startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}",
+        "views": r["views"], "role": r["role"], "party": r["party"], "claim": bool(r["claim"]),
+        "msg_id": r["msg_id"], "severity_tier": severity_of(r), "graphic": _is_graphic(r),
+        "on_map": r["lat"] is not None,
+        "verification": (f"{r['party']} — " if r["party"] and r["role"] == "official" else "")
+                        + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
+    } for r in rows]
+    return {"posts": out, "next": out[-1]["posted_at"] if len(out) == limit else None}
+
+
 # Worth interrupting for: a party claiming it struck, attacked, intercepted
 # or seized something — "IDF announces strikes on Gaza". Repelled advances,
 # movements and condemnations go to the Inbox only.

@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { useMine, usePoll, arr } from "../useMine.js"
+import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
 
 // Esri's public base maps, credited as their terms ask (CARTO's now want a key).
@@ -30,7 +31,19 @@ const FLOORS = [["all", "All"], ["high", "High +"], ["critical", "Critical"]]
 const RANK = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
 export const LAYERS = [
     ["signals", "News & verified"], ["telegram", "Telegram footage"], ["unrest", "Unrest & protests"], ["fusions", "Fusions"], ["assets", "My assets"],
+    ["ships", "Ships (AIS, live)"], ["aircraft", "Aircraft (ADS-B, live)"],
 ]
+// LIVE TRACKS, the way MarineTraffic and Flightradar show them: what is in
+// view, from zoom 5 in, an icon turned to its heading, a sheet on tap.
+// Ships teal, aircraft pale; amber marks a military aircraft or a
+// sanctioned ship — red is kept for severity, as on the desktop.
+const TRACK_ZOOM = 5
+const TRACK_CAP = 400
+const shipIcon = (deg, warn) => L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [8, 8],
+    html: `<svg width="16" height="16" viewBox="0 0 16 16" style="transform:rotate(${deg}deg)"><path d="M8 1 L12.5 14 L8 11.5 L3.5 14 Z" fill="${warn ? "#f5a524" : "#3fb6c6"}" stroke="rgba(0,0,0,.6)" stroke-width="1"/></svg>` })
+const planeIcon = (deg, mil) => L.divIcon({ className: "", iconSize: [18, 18], iconAnchor: [9, 9],
+    html: `<svg width="18" height="18" viewBox="0 0 24 24" style="transform:rotate(${deg}deg)"><path d="M12 2c.8 0 1.3.7 1.3 1.6v5.6l7.7 4.5v2l-7.7-2.3v4.9l2.2 1.6V21L12 20.1 8.5 21v-1.1l2.2-1.6v-4.9L3 15.7v-2l7.7-4.5V3.6C10.7 2.7 11.2 2 12 2z" fill="${mil ? "#f5a524" : "#dfe3ea"}" stroke="rgba(0,0,0,.6)" stroke-width=".8"/></svg>` })
+const headingOf = (v) => (Number.isFinite(+v.heading) && +v.heading !== 511 ? +v.heading : Number.isFinite(+v.cog) ? +v.cog : Number.isFinite(+v.track) ? +v.track : 0)
 const zoomFor = (height) => Math.max(2, Math.min(12, Math.round(Math.log2(40_000_000 / Math.max(50_000, height || 2_000_000)) + 1)))
 const tsOf = (x) => Date.parse(x.published_at || x.posted_at || x.created_at || x.updated_at || "") || null
 
@@ -42,7 +55,12 @@ export default function MMap({ active, focus }) {
     const [baseKey, setBaseKey] = useState("dark")
     const [hours, setHours] = useState(48)
     const [floor, setFloor] = useState("all")
-    const [on, setOn] = useState({ signals: true, telegram: true, unrest: true, fusions: true, assets: true })
+    const [on, setOn] = useState({ signals: true, telegram: true, unrest: true, fusions: true, assets: true, ships: true, aircraft: true })
+    const [bounds, setBounds] = useState(null)
+    const [ships, setShips] = useState([])
+    const [planes, setPlanes] = useState([])
+    const [track, setTrack] = useState(null)       // the tapped ship or aircraft
+    const tracks = useRef(null)
     const [layersOpen, setLayersOpen] = useState(false)
     const [open, setOpen] = useState(null)
     const [theater, setTheater] = useState("global")
@@ -62,7 +80,10 @@ export default function MMap({ active, focus }) {
         labels.style.zIndex = 350
         labels.style.pointerEvents = "none"
         map.current.on("zoomend", () => setZoom(map.current.getZoom()))
+        map.current.on("moveend", () => setBounds(map.current.getBounds()))
+        el.current._m2map = map.current            // reachable for browser checks
         group.current = L.layerGroup().addTo(map.current)
+        tracks.current = L.layerGroup().addTo(map.current)
     }, [])
     // visible again after another tab: Leaflet must re-measure
     useEffect(() => { if (active && map.current) setTimeout(() => map.current.invalidateSize(), 60) }, [active])
@@ -118,6 +139,40 @@ export default function MMap({ active, focus }) {
         }
     }, [points, on.assets, mine.assets, zoom >= 6])
 
+    // live tracks in view: after a pan (debounced) and every 15 s
+    useEffect(() => {
+        const want = active && bounds && zoom >= TRACK_ZOOM && (on.ships || on.aircraft)
+        if (!want) { setShips([]); setPlanes([]); return undefined }
+        let live = true
+        const s = bounds.getSouth(), w = bounds.getWest(), n = bounds.getNorth(), e = bounds.getEast()
+        const load = () => {
+            if (on.ships) fetch(`${API_BASE}/api/ais/vessels?bbox=${s.toFixed(3)},${w.toFixed(3)},${n.toFixed(3)},${e.toFixed(3)}`, { credentials: "include" })
+                .then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d) setShips(arr(d.vessels).slice(0, TRACK_CAP)) }).catch(() => {})
+            else setShips([])
+            if (on.aircraft) fetch(`${API_BASE}/adsb?limit=${TRACK_CAP}&west=${w.toFixed(3)}&south=${s.toFixed(3)}&east=${e.toFixed(3)}&north=${n.toFixed(3)}`, { credentials: "include" })
+                .then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d) setPlanes(arr(d.aircraft || d.states)) }).catch(() => {})
+            else setPlanes([])
+        }
+        const first = setTimeout(load, 400)
+        const t = setInterval(load, 15_000)
+        return () => { live = false; clearTimeout(first); clearInterval(t) }
+    }, [active, bounds, zoom >= TRACK_ZOOM, on.ships, on.aircraft]) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        const g = tracks.current
+        if (!g) return
+        g.clearLayers()
+        for (const v of ships) {
+            if (!Number.isFinite(+v.lat) || !Number.isFinite(+v.lon)) continue
+            L.marker([+v.lat, +v.lon], { icon: shipIcon(headingOf(v), v.sanctioned || v.watchlisted), keyboard: false })
+                .on("click", () => setTrack({ kind: "ship", ...v })).addTo(g)
+        }
+        for (const a of planes) {
+            if (!Number.isFinite(+a.lat) || !Number.isFinite(+a.lon)) continue
+            L.marker([+a.lat, +a.lon], { icon: planeIcon(headingOf(a), a.military), keyboard: false })
+                .on("click", () => setTrack({ kind: "aircraft", ...a })).addTo(g)
+        }
+    }, [ships, planes])
+
     // something elsewhere asked to be shown here
     useEffect(() => {
         if (!focus || !map.current || !Number.isFinite(+focus.lat)) return
@@ -150,6 +205,14 @@ export default function MMap({ active, focus }) {
                     {FLOORS.map(([k, l]) => <button key={k} className="m2-chip" aria-pressed={floor === k} onClick={() => setFloor(k)}>{l}</button>)}
                 </div>
             </div>
+            {(on.ships || on.aircraft) && zoom < TRACK_ZOOM && (
+                <div className="m2-chip" style={{ position: "absolute", left: 12, bottom: 16, zIndex: 500 }}>Zoom in for ships and aircraft</div>
+            )}
+            {(on.ships || on.aircraft) && zoom >= TRACK_ZOOM && (
+                <div className="m2-chip" style={{ position: "absolute", left: 12, bottom: 16, zIndex: 500 }} data-testid="track-count">
+                    {on.ships ? `${ships.length} ships` : ""}{on.ships && on.aircraft ? " · " : ""}{on.aircraft ? `${planes.length} aircraft` : ""}
+                </div>
+            )}
             <button className="m2-fab" style={{ bottom: 120 }} onClick={() => setLayersOpen(true)} aria-label="Layers"><Icon id="g-layers" /></button>
             <button className="m2-fab" style={{ bottom: 68 }} onClick={() => setBaseKey(baseKey === "dark" ? "satellite" : "dark")} aria-label="Base map"><Icon id={baseKey === "dark" ? "g-sat" : "g-map"} /></button>
             <button className="m2-fab" style={{ bottom: 16 }} onClick={locate} aria-label="Where I am"><Icon id="g-pin" /></button>
@@ -161,7 +224,7 @@ export default function MMap({ active, focus }) {
                             <button key={k} className="m2-row" onClick={() => setOn({ ...on, [k]: !on[k] })} aria-pressed={!!on[k]}>
                                 <span className="m2-dot" style={{ background: on[k] ? "var(--acchi, #7aa7ff)" : "transparent", border: "1px solid var(--gline2, #555)" }} />
                                 <span className="m2-t">{l}</span>
-                                <span className="m2-when">{k === "assets" ? mine.assets.length : k === "unrest" ? (counts.unrest || 0) + (counts.announced || 0) : counts[k === "signals" ? "signal" : k === "fusions" ? "fusion" : k] || 0}</span>
+                                <span className="m2-when">{k === "ships" ? ships.length : k === "aircraft" ? planes.length : k === "assets" ? mine.assets.length : k === "unrest" ? (counts.unrest || 0) + (counts.announced || 0) : counts[k === "signals" ? "signal" : k === "fusions" ? "fusion" : k] || 0}</span>
                             </button>
                         ))}
                     </div>
@@ -169,6 +232,45 @@ export default function MMap({ active, focus }) {
                 </Sheet>
             )}
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={(s) => map.current?.setView([+s.lat, +s.lon], 11, { animate: true })} />}
+            {track && <TrackSheet t={track} onClose={() => setTrack(null)} />}
         </div>
+    )
+}
+
+
+/** A ship or an aircraft, in the words a tracker app uses. */
+export function TrackSheet({ t, onClose }) {
+    const rows = t.kind === "ship" ? [
+        ["Flag", [t.flag_emoji, t.flag].filter(Boolean).join(" ")],
+        ["Type", t.ship_type || t.ship_type_text],
+        ["Speed", Number.isFinite(+t.speed) ? `${(+t.speed).toFixed(1)} kn` : null],
+        ["Course", Number.isFinite(+t.cog) ? `${Math.round(+t.cog)}°` : null],
+        ["Status", t.nav_status],
+        ["Destination", t.destination],
+        ["MMSI", t.mmsi], ["IMO", t.imo],
+        ["Sanctions", t.sanctioned ? "listed" : null],
+    ] : [
+        ["Type", t.type], ["Operator", t.airline || (t.military ? "military" : null)],
+        ["Altitude", Number.isFinite(+t.alt_baro) ? `${Math.round(+t.alt_baro).toLocaleString()} ft` : t.alt_baro],
+        ["Ground speed", Number.isFinite(+t.gs) ? `${Math.round(+t.gs)} kn` : null],
+        ["Track", Number.isFinite(+t.track) ? `${Math.round(+t.track)}°` : null],
+        ["Squawk", t.squawk], ["ICAO", t.icao],
+    ]
+    const title = t.kind === "ship" ? (t.name || `MMSI ${t.mmsi}`) : (String(t.flight || "").trim() || t.icao)
+    return (
+        <Sheet onClose={onClose}>
+            <div data-testid="track-sheet">
+                <div className="m2-eyebrow">{t.kind === "ship" ? "Ship" : t.military ? "Military aircraft" : "Aircraft"}</div>
+                <div style={{ fontSize: 20, fontWeight: 650, margin: "2px 0 10px" }}>{title}</div>
+                <div className="m2-card">
+                    {rows.filter(([, v]) => v != null && v !== "").map(([k, v]) => (
+                        <div key={k} className="m2-row" style={{ cursor: "default", gridTemplateColumns: "110px 1fr" }}>
+                            <span className="m2-sub" style={{ margin: 0 }}>{k}</span><span className="m2-t" style={{ fontWeight: 500 }}>{v}</span>
+                        </div>
+                    ))}
+                </div>
+                {t.name_status && <div className="m2-sub" style={{ marginTop: 8 }}>{t.name_status}</div>}
+            </div>
+        </Sheet>
     )
 }

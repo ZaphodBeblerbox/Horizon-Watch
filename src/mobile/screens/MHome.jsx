@@ -16,7 +16,8 @@ import { slotOf, useFrozen } from "../../home/dayPart.js"
 import { getCurrentUser, subscribeAuth } from "../../state/authStore.js"
 import { greetingFor } from "../../data/greetings.js"
 import { useMine, usePoll, arr } from "../useMine.js"
-import { Row, SignalSheet, sevColor, when } from "./common.jsx"
+import { Row, SignalSheet, sevColor, when, ago } from "./common.jsx"
+import API_BASE from "../../apiBase.js"
 
 const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
 const HARD = { strike: 0, attack: 0, explosion: 0, clash: 1, interception: 1, unrest: 2 }
@@ -81,10 +82,53 @@ export default function MHome({ onShowOnMap, onOpen }) {
     }, [outlook, mine.w])
     const ahead = useFrozen(`m-ahead:${slot.key}`, aheadNow, (a) => mine.ready && a.length > 0)
 
+    // THE LEAD, as a front page has one: the most important story now —
+    // yours first, then the most severe and newest everywhere.
+    const lead = useMemo(() => {
+        if (urgent.length) return urgent[0]
+        return [...arr(surface)].sort((a, b) => (SEVR[a.severity_tier] ?? 9) - (SEVR[b.severity_tier] ?? 9)
+            || String(b.published_at || "").localeCompare(String(a.published_at || "")))[0] || null
+    }, [urgent, surface])
+    // LE DIRECT: the newest Telegram posts, a swipe away.
+    const live = usePoll("/api/telegram/feed?limit=12", 2 * 60_000, (d) => arr(d?.posts))
+
     const first = String(user?.name || user?.display_name || "").split(" ")[0]
     const greet = greetingFor(first, { seed })
     return (
         <div className="m2-scroll" data-screen-label="Phone home">
+            {lead && (
+                <button className="m2-lead" data-testid="m2-lead" onClick={() => setOpen(lead)}>
+                    {(lead.thumb_url || lead.image_url) && <img src={lead.thumb_url ? `${API_BASE}${lead.thumb_url}` : lead.image_url} alt="" />}
+                    <span className="m2-eyebrow" style={{ color: sevColor(lead.severity_tier || lead.sev) }}>
+                        {[lead._asset ? "near your asset" : urgent.length ? "for you" : "now", String(lead.location || lead.place || "").split(",").slice(0, 2).join(","), when(lead.published_at || lead.created_at)].filter(Boolean).join(" · ")}
+                    </span>
+                    <span className="m2-lead-h">{lead.headline || lead.title}</span>
+                    {(lead.context || lead.summary || lead.reason) && <span className="m2-sub" style={{ fontSize: 14, lineHeight: 1.45 }}>{String(lead.context || lead.summary || lead.reason).slice(0, 220)}</span>}
+                </button>
+            )}
+
+            {arr(live).length > 0 && (
+                <section className="m2-section" data-screen-label="Phone live">
+                    <header><span className="m2-eyebrow">Live from Telegram</span><span className="m2-when" style={{ flex: 1 }}>newest first</span>
+                        <button className="m2-chip" onClick={() => { window.__m2DeskTab = "telegram"; onOpen?.("desk") }}>All posts</button></header>
+                    <div className="m2-hscroll m2-live">
+                        {arr(live).map((t) => (
+                            <button key={t.id} className="m2-card m2-tap" onClick={() => setOpen(t)} style={{ textAlign: "left", padding: 0, cursor: "pointer", width: "72%", height: 236, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                                {/* the same top band on every card, so the strip is even:
+                                    the picture, or the place on a tint */}
+                                {t.thumb_url
+                                    ? <img src={`${API_BASE}${t.thumb_url}`} alt="" style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }} />
+                                    : <span style={{ height: 120, display: "flex", alignItems: "flex-end", padding: "10px 12px", background: "linear-gradient(160deg, rgba(122,167,255,.16), rgba(122,167,255,.03))",
+                                                     fontSize: 17, fontWeight: 650, color: "var(--txt2, #c3c7cf)" }}>{String(t.place || t.channel_title || "Telegram").split(",")[0]}</span>}
+                                <span style={{ padding: "10px 12px" }}>
+                                    <span className="m2-eyebrow" style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ago(t.posted_at)} · {t.channel_title || t.channel}</span>
+                                    <span className="m2-t" style={{ marginTop: 4, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.headline || String(t.summary_en || t.text || "").slice(0, 160)}</span>
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                </section>
+            )}
             {/* WHO YOU ARE AND A WELCOME, as on the desktop: the header and
                 picture from the profile, the greeting for the time of day. */}
             <div className="m2-card" style={{ overflow: "hidden", margin: "0 0 16px" }} data-screen-label="Phone welcome">
