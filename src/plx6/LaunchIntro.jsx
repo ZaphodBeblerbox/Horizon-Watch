@@ -1,13 +1,9 @@
 /**
  * LaunchIntro.jsx — the opening screen.
  *
- * The X mark large, the word PARALLAX level beneath it, on the console's
- * ground while the system starts. When it is ready the word falls away and
- * the mark flies at the viewer; on the way it comes apart — its back
- * stroke one way, the three parallel stripes (its own leg and the two
- * accent strokes) the other — and the ground dissolves into the map behind
- * it. The X app's opening is the reference: a mark that opens onto the
- * product rather than fading off it.
+ * The PARALLAX logo — the X mark above the word — fades in on the console's
+ * ground while the system starts, and fades out onto the map when it is
+ * ready (the owner, 2026-10-10: a fade, not the flying X).
  *
  * WHEN IT IS READY. Mounted beside <App/> (main.jsx), so it covers the
  * session check, the login and the globe's first load alike. It leaves on:
@@ -18,12 +14,12 @@
  *   - 20 s in any case, so a slow server never traps anyone behind a logo.
  * It stays at least MIN_MS, or the mark flickers past before it registers.
  *
- * Reduced motion: no flight, the ground fades.
+ * Reduced motion: shorter fades.
  */
 import { useEffect, useRef, useState } from "react"
 import { LETTER_PATHS, X_PATHS } from "../ui/wordmarkGeometry.js"
 
-const MIN_MS = 900
+const MIN_MS = 1100        // the fade-in finishes before the fade-out starts
 const AFTER_AUTH_MS = 8000
 const HARD_CAP_MS = 20000
 
@@ -38,7 +34,6 @@ const STRIPES = [
     ["M19 4 L13.5 12", "var(--acchi, #a0b2d2)"],
     ["M23 4 L20.25 8", "var(--acchi, #a0b2d2)"],
 ]
-const MARK_CENTRE = "12px 12px"
 
 const reduced = () => typeof window !== "undefined"
     && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
@@ -46,10 +41,6 @@ const reduced = () => typeof window !== "undefined"
 export default function LaunchIntro() {
     const [phase, setPhase] = useState("hold")      // hold | exit | gone
     const root = useRef(null)
-    const letters = useRef(null)
-    const xGroup = useRef(null)
-    const back = useRef(null)
-    const stripes = useRef([])
     const shownAt = useRef(Date.now())
 
     // Decide when to leave.
@@ -76,49 +67,22 @@ export default function LaunchIntro() {
         }
     }, [])
 
-    // The flight.
+    // In: the logo fades up while the system starts.
+    const logo = useRef(null)
+    useEffect(() => {
+        if (reduced() || !logo.current?.animate) return
+        logo.current.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 700, easing: "ease-out", fill: "both" })
+    }, [])
+
+    // Out: the logo fades, and the ground with it, onto the map.
     useEffect(() => {
         if (phase !== "exit") return
         const done = () => setPhase("gone")
-        if (reduced() || !root.current?.animate) {
-            const a = root.current?.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 300, fill: "forwards" })
-            if (a) a.onfinish = done; else done()
-            return
-        }
-        const T = 1150
-        const ease = "cubic-bezier(.55,0,.15,1)"
-        // the word falls away under the mark
-        letters.current.animate([
-            { opacity: 1, transform: "translateY(0)" },
-            { opacity: 0, transform: "translateY(10px)" },
-        ], { duration: 380, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" })
-        // the mark comes to the centre of the screen and at the viewer
-        const r = xGroup.current.getBoundingClientRect()
-        const dy = window.innerHeight / 2 - (r.top + r.height / 2)
-        xGroup.current.animate([
-            { transform: "translateY(0) scale(1)" },
-            { transform: `translateY(${dy}px) scale(1.7)`, offset: 0.34 },
-            { transform: `translateY(${dy}px) scale(7)` },
-        ], { duration: T, easing: ease, fill: "forwards" })
-        // and comes apart: the back stroke down and left, the stripes up and right, staggered
-        back.current.animate([
-            { transform: "translate(0,0) rotate(0deg)", opacity: 1 },
-            { transform: "translate(0,0) rotate(0deg)", opacity: 1, offset: 0.3 },
-            { transform: "translate(-24px,22px) rotate(-14deg)", opacity: 0 },
-        ], { duration: T, easing: ease, fill: "forwards" })
-        const flights = [[12, -18, 8], [18, -25, 14], [25, -30, 22]]
-        stripes.current.forEach((el, i) => {
-            const [dx, dy, rot] = flights[i]
-            el?.animate([
-                { transform: "translate(0,0) rotate(0deg)", opacity: 1 },
-                { transform: "translate(0,0) rotate(0deg)", opacity: 1, offset: 0.3 + i * 0.06 },
-                { transform: `translate(${dx}px,${dy}px) rotate(${rot}deg)`, opacity: 0 },
-            ], { duration: T, easing: ease, fill: "forwards" })
-        })
-        // the ground opens onto the map
-        const g = root.current.animate([
-            { opacity: 1 }, { opacity: 1, offset: 0.4 }, { opacity: 0 },
-        ], { duration: T + 150, easing: "ease-out", fill: "forwards" })
+        if (!root.current?.animate) { done(); return }
+        const quick = reduced()
+        logo.current?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: quick ? 150 : 450, easing: "ease-in", fill: "forwards" })
+        const g = root.current.animate([{ opacity: 1 }, { opacity: 1, offset: quick ? 0 : 0.35 }, { opacity: 0 }],
+                                       { duration: quick ? 250 : 800, easing: "ease-out", fill: "forwards" })
         g.onfinish = done
     }, [phase])
 
@@ -131,23 +95,13 @@ export default function LaunchIntro() {
             background: "var(--bg-0, #14161f)", color: "var(--txt, #f2f3f6)",
             pointerEvents: exiting ? "none" : "auto", overflow: "hidden",
         }}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "min(5vh, 44px)" }}>
-                <div ref={xGroup} style={{ width: "min(26vmin, 210px)", aspectRatio: "1", transformOrigin: "50% 50%" }}>
-                    <svg viewBox="0 0 24 24" width="100%" height="100%" style={{ overflow: "visible", display: "block" }}
-                         fill="none" strokeWidth="2.2" strokeLinecap="butt">
-                        <path ref={back} d={X_BACK} stroke="currentColor"
-                              style={svgEl({ transformOrigin: MARK_CENTRE })} />
-                        {STRIPES.map(([d, stroke], i) => (
-                            <path key={d} d={d} stroke={stroke} ref={(el) => { stripes.current[i] = el }}
-                                  style={svgEl({
-                                      transformOrigin: MARK_CENTRE,
-                                      // while it waits, the two accents run as the loading mark does
-                                      animation: !exiting && i > 0 ? `plx-e${i} 1.6s cubic-bezier(.22,.61,.36,1) infinite` : "none",
-                                  })} />
-                        ))}
-                    </svg>
-                </div>
-                <svg ref={letters} viewBox="0 0 136.1 21.3" style={{ width: "min(46vw, 440px)", display: "block", overflow: "visible" }}
+            <div ref={logo} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "min(5vh, 44px)", opacity: 0 }}>
+                <svg viewBox="0 0 24 24" style={{ width: "min(26vmin, 210px)", overflow: "visible", display: "block" }}
+                     fill="none" strokeWidth="2.2" strokeLinecap="butt">
+                    <path d={X_BACK} stroke="currentColor" />
+                    {STRIPES.map(([d, stroke]) => <path key={d} d={d} stroke={stroke} />)}
+                </svg>
+                <svg viewBox="0 0 136.1 21.3" style={{ width: "min(46vw, 440px)", display: "block", overflow: "visible" }}
                      fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="butt" strokeLinejoin="miter">
                     {WORD.map((d) => <path key={d} d={d} />)}
                 </svg>
