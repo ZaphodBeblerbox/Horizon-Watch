@@ -2566,13 +2566,17 @@ def _deliver_desk_note(title: str, body: str, data: dict) -> int:
     if not _m._WEBPUSH_OK:
         return 0
     sent = 0
-    with _m._PUSH_SUBS_LOCK:
-        subs = list(_m._PUSH_SUBS.values())
+    # The stored subscriptions (main.push_subscribe). This read an in-memory
+    # dict that no longer exists, so with pywebpush installed every desk
+    # note would have raised AttributeError.
+    from database import PushSubscription, get_db as _gdb_push
+    with _gdb_push() as db:
+        subs = [_json.loads(r.subscription) for r in db.query(PushSubscription).all()]
     for sub in subs:
         try:
             _m.webpush(
                 subscription_info=sub, data=_json.dumps({"title": title, "body": body, **data}),
-                vapid_private_key=_m._VAPID_PRIVATE_KEY, vapid_claims=_m._VAPID_CLAIMS,
+                vapid_private_key=_m._VAPID_KEY, vapid_claims=dict(_m._VAPID_CLAIMS),
             )
             sent += 1
         except Exception as e:

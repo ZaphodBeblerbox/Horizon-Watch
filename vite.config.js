@@ -94,7 +94,9 @@ export default defineConfig({
                 // away from. Runs inside the SAME generated SW via workbox's
                 // own importScripts, so it reaches an old tab with zero
                 // cooperation from whatever (old, code-less) JS it's running.
-                importScripts: ['/sw-recovery.js'],
+                // sw-push.js: showing a push with the app closed (the generated
+                // worker replaces public/sw.js, where these handlers used to be).
+                importScripts: ['/sw-recovery.js', '/sw-push.js'],
                 runtimeCaching: [
                     {
                         // CESIUM, CACHED AS IT IS USED rather than precached.

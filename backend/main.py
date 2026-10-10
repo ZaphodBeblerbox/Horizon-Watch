@@ -148,6 +148,18 @@ w8OYINpr7eTh+lAh7ARnAMvU0CShRANCAATqXQyqJfz9pQC4GLtN8m1ybdgjVzYG
 jqn+AMFKug9IJvJSs8ivbu1NfjVPIHeNuwsxeDknR8HEyLNQwntQ+MdP
 -----END PRIVATE KEY-----"""
 _VAPID_CLAIMS     = {"sub": "mailto:admin@trifectatechnologies.co"}
+# AS A KEY OBJECT, NOT THE PEM TEXT. pywebpush reads a string as a file path
+# or raw DER; given this PEM it raised "Could not deserialize key data" on
+# every send, which _send_push caught and printed — so no push was ever
+# delivered (found 2026-10-10; with the object, FCM answers 201 Created).
+try:
+    from py_vapid import Vapid as _Vapid
+    _VAPID_KEY = _Vapid.from_pem(_VAPID_PRIVATE_KEY.encode())
+except Exception as _ve:                                      # noqa: BLE001
+    _VAPID_KEY = None
+    if _WEBPUSH_OK:
+        print(f"[push] VAPID key unreadable, push disabled: {_ve}", flush=True)
+        _WEBPUSH_OK = False
 # ── Background-loop error visibility ─────────────────────────────────────
 # A swallowed exception in a background loop disables a whole feature and
 # says nothing. It has happened repeatedly here: history stops recording,
@@ -1488,8 +1500,9 @@ def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> Non
             webpush(
                 subscription_info=sub,
                 data=payload,
-                vapid_private_key=_VAPID_PRIVATE_KEY,
-                vapid_claims=_VAPID_CLAIMS,
+                vapid_private_key=_VAPID_KEY,
+                # a copy: pywebpush writes "aud" and "exp" into the dict it is given
+                vapid_claims=dict(_VAPID_CLAIMS),
             )
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
@@ -12049,7 +12062,7 @@ async def _event_watch_loop():
     while True:
         try:
             import event_watch as _ew
-            n = await asyncio.to_thread(_ew.sweep, _send_push)
+            n = await asyncio.to_thread(_ew.sweep, _send_push, lambda uid: _notification_feed(uid, limit=60, hours=6))
             if n:
                 print(f"[event-watch] pushed {n}", flush=True)
         except Exception as e:                              # noqa: BLE001
@@ -28040,7 +28053,18 @@ def api_get_notifications(
     include_silent: bool = False,
     current_user=None,
 ):
+    """The notification feed for whoever is asking — see _notification_feed."""
+    _u = _get_current_user(request)
+    _uid = str(_u.get("id")) if _u and _u.get("id") else None
+    return _notification_feed(_uid, limit=limit, hours=hours, include_silent=include_silent)
+
+
+def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, include_silent: bool = False) -> list:
     """Alerts that have earned an interruption, with titles a human can read.
+
+    One function for the tray and for push (event_watch.sweep), so what
+    reaches a phone with the app closed is what would have popped up on
+    screen with it open.
 
     This is deliberately NOT a second alerts feed. /api/alerts returns the
     record — every row, unfiltered, which is what the map and the analytics
@@ -28195,8 +28219,7 @@ def api_get_notifications(
     # near, rather than appearing twice.
     try:
         import asset_watch as _aw
-        _u = _get_current_user(request)
-        _uid = str(_u.get("id") or _u.get("email")) if _u else None
+        _uid = uid
         by_id = {o["id"]: o for o in out}
         mine = []
         for c in _aw.notifications_for(_uid):
@@ -28215,8 +28238,7 @@ def api_get_notifications(
     # while something is happening on the ground near what you watch.
     try:
         import event_watch as _ew
-        _u = _get_current_user(request)
-        _uid = str(_u.get("id")) if _u and _u.get("id") else None
+        _uid = uid
         out = [{**c, "title": _nc.plain(c["title"])} for c in _ew.notifications_for(_uid)] + out
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] event watch: {type(ex).__name__}: {ex}", flush=True)

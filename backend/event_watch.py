@@ -37,7 +37,7 @@ import time
 REMIND_BEFORE_MIN = 90
 MORNING_HOUR = 7
 NEW_ANNOUNCEMENT_HOURS = 48
-PUSH_FRESH_MIN = 20
+PUSH_FRESH_MIN = 15          # notificationStore.MAX_INTERRUPT_AGE_MS: nothing older pops up either
 CAPS = {"announcement": 8, "reminder": 6, "live": 10}
 
 _lock = threading.Lock()
@@ -334,9 +334,56 @@ def push_body(card: dict) -> str:
     return " · ".join(x for x in (card.get("advice") or card.get("expect"), card.get("reason")) if x)[:220]
 
 
-def sweep(send) -> int:
-    """Send every fresh card once to each subscribed user. `send(uid,
-    title, body, data)` is main._send_push."""
+# What pops up on screen (src/state/notificationStore.js interrupts()) is
+# what goes to a closed app: the same rule, so the two cannot disagree.
+INTERRUPT_KINDS = {"escalate", "assign", "rfi", "telegram", "surge", "fusion", "live"}
+
+
+def interrupts(card: dict) -> bool:
+    sev, kind = card.get("sev"), card.get("kind") or "signal"
+    return (sev == "critical" or kind in INTERRUPT_KINDS
+            or (kind == "signal" and sev == "high") or (kind == "announcement" and sev == "high"))
+
+
+PUSH_SINGLES = 2      # pushed one by one per sweep; the rest go as one "and N more"
+
+
+def _own(card: dict) -> bool:
+    """A card already made for this user: their events, their assets."""
+    return str(card.get("id") or "").startswith(("ann:", "soon:", "now:", "asset:")) or card.get("kind") == "asset"
+
+
+def worth_pushing(card: dict, c: dict) -> bool:
+    """The shared feed (frontlines, surges, risk moves) is the same for
+    everyone; on a locked phone only what touches this user's assets,
+    theaters or countries — or is critical — earns a buzz. Measured
+    2026-10-10: without this one sweep sent eleven Yemen frontline changes
+    at once to a user who watches Paris."""
+    if _own(card) or card.get("sev") == "critical":
+        return True
+    return why(card, c) is not None
+
+
+def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
+    """(title, body, data) to send: the first PUSH_SINGLES as themselves,
+    the rest as one summary, so a burst is one buzz, not twelve."""
+    rank = {"critical": 0, "high": 1}
+    cards = sorted(cards, key=lambda x: (rank.get(x.get("sev"), 2), str(x.get("created_at") or "")))
+    out = [(x["title"], push_body(x), {"id": x["id"], "kind": x.get("kind"), "severity": x.get("sev"),
+                                       "lat": x.get("lat"), "lon": x.get("lon")}) for x in cards[:PUSH_SINGLES]]
+    rest = cards[PUSH_SINGLES:]
+    if rest:
+        heads = "; ".join(str(x["title"])[:60] for x in rest[:3])
+        out.append((f"And {len(rest)} more on Parallax", heads + (" …" if len(rest) > 3 else ""),
+                    {"id": "more:" + rest[0]["id"], "kind": "signal"}))
+    return out
+
+
+def sweep(send, feed=None) -> int:
+    """Send every fresh card that would pop up on screen, once, to each
+    subscribed user. `send(uid, title, body, data)` is main._send_push;
+    `feed(uid)` is that user's whole notification feed
+    (main._notification_feed), else only this module's own cards."""
     from database import PushSubscription, get_db
     with get_db() as db:
         uids = [r[0] for r in db.query(PushSubscription.user_id).distinct().all()]
@@ -348,17 +395,20 @@ def sweep(send) -> int:
     sent = 0
     try:
         for uid in uids:
-            for card in cards_for(str(uid), now):
+            c = concern_of(str(uid))
+            due = []
+            for card in (feed(str(uid)) if feed else cards_for(str(uid), now)):
                 created = _utc(card.get("created_at"))
-                if not created or created < fresh_after:
+                if not created or created < fresh_after or not interrupts(card) or not worth_pushing(card, c):
                     continue
                 cur = con.execute("INSERT OR IGNORE INTO event_pushes (user_id, item_id, sent_at) VALUES (?,?,?)",
                                   (str(uid), card["id"], _iso(now)))
-                con.commit()
                 if cur.rowcount:
-                    send(str(uid), card["title"], push_body(card),
-                         {"id": card["id"], "kind": card["kind"], "lat": card.get("lat"), "lon": card.get("lon")})
-                    sent += 1
+                    due.append(card)
+            con.commit()
+            for title, body, data in bundle(due):
+                send(str(uid), title, body, data)
+                sent += 1
         con.execute("DELETE FROM event_pushes WHERE sent_at < ?", (_iso(now - _dt.timedelta(days=14)),))
         con.commit()
     finally:

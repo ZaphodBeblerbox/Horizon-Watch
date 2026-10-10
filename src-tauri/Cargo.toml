@@ -29,3 +29,6 @@ tauri-plugin-log = "2"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Native notifications while the window is hidden (src/desktop/nativeNotify.js):
+# the webview has no service worker, so web push cannot reach the app.
+tauri-plugin-notification = "2"

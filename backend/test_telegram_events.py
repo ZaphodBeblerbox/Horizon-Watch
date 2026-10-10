@@ -142,6 +142,7 @@ def test_push_goes_once(monkeypatch, tmp_path):
     card = {"id": "now:x", "title": "Police are kettling protesters on Boulevard Saint-Germain", "kind": "live",
             "advice": "Leave by Rue du Bac", "reason": "in your theater Paris", "created_at": ew._iso(now)}
     monkeypatch.setattr(ew, "cards_for", lambda uid, now=None: [card])
+    monkeypatch.setattr(ew, "concern_of", lambda uid: CONCERN)
 
     class Q:
         def __init__(self, *a): pass
@@ -159,3 +160,31 @@ def test_push_goes_once(monkeypatch, tmp_path):
     send = lambda uid, title, body, data: sent.append((uid, title, body))  # noqa: E731
     assert ew.sweep(send) == 1 and ew.sweep(send) == 0
     assert sent[0][2] == "Leave by Rue du Bac · in your theater Paris"
+
+
+def test_push_follows_the_same_rule_as_the_screen():
+    # src/state/notificationStore.js interrupts(): what pops up is what is pushed.
+    assert ew.interrupts({"sev": "critical", "kind": "signal"})
+    assert ew.interrupts({"sev": "moderate", "kind": "live"})
+    assert ew.interrupts({"sev": "high", "kind": "announcement"})
+    assert not ew.interrupts({"sev": "moderate", "kind": "announcement"})
+    assert not ew.interrupts({"sev": "high", "kind": "asset"})
+    import re
+    src = open("../src/state/notificationStore.js").read()
+    body = src[src.index("export function interrupts"):src.index("export function setMuted")]
+    for kind in ew.INTERRUPT_KINDS:
+        assert f'n.kind === "{kind}"' in body, kind
+
+
+def test_the_shared_feed_buzzes_only_where_this_user_looks():
+    yemen = {"id": "frontline-yemen-1", "kind": "escalate", "sev": "high", "lat": 13.3, "lon": 43.2, "title": "Mokha changed hands"}
+    assert not ew.worth_pushing(yemen, CONCERN)
+    assert ew.worth_pushing({**yemen, "sev": "critical"}, CONCERN)
+    assert ew.worth_pushing({**yemen, "lat": 48.86, "lon": 2.37, "country_code": "fr"}, CONCERN)
+    assert ew.worth_pushing({"id": "now:x", "kind": "live", "sev": "high"}, CONCERN)
+
+
+def test_a_burst_is_two_pushes_and_a_summary():
+    cards = [{"id": f"c{i}", "title": f"Place {i} changed hands", "sev": "high", "created_at": f"2026-10-10T00:0{i}:00Z"} for i in range(6)]
+    out = ew.bundle(cards)
+    assert len(out) == 3 and out[2][0] == "And 4 more on Parallax"

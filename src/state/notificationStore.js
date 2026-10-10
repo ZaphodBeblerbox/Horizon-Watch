@@ -179,6 +179,13 @@ function isFresh(ts, now = Date.now()) {
     return Number.isFinite(ts) && ts >= now - FRESH_MS
 }
 
+/* WITH THE WINDOW HIDDEN. Cards cannot be seen, so an item that would
+   have taken the screen goes to this handler instead — the desktop app
+   sets it to a native macOS notification (desktop/nativeNotify.js). On the
+   web the server's push does that job (public/sw-push.js). */
+let offScreenHandler = null
+export function setOffScreenHandler(fn) { offScreenHandler = typeof fn === "function" ? fn : null }
+
 function onScreen() {
     try { return typeof document === "undefined" || document.visibilityState !== "hidden" } catch { return true }
 }
@@ -210,6 +217,9 @@ export function pushNotification(n) {
 
     const raised = !n.silent && fresh && onScreen() && interrupts(item)
     if (raised) state.cards = [...state.cards, item]
+    if (!n.silent && fresh && !onScreen() && offScreenHandler && interrupts(item)) {
+        try { offScreenHandler(item) } catch { /* a notification that fails must not break the tray */ }
+    }
     notify()
 
     // Criticals never self-dismiss: the one notification that must not be

@@ -14,6 +14,7 @@ import { getCurrentUser, logout } from "../../state/authStore.js"
 import IssueReader from "../../reports/IssueReader.jsx"
 import { usePoll, arr, getJSON } from "../useMine.js"
 import { Icon, Row, Sheet, SignalSheet, sevColor, when } from "./common.jsx"
+import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
 
 const EXPOSURE = { high: ["High exposure", "#E5484D"], elevated: ["Elevated", "#F5A524"], low: ["Low", "#8FB4E8"], quiet: ["Quiet", "#4CAF7A"], unknown: ["No position", "#9AA9BC"] }
 const post = (path, body) => fetch(`${API_BASE}${path}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) })
@@ -162,6 +163,30 @@ export function MReports() {
     )
 }
 
+// The settings row and switch, in the phone's own type and 44 px target.
+function PhoneRow({ label, hint, children }) {
+    return (
+        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>{label}</div>
+                {hint && <div className="m2-sub" style={{ marginTop: 4, lineHeight: 1.45 }}>{hint}</div>}
+            </div>
+            {children}
+        </div>
+    )
+}
+function PhoneToggle({ value, onChange }) {
+    return (
+        <button aria-pressed={value} onClick={() => onChange(!value)} style={{
+            width: 51, height: 31, minWidth: 51, borderRadius: 16, border: 0, padding: 0, position: "relative", cursor: "pointer",
+            background: value ? "var(--acchi, #7f9cc8)" : "rgba(255,255,255,.16)",
+        }}>
+            <span style={{ position: "absolute", top: 2, left: value ? 22 : 2, width: 27, height: 27, borderRadius: 14,
+                           background: "#fff", transition: "left .15s ease" }} />
+        </button>
+    )
+}
+
 export function MProfile() {
     const u = getCurrentUser() || {}
     return (
@@ -176,6 +201,9 @@ export function MProfile() {
                         <div className="m2-sub">{[u.title, u.company].filter(Boolean).join(" · ") || u.email}</div>
                     </div>
                 </div>
+            </div>
+            <div className="m2-card" style={{ padding: "4px 14px", marginBottom: 14 }}>
+                <ClosedNotificationsRow Row={PhoneRow} Toggle={PhoneToggle} />
             </div>
             <div className="m2-sub" style={{ marginBottom: 14, lineHeight: 1.5 }}>Your picture, header, theaters and interests are set on the desktop under Profile and Settings; the phone follows them.</div>
             <button className="m2-btn ghost" onClick={() => logout().then(() => window.location.reload())}>Sign out</button>

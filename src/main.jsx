@@ -63,6 +63,25 @@ try {
 }
 if (typeof window !== 'undefined') window.__parallaxDesktop = isDesktop()
 
+// OPENED FROM A NOTIFICATION with the app closed (public/sw-push.js opens
+// /?focus=lat,lon): fly there once the map has drawn.
+try {
+    const f = new URLSearchParams(window.location.search).get('focus')
+    const [lat, lon] = (f || '').split(',').map(Number)
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        const go = () => window.dispatchEvent(new CustomEvent('akili:fly-to', { detail: { lat, lon, altitude: 40_000 } }))
+        if (window.__plxMapReady) setTimeout(go, 300)
+        else window.addEventListener('plx:map-ready', () => setTimeout(go, 300), { once: true })
+        window.history.replaceState(null, '', window.location.pathname + window.location.hash)
+    }
+} catch { /* a bad link opens the app as usual */ }
+
+// Desktop: macOS notifications while the window is hidden, if this machine
+// turned them on (desktop/nativeNotify.js).
+if (isDesktop()) {
+    import('./desktop/nativeNotify.js').then((m) => m.installNativeNotify()).catch(() => {})
+}
+
 // Register service worker and listen for notification-click messages.
 //
 // NOT IN THE PACKAGED APP. Tauri serves the frontend from tauri://localhost,
@@ -74,7 +93,13 @@ try {
         initPushNotifications().then(({ supported }) => {
             if (!supported) return
             navigator.serviceWorker.addEventListener('message', (event) => {
-                if (event.data?.type === 'NOTIFICATION_CLICK' && event.data.eventId) {
+                if (event.data?.type !== 'NOTIFICATION_CLICK') return
+                // An event card carries its place; an alert its id.
+                if (Number.isFinite(event.data.lat) && Number.isFinite(event.data.lon)) {
+                    window.dispatchEvent(new CustomEvent('akili:fly-to', {
+                        detail: { lat: event.data.lat, lon: event.data.lon, altitude: 40_000 },
+                    }))
+                } else if (event.data.eventId) {
                     window.dispatchEvent(new CustomEvent('akili:open-alert', {
                         detail: { id: event.data.eventId },
                     }))

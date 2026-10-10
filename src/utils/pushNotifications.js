@@ -48,14 +48,19 @@ export async function requestPushPermission() {
             applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
         })
 
-        await fetch(`${API_BASE}/api/push/subscribe`, {
+        // Credentials included, and the answer checked: the subscription
+        // is stored against the signed-in user, and a refused one used to
+        // report "granted" while the server knew nothing of this device.
+        const r = await fetch(`${API_BASE}/api/push/subscribe`, {
             method:  'POST',
+            credentials: 'include',
             headers: {
                 'Content-Type': 'application/json',
                 ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
             },
             body: JSON.stringify(subscription.toJSON()),
         })
+        if (!r.ok) return { granted: false, error: new Error(r.status === 401 ? 'sign in again, then retry' : `server said ${r.status}`) }
 
         return { granted: true, subscription }
     } catch (err) {
@@ -75,6 +80,7 @@ export async function unsubscribePush() {
 
         await fetch(`${API_BASE}/api/push/unsubscribe`, {
             method:  'POST',
+            credentials: 'include',
             headers: {
                 'Content-Type': 'application/json',
                 ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
