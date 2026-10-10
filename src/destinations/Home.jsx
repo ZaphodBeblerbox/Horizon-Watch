@@ -630,7 +630,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                                                            color: v.severity_tier === "critical" ? "var(--red)" : "var(--txt3)" }}>
                                                 {whenLabel(v.posted_at || v.published_at)} · <bdi>{v.channel_title || v.source || v.channel}</bdi>{v._mine ? " · yours" : ""}
                                             </span>
-                                            <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.3, overflowWrap: "anywhere" }}>{v.headline}</span>
+                                            {v.summary_en && v.summary_en !== v.headline && <span style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--txt2)", overflowWrap: "anywhere" }}>{v.summary_en}</span>}
                                             <span style={{ fontSize: 12, color: "var(--txt3)", overflowWrap: "anywhere" }}>{String(v.place || v.geocoded_as || "").split(",").slice(0, 2).join(",")}</span>
                                             <button onClick={() => {
                                                 onOpenModule("map")

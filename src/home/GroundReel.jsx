@@ -40,8 +40,16 @@ export default function GroundReel({ videos, renderInfo }) {
                     ))}
                 </div>
             )}
-            <div key={v.id} className="plx-reel-slide" style={{ animation: `${dir > 0 ? "plx-reel-in" : "plx-reel-back"} .42s cubic-bezier(.22,.61,.36,1)`,
-                                                               display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))", gap: 0 }}>
+            <div key={v.id} className="plx-reel-slide" style={{ animation: `${dir > 0 ? "plx-reel-in" : "plx-reel-back"} .42s cubic-bezier(.22,.61,.36,1)` }}>
+            {/* THE STORY'S HEADLINE, LARGE, over the video it belongs to (the
+                owner, 2026-10-10): what is playing should be readable from
+                across the room, and it changes with the video. */}
+            <h2 data-testid="ground-headline" style={{
+                margin: 0, padding: "14px 16px 12px", font: "700 clamp(22px, 2.4vw, 32px)/1.15 var(--font)",
+                letterSpacing: "-.015em", color: "var(--txt)", textWrap: "balance", overflowWrap: "anywhere",
+                display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
+            }}>{v.headline || String(v.summary_en || v.text || "").slice(0, 140)}</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))", gap: 0 }}>
                 <div style={{ position: "relative", minWidth: 0 }}>
                     <TelegramMedia post={v} maxHeight="380px" radius="0"
                                    muted={muted} onMutedChange={setMuted}
@@ -54,6 +62,7 @@ export default function GroundReel({ videos, renderInfo }) {
                     </>)}
                 </div>
                 <div style={{ minWidth: 0 }}>{renderInfo(v, at, n)}</div>
+            </div>
             </div>
         </div>
     )
