@@ -24,3 +24,11 @@ def test_position_out_of_range(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(ValueError):
         oa.live_position("u", 95, 0)
+
+
+def test_any_kind_can_be_linked(tmp_path, monkeypatch):
+    monkeypatch.setattr(oa, "_db_path", lambda: os.path.join(tmp_path, "t.db"))
+    car = oa.create("boss", {"name": "Team car", "kind": "vehicle_car", "lat": 1, "lon": 1, "identifiers": {"user_id": "u-anna"}})
+    assert car["identifiers"]["user_id"] == "u-anna"
+    assert [m["id"] for m in oa.live_position("u-anna", 2, 3)] == [car["id"]]
+    assert (oa.get(car["id"], "boss")["lat"], oa.get(car["id"], "boss")["lon"]) == (2, 3)

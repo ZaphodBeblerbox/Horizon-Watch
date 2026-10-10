@@ -274,19 +274,20 @@ LIVE_FRESH_S = 15 * 60
 
 def linked_to(user_id: str) -> list[dict]:
     con = _con()
-    rows = con.execute("SELECT * FROM owned_assets WHERE kind='person' AND json_extract(identifiers, '$.user_id') = ?",
+    rows = con.execute("SELECT * FROM owned_assets WHERE json_extract(identifiers, '$.user_id') = ?",
                        (str(user_id),)).fetchall()
     con.close()
     return [_row(r) for r in rows]
 
 
 def live_position(user_id: str, lat: float, lon: float, accuracy_m: float | None = None) -> list[dict]:
-    """Move every person asset linked to this user; returns them."""
+    """Move every asset linked to this user — a person, or the vehicle or
+    vessel they are with (identifiers.user_id, any kind); returns them."""
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         raise ValueError("position out of range")
     now = _now()
     con = _con()
-    rows = con.execute("SELECT id, owner_id FROM owned_assets WHERE kind='person' AND json_extract(identifiers, '$.user_id') = ?",
+    rows = con.execute("SELECT id, owner_id FROM owned_assets WHERE json_extract(identifiers, '$.user_id') = ?",
                        (str(user_id),)).fetchall()
     for r in rows:
         con.execute("UPDATE owned_assets SET lat=?, lon=?, updated_at=? WHERE id=?", (lat, lon, now, r["id"]))

@@ -1,9 +1,11 @@
 /**
  * LaunchIntro.jsx — the opening screen.
  *
- * The PARALLAX logo — the X mark above the word — fades in on the console's
- * ground while the system starts, and fades out onto the map when it is
- * ready (the owner, 2026-10-10: a fade, not the flying X).
+ * PARALLAX — the word, its X the Parallax X with its stripes — and under it,
+ * on one line, "by", the Trifecta knot and TRIFECTA TECHNOLOGIES (the
+ * owner, 2026-10-10; the knot from the Trifecta logo kit, public/brand/).
+ * It fades in on the console's ground while the system starts and fades
+ * out onto the map when it is ready.
  *
  * WHEN IT IS READY. Mounted beside <App/> (main.jsx), so it covers the
  * session check, the login and the globe's first load alike. It leaves on:
@@ -17,23 +19,15 @@
  * Reduced motion: shorter fades.
  */
 import { useEffect, useRef, useState } from "react"
-import { LETTER_PATHS, X_PATHS } from "../ui/wordmarkGeometry.js"
+import { LETTER_PATHS, X_PATHS, ECHO_PATHS } from "../ui/wordmarkGeometry.js"
 
 const MIN_MS = 1100        // the fade-in finishes before the fade-out starts
 const AFTER_AUTH_MS = 8000
 const HARD_CAP_MS = 20000
 
-// The word, level (ui/wordmarkGeometry.js), without the echoes: the mark
-// above it carries them.
+// The word, level (ui/wordmarkGeometry.js), ending in the Parallax X: its
+// two strokes and the two stripes beside its front leg.
 const WORD = [...LETTER_PATHS, ...X_PATHS]
-// The mark above it (the #g-logo X): its back stroke, and the three
-// parallel stripes — its own leg and the two accents.
-const X_BACK = "M4 4 L15 20"
-const STRIPES = [
-    ["M15 4 L4 20", "currentColor"],
-    ["M19 4 L13.5 12", "var(--acchi, #a0b2d2)"],
-    ["M23 4 L20.25 8", "var(--acchi, #a0b2d2)"],
-]
 
 const reduced = () => typeof window !== "undefined"
     && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
@@ -95,17 +89,29 @@ export default function LaunchIntro() {
             background: "var(--bg-0, #14161f)", color: "var(--txt, #f2f3f6)",
             pointerEvents: exiting ? "none" : "auto", overflow: "hidden",
         }}>
-            <div ref={logo} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "min(5vh, 44px)", opacity: 0 }}>
-                <svg viewBox="0 0 24 24" style={{ width: "min(26vmin, 210px)", overflow: "visible", display: "block" }}
-                     fill="none" strokeWidth="2.2" strokeLinecap="butt">
-                    <path d={X_BACK} stroke="currentColor" />
-                    {STRIPES.map(([d, stroke]) => <path key={d} d={d} stroke={stroke} />)}
-                </svg>
-                <svg viewBox="0 0 136.1 21.3" style={{ width: "min(46vw, 440px)", display: "block", overflow: "visible" }}
+            <div ref={logo} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "min(4.5vh, 40px)", opacity: 0 }}>
+                <svg viewBox="-1 -1 146 23.3" role="img" aria-label="Parallax" style={{ width: "min(70vw, 560px)", display: "block", overflow: "visible" }}
                      fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="butt" strokeLinejoin="miter">
                     {WORD.map((d) => <path key={d} d={d} />)}
+                    {ECHO_PATHS.map((d) => <path key={d} d={d} stroke="var(--acchi, #a0b2d2)" />)}
                 </svg>
+                <TrifectaLine />
             </div>
+        </div>
+    )
+}
+
+/** "by [knot] TRIFECTA TECHNOLOGIES", on one line (Trifecta logo kit). The
+ *  knot is drawn through a mask so it takes the text colour on any ground. */
+export function TrifectaLine({ size = 1 }) {
+    return (
+        <div data-testid="trifecta-line" style={{ display: "flex", alignItems: "center", gap: `${0.7 * size}em`, fontSize: `${13 * size}px`,
+                                                  fontFamily: "'Manrope', var(--font, system-ui), sans-serif", fontWeight: 500, color: "var(--txt2, #c9cfda)" }}>
+            <span style={{ fontSize: ".8em", letterSpacing: ".18em", color: "var(--txt3, #9aa3b2)" }}>BY</span>
+            <span aria-hidden="true" style={{ width: "1.9em", height: "1.86em", background: "currentColor", display: "inline-block",
+                                              WebkitMask: "url(/brand/trifecta-mark.png) center / contain no-repeat",
+                                              mask: "url(/brand/trifecta-mark.png) center / contain no-repeat" }} />
+            <span style={{ letterSpacing: ".22em", marginRight: "-.22em" }}>TRIFECTA TECHNOLOGIES</span>
         </div>
     )
 }

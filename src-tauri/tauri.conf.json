@@ -42,7 +42,8 @@
       "debugApplicationIdSuffix": ".debug"
     },
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
     },
     "shortDescription": "Parallax \u2014 intelligence console",
     "longDescription": "Parallax reads its own local database, so the map, the inbox and the workspace keep working without a connection. A sync engine moves data to and from the server whenever there is one.",

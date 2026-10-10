@@ -195,8 +195,15 @@ function isFresh(ts, now = Date.now()) {
 let offScreenHandler = null
 export function setOffScreenHandler(fn) { offScreenHandler = typeof fn === "function" ? fn : null }
 
+/* ON SCREEN means seen: the window visible AND in front. A window behind
+   other apps is not hidden, so the desktop app used to raise an in-app card
+   nobody could see instead of a macOS notification (2026-10-10). */
 function onScreen() {
-    try { return typeof document === "undefined" || document.visibilityState !== "hidden" } catch { return true }
+    try {
+        if (typeof document === "undefined") return true
+        if (document.visibilityState === "hidden") return false
+        return typeof document.hasFocus !== "function" || document.hasFocus()
+    } catch { return true }
 }
 
 /* A CARD THAT TAKES THE SCREEN SOUNDS (owner, 2026-10-10), by severity,

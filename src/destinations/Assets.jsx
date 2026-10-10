@@ -144,6 +144,13 @@ function AssetForm({ kinds, initial, onSaved, onCancel }) {
                         ))}
                     </div>
                 )}
+                {/* ANY ASSET CAN BE LINKED TO A TEAM MEMBER (owner, 2026-10-10): a
+                    car, a vessel, a site manager's office — their shared live
+                    location then moves it, and it is assessed where they are. */}
+                {kind && !kind.ids.includes("user_id") && (
+                    <label><span style={LABEL}>Linked team member — their phone's live location moves this asset</span>
+                        <MemberSelect value={f.identifiers?.user_id || ""} onChange={(v) => setId("user_id", v)} /></label>
+                )}
                 <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
                     <label><span style={LABEL}>Watch radius (km)</span>
                         <input style={INPUT} value={f.radius_km ?? ""} placeholder={kind ? `${kind.radius} km — the default for a ${kind.label.toLowerCase()}` : ""} onChange={(e) => set("radius_km", e.target.value)} /></label>
@@ -238,7 +245,7 @@ function Brief({ assetId, signals, analogues, onCite }) {
     )
 }
 
-const ID_LABEL = { mmsi: "MMSI", imo: "IMO", icao: "ICAO", registration: "Registration", plate: "Plate" }
+const ID_LABEL = { mmsi: "MMSI", imo: "IMO", icao: "ICAO", registration: "Registration", plate: "Plate", user_id: "Linked to" }
 
 /** What the live feeds know about a tracked vessel: speed, heading, destination, flag, owner. */
 function useVesselFacts(mmsi) {
@@ -308,7 +315,7 @@ function Detail({ asset, onEdit, onDeleted }) {
                         <Fact k="Where" v={asset.address || (pos ? `${pos.lat.toFixed(4)}, ${pos.lon.toFixed(4)}` : null)} />
                         <Fact k="Position" v={pos ? `${pos.source}${pos.as_of ? ` · ${agoLabel(pos.as_of)}` : ""}` : s?.why} />
                         <Fact k="Country" v={asset.country} />
-                        {Object.entries(asset.identifiers || {}).map(([k, v]) => <Fact key={k} k={ID_LABEL[k] || k} v={v} />)}
+                        {Object.entries(asset.identifiers || {}).map(([k, v]) => <Fact key={k} k={ID_LABEL[k] || k} v={k === "user_id" ? <UserName id={v} /> : v} />)}
                         {ais && <Fact k="Speed, heading" v={`${ais.speed ?? "—"} kn · ${ais.heading != null && ais.heading !== 511 ? `${Math.round(ais.heading)}°` : "heading not sent"}`} />}
                         {ais && <Fact k="Status" v={ais.nav_status} />}
                         {ais && <Fact k="Destination" v={ais.destination} />}
@@ -479,4 +486,15 @@ function MemberSelect({ value, onChange }) {
             {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
         </select>
     )
+}
+
+/** A team member's name, from their id. */
+let _users = null
+function UserName({ id }) {
+    const [name, setName] = useState(null)
+    useEffect(() => {
+        if (!_users) _users = fetch(`${API_BASE}/api/users`, { credentials: "include" }).then((r) => (r.ok ? r.json() : [])).then((d) => (Array.isArray(d) ? d : d.users || [])).catch(() => [])
+        _users.then((us) => { const u = us.find((x) => String(x.id) === String(id)); setName(u ? (u.name || u.email) : null) })
+    }, [id])
+    return <>{name || "a team member"}</>
 }

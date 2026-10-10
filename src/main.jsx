@@ -1,3 +1,5 @@
+// Manrope, bundled (not fetched): the Trifecta line in the opener (plx6/LaunchIntro.jsx).
+import '@fontsource/manrope/latin-500.css'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './app.jsx'
