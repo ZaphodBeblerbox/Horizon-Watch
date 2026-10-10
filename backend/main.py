@@ -3922,6 +3922,24 @@ def api_graph_neighbourhood(
         return {"available": False, "error": str(e)[:200], "nodes": [], "links": []}
 
 
+@app.post("/api/ontology/of")
+def api_ontology_of(body: dict = Body(...)):
+    """The ontology of one thing, for the sidebar's graph and the overlay
+    (ontology_view.py): a graph node by `id`, or any record by
+    `entity_type` + `data` — a signal gets one put together from its act,
+    place, country, war, source, named actors and nearby facilities. Units
+    come with their order of battle."""
+    import ontology_view as ov
+    hops = 2 if int(body.get("hops") or 1) >= 2 else 1
+    data = body.get("data") if isinstance(body.get("data"), dict) else None
+    try:
+        return ov.view(_akili_db_path(), id=(body.get("id") or None), entity_type=(body.get("entity_type") or None),
+                       data=data, hops=hops)
+    except Exception as e:                                   # noqa: BLE001
+        logger.exception("ontology view failed")
+        return {"available": False, "error": str(e)[:200], "nodes": [], "links": []}
+
+
 @app.get("/api/ontology/graph/search")
 def api_graph_search(q: str = Query(...), limit: int = Query(20, ge=1, le=100)):
     """Find an entity to start a walk from."""
