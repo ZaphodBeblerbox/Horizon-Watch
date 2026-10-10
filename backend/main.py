@@ -1491,11 +1491,47 @@ async def push_unsubscribe(request: Request):
         db.commit()
     return {"status": "unsubscribed"}
 
-def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> list:
+# NOT WHILE THE APP IS OPEN (owner, 2026-10-10): a device with Parallax
+# on screen says so every 30 s (/api/push/presence, by its push endpoint);
+# it gets the app's own cards instead of a system notification.
+_PUSH_ACTIVE: dict = {}
+_PUSH_ACTIVE_S = 75
+
+
+@app.post("/api/push/presence")
+async def api_push_presence(request: Request):
+    """This device has Parallax on screen (or, with gone, no longer).
+    Keyed by the push endpoint, an unguessable URL only that device holds,
+    so no sign-in is needed and it can be sent as the page is closing."""
+    try:
+        d = await request.json()
+    except Exception:                                       # noqa: BLE001
+        return {"ok": False}
+    ep = str((d or {}).get("endpoint") or "")[:1000]
+    if not ep.startswith("https://"):
+        return {"ok": False}
+    if d.get("gone"):
+        _PUSH_ACTIVE.pop(ep, None)
+    else:
+        _PUSH_ACTIVE[ep] = time.monotonic()
+    if len(_PUSH_ACTIVE) > 5000:                             # never grows without bound
+        cut = time.monotonic() - _PUSH_ACTIVE_S
+        for k in [k for k, t in _PUSH_ACTIVE.items() if t < cut]:
+            _PUSH_ACTIVE.pop(k, None)
+    return {"ok": True}
+
+
+def _push_app_open(endpoint: str) -> bool:
+    t = _PUSH_ACTIVE.get(endpoint)
+    return t is not None and time.monotonic() - t < _PUSH_ACTIVE_S
+
+
+def _send_push(uid: str, title: str, body: str, data: dict | None = None, skip_open: bool = True) -> list:
     """Send a Web Push notification to every endpoint this user has.
 
     Every endpoint, not one: a person with a laptop and a phone expects the
-    alert on whichever they are holding.
+    alert on whichever they are holding — except a device that has the app
+    open right now (skip_open), which shows it in the app.
     """
     report = []                       # per device: {service, ok, status, error}
     if not _WEBPUSH_OK:
@@ -1514,6 +1550,9 @@ def _send_push(uid: str, title: str, body: str, data: dict | None = None) -> lis
     for row_id, sub in subs:
         ep = str(sub.get("endpoint") or "")
         service = "Apple" if "push.apple.com" in ep else "Google" if "googleapis" in ep else "Mozilla" if "mozilla" in ep else "Microsoft" if "notify.windows" in ep else "push service"
+        if skip_open and _push_app_open(ep):
+            report.append({"service": service, "ok": True, "skipped": "the app is open on this device"})
+            continue
         try:
             r = webpush(
                 subscription_info=sub,
@@ -1552,8 +1591,9 @@ def api_push_test(request: Request):
     notifications on for, and say what each push service answered — so a
     notification that never arrives can be told apart from one never sent."""
     user = _require_current_user(request)
+    # sent even to a device with the app open: the test is pressed from inside it
     rep = _send_push(str(user["id"]), "Parallax", "Test notification — notifications reach this device.",
-                     {"id": f"test:{int(time.time())}", "kind": "system"})
+                     {"id": f"test:{int(time.time())}", "kind": "system"}, skip_open=False)
     return {"devices": len(rep), "report": rep}
 
 

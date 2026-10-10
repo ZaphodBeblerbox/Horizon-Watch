@@ -30,6 +30,7 @@ import { getCurrentUser, subscribeAuth } from "../state/authStore.js"
 import LocationPrompt from "../components/LocationPrompt.jsx"
 import LivePlayerHost from "../telegram/LivePlayer.jsx"
 import SourceViewer from "../components/SourceViewer.jsx"
+import MNotifCards from "./screens/MNotifCards.jsx"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
@@ -64,6 +65,7 @@ export default function MobileApp() {
                 <MMap active={tab === "map"} chrome={tab === "map"} focus={focus} onOpen={go} alerts={arr(notes).length} />
             </div>
             <LivePlayerHost />
+            <MNotifCards onOpen={(n) => (n.ref && Number.isFinite(+n.ref.lat) ? showOnMap({ lat: n.ref.lat, lon: n.ref.lon, headline: n.title, id: n.alertId || n.id }) : go("alerts"))} />
             <SourceViewer />
             {/* The map runs edge to edge (its own round controls carry the bell). */}
             {tab !== "map" && <header className="m2-top">

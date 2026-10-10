@@ -21,6 +21,7 @@ import { PlxMenu, PlxToast, PlxAlerts } from "./plx6/PlxOverlays.jsx"
 import { useChrome } from "./state/useChrome.js"
 import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayManager.js"
 import NotificationStack from "./components/NotificationStack.jsx"
+import { startPushPresence } from "./notify/pushPresence.js"
 import NotificationTray from "./components/NotificationTray.jsx"
 import { pushNotification, unreadCount as notifUnread, subscribeNotifications, getNotifications } from "./state/notificationStore.js"
 import { subscribeLive } from "./state/liveEvents.js"
@@ -353,6 +354,8 @@ export default function App() {
     // asks the real backend whether an existing cookie is still valid
     // (real 401 if not — never assumed).
     const [authUser, setAuthUser] = useState(null)
+    // this device has Parallax on screen: no system notification while it does (notify/pushPresence.js)
+    useEffect(() => { if (authUser) startPushPresence() }, [authUser])
     const [authChecked, setAuthChecked] = useState(false)
     // Real auth/performance round fix — a transient failure (network
     // error, timeout, a cold-starting backend's 5xx) of the mount-time

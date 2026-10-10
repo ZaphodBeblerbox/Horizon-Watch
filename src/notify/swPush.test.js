@@ -18,12 +18,12 @@ function load({ windows = [] } = {}) {
 const push = (obj) => ({ data: { json: () => obj, text: () => JSON.stringify(obj) } })
 
 describe("sw-push.js", () => {
-    it("shows the push when no Parallax window is in front: the app's name, the X and the headline", async () => {
+    it("shows the push when no Parallax window is in front: the X and the headline as the title (the system names the app)", async () => {
         const sw = load()
         await sw.fire("push", push({ title: "Parallax", body: "Police are kettling protesters on Boulevard Saint-Germain", id: "now:x", kind: "live", lat: 48.85, lon: 2.32 }))
         expect(sw.shown).toHaveLength(1)
-        expect(sw.shown[0][0]).toBe("Parallax")
-        expect(sw.shown[0][1]).toMatchObject({ body: "Police are kettling protesters on Boulevard Saint-Germain", icon: "/icon-192.png", tag: "now:x", requireInteraction: true })
+        expect(sw.shown[0][0]).toBe("Police are kettling protesters on Boulevard Saint-Germain")
+        expect(sw.shown[0][1]).toMatchObject({ body: "", icon: "/icon-192.png", tag: "now:x", requireInteraction: true })
     })
     it("leaves it to the app when a window is focused", async () => {
         const w = { focused: true, visibilityState: "visible", postMessage: vi.fn() }

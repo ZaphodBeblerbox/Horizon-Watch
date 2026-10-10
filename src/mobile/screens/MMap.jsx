@@ -20,6 +20,7 @@ import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
 import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { PHONE_LAYERS, layerGroups } from "../mapLayers.js"
+import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 
 
 // Esri's public base maps, credited as their terms ask (CARTO's now want a key).
@@ -59,10 +60,24 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const map = useRef(null)
     const base = useRef(null)
     const group = useRef(null)
-    const [baseKey, setBaseKey] = useState("dark")
+    const [baseKey, setBaseKey] = useState(() => getSettings()?.phoneMapDefault?.base || "dark")
     const [hours, setHours] = useState(48)
-    const [floor, setFloor] = useState("all")
-    const [on, setOn] = useState(() => ({ ...Object.fromEntries(PHONE_LAYERS.map((l) => [l.key, !!l.defaultOn])), ships: true, aircraft: true }))
+    const [floor, setFloor] = useState(() => getSettings()?.phoneMapDefault?.floor || "all")
+    // the account's settings can arrive after the map opens: take them then, unless the user has already changed something
+    useEffect(() => subscribeSettings((st) => {
+        const v = st?.phoneMapDefault
+        if (!v || touched.current) return
+        setOn({ ...builtIn(), ...(v.layers || {}) }); if (v.base) setBaseKey(v.base); if (v.floor) setFloor(v.floor)
+    }), []) // eslint-disable-line react-hooks/exhaustive-deps
+    const saveDefault = () => { updateSetting("phoneMapDefault", { layers: on, base: baseKey, floor }); setSavedAt(Date.now()) }
+    const resetDefault = () => { updateSetting("phoneMapDefault", null); setOn(builtIn()); setBaseKey("dark"); setFloor("all"); setSavedAt(null) }
+    // MY DEFAULT LAYERS (owner, 2026-10-10): saved with the account's
+    // settings (Filters › Save as my default), so every phone opens on them
+    const builtIn = () => ({ ...Object.fromEntries(PHONE_LAYERS.map((l) => [l.key, !!l.defaultOn])), ships: true, aircraft: true })
+    const savedView = () => getSettings()?.phoneMapDefault || null
+    const [on, setOn] = useState(() => ({ ...builtIn(), ...(savedView()?.layers || {}) }))
+    const touched = useRef(false)
+    const [savedAt, setSavedAt] = useState(null)
     const [feats, setFeats] = useState({})        // layer key → its features in view
     const [bounds, setBounds] = useState(null)
     const [ships, setShips] = useState([])
@@ -321,7 +336,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                                 <div className="m2-h">{gname}</div>
                                 <div className="m2-tiles">
                                     {layers.map((l) => (
-                                        <button key={l.key} className="m2-tile" aria-pressed={!!on[l.key]} onClick={() => setOn((o) => ({ ...o, [l.key]: !o[l.key] }))} data-layer={l.key}>
+                                        <button key={l.key} className="m2-tile" aria-pressed={!!on[l.key]} onClick={() => { touched.current = true; setSavedAt(null); setOn((o) => ({ ...o, [l.key]: !o[l.key] })) }} data-layer={l.key}>
                                             <img src={l.legendIcon} alt="" />
                                             <b>{l.label}</b><small>{on[l.key] ? (tooFar(l) ? "zoom in" : countOf(l.key)) : ""}</small>
                                         </button>
@@ -338,6 +353,11 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                             <button aria-pressed={baseKey === "dark"} onClick={() => setBaseKey("dark")} style={{ background: "linear-gradient(160deg,#2a2f3a,#12151b)" }}>Dark</button>
                             <button aria-pressed={baseKey === "satellite"} onClick={() => setBaseKey("satellite")} style={{ background: "linear-gradient(160deg,#4d5a3a,#1f2c3d)" }}>Satellite</button>
                         </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginTop: 16 }}>
+                            <button className="m2-btn" data-testid="save-default-layers" onClick={saveDefault}>{savedAt ? "Saved as your default" : "Save as my default"}</button>
+                            <button className="m2-btn ghost" onClick={resetDefault}>Reset</button>
+                        </div>
+                        <div className="m2-sub" style={{ marginTop: 6 }}>These layers, the base map and how serious open on every phone you sign in on.</div>
                     </div>
                 </Sheet>
             )}
