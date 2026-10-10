@@ -68,10 +68,13 @@ export default function VoiceBar({ active: activeProp = true, floating = false }
         const down = (e) => { if (isFn(e)) setFnDown(true) }
         const up = (e) => { if (e.key === "Fn" || e.code === "Fn" || !(typeof e.getModifierState === "function" && e.getModifierState("Fn"))) setFnDown(false) }
         const off = () => setFnDown(false)
+        // the desktop app reads fn from macOS itself (src-tauri lib.rs fnkey)
+        const native = (e) => setFnDown(!!e.detail)
+        window.addEventListener("plx:fn", native)
         window.addEventListener("keydown", down, true)
         window.addEventListener("keyup", up, true)
         window.addEventListener("blur", off)
-        return () => { window.removeEventListener("keydown", down, true); window.removeEventListener("keyup", up, true); window.removeEventListener("blur", off) }
+        return () => { window.removeEventListener("keydown", down, true); window.removeEventListener("keyup", up, true); window.removeEventListener("blur", off); window.removeEventListener("plx:fn", native) }
     }, [])
     const [chip, setChip] = useState(null)          // { result, ctx } awaiting confirm
     const [undo, setUndo] = useState(() =>

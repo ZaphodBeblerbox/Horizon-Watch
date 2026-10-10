@@ -144,6 +144,10 @@ export default function Notes({ onInsert = null }) {
                             <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10.5, color: "var(--txt4)" }}>
                                 {[when(focused), savedMeta(focused)].filter(Boolean).join(" · ")}
                             </span>
+                            {/* what it was read from (a saved answer carries its signals) */}
+                            {focused.context && (
+                                <span style={{ fontSize: 12, lineHeight: 1.55, color: "var(--txt3)", whiteSpace: "pre-wrap" }}>{focused.context}</span>
+                            )}
                         </div>
                     ) : (
                         <span style={{ fontSize: 12, color: "var(--txt3)" }}>Pick a note to see it here.</span>

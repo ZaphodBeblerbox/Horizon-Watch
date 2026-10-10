@@ -84,17 +84,29 @@ export default function ExplanationPanel() {
     }
     const text = d.explanation || d.note || ""
     const sourcesList = (d.signals || []).map((s) => `- ${s.headline}${s.location ? ` (${s.location})` : ""}${s.source ? ` · ${s.source}` : ""}`).join("\n")
+    /* WHAT IS KEPT IS THE ANSWER (owner, 2026-10-10: a note held only the
+       question). The answer is the note's text — the line every list shows
+       (savedLabel reads the headline) — with the place, and the signals it
+       was read from as its context. Filed like a spoken note (filing.js),
+       so it lands in the case as well as in Reports › Notes. */
+    const at = d.signals?.find((s) => s.lat != null)
     const keep = {
-        note() {
-            saveForBriefing({ id: `answer-${Date.now()}`, kind: "note", label: `${d.place}: ${text.slice(0, 80)}`, headline: `What is going on in ${d.place}`,
-                              region: d.place, detail: text, context: sourcesList, when: new Date().toISOString() })
-            setDone("Saved as a note — in your saved items for briefings.")
+        async note() {
+            const item = { id: `answer-${Date.now()}`, kind: "note", headline: `${d.place}: ${text}`, label: `${d.place}: ${text}`,
+                           region: d.place, detail: text, context: sourcesList || null, source: (d.sources || []).join(", ") || null,
+                           lat: at?.lat ?? null, lon: at?.lon ?? null, when: new Date().toISOString() }
+            saveForBriefing(item)
+            try { const { fileSignal } = await import("../state/filing.js"); await fileSignal(item) } catch { /* kept locally */ }
+            setDone("Saved as a note — Reports › Notes.")
         },
-        briefing() {
-            saveForBriefing({ id: `mini-${Date.now()}`, kind: "briefing", label: `Mini briefing: ${d.place}`, headline: `Mini briefing — ${d.place}`,
-                              region: d.place, detail: `${text}\n\nSources (${d.count}):\n${sourcesList}`, source: (d.sources || []).join(", "),
-                              when: new Date().toISOString() })
-            setDone("Added as a mini briefing — open Reports to generate or send it.")
+        async briefing() {
+            const item = { id: `mini-${Date.now()}`, kind: "note", headline: `Mini briefing — ${d.place}: ${text}`, label: `Mini briefing — ${d.place}`,
+                           region: d.place, detail: `${text}\n\nRead from ${d.count} signal${d.count === 1 ? "" : "s"}:\n${sourcesList}`,
+                           context: sourcesList || null, source: (d.sources || []).join(", ") || null,
+                           lat: at?.lat ?? null, lon: at?.lon ?? null, when: new Date().toISOString() }
+            saveForBriefing(item)
+            try { const { fileSignal } = await import("../state/filing.js"); await fileSignal(item) } catch { /* kept locally */ }
+            setDone("Saved as a mini briefing with its sources — Reports › Notes; insert it into a briefing or deck from there.")
         },
         desk() {
             shareToDesk({ kind: "place", label: d.place, lat: d.signals?.find((s) => s.lat != null)?.lat ?? null, lon: d.signals?.find((s) => s.lat != null)?.lon ?? null },
@@ -111,13 +123,16 @@ export default function ExplanationPanel() {
     return (
         <div
             data-testid="explanation-panel"
+            className="pane-glass"
+            /* THE SAME SIDEBAR AS EVERY OTHER (owner, 2026-10-10): the
+               inspector's own place and size — right 12, top 10, the shared
+               --pane-r width and --pane-bottom inset (Situation.jsx
+               rightPaneStyle) — and its glass. */
             style={{
-                position: "absolute", right: 12, top: 84, bottom: "var(--pane-bottom)",
-                width: 420, maxWidth: "calc(100% - 72px)", zIndex: 28,
+                position: "absolute", right: 12, top: 10, bottom: "var(--pane-bottom)",
+                width: "var(--pane-r)", zIndex: 28,
                 display: "flex", flexDirection: "column", overflow: "hidden",
-                background: "var(--glass)", backdropFilter: "blur(22px) saturate(1.15)",
-                WebkitBackdropFilter: "blur(22px) saturate(1.15)",
-                border: "1px solid var(--gline)", boxShadow: "var(--gshadow)",
+                border: "1px solid var(--gline)",
             }}
         >
             <div style={{
