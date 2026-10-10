@@ -85,6 +85,9 @@ if (isDesktop()) {
     import('./desktop/nativeNotify.js').then((m) => m.installNativeNotify()).catch(() => {})
 }
 
+// Sounds: unlocked by the first click or key (soundSystem.installAudioUnlock).
+import('./soundSystem.js').then((m) => m.installAudioUnlock()).catch(() => {})
+
 // Register service worker and listen for notification-click messages.
 //
 // NOT IN THE PACKAGED APP. Tauri serves the frontend from tauri://localhost,

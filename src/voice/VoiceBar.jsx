@@ -57,6 +57,22 @@ export default function VoiceBar({ active: activeProp = true, floating = false }
     const settle = useRef(null)
     const lastLen = useRef(0)
     const [state, setState] = useState("idle")      // idle | heard | working
+    /* THE X GLOWS WHILE fn IS HELD (owner, 2026-10-10), not only once words
+       arrive. Where the system passes the fn key to the page (it reports
+       key "Fn", or the Fn modifier on any key), holding it lights the mark;
+       where the dictation app keeps fn to itself, the mark still lights the
+       moment its words arrive, as before. */
+    const [fnDown, setFnDown] = useState(false)
+    useEffect(() => {
+        const isFn = (e) => e.key === "Fn" || e.code === "Fn" || (typeof e.getModifierState === "function" && e.getModifierState("Fn"))
+        const down = (e) => { if (isFn(e)) setFnDown(true) }
+        const up = (e) => { if (e.key === "Fn" || e.code === "Fn" || !(typeof e.getModifierState === "function" && e.getModifierState("Fn"))) setFnDown(false) }
+        const off = () => setFnDown(false)
+        window.addEventListener("keydown", down, true)
+        window.addEventListener("keyup", up, true)
+        window.addEventListener("blur", off)
+        return () => { window.removeEventListener("keydown", down, true); window.removeEventListener("keyup", up, true); window.removeEventListener("blur", off) }
+    }, [])
     const [chip, setChip] = useState(null)          // { result, ctx } awaiting confirm
     const [undo, setUndo] = useState(() =>
         (_lastDone && Date.now() - _lastDone.at < UNDO_MS ? _lastDone.undo : null))   // { label, fn, logIndex }
@@ -291,7 +307,7 @@ export default function VoiceBar({ active: activeProp = true, floating = false }
                         borderRadius: "50%",
                     }}
                 >
-                    <VoiceMark state={state} />
+                    <VoiceMark state={state === "idle" && fnDown ? "heard" : state} />
                 </button>
 
                 {(state !== "idle" || heard) && (

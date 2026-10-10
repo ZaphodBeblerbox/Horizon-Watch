@@ -4,6 +4,7 @@
  * so), and the words. A tick says you have seen a post; comments discuss it.
  * Same posts as the desktop Desk (routers/desk.py).
  */
+import SourceLink from "../../components/SourceLink.jsx"
 import { useEffect, useRef, useState } from "react"
 import { Attachment } from "../../desk/deskAttachments.jsx"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
@@ -165,7 +166,7 @@ function TelegramCard({ t, onShowOnMap }) {
                 <div className="m2-post-acts">
                     {t.on_map && <button onClick={() => onShowOnMap?.(t)}><Icon id="g-pin" size={15} />{String(t.place || "").split(",")[0]}</button>}
                     {t.text && t.lang && t.lang !== "en" && <button onClick={() => setOrig(!orig)}>{orig ? "hide original" : "original"}</button>}
-                    {t.url && <a href={t.url} target="_blank" rel="noopener noreferrer">Telegram ↗</a>}
+                    {t.url && <SourceLink url={t.url}>Telegram post</SourceLink>}
                 </div>
                 <div className="m2-when" style={{ marginTop: 2 }}>{t.verification}</div>
             </div>

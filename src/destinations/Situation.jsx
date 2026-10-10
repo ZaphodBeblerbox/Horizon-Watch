@@ -17,6 +17,7 @@
  * that SAME filtered list — never independently recomputed, so they can't
  * disagree.
  */
+import { claimSide, onSideClaim } from "../ui/sideWindows.js"
 import MapSceneCard, { MAP_SCENE_UI, MapSplitHandle, mapSceneOverlay } from "../components/MapSceneCard.jsx"
 import { EMPTY_VESSEL_FILTER, EMPTY_AIRCRAFT_FILTER } from "../globe/trackFilters.js"
 import { VesselFilterPanel, AircraftFilterPanel } from "../components/TrackFilterPanel.jsx"
@@ -815,8 +816,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
        first, is also what A4 describes: `openObj(id)` opens the object
        view as part of selecting. */
     useEffect(() => {
-        if (inspectorPopup) setRightOpen(true)
+        if (inspectorPopup) { setRightOpen(true); claimSide("inspector") }
     }, [inspectorPopup, setRightOpen])
+    // ONE WINDOW ON THE RIGHT (ui/sideWindows.js): a spoken answer takes the
+    // inspector's place; opening the inspector folds the answer away.
+    useEffect(() => { if (rightOpen) claimSide("inspector") }, [rightOpen])
+    useEffect(() => onSideClaim("inspector", (by) => { if (by === "answer") setRightOpen(false) }), [setRightOpen])
     useEffect(() => {
         const t = setTimeout(() => setEntered(true), 20)
         return () => clearTimeout(t)

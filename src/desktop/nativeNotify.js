@@ -37,7 +37,8 @@ function openLastOnReturn() {
 
 /** The notification's text: the headline only. */
 export function nativeContent(item) {
-    return { title: "Parallax", body: String(item?.title || "").slice(0, 220) }
+    // the system's notification sound with it (macOS: a named system sound)
+    return { title: "Parallax", body: String(item?.title || "").slice(0, 220), sound: "Ping" }
 }
 
 export function desktopNotifyOn() {

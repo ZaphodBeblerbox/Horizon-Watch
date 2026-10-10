@@ -1363,7 +1363,10 @@ export default function App() {
                             (tier === "significant" && s.soundSignificant) ||
                             (tier === "elevated"    && s.soundElevated)    ||
                             (tier === "low")
-                        if (shouldPlay) {
+                        // Sounds come with the cards now (notificationStore
+                        // soundFor); only a missile or earthquake warning,
+                        // which never becomes a card, keeps its own tone here.
+                        if (shouldPlay && (top.type === "missile_warning" || top.type === "earthquake")) {
                             resumeAudio()
                             playAlert(tier, top.type)
                         }

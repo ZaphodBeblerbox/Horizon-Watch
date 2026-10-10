@@ -3,6 +3,7 @@
  * "when" label, and the sheet a signal opens into (what it is, its
  * footage or the X posts it cites, show it on the map, share it to the desk).
  */
+import SourceLink from "../../components/SourceLink.jsx"
 import { useState } from "react"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
 import XPost, { xPostId } from "../../components/XPost.jsx"
@@ -72,7 +73,7 @@ export function SignalSheet({ s, onClose, onShowOnMap }) {
             )}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
                 {Number.isFinite(+s.lat) && Number.isFinite(+s.lon) && <button className="m2-btn" onClick={() => { onShowOnMap?.(s); onClose() }}>Show on the map</button>}
-                {s.url && !xs.length && <a className="m2-btn ghost" style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }} href={s.url} target="_blank" rel="noreferrer">Original</a>}
+                {s.url && !xs.length && <SourceLink className="m2-btn ghost" url={s.url} style={{ display: "inline-flex", alignItems: "center", textDecoration: "none", color: "inherit" }}>Original</SourceLink>}
             </div>
             <div className="m2-eyebrow" style={{ marginBottom: 6 }}>Share to the desk</div>
             <textarea className="m2-input" rows={2} placeholder="What should the team know?" value={note} onChange={(e) => setNote(e.target.value)} />

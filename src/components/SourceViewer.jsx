@@ -8,12 +8,14 @@
  *
  * Only X and Telegram posts are shown in-frame, through their official
  * embed endpoints; anything else never reaches this panel (the caller
- * opens a tab). "Open original" is always offered, because an embed shows
- * the post, not the replies or the account around it.
+ * opens a tab). Nothing here leads out of Parallax (owner, 2026-10-10): the
+ * post's link can be copied. On a phone it is a full-screen sheet; next to
+ * a spoken answer it takes the side (ui/sideWindows.js).
  */
 import { useEffect, useRef, useState } from "react"
 import { embedFor } from "../inspector/sourceEmbed.js"
 import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
+import { claimSide, onSideClaim } from "../ui/sideWindows.js"
 
 export default function SourceViewer() {
     const [url, setUrl] = useState(null)
@@ -41,6 +43,8 @@ export default function SourceViewer() {
         }
     }, [])
 
+    useEffect(() => onSideClaim("source", (by) => { if (by === "answer") setUrl(null) }), [])
+    useEffect(() => { if (url) claimSide("source") }, [url])
     const embed = url ? embedFor(url, { dark: theme === "dark" }) : null
 
     /* WHERE IT GOES. Beside the inspector when the window has room for the
@@ -54,6 +58,7 @@ export default function SourceViewer() {
         window.addEventListener("resize", r)
         return () => window.removeEventListener("resize", r)
     }, [])
+    const phone = vw < 640
     const docked = vw >= 1150
     const width = docked ? Math.min(460, vw - 48 - 334 - 480) : 312
     useEffect(() => {
@@ -64,8 +69,8 @@ export default function SourceViewer() {
 
     return (
         <aside role="dialog" aria-label={`Source: ${embed.label}`} style={{
-            position: "fixed", top: 94, bottom: 22, zIndex: 70,
-            right: docked ? 12 + 312 + 10 : 12, width: docked ? Math.max(320, width) : 312,
+            position: "fixed", top: phone ? 0 : 94, bottom: phone ? 0 : 22, zIndex: phone ? 3000 : 70,
+            right: phone ? 0 : docked ? 12 + 312 + 10 : 12, width: phone ? "100vw" : docked ? Math.max(320, width) : 312,
             display: "flex", flexDirection: "column",
             background: "var(--bg-1, var(--canvas))", border: "1px solid var(--gline2, var(--line))",
             boxShadow: "var(--gshadow)",
@@ -82,9 +87,10 @@ export default function SourceViewer() {
                         {embed.label}
                     </div>
                 </div>
-                <a href={url} target="_blank" rel="noopener noreferrer" title={url} style={{
-                    font: "500 12px var(--font)", color: "var(--acc-hi, var(--acchi))", textDecoration: "none", whiteSpace: "nowrap",
-                }}>Open original ↗</a>
+                {/* NOT A WAY OUT (owner, 2026-10-10): the post stays in Parallax; its link can be copied */}
+                <button onClick={() => { navigator.clipboard?.writeText(url).catch(() => {}) }} title={url} style={{
+                    font: "500 12px var(--font)", color: "var(--acc-hi, var(--acchi))", whiteSpace: "nowrap", border: 0, background: "none", cursor: "pointer", padding: 0,
+                }}>Copy link</button>
                 <button onClick={() => setUrl(null)} aria-label="Close source" title="Close (Esc)" style={{
                     width: 26, height: 26, border: "1px solid var(--gline2, var(--line))", background: "transparent",
                     color: "var(--txt-3, var(--txt3))", cursor: "pointer", font: "inherit",

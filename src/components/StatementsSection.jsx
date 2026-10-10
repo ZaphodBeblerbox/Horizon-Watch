@@ -7,6 +7,7 @@
  * last 72 hours, or naming the same country when they could not be placed
  * more precisely — attributed, with a link to the original.
  */
+import SourceLink from "./SourceLink.jsx"
 import { useEffect, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { agoLabel } from "../utils/formatTime.js"
@@ -40,7 +41,7 @@ export function StatementList({ items }) {
                     <span style={{ fontSize: 11, color: "var(--txt3)" }}>
                         {s.party || s.channel_title} · official statement · {agoLabel(s.posted_at)}
                         {s.km != null ? ` · ${s.km} km away` : " · names the country"}
-                        {s.url && <> · <a href={s.url} target="_blank" rel="noreferrer" style={{ color: "var(--acchi)" }}>original</a></>}
+                        {s.url && <> · <SourceLink url={s.url}>original</SourceLink></>}
                     </span>
                 </div>
             ))}

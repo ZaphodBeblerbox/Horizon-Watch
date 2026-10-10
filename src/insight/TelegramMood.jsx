@@ -10,6 +10,7 @@
  * channel speaks for its side and a country read only through such
  * channels is read through their eyes.
  */
+import SourceLink from "../components/SourceLink.jsx"
 import { useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
 import Columns, { BarList } from "../charts/Columns.jsx"
@@ -95,7 +96,7 @@ export default function TelegramMood() {
                                 <div style={{ font: "400 10.5px var(--mono)", color: c.mobilise >= 3 ? "var(--red)" : "var(--txt4)", marginTop: 3 }}>
                                     {c.mobilise >= 3 ? "call to confront · " : "call to gather · "}{c.channel}{c.role ? ` (${ROLE[c.role] || c.role})` : ""} · {String(c.posted_at).slice(0, 16).replace("T", " ")}Z
                                     {c.target ? ` · aimed at ${c.target}` : ""}
-                                    {c.url && <> · <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--acc-hi, var(--acchi))" }}>post</a></>}
+                                    {c.url && <> · <SourceLink url={c.url}>post</SourceLink></>}
                                 </div>
                             </div>
                         ))}

@@ -199,6 +199,20 @@ function onScreen() {
     try { return typeof document === "undefined" || document.visibilityState !== "hidden" } catch { return true }
 }
 
+/* A CARD THAT TAKES THE SCREEN SOUNDS (owner, 2026-10-10), by severity,
+   as Settings › Alerts allows: muted, or per tier. Never for the tray only. */
+let lastSoundAt = 0
+function soundFor(item) {
+    const s = getSettings() || {}
+    if (s.soundMuted || state.muted) return
+    const tierOn = item.sev === "critical" ? s.soundCritical !== false
+        : item.sev === "high" ? s.soundSignificant !== false
+        : item.kind === "livestream" || item.kind === "home" ? true : !!s.soundElevated
+    if (!tierOn || Date.now() - lastSoundAt < 1500) return      // a burst is one sound
+    lastSoundAt = Date.now()
+    import("../soundSystem.js").then((m) => { m.resumeAudio(); m.playNotification(item.sev, item.kind) }).catch(() => {})
+}
+
 export function pushNotification(n) {
     const ts = Number.isFinite(n.ts) ? n.ts : Date.now()
     const fresh = isFresh(ts)
@@ -228,6 +242,7 @@ export function pushNotification(n) {
 
     const raised = !n.silent && fresh && onScreen() && interrupts(item)
     if (raised) state.cards = [...state.cards, item]
+    if (raised) soundFor(item)
     if (!n.silent && fresh && !onScreen() && offScreenHandler && interrupts(item)) {
         try { offScreenHandler(item) } catch { /* a notification that fails must not break the tray */ }
     }

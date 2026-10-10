@@ -152,10 +152,10 @@ function SourceRow({ label, url, embed = true }) {
                     {hostOf(url)}
                 </div>
             </div>
-            {inPlace && <button style={btn} onClick={() => openSource(url)}>Open here</button>}
-            <a style={{ ...btn, border: 0, padding: 0 }} href={url} target="_blank" rel="noopener noreferrer" title={url}>
-                {inPlace ? "↗" : "Open ↗"}
-            </a>
+            {/* the post opens inside Parallax; only a site that cannot be framed opens a tab */}
+            {inPlace
+                ? <button style={btn} onClick={() => openSource(url)}>Open original post</button>
+                : <a style={{ ...btn, border: 0, padding: 0 }} href={url} target="_blank" rel="noopener noreferrer" title={url}>Open ↗</a>}
         </div>
     )
 }

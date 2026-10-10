@@ -29,6 +29,7 @@ self.addEventListener('push', (event) => {
             badge: '/icon-192.png',
             tag: data.id || 'parallax',
             renotify: true,
+            silent: false,                  // the system's notification sound
             requireInteraction: critical,
             vibrate: critical ? [300, 100, 300, 100, 300] : [200, 100, 200],
             data: { url: data.url || '/', eventId: data.id, lat: data.lat, lon: data.lon,

@@ -97,3 +97,31 @@ export function playDocumentSaved() {
 export function resumeAudio() {
     if (_ctx && _ctx.state === "suspended") _ctx.resume()
 }
+
+/* BROWSERS ONLY PLAY AFTER A GESTURE. An AudioContext created by a timer
+   (the first alert) starts suspended and resume() from a timer is refused,
+   so every sound was silent. The first click, tap or key anywhere creates
+   and resumes it; after that a notification can play at any time. */
+export function installAudioUnlock() {
+    if (typeof window === "undefined" || window.__plxAudioUnlock) return
+    window.__plxAudioUnlock = true
+    const unlock = () => {
+        try {
+            const c = ctx()
+            if (c.state === "suspended") c.resume()
+            // a silent blip: Safari and the desktop webview unlock on a played node
+            const g = c.createGain(); g.gain.value = 0; g.connect(c.destination)
+            const o = c.createOscillator(); o.connect(g); o.start(); o.stop(c.currentTime + 0.01)
+        } catch { /* no audio here */ }
+        if (_ctx && _ctx.state === "running") {
+            for (const ev of ["pointerdown", "keydown", "touchstart"]) window.removeEventListener(ev, unlock, true)
+        }
+    }
+    for (const ev of ["pointerdown", "keydown", "touchstart"]) window.addEventListener(ev, unlock, true)
+}
+
+/** The sound for a notification that takes the screen, by its severity. */
+export function playNotification(sev, kind) {
+    if (kind === "livestream") { try { seq([[660, "sine", 0.1, 0.25], [880, "sine", 0.14, 0.25]]) } catch { /* silent */ } return }
+    playAlert(sev === "critical" ? "critical" : sev === "high" ? "significant" : "elevated")
+}

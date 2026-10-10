@@ -9,6 +9,7 @@
  * fixed words (headings, tags, bands) come from the server in the issue's
  * language, so the reader and the PDF say the same thing.
  */
+import SourceLink from "../components/SourceLink.jsx"
 import { useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
 import Loading from "../ui/Loading.jsx"
@@ -128,7 +129,7 @@ function RefPanel({ id, ev, doc, onClose }) {
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <button onClick={() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: e.lat, lon: e.lon, altitude: 60000 } }))}
                     style={{ height: 28, padding: "0 12px", border: "1px solid var(--gline2)", background: "transparent", color: "var(--txt)", font: "inherit", cursor: "pointer" }}>Show on the globe</button>
-                {e.url && <a href={e.url} target="_blank" rel="noreferrer" style={{ alignSelf: "center", color: "var(--acchi)", fontSize: 13 }}>Original</a>}
+                {e.url && <SourceLink url={e.url} style={{ alignSelf: "center", fontSize: 13 }}>Original</SourceLink>}
             </div>
         </>}
         {q && <>
