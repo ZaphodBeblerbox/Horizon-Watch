@@ -11657,7 +11657,9 @@ def _prune_history_once() -> str:
     # on 5 October because only a one-off clean-up ever wrote it.
     try:
         import activity_rollup as _ar
-        rolled = _ar.roll_missing_days(_akili_db_path())
+        # two days a pass (~3.5 s of write lock each): a backlog after an
+        # outage drains over a few passes instead of stalling every writer
+        rolled = _ar.roll_missing_days(_akili_db_path(), max_days=2)
         if rolled:
             print(f"[activity] rolled {len(rolled)} day(s) into activity_daily: {rolled[0]}…{rolled[-1]}", flush=True)
     except Exception as _are:                                # noqa: BLE001
