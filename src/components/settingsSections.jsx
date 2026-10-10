@@ -221,6 +221,14 @@ export function GeneralSection({ settings }) {
                     Start the walkthrough
                 </button>
             </Row>
+            <Row label="What's new"
+                 hint="A short tour of the latest changes. It opens by itself once after an update until you choose “Don't show again”.">
+                <button onClick={() => window.dispatchEvent(new CustomEvent("akili:start-whats-new"))}
+                    style={{ height: 28, padding: "0 12px", border: "1px solid var(--gline2)", background: "transparent",
+                             color: "var(--txt2)", font: "inherit", fontSize: 12.5, cursor: "pointer", borderRadius: 0 }}>
+                    Show what's new
+                </button>
+            </Row>
 
             <SectionTitle>Locale</SectionTitle>
             <Row label="Timezone" hint={tzSaving ? "Saving…" : "Used for timestamps you set yourself elsewhere in the app."}>

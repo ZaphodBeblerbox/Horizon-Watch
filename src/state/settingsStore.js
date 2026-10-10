@@ -106,6 +106,9 @@ export const DEFAULTS = {
     // not seen the current one gets the welcome and the walkthrough once,
     // at their first login to it — and never again, on any device.
     welcome: null,
+    // The "what's new" tour this user said not to show again (tutorialSteps
+    // WHATS_NEW_ID); a newer one shows once after the update.
+    whatsnew: null,
 }
 
 /** The release the welcome card introduces. */

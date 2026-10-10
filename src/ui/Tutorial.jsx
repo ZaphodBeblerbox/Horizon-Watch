@@ -9,7 +9,7 @@
  * WHY THIS DOES NOT BREAK SILENTLY. The old walkthrough was text-only
  * because a tour anchored to buttons breaks when the layout moves: the ring
  * lands on nothing. Here every target is a stable hook (data-tour, a
- * data-testid, a rail button's title), the step waits up to two seconds for
+ * data-testid, a rail button's title), the step waits up to four seconds for
  * it, and if it is not there the step is shown as a centred card instead of
  * pointing at the wrong thing. tutorialSteps.test.js checks that every hook
  * the steps name still exists in the source.
@@ -17,10 +17,17 @@
  * Shown on first launch, and again from Settings → General → "Guided
  * walkthrough" (or the akili:start-tour event) — at once, not next launch.
  * The setting is tri-state: null = not seen, "done" = finished or skipped.
+ *
+ * WHAT'S NEW (tutorialSteps.WHATS_NEW): the same engine runs a short tour of
+ * the latest changes on the first opening after an update, for people who
+ * have done the main walkthrough. "Don't show again" (on every step, and the
+ * last step's main button) stores settings.whatsnew = WHATS_NEW_ID; "Later"
+ * or Escape closes it until the next launch. Finishing the main walkthrough
+ * counts as having seen it. Replayable from Settings (akili:start-whats-new).
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { getSettings, subscribeSettings, updateSetting, settingsFromServer, RELEASE } from "../state/settingsStore.js"
-import { STEPS } from "./tutorialSteps.js"
+import { STEPS, WHATS_NEW, WHATS_NEW_ID } from "./tutorialSteps.js"
 
 const PAD = 8
 const GAP = 14
@@ -60,6 +67,8 @@ export default function Tutorial() {
     const due = (st) => settingsFromServer() && st?.welcome !== RELEASE
     const [welcome, setWelcome] = useState(() => due(getSettings()))
     const [open, setOpen] = useState(false)
+    const [tour, setTour] = useState("main")             // "main" | "new"
+    const steps = tour === "new" ? WHATS_NEW : STEPS
     const [i, setI] = useState(0)
     const [ring, setRing] = useState(null)
     const [found, setFound] = useState(true)
@@ -81,10 +90,32 @@ export default function Tutorial() {
         else if (v == null) { setI(0); setOpen(true) }
     }), [])
     useEffect(() => {
-        const h = () => { setI(0); setOpen(true) }
+        const h = () => { setTour("main"); setI(0); setOpen(true) }
+        const n = () => { setTour("new"); setI(0); setOpen(true) }
         window.addEventListener("akili:start-tour", h)
-        return () => window.removeEventListener("akili:start-tour", h)
+        window.addEventListener("akili:start-whats-new", n)
+        return () => { window.removeEventListener("akili:start-tour", h); window.removeEventListener("akili:start-whats-new", n) }
     }, [])
+
+    // What's new: once the user's own settings are in, if they have done the
+    // main walkthrough and not said "don't show again" to this set. Once per
+    // launch; a moment after start so the opener and the map come first.
+    const newAsked = useRef(false)
+    useEffect(() => {
+        const check = (s) => {
+            if (newAsked.current || !settingsFromServer() || due(s)) return
+            if (s?.tutorial !== "done" || s?.whatsnew === WHATS_NEW_ID) return
+            newAsked.current = true
+            setTimeout(() => { setTour("new"); setI(0); setOpen(true) }, 2500)
+        }
+        check(getSettings())
+        return subscribeSettings(check)
+    }, [])
+    const neverAgain = useCallback(async () => {
+        setOpen(false)
+        WHATS_NEW[i]?.leave?.()
+        if (getSettings()?.whatsnew !== WHATS_NEW_ID) await updateSetting("whatsnew", WHATS_NEW_ID)
+    }, [i])
 
     // One save after the other: two PATCHes in flight at once each wrote the
     // settings as they read them, and the later one dropped the earlier key
@@ -93,19 +124,23 @@ export default function Tutorial() {
         setWelcome(false)
         if (getSettings()?.welcome !== RELEASE) await updateSetting("welcome", RELEASE)
         if (getSettings()?.tutorial !== "done") await updateSetting("tutorial", "done")
+        // the main walkthrough covers what is new
+        if (getSettings()?.whatsnew !== WHATS_NEW_ID) await updateSetting("whatsnew", WHATS_NEW_ID)
     }, [])
 
     const finish = useCallback(() => {
         setOpen(false)
+        if (tour === "new") { WHATS_NEW[i]?.leave?.(); return }      // "Later": back next launch
         seen()
         STEPS[i]?.leave?.()
-    }, [i, seen])
+    }, [i, seen, tour])
 
     // Open what the step is about, then find its target (it may take a
     // moment to mount or slide in) and keep the ring on it while it moves.
     useEffect(() => {
         if (!open) return undefined
-        const step = STEPS[i]
+        const step = steps[i]
+        if (!step) return undefined
         try { step.go?.() } catch { /* a step that cannot open still explains */ }
         let alive = true
         const t0 = Date.now()
@@ -114,12 +149,12 @@ export default function Tutorial() {
             if (!alive) return
             const r = rectOf(step.target)
             if (r) { setRing(r); setFound(true) }
-            else if (Date.now() - t0 > 2000) setFound(false)
+            else if (Date.now() - t0 > 4000) setFound(false)
         }
         tick()
         const iv = setInterval(tick, 200)
         return () => { alive = false; clearInterval(iv); try { step.leave?.() } catch { /* nothing to undo */ } }
-    }, [open, i])
+    }, [open, i, steps])
 
     useEffect(() => {
         const h = () => setVp({ w: innerWidth, h: innerHeight })
@@ -132,12 +167,12 @@ export default function Tutorial() {
         if (!open) return undefined
         const onKey = (e) => {
             if (e.key === "Escape") { e.stopPropagation(); finish() }
-            else if (e.key === "ArrowRight" || e.key === "Enter") setI((n) => Math.min(n + 1, STEPS.length - 1))
+            else if (e.key === "ArrowRight" || e.key === "Enter") setI((n) => Math.min(n + 1, steps.length - 1))
             else if (e.key === "ArrowLeft") setI((n) => Math.max(n - 1, 0))
         }
         window.addEventListener("keydown", onKey, true)
         return () => window.removeEventListener("keydown", onKey, true)
-    }, [open, finish])
+    }, [open, finish, steps])
 
     if (welcome && !open) {
         return (
@@ -170,15 +205,16 @@ export default function Tutorial() {
         )
     }
     if (!open) return null
-    const step = STEPS[i]
-    const last = i === STEPS.length - 1
+    const step = steps[i] || steps[0]
+    const last = i === steps.length - 1
+    const isNew = tour === "new"
     const r = step.target && found && ring
         ? { x: ring.x - PAD, y: ring.y - PAD, w: ring.w + PAD * 2, h: ring.h + PAD * 2 } : null
     const pos = placeCard(r, vp.w, vp.h, CARD_W, cardH)
     const waiting = step.target && found && !ring
 
     return (
-        <div role="dialog" aria-label="Guided walkthrough" style={{ position: "fixed", inset: 0, zIndex: 6000, pointerEvents: "auto" }}>
+        <div role="dialog" aria-label={isNew ? "What's new" : "Guided walkthrough"} style={{ position: "fixed", inset: 0, zIndex: 6000, pointerEvents: "auto" }}>
             {/* The dimming, with a hole where the target is. */}
             <svg width={vp.w} height={vp.h} style={{ position: "absolute", inset: 0 }}>
                 <defs>
@@ -199,20 +235,31 @@ export default function Tutorial() {
                 backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
             }}>
                 <div style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)", marginBottom: 8 }}>
-                    Walkthrough · {i + 1} of {STEPS.length}{step.where ? ` · ${step.where}` : ""}
+                    {isNew ? "What's new" : "Walkthrough"} · {i + 1} of {steps.length}{step.where ? ` · ${step.where}` : ""}
                 </div>
                 <h2 style={{ margin: "0 0 8px", fontFamily: "var(--mz-font-body)", fontWeight: 600, fontSize: 17 }}>{step.title}</h2>
                 <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--txt2)" }}>{step.body}</p>
                 {step.try && <p style={{ margin: "8px 0 0", fontSize: 12.5, lineHeight: 1.5, color: "var(--txt)" }}><span style={{ color: "var(--acchi)" }}>Try it: </span>{step.try}</p>}
                 {waiting && <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--txt4)" }}>Opening…</p>}
                 <div style={{ display: "flex", gap: 3, margin: "14px 0 12px" }}>
-                    {STEPS.map((_, n) => (
+                    {steps.map((_, n) => (
                         <button key={n} onClick={() => setI(n)} aria-label={`Step ${n + 1}`} style={{
                             flex: 1, height: 3, padding: 0, border: 0, cursor: "pointer",
                             background: n <= i ? "var(--acchi)" : "var(--gline2)",
                         }} />
                     ))}
                 </div>
+                {isNew ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <button onClick={finish} style={BTN} title="Close; it opens again next time">Later</button>
+                        {!last && <button onClick={neverAgain} style={BTN} data-testid="whats-new-never">Don't show again</button>}
+                        <span style={{ flex: 1 }} />
+                        {i > 0 && <button onClick={() => setI(i - 1)} style={BTN}>Back</button>}
+                        {last
+                            ? <button onClick={neverAgain} style={{ ...BTN, ...PRIMARY }} data-testid="whats-new-never">Done · don't show again</button>
+                            : <button onClick={() => setI(i + 1)} style={{ ...BTN, ...PRIMARY }}>Next</button>}
+                    </div>
+                ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <button onClick={finish} style={BTN}>{last ? "Close" : "Skip"}</button>
                     <span style={{ flex: 1 }} />
@@ -221,6 +268,7 @@ export default function Tutorial() {
                         ? <button onClick={finish} style={{ ...BTN, ...PRIMARY }}>Done</button>
                         : <button onClick={() => setI(i + 1)} style={{ ...BTN, ...PRIMARY }}>Next</button>}
                 </div>
+                )}
             </div>
         </div>
     )
