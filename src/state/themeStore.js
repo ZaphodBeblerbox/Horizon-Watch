@@ -19,6 +19,7 @@
 import API_BASE from "../apiBase.js"
 import { getUserLocation } from "../globe/useUserLocation.js"
 import { getSettings, updateSetting } from "./settingsStore.js"
+import { getCurrentUser } from "./authStore.js"
 import { solarElevationDeg, civilTwilightBlend, solarDayPhase } from "../utils/solarPosition.js"
 import { blendColor, isParseableColor } from "../utils/colorBlend.js"
 
@@ -407,13 +408,23 @@ export async function setThemeMode(mode) {
     if (mode === "auto") startAutoEngine()
     else applyManual(mode)
 
+    /* THE CHOICE IS THE USER'S NOW, IN MEMORY TOO (2026-10-10: "I can't
+       switch away from the automatic day-night cycle"). The signed-in user
+       held in authStore kept the theme from sign-in, and every republish of
+       it (a profile save, a session check that kept the cached user) ran
+       reconcileTheme with that old value and put Auto back. */
+    const me = getCurrentUser()
+    if (me) me.theme = mode
+
+    const put = () => fetch(`${API_BASE}/api/users/me/theme`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ theme: mode }),
+    })
     try {
-        await fetch(`${API_BASE}/api/users/me/theme`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ theme: mode }),
-        })
+        let r = await put()
+        if (!r.ok) { await new Promise((ok) => setTimeout(ok, 1500)); r = await put() }      // once more, then the next check corrects it
     } catch { /* real network hiccup — local mode already applied */
     } finally {
         hasPendingLocalWrite = false

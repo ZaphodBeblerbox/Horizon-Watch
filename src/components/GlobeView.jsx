@@ -789,14 +789,20 @@ export default function GlobeView({
                 return
             }
             viewer.resolutionScale = window.devicePixelRatio
-            viewer.scene.globe.maximumScreenSpaceError = 1
+            // MEMORY, NOT ONLY SHARPNESS (2026-10-10). Screen-space error 1 at
+            // full Retina resolution with a 1,000-tile cache had the desktop
+            // app's web process at 1.7 GB after load on a 16 GB Mac; macOS
+            // then raised critical memory pressure and the page was reloaded
+            // under the user — "it keeps refreshing". 1.5 is still sharper
+            // than Cesium's default 2, at a fraction of the tiles.
+            viewer.scene.globe.maximumScreenSpaceError = 1.5
             viewer.scene.postProcessStages.fxaa.enabled = true
             viewer.scene.highDynamicRange = false
             viewer.scene.fog.enabled = true
             viewer.scene.fog.density = 0.0003
             viewer.scene.globe.showGroundAtmosphere = true
             if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
-            viewer.scene.globe.tileCacheSize = 1000
+            viewer.scene.globe.tileCacheSize = 300
             viewer.targetFrameRate = 60
             viewer.scene.requestRenderMode = true
             viewer.scene.maximumRenderTimeChange = 0.05
@@ -929,7 +935,12 @@ export default function GlobeView({
                 // wholesale, carries its own attribution requirement, and
                 // bills against the ion quota.
                 if (!buildingsRef.current) {
-                    Cesium3DTileset.fromIonAssetId(96188).then((ts) => {
+                    // Capped: Cesium's default lets a tileset hold 512 MB plus
+                    // 512 MB of overflow, the largest single share of the
+                    // memory that got the desktop app reloaded.
+                    Cesium3DTileset.fromIonAssetId(96188, {
+                        cacheBytes: 128 * 1024 * 1024, maximumCacheOverflowBytes: 128 * 1024 * 1024, maximumScreenSpaceError: 24,
+                    }).then((ts) => {
                         if (cancelled || viewer.isDestroyed?.()) return
                         buildingsRef.current = ts
                         viewer.scene.primitives.add(ts)
