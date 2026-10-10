@@ -29489,6 +29489,26 @@ def _require_capability_real(user: dict, capability: str) -> None:
     if capability not in caps:
         raise HTTPException(status_code=403, detail=f"'{user.get('name') or user.get('email')}' lacks the '{capability}' capability")
 
+def _needs_bearer(request: Request) -> bool:
+    """Whether this client cannot keep the session cookie and must hold
+    the token itself: the packaged app (tauri:// origin), and a web page
+    served from another site than this API — the Vercel frontend talking to
+    Railway. There hw_session is a third-party cookie; Safari, and Chrome
+    with tracking protection, drop it, so login looked fine and every call
+    that needs the user answered "authentication required" (the owner saw
+    it on the map, 2026-10-10)."""
+    origin = (request.headers.get("origin") or "").lower()
+    if not origin:
+        return False
+    if origin.startswith("tauri://") or origin.startswith("http://tauri."):
+        return True
+    from urllib.parse import urlparse
+    page = (urlparse(origin).hostname or "")
+    api = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(":")[0].lower()
+    site = lambda h: ".".join(h.split(".")[-2:]) if h.count(".") >= 1 and not h.replace(".", "").isdigit() else h
+    return bool(page) and bool(api) and site(page) != site(api)
+
+
 def _cookie_kwargs(request: Request) -> dict:
     # Real cross-origin cookie handling: production is genuinely cross-site
     # (Vercel frontend, Railway backend — different registrable domains),
@@ -29556,8 +29576,7 @@ async def api_auth_login(request: Request, response: Response):
         # cookie. Handing the raw JWT to a browser page would put it within
         # reach of any injected script, which is exactly what httpOnly
         # exists to prevent — so a browser never receives this field.
-        origin = (request.headers.get("origin") or "").lower()
-        if origin.startswith("tauri://") or origin.startswith("http://tauri."):
+        if _needs_bearer(request):
             out["session_token"] = token
         return out
 
@@ -29582,6 +29601,10 @@ def api_auth_me(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="not authenticated")
     token = _create_session_token(user["id"])
     response.set_cookie(key="hw_session", value=token, max_age=JWT_SESSION_HOURS * 3600, **_cookie_kwargs(request))
+    # a client holding its own token gets the renewed one too, or its
+    # session would end at the first token's expiry however active it was
+    if _needs_bearer(request):
+        return {**user, "session_token": token}
     return user
 
 @app.get("/api/teams")

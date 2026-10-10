@@ -18,17 +18,34 @@
  * the alternative is an app that cannot stay logged in at all.
  */
 
-import { isDesktop } from "../apiBase.js"
+import API_BASE, { isDesktop } from "../apiBase.js"
+
+/**
+ * Whether this page has to carry the session itself: the packaged app, and
+ * a web page on another site than the API (the Vercel frontend talking to
+ * Railway), where hw_session is a third-party cookie that Safari and
+ * Chrome's tracking protection drop. The server makes the same call
+ * (main._needs_bearer) and only then returns the token.
+ */
+export function needsBearer(w = typeof window !== "undefined" ? window : undefined, apiBase = API_BASE) {
+    if (isDesktop(w)) return true
+    try {
+        const site = (h) => h.split(".").slice(-2).join(".")
+        const page = w?.location?.hostname || ""
+        const api = new URL(apiBase, w?.location?.href).hostname
+        return !!page && !!api && site(page) !== site(api)
+    } catch { return false }
+}
 
 const KEY = "parallax.session"
 
 export function storeDesktopToken(token) {
-    if (!token || !isDesktop()) return
+    if (!token || !needsBearer()) return
     try { localStorage.setItem(KEY, token) } catch { /* nothing to do */ }
 }
 
 export function getDesktopToken() {
-    if (!isDesktop()) return null
+    if (!needsBearer()) return null
     try { return localStorage.getItem(KEY) } catch { return null }
 }
 
@@ -41,7 +58,7 @@ export function clearDesktopToken() {
  * Installed before React mounts, alongside the offline cache.
  */
 export function installDesktopAuth({ win = typeof window !== "undefined" ? window : undefined, apiBase } = {}) {
-    if (!win || !apiBase || !isDesktop()) return () => {}
+    if (!win || !apiBase || !needsBearer(win, apiBase)) return () => {}
     if (win.__parallaxAuthInstalled) return () => {}
     win.__parallaxAuthInstalled = true
 

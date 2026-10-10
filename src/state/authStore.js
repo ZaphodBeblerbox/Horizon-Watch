@@ -122,7 +122,10 @@ async function _tryFetchMe() {
     if (r.status === 401) return { outcome: "unauthenticated" }
     if (!r.ok) return { outcome: "transient" }
     try {
-        return { outcome: "ok", user: await r.json() }
+        const user = await r.json()
+        // the renewed token, for a client that holds its own (desktopAuth)
+        if (user?.session_token) { storeDesktopToken(user.session_token); delete user.session_token }
+        return { outcome: "ok", user }
     } catch {
         return { outcome: "transient" }
     }
