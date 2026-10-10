@@ -17,7 +17,7 @@ import MHome from "./screens/MHome.jsx"
 import MMap from "./screens/MMap.jsx"
 import MDesk from "./screens/MDesk.jsx"
 import MMessages from "./screens/MMessages.jsx"
-import { MAssets, MAlerts, MReports, MProfile } from "./screens/MMore.jsx"
+import { MAssets, MAlerts, MReports, MProfile, MSettings } from "./screens/MMore.jsx"
 import ConflictContext from "../conflicts/ConflictContext.jsx"
 import TelegramMood from "../insight/TelegramMood.jsx"
 import { Icon, Sheet } from "./screens/common.jsx"
@@ -33,9 +33,9 @@ import SourceViewer from "../components/SourceViewer.jsx"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
-              ["reports", "Reports", "g-report"], ["general", "General", "g-feed"], ["profile", "Profile", "g-user"]]
+              ["reports", "Reports", "g-report"], ["general", "General", "g-feed"], ["profile", "Profile", "g-user"], ["settings", "Settings", "g-gear"]]
 const TITLES = { home: null, map: "Map", desk: "Desk", messages: "Messages", assets: "Assets", alerts: "Alerts", conflicts: "Conflicts", mood: "Mood on Telegram",
-                 reports: "Situation reports", general: "General", profile: "Profile", admin: "Admin" }
+                 reports: "Situation reports", general: "General", profile: "Profile", admin: "Admin", settings: "Settings" }
 
 export default function MobileApp() {
     const [tab, setTab] = useState("home")
@@ -48,6 +48,7 @@ export default function MobileApp() {
     // keeps "last seen" current. The list itself isn't shown here.
     useOnlineUsers("phone")
     const go = (t, opts) => { setMenu(false); if (opts?.asset) setAssetOpen(opts.asset); setTab(t) }
+    useEffect(() => { const h = (e) => go(e.detail); window.addEventListener("m2:go", h); return () => window.removeEventListener("m2:go", h) }, []) // eslint-disable-line react-hooks/exhaustive-deps
     const showOnMap = (s) => { if (!s || !Number.isFinite(+s.lat)) return; setFocus({ ...s, _t: Date.now() }); setTab("map") }
     const [me, setMe] = useState(() => getCurrentUser())
     useEffect(() => subscribeAuth(setMe), [])
@@ -68,6 +69,7 @@ export default function MobileApp() {
             {tab !== "map" && <header className="m2-top">
                 {TITLES[tab] ? <span className="m2-title">{TITLES[tab]}</span>
                     : <span className="m2-brand" style={{ flex: 1, display: "flex" }} aria-label="Parallax"><span style={{ width: 124, height: 19, display: "block" }}><PlxWordmark /></span></span>}
+                {tab !== "settings" && <button className="m2-iconbtn" aria-label="Settings" onClick={() => go("settings")}><Icon id="g-gear" /></button>}
                 <button className="m2-iconbtn" aria-label="Alerts" onClick={() => go("alerts")}>
                     <Icon id="g-bell" />{arr(notes).length > 0 && <span className="m2-badge">{Math.min(99, arr(notes).length)}</span>}
                 </button>
@@ -87,6 +89,7 @@ export default function MobileApp() {
                 {tab === "general" && <Pane on><div className="m2-scroll"><GeneralFeed compact onMap={(it) => showOnMap(it)} /></div></Pane>}
                 {tab === "admin" && me?.is_super_admin && <Pane on><MAdmin /></Pane>}
                 {tab === "profile" && <Pane on><MProfile /></Pane>}
+                {tab === "settings" && <Pane on><MSettings /></Pane>}
             </main>
             <nav className="m2-nav">
                 {NAV.map(([k, label, icon]) => (

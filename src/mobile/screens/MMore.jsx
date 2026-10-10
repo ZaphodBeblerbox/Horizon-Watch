@@ -14,7 +14,8 @@ import { getCurrentUser, logout } from "../../state/authStore.js"
 import IssueReader from "../../reports/IssueReader.jsx"
 import { usePoll, arr, getJSON } from "../useMine.js"
 import { Icon, Row, Sheet, SignalSheet, sevColor, when } from "./common.jsx"
-import { getSettings, subscribeSettings } from "../../state/settingsStore.js"
+import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
+import { setDnd } from "../../state/notificationStore.js"
 import LiveShareRow from "../../location/LiveShareRow.jsx"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
 
@@ -204,11 +205,9 @@ export function MProfile() {
                     </div>
                 </div>
             </div>
-            <div className="m2-card" style={{ padding: "4px 14px", marginBottom: 14 }}>
-                <ClosedNotificationsRow Row={PhoneRow} Toggle={PhoneToggle} />
-                <LiveShareRow Row={PhoneRow} Toggle={PhoneToggle} />
-                <HereRowPhone />
-            </div>
+            <button className="m2-btn ghost" style={{ width: "100%", marginBottom: 14 }} onClick={() => window.dispatchEvent(new CustomEvent("m2:go", { detail: "settings" }))}>
+                Settings — notifications, location, time
+            </button>
             <div className="m2-sub" style={{ marginBottom: 14, lineHeight: 1.5 }}>Your picture, header, theaters and interests are set on the desktop under Profile and Settings; the phone follows them.</div>
             <button className="m2-btn ghost" onClick={() => logout().then(() => window.location.reload())}>Sign out</button>
             {/* which build this phone is running: a cached copy looks like a fix that did not ship */}
@@ -235,5 +234,60 @@ function HereRowPhone() {
             {err && <span style={{ display: "block", color: "var(--red, #e5484d)", marginTop: 4 }}>{err}</span>}</>}>
             <button className="m2-chip" disabled={busy} onClick={use}>{busy ? "Finding…" : here ? "Update" : "Use my location"}</button>
         </PhoneRow>
+    )
+}
+
+
+/** Settings on the phone (owner, 2026-10-10: "there is no settings page on
+ *  mobile"): notifications, sounds, location, time, footage — the same
+ *  stored settings as the desktop's, so the two agree. */
+export function MSettings() {
+    const [st, setSt] = useState(() => getSettings() || {})
+    useEffect(() => subscribeSettings((s) => setSt(s || {})), [])
+    const Group = ({ title, children }) => (
+        <>
+            <div className="m2-h">{title}</div>
+            <div className="m2-card" style={{ padding: "2px 14px", marginBottom: 6 }}>{children}</div>
+        </>
+    )
+    const set = (k, v) => updateSetting(k, v)
+    const timeUtc = st?.general?.timeDisplay === "utc"
+    return (
+        <div className="m2-scroll" data-screen-label="Phone settings">
+            <Group title="Notifications">
+                <ClosedNotificationsRow Row={PhoneRow} Toggle={PhoneToggle} />
+                <PhoneRow label="Do not disturb" hint="No cards on screen; everything still lands in Alerts.">
+                    <PhoneToggle value={!!st.dnd} onChange={(v) => setDnd(v)} />
+                </PhoneRow>
+                <PhoneRow label="Alert sounds" hint="A sound with each card that takes the screen.">
+                    <PhoneToggle value={!st.soundMuted} onChange={(v) => set("soundMuted", !v)} />
+                </PhoneRow>
+                {!st.soundMuted && <>
+                    <PhoneRow label="Critical"><PhoneToggle value={st.soundCritical !== false} onChange={(v) => set("soundCritical", v)} /></PhoneRow>
+                    <PhoneRow label="High"><PhoneToggle value={st.soundSignificant !== false} onChange={(v) => set("soundSignificant", v)} /></PhoneRow>
+                    <PhoneRow label="Moderate"><PhoneToggle value={!!st.soundElevated} onChange={(v) => set("soundElevated", v)} /></PhoneRow>
+                </>}
+            </Group>
+            <Group title="Location">
+                <HereRowPhone />
+                <LiveShareRow Row={PhoneRow} Toggle={PhoneToggle} />
+            </Group>
+            <Group title="Time">
+                <PhoneRow label="Times shown in" hint="Your local time, or Zulu (UTC) everywhere.">
+                    <div className="m2-segs" style={{ width: 160 }}>
+                        <button aria-pressed={!timeUtc} onClick={() => set("general.timeDisplay", "local")}>Local</button>
+                        <button aria-pressed={timeUtc} onClick={() => set("general.timeDisplay", "utc")}>Zulu</button>
+                    </div>
+                </PhoneRow>
+            </Group>
+            <Group title="Footage">
+                <PhoneRow label="Warn before graphic footage" hint="Footage that may show dead or injured people opens blurred until you choose to see it.">
+                    <PhoneToggle value={st?.media?.warnGraphic !== false} onChange={(v) => set("media.warnGraphic", v)} />
+                </PhoneRow>
+            </Group>
+            <div className="m2-sub" data-testid="build-stamp" style={{ marginTop: 16, fontFamily: "var(--mz-font-mono, monospace)", fontSize: 11 }}>
+                Parallax {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : ""} · build {typeof __PLX_BUILD__ !== "undefined" ? __PLX_BUILD__ : "?"}
+            </div>
+        </div>
     )
 }
