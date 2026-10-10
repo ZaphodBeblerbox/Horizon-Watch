@@ -18,9 +18,29 @@ mod fnkey {
   }
 }
 
+// A NATIVE NOTIFICATION, ASKED FOR DIRECTLY (2026-10-10: Parallax never
+// appeared in System Settings › Notifications). The plugin's JavaScript
+// route builds a browser-style Notification whose call to the native side
+// swallows any error, so a failure looked like success. This command calls
+// the same native code and returns its error to the page.
+#[tauri::command]
+fn plx_notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+  #[cfg(not(any(target_os = "android", target_os = "ios")))]
+  {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification().builder().title(title).body(body).sound("Ping").show().map_err(|e| e.to_string())
+  }
+  #[cfg(any(target_os = "android", target_os = "ios"))]
+  {
+    let _ = (app, title, body);
+    Ok(())
+  }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let app = tauri::Builder::default()
+    .invoke_handler(tauri::generate_handler![plx_notify])
     .setup(|app| {
       // Desktop only — see the target-gated dependency in Cargo.toml.
       // tauri_plugin_process is what lets the app relaunch itself once an
@@ -33,6 +53,13 @@ pub fn run() {
         // Native notifications while the window is hidden: the webview has
         // no service worker, so web push cannot reach the app.
         app.handle().plugin(tauri_plugin_notification::init())?;
+        // A self-test from outside the page: launched with PLX_NOTIFY_TEST=1,
+        // the app sends one notification from the native side on start.
+        if std::env::var("PLX_NOTIFY_TEST").is_ok() {
+          use tauri_plugin_notification::NotificationExt;
+          let r = app.notification().builder().title("Parallax").body("Native notification test").show();
+          eprintln!("[plx] native notification test: {:?}", r.map_err(|e| e.to_string()));
+        }
       }
 
       #[cfg(target_os = "macos")]

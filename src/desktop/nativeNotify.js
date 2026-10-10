@@ -49,6 +49,13 @@ async function plugin() {
     return import("@tauri-apps/plugin-notification")
 }
 
+/** Send one, through our own command (src-tauri lib.rs plx_notify), so an
+ *  error comes back instead of vanishing in the plugin's script. */
+export async function nativeSend({ title, body }) {
+    const { invoke } = await import("@tauri-apps/api/core")
+    await invoke("plx_notify", { title, body: body || "" })
+}
+
 export async function enableDesktopNotify() {
     if (!isDesktop()) return { ok: false, error: "not the desktop app" }
     try {
@@ -58,6 +65,10 @@ export async function enableDesktopNotify() {
         if (!granted) return { ok: false, error: "macOS did not allow notifications — System Settings › Notifications › Parallax" }
         try { localStorage.setItem(KEY, "1") } catch { /* private storage */ }
         installNativeNotify()
+        // one now: it registers Parallax with macOS (System Settings ›
+        // Notifications lists it from then on) and shows that it works
+        try { await nativeSend({ title: "Parallax", body: "Notifications are on — they arrive when Parallax is in the background or closed." }) }
+        catch (e) { return { ok: false, error: `macOS refused it: ${e?.message || e}` } }
         return { ok: true }
     } catch (e) {
         return { ok: false, error: e?.message || String(e) }
@@ -79,10 +90,9 @@ export function installNativeNotify() {
     }
     setOffScreenHandler(async (item) => {
         try {
-            const n = await plugin()
-            n.sendNotification(nativeContent(item))
+            await nativeSend(nativeContent(item))
             lastShown = { item, at: Date.now() }
-        } catch { /* the plugin is missing in an older build: stay quiet */ }
+        } catch (e) { console.warn("[notify] native notification failed:", e) }
     })
 }
 
@@ -92,8 +102,7 @@ export async function testNativeNotify(delayMs = 5000) {
     if (!isDesktop()) return { ok: false, error: "not the desktop app" }
     await new Promise((ok) => setTimeout(ok, delayMs))
     try {
-        const n = await plugin()
-        await n.sendNotification(nativeContent({ title: "Test notification — notifications reach this Mac." }))
+        await nativeSend(nativeContent({ title: "Test notification — notifications reach this Mac." }))
         return { ok: true }
     } catch (e) {
         return { ok: false, error: e?.message || String(e) }
