@@ -1,0 +1,77 @@
+{
+ "messages": [],
+ "results": {},
+ "index": [
+  {
+   "id": 2,
+   "datum": "11.10.2026",
+   "von": "00:00",
+   "bis": "18:00",
+   "thema": "Mahnwache Regenbogen-Bank  Für Berliner Vielfalt und Schutz queerer Lebensformen (vom 09.10. bis 11.10.2026,Fr.,Sa.,So.)",
+   "plz": "10785",
+   "strasse_nr": "Ahornsteig",
+   "aufzugsstrecke": ""
+  },
+  {
+   "id": 5,
+   "datum": "11.10.2026",
+   "von": "00:00",
+   "bis": "23:59",
+   "thema": "Sitzstreik und Mahnwache für Menschenrechte im Iran, sowie für eine Neubewertung der diplomatischen Beziehungen   (vom 02.10. bis 30.12.2026 - täglich)",
+   "plz": "10557",
+   "strasse_nr": "Platz der Republik 1",
+   "aufzugsstrecke": ""
+  },
+  {
+   "id": 11,
+   "datum": "11.10.2026",
+   "von": "10:00",
+   "bis": "14:00",
+   "thema": "Therapiefreiheit statt WHO-Pharma Diktat",
+   "plz": "10787",
+   "strasse_nr": "Budapester Str. 2",
+   "aufzugsstrecke": ""
+  },
+  {
+   "id": 14,
+   "datum": "11.10.2026",
+   "von": "10:00",
+   "bis": "18:00",
+   "thema": "Gegen Mietverdrängung durch sogenannte energetische  und Luxussanierung für unverfälschte Denkmalpflege und  Instandhaltung (vom 03.10. bis 02.12.2026 - jeweils Mi.,Sa.,So.)",
+   "plz": "13509",
+   "strasse_nr": "An der Heide 1",
+   "aufzugsstrecke": "An der Heide, Kehrwieder, Am Rosensteg, Am Brunnen    - > alle 2 Stunden im Wechsel"
+  },
+  {
+   "id": 68,
+   "datum": "12.10.2026",
+   "von": "00:00",
+   "bis": "23:59",
+   "thema": "Sitzstreik und Mahnwache für Menschenrechte im Iran, sowie für eine Neubewertung der diplomatischen Beziehungen   (vom 02.10. bis 30.12.2026 - täglich)",
+   "plz": "10557",
+   "strasse_nr": "Platz der Republik 1",
+   "aufzugsstrecke": ""
+  },
+  {
+   "id": 155,
+   "datum": "13.10.2026",
+   "von": "00:00",
+   "bis": "23:59",
+   "thema": "Sitzstreik und Mahnwache für Menschenrechte im Iran, sowie für eine Neubewertung der diplomatischen Beziehungen   (vom 02.10. bis 30.12.2026 - täglich)",
+   "plz": "10557",
+   "strasse_nr": "Platz der Republik 1",
+   "aufzugsstrecke": ""
+  },
+  {
+   "id": 999001,
+   "datum": "17.10.2026",
+   "von": "08:00",
+   "bis": "12:00",
+   "thema": "Sitzblockade am Westhafen gegen Waffenlieferungen, Anmelder Herr Max Mustermann, Tel. 0170 1234567, max@example.org",
+   "plz": "13353",
+   "strasse_nr": "Westhafenstr. 1",
+   "aufzugsstrecke": ""
+  }
+ ],
+ "item": []
+}

@@ -1273,11 +1273,17 @@ export function adaptEndangeredPlace(data = {}) {
         attr("Address", data.address || null),
         attr("Activity", [data.sector, data.domain].filter(Boolean).join(" — ") || null),
         attr("On the map's lists", Array.isArray(data.lists) && data.lists.length ? data.lists.join("; ") : null),
+        attr("Country", data.country && data.country !== "FR" ? (data.country_name || data.country) : null),
         attr("Position", fmtCoord(data.lat, data.lon)),
+        attr("Position note", data.approx ? `Position ${data.approx}` : null),
+        attr("Listed by", data.source || null),
+        attr("Credit", data.credit || null),
         attr("Source", data.source_url || null),
     ])
-    const levelWord = data.alarm === "red" ? "Roadblock, convoy or picket within 48 h"
-        : data.alarm === "amber" ? "Call to act" : "Listed, no call"
+    const french = !data.country || data.country === "FR"
+    const levelWord = data.alarm === "red" ? (french ? "Roadblock, convoy or picket within 48 h" : "Blockade or supply strike within 48 h")
+        : data.alarm === "amber" ? (calls.some((c) => c.basis === "announced") ? "Notified or proclaimed" : "Call to act")
+            : "Listed, no call"
     return {
         identity: {
             title: data.name || "Endangered place",

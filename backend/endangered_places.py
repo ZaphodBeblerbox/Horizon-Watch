@@ -85,12 +85,20 @@ FC_PUBLIC_URL = f"https://framacarte.org/m/{FC_MAP_ID}/"
 # The company layers (by name); the technopoles, state bodies and the
 # infrastructure layer (OSM editor names) are left out.
 FC_LAYER_WORDS = ("armement", "militaro", "complicit", "drone")
+GJ_CREDIT = ("17octobregiletjaune.net — the gilets jaunes' public call map; fuel stations from the DGCCRF list "
+             "(Licence Ouverte); facts cited")
+FC_CREDIT = "Framacarte (uMap) map 213599, “La guerre se fabrique près de chez nous” — map data © its authors; facts cited"
 FC_NOTE = ("Listed by an anti-militarist map (\"La guerre se fabrique près de chez nous\", "
            "Framacarte) as a target for action — no dated call")
 
-USER_AGENT = "ParallaxMonitor/1.0 (read-only situational awareness; polls every 30 min)"
+# A generic User-Agent with a contact URL (never a person's address).
+USER_AGENT = ("HorizonWatch/1.0 (+https://github.com/ZaphodBeblerbox/Horizon-Watch; read-only situational "
+              "awareness, polite polling)")
 TZ = "Europe/Paris"
 FRANCE = (46.6, 2.5)
+# Other countries' sources (endangered_sources.py); off with
+# ENDANGERED_OTHER_COUNTRIES=false.
+OTHER_COUNTRIES = os.getenv("ENDANGERED_OTHER_COUNTRIES", "true").strip().lower() not in ("0", "false", "no")
 
 # How often each source is read (seconds).
 EVERY = {"actions": 30 * 60, "lieux": 30 * 60, "sites": 6 * 3600, "stations": 6 * 3600,
@@ -177,7 +185,7 @@ def _fetch(url: str, cond: dict | None = None, timeout: int = 30, max_bytes: int
     """(body bytes, {etag, last_modified}). Raises NotModified on a 304,
     anything else on failure. Conditional when the last answer gave an
     ETag or Last-Modified."""
-    headers = {"User-Agent": USER_AGENT, "Accept": "application/json, text/html;q=0.8"}
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json, text/html;q=0.8, */*;q=0.5"}
     cond = cond or {}
     if cond.get("etag"):
         headers["If-None-Match"] = cond["etag"]
@@ -326,11 +334,33 @@ def refresh(now: _dt.datetime | None = None, force: bool = False) -> dict:
                     print(f"[endangered] error: fetch page: {type(e).__name__}: {e}", flush=True)
         if _due(meta, "framacarte", now_ts, force):
             changed |= _pull_framacarte(meta, now_ts, errors)
+        # Other countries (endangered_sources.py): each source on its own
+        # cadence, a failing one keeps its last good copy.
+        es = None
+        if OTHER_COUNTRIES:
+            try:
+                import endangered_sources as es
+                changed |= es.refresh_all(meta, now, force, errors)
+            except Exception as e:                             # noqa: BLE001
+                errors.append(f"other countries: {type(e).__name__}: {e}")
+                print(f"[endangered] error: other countries: {type(e).__name__}: {e}", flush=True)
         raw = load_raw(meta)
         places, stats = build(raw, meta.get("first_seen") or {}, meta.get("action_date") or GJ_ACTION_DATE, now)
+        if es is not None:
+            try:
+                other, ostats = es.build_places(meta, now)
+                places = places + es.merge_with_france(places, other)
+                stats = {**stats_of(places), "unplaced_calls": stats["unplaced_calls"] + ostats["unplaced"]}
+            except Exception as e:                             # noqa: BLE001
+                errors.append(f"other countries build: {type(e).__name__}: {e}")
+                print(f"[endangered] error: other countries build: {type(e).__name__}: {e}", flush=True)
         # When each call was first seen: "new" calls, and the time a
         # per-user card carries.
         fs = meta.setdefault("first_seen", {})
+        for p in places:
+            for c in p["calls"]:
+                if c["key"] in fs and "first_seen" not in c:
+                    c["first_seen"] = fs[c["key"]]
         new_calls = []
         for p in places:
             for c in p["calls"]:
@@ -338,6 +368,11 @@ def refresh(now: _dt.datetime | None = None, force: bool = False) -> dict:
                     fs[c["key"]] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
                     c["first_seen"] = fs[c["key"]]
                     new_calls.append(c["key"])
+        # Forget calls gone for two months (official lists roll over daily).
+        live_keys = {c["key"] for p in places for c in p["calls"]}
+        old = (now - _dt.timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for k in [k for k, v in fs.items() if k not in live_keys and str(v) < old]:
+            fs.pop(k, None)
         meta["built_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         out = {"built_at": meta["built_at"], "action_date": meta.get("action_date") or GJ_ACTION_DATE,
                "sources": source_status(meta), "stats": stats, "places": places}
@@ -496,6 +531,8 @@ def build(raw: dict, first_seen: dict, action_date: str, now: _dt.datetime | Non
     out = list(places.values())
     out += _framacarte_places(raw.get("framacarte") or {})
     for p in out:
+        p["country"], p["country_name"] = "FR", "France"
+        p["credit"] = (GJ_CREDIT if p["source"] == GJ_LABEL else FC_CREDIT)
         for c in p["calls"]:
             if c["key"] in first_seen:
                 c["first_seen"] = first_seen[c["key"]]
@@ -547,9 +584,13 @@ def _framacarte_places(layers: dict) -> list[dict]:
 
 def stats_of(places: list[dict]) -> dict:
     by_kind, by_call, by_dept, by_level = {}, {}, {}, {}
+    by_country, by_source = {}, {}
     calls = 0
     for p in places:
         by_kind[p["kind"]] = by_kind.get(p["kind"], 0) + 1
+        cc = p.get("country") or "?"
+        by_country[cc] = by_country.get(cc, 0) + 1
+        by_source[p["source"]] = by_source.get(p["source"], 0) + 1
         for c in p["calls"]:
             calls += 1
             by_call[c["kind"]] = by_call.get(c["kind"], 0) + 1
@@ -557,7 +598,8 @@ def stats_of(places: list[dict]) -> dict:
             if p.get("dept"):
                 by_dept[p["dept"]] = by_dept.get(p["dept"], 0) + 1
     return {"places": len(places), "places_with_calls": sum(1 for p in places if p["calls"]), "calls": calls,
-            "by_kind": by_kind, "by_call": by_call, "by_level": by_level,
+            "by_kind": by_kind, "by_call": by_call, "by_level": by_level, "by_country": by_country,
+            "by_source": by_source,
             "top_departments": sorted(by_dept.items(), key=lambda x: -x[1])[:10]}
 
 
@@ -577,14 +619,25 @@ def source_status(meta: dict) -> list[dict]:
          "ok_at": iso(max((x.get("ok_at") or 0) for x in fc)) if fc else None,
          "error": next((x.get("error") for x in fc if x.get("error")), None),
          "note": "Arms-industry companies an anti-militarist map lists as targets for action"},
-    ]
+    ] + _other_status(meta)
+
+
+def _other_status(meta: dict) -> list[dict]:
+    if not OTHER_COUNTRIES:
+        return []
+    try:
+        import endangered_sources as es
+        return es.status_rows(meta)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[endangered] error: source status: {type(e).__name__}: {e}", flush=True)
+        return []
 
 
 # ── derived on read ──────────────────────────────────────────────────────
 
-def _zone():
+def _zone(tz: str | None = None):
     from zoneinfo import ZoneInfo
-    return ZoneInfo(TZ)
+    return ZoneInfo(tz or TZ)
 
 
 def call_start(c: dict) -> _dt.datetime | None:
@@ -593,15 +646,29 @@ def call_start(c: dict) -> _dt.datetime | None:
     except (KeyError, TypeError, ValueError):
         return None
     hh, mm = (c.get("time") or "07:00").split(":")
-    return _dt.datetime(d.year, d.month, d.day, int(hh), int(mm), tzinfo=_zone())
+    return _dt.datetime(d.year, d.month, d.day, int(hh), int(mm), tzinfo=_zone(c.get("tz")))
 
 
 def call_end(c: dict) -> _dt.datetime | None:
+    """The end of the call's last day (a strike over two days, a vigil
+    notified on several dates), in its own time zone."""
     try:
-        d = _dt.date.fromisoformat(c["date"])
+        d = _dt.date.fromisoformat(c.get("end_date") or c["date"])
     except (KeyError, TypeError, ValueError):
         return None
-    return _dt.datetime(d.year, d.month, d.day, 23, 59, tzinfo=_zone())
+    return _dt.datetime(d.year, d.month, d.day, 23, 59, tzinfo=_zone(c.get("tz")))
+
+
+def covers(c: dict, day: str) -> bool:
+    """Is the call on this day (ISO date)."""
+    if c.get("dates"):
+        return day in c["dates"]
+    return c["date"] <= day <= (c.get("end_date") or c["date"])
+
+
+def _dlabel(iso: str) -> str:
+    d = _dt.date.fromisoformat(iso)
+    return f"{d.strftime('%a')} {d.day} {d.strftime('%b')}"
 
 
 def when_label(c: dict) -> str:
@@ -610,13 +677,26 @@ def when_label(c: dict) -> str:
     except (KeyError, TypeError, ValueError):
         return "date not given"
     day = f"{d.strftime('%a')} {d.day} {d.strftime('%b')}"
-    return f"{day}, {c['time']}" if c.get("time") else f"{day}, time to be confirmed"
+    if not c.get("verb"):                                   # the French calls, as they always read
+        return f"{day}, {c['time']}" if c.get("time") else f"{day}, time to be confirmed"
+    hours = (f"{c['time']}–{c['end_time']}" if c.get("time") and c.get("end_time") else c.get("time")) or None
+    if c.get("dates") and len(c["dates"]) > 1:
+        return (f"{len(c['dates'])} days from {day} to {_dlabel(c['dates'][-1])}"
+                + (f", {hours}" if hours else ""))
+    if c.get("end_date") and c["end_date"] != c["date"]:
+        return (f"{day}{', ' + c['time'] if c.get('time') else ''} to {_dlabel(c['end_date'])}"
+                + (f", {c['end_time']}" if c.get("end_time") else ""))
+    if hours:
+        return f"{day}, {hours}"
+    return f"{day}, all day" if str(c.get("kind", "")).startswith("strike") else f"{day}, time not given"
 
 
 def call_line(c: dict, source: str = GJ_LABEL) -> str:
-    """'Filtering roadblock called for Sat 17 Oct, 09:00 — source: 17octobregiletjaune.net'"""
-    what = c["label_en"] + (" announced" if c.get("announced") else " called")
-    return f"{what} for {when_label(c)} — source: {source}"
+    """'Filtering roadblock called for Sat 17 Oct, 09:00 — source: 17octobregiletjaune.net'
+    'Rail strike proclaimed for Tue 13 Oct, 06:00 to Wed 14 Oct — “staff of …” — source: MIT …'"""
+    verb = c.get("verb") or ("announced" if c.get("announced") else "called")
+    topic = f" — “{c['topic']}”" if c.get("topic") else ""
+    return f"{c['label_en']} {verb} for {when_label(c)}{topic} — source: {source}"
 
 
 def annotate(p: dict, now: _dt.datetime | None = None) -> dict:
@@ -626,7 +706,7 @@ def annotate(p: dict, now: _dt.datetime | None = None) -> dict:
     live = [c for c in p["calls"] if (call_end(c) or now) >= now]
     if not p["calls"]:
         status = "listed (no call)"
-    elif any(c["date"] == today for c in live):
+    elif any(covers(c, today) for c in live):
         status = "call active today"
     elif live:
         status = "upcoming"
@@ -640,7 +720,7 @@ def annotate(p: dict, now: _dt.datetime | None = None) -> dict:
             break
         alarm = "amber"
     nxt = min((call_start(c) for c in live if call_start(c)), default=None)
-    q = {**p, "status": status, "alarm": alarm,
+    q = {**{k: v for k, v in p.items() if k != "near_km"}, "status": status, "alarm": alarm,
          "next_at": nxt.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if nxt else None,
          "calls": [{**{k: v for k, v in c.items() if k not in ("key", "first_seen")
                        and not (k == "source_url" and v == p.get("source_url"))},
@@ -669,9 +749,11 @@ def load_places() -> dict:
 
 
 def query(bbox: str | None = None, status: str | None = None, kind: str | None = None,
-          now: _dt.datetime | None = None, data: dict | None = None) -> dict:
+          now: _dt.datetime | None = None, data: dict | None = None, country: str | None = None) -> dict:
     """GET /api/endangered-places: annotated places, optionally in a bbox
-    (south,west,north,east), of some statuses / kinds (comma lists)."""
+    (south,west,north,east), of some statuses / kinds / countries (ISO2)
+    (comma lists). `countries` counts every country, whatever the filter —
+    the layer's country chips."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     d = data if data is not None else load_places()
     box = None
@@ -683,8 +765,16 @@ def query(bbox: str | None = None, status: str | None = None, kind: str | None =
             box = None
     want_status = {x.strip().lower() for x in (status or "").split(",") if x.strip()}
     want_kind = {x.strip().lower() for x in (kind or "").split(",") if x.strip()}
+    want_cc = {x.strip().upper() for x in (country or "").split(",") if x.strip()}
     out = []
+    by_cc: dict[str, dict] = {}
     for p in d.get("places") or []:
+        cc = p.get("country") or "FR"
+        row = by_cc.setdefault(cc, {"code": cc, "name": p.get("country_name") or cc, "places": 0, "with_calls": 0})
+        row["places"] += 1
+        row["with_calls"] += bool(p["calls"])
+        if want_cc and cc not in want_cc:
+            continue
         if box and not (box[0] <= p["lat"] <= box[2] and (box[1] <= p["lon"] <= box[3] if box[1] <= box[3]
                                                           else (p["lon"] >= box[1] or p["lon"] <= box[3]))):
             continue
@@ -702,13 +792,19 @@ def query(bbox: str | None = None, status: str | None = None, kind: str | None =
               "calls": sum(len(p["calls"]) for p in out)}
     return {"built_at": d.get("built_at"), "action_date": d.get("action_date"), "sources": d.get("sources") or [],
             "counts": counts, "stats": d.get("stats") or {}, "places": out,
+            "countries": sorted(by_cc.values(), key=lambda r: (-r["places"], r["name"])),
             "calls_within_7_days": calls_within(d, now, 7)}
 
 
 def calls_within(d: dict, now: _dt.datetime, days: int) -> bool:
-    """Any call still to come within `days` (the map layer's default)."""
+    """Any call still to come within `days` (the map layer's default): the
+    gilets jaunes' calls, or a HIGH call elsewhere — Berlin notifies
+    assemblies every day, which alone would keep the layer always on."""
     for p in d.get("places") or []:
+        gj = p.get("source") == GJ_LABEL
         for c in p["calls"]:
+            if not gj and c.get("level") != "high":
+                continue
             s, e = call_start(c), call_end(c)
             if e and e >= now and s and (s - now).total_seconds() <= days * 86400:
                 return True
@@ -721,7 +817,10 @@ SOURCE = "public-calls"
 TYPE_SUMMARY = "Endangered places: calls to act"
 TYPE_PLACE = "Endangered place: blockade called"
 TYPE_DAY = "Endangered places: action day"
-ALERT_TYPES = (TYPE_SUMMARY, TYPE_PLACE, TYPE_DAY)
+# other countries (endangered_sources.py)
+TYPE_COUNTRY = "Endangered places: country summary"
+TYPE_SUPPLY = "Endangered place: supply disruption called"
+ALERT_TYPES = (TYPE_SUMMARY, TYPE_PLACE, TYPE_DAY, TYPE_COUNTRY, TYPE_SUPPLY)
 SUMMARY_MIN_CALLS = 5
 MORNING = (6, 13)            # the action day's reminder is written between 06:00 and 13:00 Paris time
 
@@ -786,7 +885,7 @@ def place_alerts(places: list[dict], date: str) -> list[dict]:
     """One per refinery / fuel depot with a high-level call that day."""
     out = []
     for p in places:
-        if p["kind"] not in FUEL_SUPPLY:
+        if p["kind"] not in FUEL_SUPPLY or p.get("source") != GJ_LABEL:
             continue
         high = [c for c in p["calls"] if c["date"] == date and c["level"] == "high"]
         if not high:
@@ -873,7 +972,18 @@ def due_alerts(now: _dt.datetime | None = None) -> dict:
     now = now or _dt.datetime.now(_dt.timezone.utc)
     d = load_places()
     meta = _read_json("meta.json", {}) or {}
-    return plan_alerts(d.get("places") or [], d.get("action_date") or GJ_ACTION_DATE, meta.get("alerts") or {}, now)
+    places, sent = d.get("places") or [], meta.get("alerts") or {}
+    out = plan_alerts(places, d.get("action_date") or GJ_ACTION_DATE, sent, now)
+    if OTHER_COUNTRIES:
+        # Other countries: a summary per country per day with HIGH calls, one
+        # alert per critical supply site (endangered_sources.plan).
+        try:
+            import endangered_sources as es
+            o = es.plan(places, sent, now)
+            out = {"new": out["new"] + o["new"], "update": out["update"] + o["update"]}
+        except Exception as e:                                 # noqa: BLE001
+            print(f"[endangered] error: other countries' alerts: {type(e).__name__}: {e}", flush=True)
+    return out
 
 
 def mark_sent(alerts: list[dict]) -> None:
@@ -912,10 +1022,40 @@ CARD_WINDOW_DAYS = 7
 THEATER_ALL_SHARE = 0.8      # a theater holding this share of all places is the national summary again
 
 
+def _near_radius(p: dict, a: dict) -> float:
+    """How close counts: 25 km (or the asset's own radius) for the French
+    calls, as before; elsewhere the place's own reach — 5 km for a city
+    assembly or action, the province / region / country for a strike."""
+    if p.get("source") == GJ_LABEL or not p.get("near_km"):
+        return max(NEAR_KM, float(a.get("radius") or 0))
+    return float(p["near_km"])
+
+
+def _card_title(p: dict, top: dict, more: str) -> str:
+    if p.get("source") == GJ_LABEL or not top.get("verb"):
+        return (f"{top['label_en']} called at {p['name']}{', ' + p['city'] if p.get('city') and p['city'] not in p['name'] else ''}"
+                f" — {when_label(top)}{more}")
+    cn = p.get("country_name") or p.get("country") or ""
+    if p["kind"] == "strike":
+        return f"{cn}: {top['label_en']} {top['verb']} — {p['name']} — {when_label(top)}{more}"
+    return f"{top['label_en']} {top['verb']} at {p['name']} ({cn}) — {when_label(top)}{more}"
+
+
+def _advice(p: dict, top: dict) -> str:
+    day = when_label(top).split(",")[0]
+    if p.get("source") == GJ_LABEL or not top.get("verb"):
+        return f"Expect disruption around {p['name']} on {day}; check access and deliveries."
+    if p["kind"] == "strike":
+        return f"Expect {top['label_en'].lower()} disruption in {p['name']} on {day}; check deliveries and staff travel."
+    return f"Expect crowds and road closures around {p['name']} on {day}; check access."
+
+
 def cards_for(c: dict, now: _dt.datetime | None = None, data: dict | None = None) -> list[dict]:
     """The calls that concern this user: one card per place within 25 km
     (or their asset's own watch radius, if wider) of an asset or of where
-    they are; one card per theater with how many places are inside it."""
+    they are — elsewhere than the gilets jaunes' calls, within the place's
+    own reach and not for a vigil; one card per theater with how many places
+    are inside it (elsewhere: only HIGH calls, one card per theater)."""
     import event_watch as ew
     now = now or _dt.datetime.now(_dt.timezone.utc)
     if not (c.get("assets") or c.get("theaters")):
@@ -924,6 +1064,8 @@ def cards_for(c: dict, now: _dt.datetime | None = None, data: dict | None = None
     live = []
     for p in d.get("places") or []:
         if not p["calls"]:
+            continue
+        if p.get("source") != GJ_LABEL and p.get("level") == "low":
             continue
         q = annotate(p, now)
         # only calls that start within the week: a card is about disruption
@@ -939,7 +1081,7 @@ def cards_for(c: dict, now: _dt.datetime | None = None, data: dict | None = None
         best = None
         for a in c.get("assets") or []:
             dist = ew.km(a["lat"], a["lon"], p["lat"], p["lon"])
-            if dist <= max(NEAR_KM, float(a.get("radius") or 0)) and (best is None or dist < best[0]):
+            if dist <= _near_radius(p, a) and (best is None or dist < best[0]):
                 best = (dist, a)
         if best:
             near.append((p, q, best))
@@ -952,25 +1094,28 @@ def cards_for(c: dict, now: _dt.datetime | None = None, data: dict | None = None
         dist_s = "under 1 km" if dist < 1 else f"{round(dist)} km"
         reason = (f"{dist_s} from where you are" if a.get("me")
                   else f"{dist_s} from your {(a.get('label') + ' ') if a.get('label') else ''}{a['name']}")
+        if p["kind"] == "strike" and p.get("source") != GJ_LABEL:
+            reason = (("where you are" if a.get("me") else f"your {(a.get('label') + ' ') if a.get('label') else ''}{a['name']}")
+                      + f" is in the strike's area ({p['name']})")
         more = f" (+{len(live_calls) - 1} more)" if len(live_calls) > 1 else ""
-        title = f"{top['label_en']} called at {p['name']}{', ' + p['city'] if p.get('city') and p['city'] not in p['name'] else ''} — {when_label(top)}{more}"
         seen = [x.get("first_seen") for x in p["calls"] if x.get("first_seen")]
         cards.append({
-            "id": f"epl:{p['id']}:{top['date']}", "title": title, "kind": "announcement",
+            "id": f"epl:{p['id']}:{top['date']}", "title": _card_title(p, top, more), "kind": "announcement",
             "alert_type": "Endangered place", "sev": "moderate" if p["level"] == "low" else "high",
             "reason": reason, "lat": p["lat"], "lon": p["lon"], "source": p["source"], "url": p["source_url"],
             "starts_at": q.get("next_at"), "notify": True, "created_at": min(seen) if seen else q.get("next_at"),
-            "advice": f"Expect disruption around {p['name']} on {when_label(top).split(',')[0]}; check access and deliveries.",
+            "advice": _advice(p, top),
         })
+    gj_live = [(p, q) for p, q in live if p.get("source") == GJ_LABEL]
     seen_sets = set()
     for t in c.get("theaters") or []:
-        inside = [(p, q) for p, q in live if ew.km(t["lat"], t["lon"], p["lat"], p["lon"]) <= t["reach"]]
+        inside = [(p, q) for p, q in gj_live if ew.km(t["lat"], t["lon"], p["lat"], p["lon"]) <= t["reach"]]
         if not inside:
             continue
         # A theater over (nearly) all of France says what the national
         # summary already says; two theaters over the same places, once.
         ids = frozenset(p["id"] for p, _q in inside)
-        if len(inside) >= THEATER_ALL_SHARE * len(live) or ids in seen_sets:
+        if len(inside) >= THEATER_ALL_SHARE * len(gj_live) or ids in seen_sets:
             continue
         seen_sets.add(ids)
         date = min(x["date"] for p, _q in inside for x in p["calls"])
@@ -990,4 +1135,41 @@ def cards_for(c: dict, now: _dt.datetime | None = None, data: dict | None = None
             "source": GJ_LABEL, "url": f"{GJ_SITE}/carte/", "notify": True,
             "created_at": min(seen) if seen else None,
         })
+    cards += _theater_cards_other(c, [(p, q) for p, q in live if p.get("source") != GJ_LABEL], now)
     return cards
+
+
+def _theater_cards_other(c: dict, live: list, now: _dt.datetime) -> list[dict]:
+    """Outside the gilets jaunes' calls: one card per theater, only when a
+    HIGH call (a blockade, a supply strike) is inside it in the week."""
+    import event_watch as ew
+    out, seen_sets = [], set()
+    for t in c.get("theaters") or []:
+        inside = []
+        for p, _q in live:
+            if ew.km(t["lat"], t["lon"], p["lat"], p["lon"]) > t["reach"]:
+                continue
+            for x in p["calls"]:
+                if x["level"] == "high" and (call_end(x) or now) >= now:
+                    inside.append((p, x))
+        if not inside:
+            continue
+        ids = frozenset(x["key"] for _p, x in inside)
+        if ids in seen_sets:
+            continue
+        seen_sets.add(ids)
+        inside.sort(key=lambda px: (px[1]["date"], px[1].get("time") or "99"))
+        p0, x0 = inside[0]
+        kinds = sorted({x["label_en"].lower() for _p, x in inside})
+        countries = sorted({p.get("country_name") or p.get("country") or "" for p, _x in inside})
+        title = (f"{_n(len(inside), 'high-disruption call', 'high-disruption calls')} in your theater {t['name']} "
+                 f"({', '.join(countries)}): {', '.join(kinds[:3])} — first {_card_title(p0, x0, '')}")
+        seen = [x.get("first_seen") for _p, x in inside if x.get("first_seen")]
+        out.append({
+            "id": f"epl-th2:{t['name']}:{x0['date']}", "title": title, "kind": "announcement",
+            "alert_type": "Endangered places", "sev": "high",
+            "reason": f"in your theater {t['name']} · {len({p['id'] for p, _x in inside})} places",
+            "lat": t["lat"], "lon": t["lon"], "source": p0["source"], "url": p0["source_url"], "notify": True,
+            "created_at": min(seen) if seen else None,
+        })
+    return out

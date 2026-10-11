@@ -1,0 +1,77 @@
+{
+ "Dateidatum": "2026-10-11",
+ "Tabellenkopf": [
+  {
+   "Datum": "Datum",
+   "Zeit": "Zeit",
+   "Thema": "Thema",
+   "Ort": "Versammlungsort",
+   "Startpunkt": "Startpunkt",
+   "Teilnehmer": "Teilnehmerprognose lt. Veranstalter",
+   "Veranstalter": "Veranstalter/-in",
+   "Status": "Status"
+  }
+ ],
+ "Versammlungen": [
+  {
+   "Datum": "2026-10-12",
+   "Zeit": "19.00 - 21.00 Uhr",
+   "Thema": "Mahnwache für Frieden Dresden",
+   "Ort": "Jorge-Gomondai-Platz ",
+   "Startpunkt": null,
+   "Teilnehmer": "50",
+   "Veranstalter": "natürliche Person",
+   "Status": "beschieden"
+  },
+  {
+   "Datum": "2026-10-12",
+   "Zeit": "17.30 - 19.00 Uhr",
+   "Thema": "European Shield Tour zur Unterstützung des Safe Europe Acts",
+   "Ort": "Neumarkt ",
+   "Startpunkt": null,
+   "Teilnehmer": "200",
+   "Veranstalter": "natürliche Person",
+   "Status": "beschieden"
+  },
+  {
+   "Datum": "2026-10-12",
+   "Zeit": "17.30 - 19.00 Uhr",
+   "Thema": "Im Hochland nach den Rechten schauen!⁩",
+   "Ort": "Neukircher Straße",
+   "Startpunkt": null,
+   "Teilnehmer": "ca. 50",
+   "Veranstalter": "natürliche Person",
+   "Status": "beschieden"
+  },
+  {
+   "Datum": "2026-10-12",
+   "Zeit": "17.00 - 19.00 Uhr",
+   "Thema": "Kein Mensch ist illegal",
+   "Ort": "Neumarkt",
+   "Startpunkt": null,
+   "Teilnehmer": "500",
+   "Veranstalter": "natürliche Person",
+   "Status": "beschieden"
+  },
+  {
+   "Datum": "2026-10-12",
+   "Zeit": "17.00 - 20.00 Uhr",
+   "Thema": "Unsere Nachbarn bleiben hier!",
+   "Ort": "Neumarkt",
+   "Startpunkt": null,
+   "Teilnehmer": "500",
+   "Veranstalter": "natürliche Person",
+   "Status": "beschieden"
+  },
+  {
+   "Datum": "2026-10-16",
+   "Zeit": "10.00 - 12.00 Uhr",
+   "Thema": "Blockade der Zufahrt zum Rüstungswerk",
+   "Ort": null,
+   "Startpunkt": "Albertplatz",
+   "Teilnehmer": "ca. 1.200",
+   "Veranstalter": "Erika Musterfrau",
+   "Status": "angemeldet"
+  }
+ ]
+}

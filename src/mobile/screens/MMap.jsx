@@ -21,6 +21,7 @@ import { drawVesselThreat } from "./MVesselThreat.jsx"
 import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { PHONE_LAYERS, layerGroups } from "../mapLayers.js"
+import EndangeredCountryChips, { useEndangeredCountries } from "../../components/EndangeredCountryChips.jsx"
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
@@ -95,6 +96,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const threat = useRef(null)            // the vessel-of-concern live view (MVesselThreat.jsx)
     const [threatOn, setThreatOn] = useState(false)
     const mine = useMine()
+    const epCountries = useEndangeredCountries()          // endangered places: the countries chosen
 
     // the map itself, once
     useEffect(() => {
@@ -139,7 +141,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const first = setTimeout(run, 250)
         const t = setInterval(run, active ? 2 * 60_000 : 10 * 60_000)
         return () => { live = false; clearTimeout(first); clearInterval(t) }
-    }, [bounds, zoom, hours, on, active])
+    }, [bounds, zoom, hours, on, active, epCountries])
 
     // THE BLUE DOT: where you are (location/liveShare.js), above everything
     const [me, setMe] = useState(() => myPosition())
@@ -377,6 +379,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                                         </button>
                                     ))}
                                 </div>
+                                {gname === "Endangered places" && <EndangeredCountryChips enabled={!!on.endangered} variant="phone" />}
                             </div>
                         ))}
                         <div className="m2-h">How serious</div>

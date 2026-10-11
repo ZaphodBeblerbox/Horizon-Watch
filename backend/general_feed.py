@@ -42,6 +42,7 @@ EVENT_TYPES = (
     "emergency_squawk",
     # public calls to block named places, from monitored public maps (endangered_places.py)
     "Endangered places: calls to act", "Endangered place: blockade called", "Endangered places: action day",
+    "Endangered places: country summary", "Endangered place: supply disruption called",       # other countries
 )
 # A sentiment escalation alert from our Telegram reading (another module):
 # any alert_type that starts with this is ours.

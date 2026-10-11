@@ -1,0 +1,184 @@
+[
+ {
+  "id": 15302,
+  "title": "Exposició \"GUIXOFRÉNIA\" Dibuixos que fan pensar, de y0rgos k",
+  "slug": "exposicio-guixofrenia-dibuixos-que-fan-pensar-de-y0rgos-k",
+  "multidate": true,
+  "start_datetime": 1790854200,
+  "end_datetime": 1792785600,
+  "media": [],
+  "online_locations": "",
+  "tags": [
+   "Gràcia",
+   "activisme",
+   "art",
+   "exposició"
+  ],
+  "place": {
+   "id": 24,
+   "name": "Ateneu Llibertari de Gràcia",
+   "address": "5 B2, Carrer de l'Alzina, Gràcia, Barcelona, 08024",
+   "latitude": 41.4059836,
+   "longitude": 2.1567601
+  }
+ },
+ {
+  "id": 15297,
+  "title": "Pròxims dies de resistència a l'àgora",
+  "slug": "proxims-dies-de-resistencia-a-lagora",
+  "multidate": true,
+  "start_datetime": 1790978400,
+  "end_datetime": 1792015200,
+  "media": [],
+  "online_locations": "",
+  "tags": [
+   "Raval",
+   "desallotjament",
+   "desnonament",
+   "okupació"
+  ],
+  "place": {
+   "id": 171,
+   "name": "Agora Juan Andrés Benítez",
+   "address": "carrer Riereta amb Aurora",
+   "latitude": 41.3783543,
+   "longitude": 2.1678203
+  }
+ },
+ {
+  "id": 15473,
+  "title": "Muay Thai / k1 Espai Transfeminista NO MIXTE",
+  "slug": "muay-thai-k1-espai-transfeminista-no-mixte-59",
+  "start_datetime": 1791795600,
+  "end_datetime": 1791801000,
+  "media": [],
+  "online_locations": [
+   "https://blogs.sindominio.net/lacinetika/gimnas/"
+  ],
+  "parentId": 13676,
+  "tags": [],
+  "place": {
+   "id": 54,
+   "name": "La Cinètika",
+   "address": "32, Rambla de Fabra i Puig, Sant Andreu, Barcelona, 08030",
+   "latitude": 41.4303043,
+   "longitude": 2.188017
+  }
+ },
+ {
+  "id": 15472,
+  "title": "Clases (Danza, Portes Acrobáticos, Cuerda)",
+  "slug": "clases-danza-portes-acrobaticos-cuerda-5",
+  "start_datetime": 1791801000,
+  "end_datetime": 1791833400,
+  "media": [],
+  "online_locations": [],
+  "parentId": 15019,
+  "tags": [
+   "circ",
+   "danza",
+   "taller"
+  ],
+  "place": {
+   "id": 3382,
+   "name": "La Nave de Metal",
+   "address": "Espronceda 326, Nave 1",
+   "latitude": null,
+   "longitude": null
+  }
+ },
+ {
+  "id": 15475,
+  "title": "Taller de costura al Casal",
+  "slug": "taller-de-costura-al-casal-2",
+  "start_datetime": 1791819000,
+  "end_datetime": 1791826200,
+  "media": [],
+  "online_locations": [],
+  "parentId": 15375,
+  "tags": [
+   "CasalsiAteneus",
+   "ElNoiBaliarda",
+   "Esquerra Independentista",
+   "SantAndreu",
+   "SantAndreuDelPalomar",
+   "TallerDeCostura",
+   "taller"
+  ],
+  "place": {
+   "id": 3297,
+   "name": "Casal Independentista el Noi Baliarda",
+   "address": "Carrer Malats 65",
+   "latitude": null,
+   "longitude": null
+  }
+ },
+ {
+  "id": 15484,
+  "title": "Assemblea setmanal Grup d'Habitatge de Sants",
+  "slug": "assemblea-setmanal-grup-dhabitatge-de-sants",
+  "start_datetime": 1791819000,
+  "end_datetime": 1791831600,
+  "media": [],
+  "online_locations": [],
+  "parentId": 15154,
+  "tags": [
+   "Assessoria habitatge",
+   "Dret a l'habitatge",
+   "Grup d'Habitatge de Sants",
+   "Sants",
+   "SindicatHabitatge",
+   "assemblea",
+   "autogestió",
+   "desallotjament",
+   "habitatge"
+  ],
+  "place": {
+   "id": 247,
+   "name": "plaça de Joan Corrades",
+   "address": "Plaça Joan Corrades, Sants, Barcelona",
+   "latitude": null,
+   "longitude": null
+  }
+ },
+ {
+  "id": 15466,
+  "title": "Manifestació per Palestina contra el genocidi i el colonialisme",
+  "slug": "manifestacio-per-palestina-contra-el-genocidi-i-el-colonialisme",
+  "start_datetime": 1791820800,
+  "end_datetime": null,
+  "media": [],
+  "online_locations": "",
+  "tags": [
+   "Palestina"
+  ],
+  "place": {
+   "id": 119,
+   "name": "DGAIA",
+   "address": "avinguda Paraŀlel 52, Barcelona",
+   "latitude": null,
+   "longitude": null
+  }
+ },
+ {
+  "id": 15476,
+  "title": "curs de conversa amb anglès ",
+  "slug": "curs-de-conversa-amb-angles-sun-with-rays-tornem-al-setembre-sun-with-rays-8",
+  "start_datetime": 1791824400,
+  "end_datetime": 1791828000,
+  "media": [],
+  "online_locations": "",
+  "parentId": 12232,
+  "tags": [
+   "Gràcia",
+   "idiomes"
+  ],
+  "place": {
+   "id": 24,
+   "name": "Ateneu Llibertari de Gràcia",
+   "address": "5 B2, Carrer de l'Alzina, Gràcia, Barcelona, 08024",
+   "latitude": 41.4059836,
+   "longitude": 2.1567601
+  }
+ }
+]

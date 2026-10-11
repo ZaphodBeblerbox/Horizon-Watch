@@ -1,0 +1,81 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//demosphere.net//NONSGML kigkonsult.se iCalcreator 2.22.1//
+METHOD:PUBLISH
+X-WR-CALNAME:demosphere bruxelles
+X-WR-CALDESC:agenda politique
+X-WR-RELCALID:58492105274ed60dfadce9a686768d20
+X-WR-TIMEZONE:Europe/Brussels
+BEGIN:VEVENT
+UID:https://bxl.demosphere.net/rv/18755
+DTSTAMP:20261013T160000Z
+DESCRIPTION:plus d'infos sur : https://bxl.demosphere.net/rv/18755
+DTSTART:20261013T160000Z
+DTEND:20261013T170000Z
+GEO:00;0
+LOCATION:1000 Bruxelles\, \nGare centrale \nCarrefour de l'Europe
+SUMMARY:Rassemblement : Contre le colonialisme\, le fascisme\, les guerres 
+ et génocides !
+URL:https://bxl.demosphere.net/rv/18755
+END:VEVENT
+BEGIN:VEVENT
+UID:https://bxl.demosphere.net/rv/18843
+DTSTAMP:20261014T163000Z
+DESCRIPTION:plus d'infos sur : https://bxl.demosphere.net/rv/18843
+DTSTART:20261014T163000Z
+DTEND:20261014T173000Z
+GEO:00;0
+LOCATION:1000 Bruxelles\, \nPlus d'infos à venir
+SUMMARY:Rencontre : Accueil de la délégation CNI-Frayba
+URL:https://bxl.demosphere.net/rv/18843
+END:VEVENT
+BEGIN:VEVENT
+UID:https://bxl.demosphere.net/rv/18848
+DTSTAMP:20261014T163000Z
+DESCRIPTION:plus d'infos sur : https://bxl.demosphere.net/rv/18848
+DTSTART:20261014T163000Z
+DTEND:20261014T173000Z
+GEO:00;0
+LOCATION:1150 Woluwé Saint-Pierre\, \nRockin' Squat \navenue de Tervueren 1
+ 58
+SUMMARY:Rencontre : Solidarité avec les luttes autonomes du Mexique et d'ai
+ lleurs
+URL:https://bxl.demosphere.net/rv/18848
+END:VEVENT
+BEGIN:VEVENT
+UID:https://bxl.demosphere.net/rv/18793
+DTSTAMP:20261014T170000Z
+DESCRIPTION:plus d'infos sur : https://bxl.demosphere.net/rv/18793
+DTSTART:20261014T170000Z
+DTEND:20261014T180000Z
+GEO:00;0
+LOCATION:1000 Bruxelles\, \nBourse \nPlace de la Bourse
+SUMMARY:Rassemblement : Back to la Bourse for Palestine !
+URL:https://bxl.demosphere.net/rv/18793
+END:VEVENT
+BEGIN:VEVENT
+UID:https://bxl.demosphere.net/rv/18833
+DTSTAMP:20261017T083000Z
+DESCRIPTION:plus d'infos sur : https://bxl.demosphere.net/rv/18833
+DTSTART:20261017T083000Z
+DTEND:20261017T093000Z
+GEO:00;0
+LOCATION:1050 Ixelles\, \nBibliothèque d’Ixelles \n19\, rue Mercelis \n1050
+  Bruxelles
+SUMMARY:Atelier/Animation Smartphones et vie privée (version avancée\; Exod
+ us Privacy)
+URL:https://bxl.demosphere.net/rv/18833
+END:VEVENT
+BEGIN:VEVENT
+UID:https://bxl.demosphere.net/rv/18756
+DTSTAMP:20261020T160000Z
+DESCRIPTION:plus d'infos sur : https://bxl.demosphere.net/rv/18756
+DTSTART:20261020T160000Z
+DTEND:20261020T170000Z
+GEO:00;0
+LOCATION:1000 Bruxelles\, \nGare centrale \nCarrefour de l'Europe
+SUMMARY:Rassemblement : Contre le colonialisme\, le fascisme\, les guerres 
+ et génocides !
+URL:https://bxl.demosphere.net/rv/18756
+END:VEVENT
+END:VCALENDAR

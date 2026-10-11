@@ -64,3 +64,53 @@ describe("endangered places", () => {
         expect(typeof l.defaultOn).toBe("boolean")
     })
 })
+
+describe("endangered places outside France", () => {
+    const strike = {
+        id: "it_mit:IT", kind: "strike", kind_label: "Strike", name: "Italy (nationwide)", lat: 42.5, lon: 12.6,
+        country: "IT", country_name: "Italy", status: "upcoming", alarm: "red", level: "high",
+        source: "MIT — proclaimed transport strikes (Italy)", source_url: "https://scioperi.mit.gov.it/mit2/public/scioperi",
+        credit: "Ministero delle Infrastrutture e dei Trasporti — facts cited",
+        calls: [{ kind: "strike_trasporto_merci", label_en: "Freight transport strike", level: "high", basis: "announced",
+                  verb: "proclaimed", date: "2026-10-13", end_date: "2026-10-14", time: "06:00",
+                  line: "Freight transport strike proclaimed for Tue 13 Oct, 06:00 to Wed 14 Oct — source: MIT — proclaimed transport strikes (Italy)" }],
+    }
+    const berlin = { id: "de_berlin:1", kind: "assembly", name: "Alexanderplatz, Berlin", lat: 52.52, lon: 13.41,
+        country: "DE", country_name: "Germany", alarm: "amber", status: "upcoming", source: "Polizei Berlin — notified assemblies",
+        calls: [{ kind: "assembly", label_en: "Notified assembly", level: "medium", basis: "announced", line: "x" }] }
+
+    it("names the country, the source and its credit", async () => {
+        const { placeSubtitle, creditLine } = await import("./endangeredPlaces.js")
+        expect(placeSubtitle(strike)).toBe("Strike · Italy")
+        expect(placeSubtitle(refinery)).not.toContain("France")
+        expect(creditLine(strike)).toBe("Source: MIT — proclaimed transport strikes (Italy). Credit: Ministero delle Infrastrutture e dei Trasporti — facts cited.")
+        expect(placeDetail(strike)).toContain("Credit: Ministero")
+        const n = normalizeEntity("endangered_place", strike)
+        const by = Object.fromEntries(n.attributes.map((a) => [a.label, a.value]))
+        expect(by.Country).toBe("Italy")
+        expect(by.Credit).toContain("Ministero")
+        expect(n.identity.subtitle).toContain("supply strike within 48 h")
+        expect(normalizeEntity("endangered_place", berlin).identity.subtitle).toContain("Notified or proclaimed")
+    })
+
+    it("filters by country, shared by the globe and the phone", async () => {
+        const m = await import("./endangeredPlaces.js")
+        m.setCountryFilter([])
+        expect(m.filterByCountry([strike, berlin, refinery])).toHaveLength(3)
+        let heard = null
+        const off = m.subscribeCountryFilter((v) => { heard = v })
+        m.toggleCountry("it")
+        expect(heard).toEqual(["IT"])
+        expect(m.filterByCountry([strike, berlin, refinery]).map((p) => p.id)).toEqual(["it_mit:IT"])
+        m.toggleCountry("FR")
+        expect(m.filterByCountry([strike, berlin, refinery]).map((p) => p.id)).toEqual(["it_mit:IT", "gj:806103973"])
+        m.setCountryFilter([])
+        off()
+    })
+
+    it("draws a glyph for each new kind", () => {
+        for (const kind of ["assembly", "strike", "action", "lobby_office"]) {
+            expect(decodeURIComponent(placeIconUri({ kind, alarm: "amber", hasCall: true, size: 22 }))).toContain("<path")
+        }
+    })
+})

@@ -27,7 +27,7 @@ import { infraGlyphUri } from "../globe/infraGlyphs.js"
 import { styleFor as gfwStyleFor, summaryOf as gfwSummaryOf, ageLabel as gfwAgeLabel, KINDS as GFW_KINDS } from "../globe/gfwEvents.js"
 import { riskAlpha, buildA2ToA3, indexByIso3 } from "../globe/riskChoropleth.js"
 import { CAT } from "../components/timeStripMath.js"
-import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
+import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, defaultOnNow as endangeredDefaultOn, filterByCountry } from "../globe/endangeredPlaces.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -1042,7 +1042,8 @@ async function loadEndangered({ bounds, zoom }) {
     if (!d) return []
     rememberWithin7(d.calls_within_7_days)
     const b = normBounds(bounds)
-    const inView = arr(d.places).filter((p) => finite(p.lat, p.lon) && inBounds(p.lat, p.lon, b, 0.5))
+    // the Filters sheet's country chips (EndangeredCountryChips)
+    const inView = filterByCountry(arr(d.places)).filter((p) => finite(p.lat, p.lon) && inBounds(p.lat, p.lon, b, 0.5))
     return clusterPlaces(inView, Number.isFinite(zoom) ? zoom : 5).slice(0, MAX_FEATURES)
 }
 

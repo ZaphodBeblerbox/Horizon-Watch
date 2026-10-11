@@ -64,6 +64,7 @@ import FlowsPanel from "../components/FlowsPanel.jsx"
 import { whenLabel } from "../utils/formatTime.js"
 import { hm } from "../utils/clock.js"
 import { defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
+import EndangeredCountryChips from "../components/EndangeredCountryChips.jsx"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -1792,9 +1793,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     {/* ENDANGERED PLACES live under infrastructure (owner, 2026-10-12) */}
                     <SubLayerRow
                         label="Endangered places"
-                        hint="Refineries, fuel depots, fuel stations and rally points named in public calls for roadblocks, slow-drive convoys and other actions (gilets jaunes, 17octobregiletjaune.net), and arms-industry companies an anti-militarist map lists as targets. Red: a roadblock, convoy or picket within 48 h; amber: other calls; grey: listed, no call. A click lists the calls and the source."
+                        hint="Refineries, fuel depots, fuel stations and rally points named in public calls for roadblocks, slow-drive convoys and other actions (gilets jaunes, 17octobregiletjaune.net), and arms-industry companies an anti-militarist map lists as targets. Elsewhere: assemblies notified to the Berlin and Dresden authorities, Italy's proclaimed transport strikes, actions on activist calendars (Brussels, Liège, Frankfurt, Würzburg, Madrid, Barcelona, Bonn, Rhein-Main, Bologna, Extinction Rebellion UK) and target lists (CAAT, uMap maps). Red: a blockade, roadblock, convoy, picket or supply strike within 48 h; amber: other calls and notices; grey: listed, no call. A click lists the calls, the source and its credit."
                         on={endangeredOn} parentOn={true}
                         onToggle={() => setEndangeredOn((v) => !v)} />
+                    <EndangeredCountryChips enabled={endangeredOn} variant="desktop" />
 
                     {INFRA_LAYERS.map((l) => (
                         <button key={l.key} type="button" className="layer"

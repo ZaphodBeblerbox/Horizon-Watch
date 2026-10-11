@@ -20,6 +20,9 @@ export const ALARM_COLOR = { red: "#E5484D", amber: "#F5A524", grey: "#8A94A3" }
 export const KIND_LABEL = {
     refinery: "Refinery", fuel_depot: "Fuel depot", fuel_station: "Fuel station",
     gathering: "Gathering point", roundabout: "Roundabout", arms_company: "Arms-industry company",
+    // other countries (backend/endangered_sources.py)
+    assembly: "Notified assembly", strike: "Strike", action: "Called action",
+    lobby_office: "Arms-lobby office / EU body", listed_site: "Site on an activist map",
 }
 
 // Glyphs on a 24-unit grid, drawn in one colour.
@@ -36,6 +39,14 @@ const GLYPH = {
     roundabout: `<circle cx="12" cy="12" r="6.2" fill="none" stroke-width="2.6"/><circle cx="12" cy="12" r="2.2"/>`,
     // a cross-hair
     arms_company: `<circle cx="12" cy="12" r="6" fill="none" stroke-width="2.2"/><path d="M12 3 V8 M12 16 V21 M3 12 H8 M16 12 H21" fill="none" stroke-width="2.2"/>`,
+    // three heads in a row: a notified assembly
+    assembly: `<circle cx="6" cy="9" r="2.6"/><circle cx="12" cy="7.5" r="2.8"/><circle cx="18" cy="9" r="2.6"/><path d="M2.5 19 Q6 12.5 9.5 19 Z M8 19 Q12 11 16 19 Z M14.5 19 Q18 12.5 21.5 19 Z"/>`,
+    // a raised fist: a strike
+    strike: `<path d="M7 11 V7.5 Q7 6 8.5 6 Q10 6 10 7.5 V6.5 Q10 5 11.5 5 Q13 5 13 6.5 V7 Q13 5.6 14.5 5.6 Q16 5.6 16 7 V8.5 Q16 7.2 17.3 7.2 Q18.6 7.2 18.6 8.6 V13 Q18.6 17 15 17.5 V21 H9 V17.5 Q7 16.5 7 14 Z"/>`,
+    // a megaphone: a called action
+    action: `<path d="M4 10 H8 L17 5 V19 L8 14 H4 Z"/><path d="M6 14.5 L7.5 20 H10 L9 14.5 Z"/><path d="M19.5 9.5 Q21 12 19.5 14.5" fill="none" stroke-width="1.8"/>`,
+    // a column-front building: an office / institution
+    lobby_office: `<path d="M3 9 L12 4 L21 9 Z"/><path d="M5 10.5 H7.5 V17.5 H5 Z M10.75 10.5 H13.25 V17.5 H10.75 Z M16.5 10.5 H19 V17.5 H16.5 Z M3.5 18.5 H20.5 V20.5 H3.5 Z"/>`,
 }
 
 const _cache = new Map()
@@ -85,10 +96,12 @@ export function clusterIconUri({ count, alarm = "grey", size = 30 }) {
 const RANK = { red: 0, amber: 1, grey: 2 }
 export const worstAlarm = (a, b) => ((RANK[a] ?? 2) <= (RANK[b] ?? 2) ? a : b)
 
-/** One line per place on a list: "Fuel depot · Cusset (03) · TotalEnergies". */
+/** One line per place on a list: "Fuel depot · Cusset (03) · TotalEnergies";
+ *  outside France the country is named: "Notified assembly · Berlin · Germany". */
 export function placeSubtitle(p) {
     const where = p.city ? `${p.city}${p.dept ? ` (${p.dept})` : ""}` : null
-    return [p.kind_label || KIND_LABEL[p.kind], where, p.operator ? String(p.operator).split(" (")[0] : null]
+    const country = p.country && p.country !== "FR" ? (p.country_name || p.country) : null
+    return [p.kind_label || KIND_LABEL[p.kind], where, p.operator ? String(p.operator).split(" (")[0] : null, country]
         .filter(Boolean).join(" · ")
 }
 
@@ -99,6 +112,7 @@ export function callLines(p) {
 
 /** What the card says when there is no dated call. */
 export function listedNote(p) {
+    if (p.note) return p.note
     if (p.kind === "arms_company") {
         return p.note || "Listed by an anti-militarist map as a target for action — no dated call"
     }
@@ -112,14 +126,62 @@ export function placeDetail(p) {
     if (lines.length) parts.push(lines.join(". ") + ".")
     else parts.push(listedNote(p) + ".")
     if (p.operator) parts.push(`Operator: ${p.operator}.`)
-    if (p.kind === "arms_company") {
+    if (p.kind === "arms_company" || p.kind === "lobby_office" || p.kind === "listed_site") {
         const what = [p.sector, p.domain].filter(Boolean).join(" — ")
         if (what) parts.push(`Activity: ${what}.`)
         if (Array.isArray(p.lists) && p.lists.length) parts.push(`On the map's lists: ${p.lists.join("; ")}.`)
     }
+    if (p.approx) parts.push(`Position ${p.approx}.`)
     parts.push(`Status: ${p.status}.`)
+    const credit = creditLine(p)
+    if (credit) parts.push(credit)
     return parts.join(" ")
 }
+
+/** "Source: Polizei Berlin — notified assemblies. Credit: …" — every place
+ *  says where it comes from and under which terms. */
+export function creditLine(p) {
+    if (!p || (!p.source && !p.credit)) return null
+    const src = p.source ? `Source: ${p.source}.` : ""
+    const credit = p.credit && p.credit !== p.source ? ` Credit: ${p.credit}.` : ""
+    return `${src}${credit}`.trim().replace(/\.\./g, ".")
+}
+
+// ── the country filter (desktop layer card, phone sheet) ─────────────────
+
+const COUNTRY_KEY = "endangered:countries"
+let _countries = (() => {
+    try {
+        const v = JSON.parse(localStorage.getItem(COUNTRY_KEY) || "[]")
+        return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []
+    } catch { return [] }
+})()
+const _subs = new Set()
+
+/** The ISO2 codes chosen, [] for every country. */
+export const getCountryFilter = () => _countries
+
+export function setCountryFilter(list) {
+    _countries = [...new Set((Array.isArray(list) ? list : []).map((x) => String(x).toUpperCase()))].sort()
+    try { localStorage.setItem(COUNTRY_KEY, JSON.stringify(_countries)) } catch { /* private window */ }
+    _subs.forEach((fn) => { try { fn(_countries) } catch { /* a listener's own problem */ } })
+}
+
+export function toggleCountry(code) {
+    const c = String(code).toUpperCase()
+    setCountryFilter(_countries.includes(c) ? _countries.filter((x) => x !== c) : [..._countries, c])
+}
+
+export function subscribeCountryFilter(fn) {
+    _subs.add(fn)
+    return () => _subs.delete(fn)
+}
+
+/** Is this place in the chosen countries (a place without one is French). */
+export const inCountries = (p, sel = _countries) => !sel || !sel.length || sel.includes(p?.country || "FR")
+
+export const filterByCountry = (places, sel = _countries) =>
+    (Array.isArray(places) ? places : []).filter((p) => inCountries(p, sel))
 
 // ── default on while calls are within 7 days ─────────────────────────────
 

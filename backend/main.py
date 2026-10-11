@@ -13723,7 +13723,9 @@ async def _telegram_mood_alert_loop():
 async def _endangered_places_loop():
     """Public calls to block or act at named places (endangered_places.py,
     owner 2026-10-11): the gilets jaunes' map every 30 min, the
-    anti-militarist Framacarte daily. Fetch and build in a thread of its
+    anti-militarist Framacarte daily, and other countries' sources each on
+    its own cadence (endangered_sources.py: official lists hourly,
+    calendars 3 h, uMap daily, map discovery weekly). Fetch and build in a thread of its
     own; new alerts through write_alert(), changed ones updated in place."""
     if os.getenv("ENDANGERED_PLACES_ENABLED", "true").strip().lower() in ("0", "false", "no"):
         print("[endangered] disabled via ENDANGERED_PLACES_ENABLED")
@@ -13761,7 +13763,8 @@ async def _endangered_places_loop():
 
 
 @app.get("/api/endangered-places")
-async def api_endangered_places(bbox: str | None = None, status: str | None = None, kind: str | None = None):
+async def api_endangered_places(bbox: str | None = None, status: str | None = None, kind: str | None = None,
+                                country: str | None = None):
     """Places public calls name for blockades and other actions
     (endangered_places.py): each with its calls in plain English, its
     status (call active today / upcoming / listed (no call) / past) and
@@ -13769,7 +13772,7 @@ async def api_endangered_places(bbox: str | None = None, status: str | None = No
     calls to come; grey: listed or over). bbox = south,west,north,east."""
     import endangered_places as _ep
     return await asyncio.get_running_loop().run_in_executor(
-        _executor, lambda: _ep.query(bbox=bbox, status=status, kind=kind))
+        _executor, lambda: _ep.query(bbox=bbox, status=status, kind=kind, country=country))
 
 
 async def _global_adsb_cache_loop():
