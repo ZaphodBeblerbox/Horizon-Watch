@@ -18,6 +18,7 @@ import { getSettings, subscribeSettings, updateSetting } from "../../state/setti
 import { setDnd } from "../../state/notificationStore.js"
 import LiveShareRow from "../../location/LiveShareRow.jsx"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
+import PushDevices from "../../notify/PushDevices.jsx"
 
 const EXPOSURE = { high: ["High exposure", "#E5484D"], elevated: ["Elevated", "#F5A524"], low: ["Low", "#8FB4E8"], quiet: ["Quiet", "#4CAF7A"], unknown: ["No position", "#9AA9BC"] }
 const post = (path, body) => fetch(`${API_BASE}${path}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) })
@@ -256,6 +257,7 @@ export function MSettings() {
         <div className="m2-scroll" data-screen-label="Phone settings">
             <Group title="Notifications">
                 <ClosedNotificationsRow Row={PhoneRow} Toggle={PhoneToggle} />
+                <PushDevices Row={PhoneRow} />
                 <PhoneRow label="Do not disturb" hint="No cards on screen; everything still lands in Alerts.">
                     <PhoneToggle value={!!st.dnd} onChange={(v) => setDnd(v)} />
                 </PhoneRow>

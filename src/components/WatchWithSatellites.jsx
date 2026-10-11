@@ -42,6 +42,7 @@ export default function WatchWithSatellites({ data }) {
             if (!r.ok) throw new Error(z.detail || `HTTP ${r.status}`)
             toast(`Watching ${name} every ${every} h — the first optical and radar pass is on its way`, { icon: "i-check" })
             setOpen(false)
+            window.dispatchEvent(new CustomEvent("akili:zones-changed"))
             window.dispatchEvent(new CustomEvent("akili:imagery-open-scene", { detail: { systemId: z.system_id } }))
         } catch (e) { toast(`Could not create the watch — ${e.message}`, { icon: "i-alert" }) } finally { setBusy(false) }
     }

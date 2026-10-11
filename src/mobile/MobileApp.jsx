@@ -10,7 +10,7 @@
  * Rendered by app.jsx in place of the desktop console below the phone
  * breakpoint; same session, same data, same rules for "yours".
  */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import "./m2.css"
 import PlxIcons from "../plx6/PlxIcons.jsx"
 import MHome from "./screens/MHome.jsx"
@@ -20,7 +20,8 @@ import MMessages from "./screens/MMessages.jsx"
 import { MAssets, MAlerts, MReports, MProfile, MSettings } from "./screens/MMore.jsx"
 import ConflictContext from "../conflicts/ConflictContext.jsx"
 import TelegramMood from "../insight/TelegramMood.jsx"
-import { Icon, Sheet } from "./screens/common.jsx"
+import { Icon, Sheet, SignalSheet } from "./screens/common.jsx"
+import API_BASE from "../apiBase.js"
 import { usePoll, arr } from "./useMine.js"
 import useOnlineUsers from "../state/useOnlineUsers.js"
 import PlxWordmark from "../plx6/PlxWordmark.jsx"
@@ -55,20 +56,33 @@ export default function MobileApp() {
     const plainShowOnMap = (s) => { if (!s || !Number.isFinite(+s.lat)) return; setFocus({ ...s, _t: Date.now() }); setTab("map") }
     // a vessel of concern (from Alerts, the General feed, Home …) opens on
     // the vessel, as its notification does; everything else as before
-    const showOnMap = (s) => (s && !s.vesselThreat && routeFor(s)?.action === "vessel" ? openSignal(s) : plainShowOnMap(s))
+    // "Show on the map": a vessel of concern opens its live view (rings, trail, targets); anything else is centred
+    const showOnMap = (s) => (s && !s.vesselThreat && routeFor(s)?.action === "vessel" ? sigMap.current?.(routeFor(s)) : plainShowOnMap(s))
 
-    /* THE PHONE OPENS A NOTIFICATION (notify/openSignal.js decides what):
-       a vessel of concern on the Map — centred on the vessel, its drone
-       rings, last 24 h trail, top targets and the dashed line to the top
-       one with the drone's time to it — with the vessel's sheet open; a
-       livestream plays; an asset opens; any other signal is shown on the
-       map, or in Alerts when it has no place. */
+    /* THE SIGNAL FIRST, THE MAP ON REQUEST (owner, 2026-10-11): a tapped
+       notification opens the signal itself — its sheet, over whatever is on
+       screen, filled from the alert — with "Show on the map" (and, for a
+       vessel of concern, its live view with the drone rings) as a button. */
+    const [sig, setSig] = useState(null)
+    const sigMap = useRef(null)
     useEffect(() => {
         const open = async (r) => {
             if (!r) return
             setMenu(false)
             if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
             if (r.action === "asset") { go("assets", { asset: r.assetId }); return }
+            const base = { id: r.alertId || r.id, alert_id: r.alertId || r.id, headline: r.title || "Signal", title: r.title, summary: r.sub,
+                           severity_tier: r.sev, lat: r.lat, lon: r.lon, mmsi: r.mmsi, entity_id: r.mmsi || undefined, alert_type: r.alertType, _route: r }
+            setSig(base)
+            if (r.alertId || r.id) {
+                fetch(`${API_BASE}/api/alerts/${encodeURIComponent(r.alertId || r.id)}`, { credentials: "include" })
+                    .then((x) => (x.ok ? x.json() : null))
+                    .then((a) => { if (a && (a.title || a.headline)) setSig((cur) => (cur && cur.id === base.id ? { ...a, ...Object.fromEntries(Object.entries(base).filter(([, v]) => v != null && v !== "")), headline: a.title || a.headline || base.headline, summary: a.message || a.description || base.summary, severity_tier: a.severity || base.severity_tier } : cur)) })
+                    .catch(() => {})
+            }
+        }
+        sigMap.current = async (r) => {
+            if (!r) return
             if (r.action === "vessel") {
                 setTab("map")
                 const base = { id: r.alertId || r.id, alert_id: r.alertId || r.id, alert_type: r.alertType, mmsi: r.mmsi, entity_id: r.mmsi,
@@ -114,6 +128,9 @@ export default function MobileApp() {
             </div>
             <LivePlayerHost />
             <MNotifCards onOpen={(n) => openSignal(n)} />
+            {sig && <SignalSheet s={sig} onClose={() => setSig(null)}
+                                 onShowOnMap={(x) => { const r = sig._route || {}; setSig(null)
+                                     sigMap.current?.(r.action === "vessel" ? r : { ...r, action: "signal", lat: x?.lat ?? r.lat, lon: x?.lon ?? r.lon }) }} />}
             <SourceViewer />
             {/* The map runs edge to edge (its own round controls carry the bell). */}
             {tab !== "map" && <header className="m2-top">

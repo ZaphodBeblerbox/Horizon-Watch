@@ -1692,10 +1692,16 @@ export default function App() {
                     return
                 }
             }
-            window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
-                entityType: "alert", entityId: n.id,
-                data: { id: n.id, title: n.title, message: n.sub, severity: n.sev, lat: at?.lat, lon: at?.lon, source: n.kind },
-            } }))
+            // THE SIGNAL ITSELF, IN FULL (owner, 2026-10-11): not on the map
+            // yet, so the alert is fetched and the inspector shows all of it
+            const thin = { id: n.id, title: n.title, message: n.sub, severity: n.sev, lat: at?.lat, lon: at?.lon, source: n.kind }
+            const show = (data) => window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "alert", entityId: n.id, data } }))
+            const aid = n.alertId || raw
+            if (!aid) { show(thin); return }
+            fetch(`${API_BASE}/api/alerts/${encodeURIComponent(aid)}`, { credentials: "include" })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((full) => show(full && (full.title || full.alert_id) ? { ...thin, ...full, id: n.id, title: full.title || thin.title } : thin))
+                .catch(() => show(thin))
         }, at ? 1700 : 300)
     }, [openTab])
 

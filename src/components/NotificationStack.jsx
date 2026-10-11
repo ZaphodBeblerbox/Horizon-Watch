@@ -47,6 +47,7 @@ async function scanHere(n) {
         const z = await r.json().catch(() => ({}))
         if (!r.ok) throw new Error(z.detail || `HTTP ${r.status}`)
         toast(`Scanning ${name} — the first optical and radar pass is on its way`, { icon: "i-check" })
+        window.dispatchEvent(new CustomEvent("akili:zones-changed"))
         window.dispatchEvent(new CustomEvent("akili:imagery-open-scene", { detail: { systemId: z.system_id } }))
     } catch (e) { toast(`Could not task a pass — ${e.message}`, { icon: "i-alert" }) }
 }

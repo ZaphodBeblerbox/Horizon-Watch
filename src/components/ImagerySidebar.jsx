@@ -232,12 +232,27 @@ export default function ImagerySidebar({
     }, [drawn, maxCloud, daysBack])
 
     const loadAreas = useCallback(() => {
-        fetch(`${API}/api/imagery/aois`)
+        fetch(`${API}/api/imagery/aois`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : []))
             .then((d) => setAreas(Array.isArray(d) ? d : []))
             .catch(() => setAreas([]))
     }, [])
     useEffect(() => { if (tab === "areas") loadAreas() }, [tab, loadAreas])
+    // a zone added or deleted anywhere (the Imagery page, a notification card) shows here too
+    useEffect(() => {
+        const h = () => { if (tab === "areas") loadAreas() }
+        window.addEventListener("akili:zones-changed", h)
+        return () => window.removeEventListener("akili:zones-changed", h)
+    }, [tab, loadAreas])
+    // DELETE AN AREA from here (owner, 2026-10-11: "I still can't delete detection zones")
+    const deleteArea = async (z) => {
+        if (!window.confirm(`Delete "${z.name}"? Its scans and detections go with it.`)) return
+        const r = await fetch(`${API}/api/watch-zones/${z.system_id}`, { method: "DELETE", credentials: "include" }).catch(() => null)
+        if (!r?.ok) { toast(`Could not delete ${z.name}${r ? ` (HTTP ${r.status})` : ""}`, { icon: "i-alert" }); return }
+        toast(`${z.name} deleted`, { icon: "i-check" })
+        window.dispatchEvent(new CustomEvent("akili:zones-changed"))
+        loadAreas()
+    }
 
     const areaKm2 = useMemo(() => bboxAreaKm2(drawn?.bounds), [drawn])
     const corners = cornerCount(drawn)
@@ -248,10 +263,10 @@ export default function ImagerySidebar({
     const toggleArea = (z) => {
         const next = z.status === "active" ? "paused" : "active"
         fetch(`${API}/api/watch-zones/${z.system_id}`, {
-            method: "PUT", headers: { "Content-Type": "application/json" },
+            method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
             body: JSON.stringify({ status: next }),
         })
-            .then((r) => { if (!r.ok) throw new Error(); toast(`${z.name} — ${next}`, { icon: "i-check" }); loadAreas() })
+            .then((r) => { if (!r.ok) throw new Error(); toast(`${z.name} — ${next}`, { icon: "i-check" }); loadAreas(); window.dispatchEvent(new CustomEvent("akili:zones-changed")) })
             .catch(() => toast("Could not change the area's state", { icon: "i-alert" }))
     }
 
@@ -339,7 +354,7 @@ export default function ImagerySidebar({
             // (the one real, currently-implemented task — an empty list
             // makes a freshly-drawn area unscannable).
             const res = await fetch(`${API}/api/watch-zones`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
+                method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
                 // §12.1's standing-task controls are real inputs, not
                 // decoration: the cadence and the Active checkbox are what
                 // the scheduler reads, so they travel with the create.
@@ -354,11 +369,14 @@ export default function ImagerySidebar({
             if (!res.ok) { toast(zone.detail || "Failed to save real area", { icon: "i-alert" }); return }
             if (sensor !== "sentinel2_optical") {
                 await fetch(`${API}/api/watch-zones/${zone.system_id}`, {
-                    method: "PUT", headers: { "Content-Type": "application/json" },
+                    method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
                     body: JSON.stringify({ sensor_preference: sensor }),
                 })
             }
-            toast("Area saved — it will appear in the Imagery module's real AOI list", { icon: "i-check" })
+            toast("Area saved — it is in the Imagery window now", { icon: "i-check" })
+            // THE IMAGERY WINDOW SHOWS IT AT ONCE (owner, 2026-10-11: saving here did not reach it)
+            window.dispatchEvent(new CustomEvent("akili:zones-changed"))
+            loadAreas()
             setName("")
         } catch (e) {
             toast("Failed to save real area", { icon: "i-alert" })
@@ -675,13 +693,19 @@ export default function ImagerySidebar({
                 {!areas.length ? (
                     <div className="scanhint">No standing areas on file.</div>
                 ) : areas.map((z) => (
-                    <button key={z.system_id} type="button" className="arearow"
-                            title="Click to toggle active / paused"
-                            onClick={() => toggleArea(z)}>
-                        <span className="n">{z.name}</span>
-                        <span className={`st ${z.status}`}>{z.status}</span>
-                        <span className="meta">{(z.scan_interval_hours ?? 24)}h</span>
-                    </button>
+                    <div key={z.system_id} style={{ display: "flex", alignItems: "stretch", gap: 4 }}>
+                        <button type="button" className="arearow" style={{ flex: 1, minWidth: 0 }}
+                                title="Click to toggle active / paused"
+                                onClick={() => toggleArea(z)}>
+                            <span className="n">{z.name}</span>
+                            <span className={`st ${z.status}`}>{z.status}</span>
+                            <span className="meta">{(z.scan_interval_hours ?? 24)}h</span>
+                        </button>
+                        <button type="button" onClick={() => deleteArea(z)} aria-label={`Delete ${z.name}`} title="Delete this area"
+                                data-testid="area-delete"
+                                style={{ border: "1px solid var(--gline)", background: "transparent", color: "var(--red, #e5484d)", borderRadius: 6,
+                                         padding: "0 10px", font: "inherit", fontSize: 12, cursor: "pointer" }}>Delete</button>
+                    </div>
                 ))}
               </>)}
             </div>

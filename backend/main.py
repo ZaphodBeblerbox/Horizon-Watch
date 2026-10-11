@@ -1462,6 +1462,7 @@ async def push_subscribe(request: Request):
             # shared machine — the endpoint moves with it.
             row.user_id = user["id"]
             row.subscription = _json.dumps(data)
+            row.user_agent = request.headers.get("user-agent") or row.user_agent
         else:
             db.add(PushSubscription(
                 user_id=user["id"], endpoint=endpoint,
@@ -1470,6 +1471,51 @@ async def push_subscribe(request: Request):
             ))
         db.commit()
     return {"status": "subscribed"}
+
+def _push_device_label(ua: str | None, endpoint: str) -> str:
+    """A device in words, from what its browser said when it subscribed."""
+    u = str(ua or "")
+    if "push.apple.com" in endpoint and ("iPhone" in u or "iPad" in u or "Mobile" in u):
+        return "iPhone or iPad — Home Screen app"
+    if "iPhone" in u or "iPad" in u:
+        return "iPhone or iPad"
+    if "Android" in u:
+        return "Android phone"
+    os_ = "Mac" if "Mac OS X" in u or "Macintosh" in u else "Windows" if "Windows" in u else "Linux" if "Linux" in u else "computer"
+    br = ("Edge" if "Edg/" in u else "Firefox" if "Firefox/" in u else "Chrome" if "Chrome/" in u
+          else "Safari" if "Safari/" in u else "a browser")
+    return f"{br} on {os_} — web"
+
+
+@app.get("/api/push/devices")
+def api_push_devices(request: Request, endpoint: str = ""):
+    """Every device that receives this user's notifications, so one can be
+    switched off from any other (owner, 2026-10-11: web notifications off on
+    the computer, the phone and the desktop app still on). `endpoint` marks
+    the asking device. The desktop app (DMG) is not here: it notifies
+    through macOS itself, switched in its own Settings."""
+    from database import PushSubscription, get_db as _gdb_push
+    user = _require_current_user(request)
+    with _gdb_push() as db:
+        rows = db.query(PushSubscription).filter(PushSubscription.user_id == user["id"]).order_by(PushSubscription.created_at).all()
+        return [{"id": r.id, "label": _push_device_label(r.user_agent, r.endpoint or ""),
+                 "this_device": bool(endpoint) and r.endpoint == endpoint,
+                 "created_at": r.created_at.isoformat() if r.created_at else None,
+                 "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None} for r in rows]
+
+
+@app.delete("/api/push/devices/{device_id}")
+def api_push_device_delete(device_id: str, request: Request):
+    """Stop notifications to one device of this user's."""
+    from database import PushSubscription, get_db as _gdb_push
+    user = _require_current_user(request)
+    with _gdb_push() as db:
+        n = db.query(PushSubscription).filter(PushSubscription.user_id == user["id"], PushSubscription.id == device_id).delete()
+        db.commit()
+    if not n:
+        raise HTTPException(404, "no such device")
+    return {"removed": device_id}
+
 
 @app.post("/api/push/unsubscribe")
 async def push_unsubscribe(request: Request):

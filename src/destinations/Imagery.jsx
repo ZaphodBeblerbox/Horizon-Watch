@@ -168,6 +168,13 @@ export default function Imagery() {
             .catch((e) => setErr(e.message))
     }, [])
     useEffect(() => { loadZonesRef.current = loadZones; loadZones() }, [loadZones])
+    // a zone saved or deleted elsewhere (the map's satellite panel, a
+    // notification card) appears here at once (owner, 2026-10-11)
+    useEffect(() => {
+        const h = () => loadZones()
+        window.addEventListener("akili:zones-changed", h)
+        return () => window.removeEventListener("akili:zones-changed", h)
+    }, [loadZones])
     // The strip holds the hand-drawn areas as buttons; generated overwatch
     // zones (forty at a time) go in one grouped picker beside them.
     const stripZones = useMemo(() => safeArray(zones).filter((z) => !isBackground(z) && !z.metadata?.group), [zones])
@@ -1138,7 +1145,7 @@ function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
             const r = await fetch(`${API_BASE}/api/watch-zones/${z.system_id}`,
                 { method: "DELETE", credentials: "include" })
             if (!r.ok) throw new Error(`HTTP ${r.status}`)
-            toast("Area deleted"); onChanged()
+            toast("Area deleted"); onChanged(); window.dispatchEvent(new CustomEvent("akili:zones-changed"))
         } catch (e) { toast(`Could not delete it — ${e.message}`, { icon: "i-alert" }) }
     }
     /** Accept or decline proposals: {ids} | {group, subgroup?}. */

@@ -11,6 +11,7 @@ import { useFreshness } from "./Freshness.jsx"
 import { getManualLocation, setManualLocation } from "../state/themeStore.js"
 import ThemeControl from "./ThemeControl.jsx"
 import ClosedNotificationsRow from "../notify/ClosedNotificationsRow.jsx"
+import PushDevices from "../notify/PushDevices.jsx"
 import LiveShareRow from "../location/LiveShareRow.jsx"
 
 /**
@@ -318,6 +319,7 @@ export function AlertsSection({ settings, onOpenSources }) {
                 <Toggle value={Boolean(settings.dnd)} onChange={(v) => setDnd(v)} />
             </Row>
             <ClosedNotificationsRow Row={Row} Toggle={Toggle} />
+            <PushDevices Row={Row} />
 
             <SectionTitle>Sound</SectionTitle>
             <Row label="Alert sounds" hint="Real audio cue on new alerts.">

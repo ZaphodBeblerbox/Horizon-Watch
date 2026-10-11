@@ -21,13 +21,15 @@ export async function watchArea({ name, lat, lon, km = 25 }) {
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) { toast("No position to watch", { icon: "i-alert" }); return null }
     const r = await fetch(`${API_BASE}/api/watch-zones`, {
         method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}` },
+        // an empty Authorization header overrode the app's real sign-in (2026-10-11)
+        headers: { "Content-Type": "application/json", ...(localStorage.getItem("hw-auth-token") ? { Authorization: `Bearer ${localStorage.getItem("hw-auth-token")}` } : {}) },
         body: JSON.stringify({ name: `Watch · ${name}`.slice(0, 80), polygon_geojson: squareAround(lat, lon, km),
                                priority: "high", scan_interval_hours: 24, alert_threshold: "medium" }),
     })
     const d = await r.json().catch(() => ({}))
     if (!r.ok) { toast(d.detail || "Could not create the watch area", { icon: "i-alert" }); return null }
     toast(`Watching ${name} — satellite scans every 24 h (Overwatch)`, { icon: "i-check" })
+    window.dispatchEvent(new CustomEvent("akili:zones-changed"))
     return d
 }
 
