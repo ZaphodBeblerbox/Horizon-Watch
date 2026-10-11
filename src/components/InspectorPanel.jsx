@@ -28,6 +28,9 @@ import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 import { shareToDesk } from "../desk/shareToDesk.js"
 import ConflictContext from "../conflicts/ConflictContext.jsx"
+import { useTrackPhoto, TrackPhotoView } from "./TrackPhoto.jsx"
+import CountryFlag from "./CountryFlag.jsx"
+import { trackCountry } from "../lib/icaoCountry.js"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -363,6 +366,9 @@ export default function InspectorPanel({
     // (never a fake/placeholder value) when nothing real comes back.
     const [aircraftInfo, setAircraftInfo] = useState(null)
     const [aircraftPending, setAircraftPending] = useState(false)
+    // Which aircraft the route/registry lookup has answered for: the photo
+    // waits for it, so it is asked for once, with the registration.
+    const [aircraftDoneFor, setAircraftDoneFor] = useState(null)
     useEffect(() => {
         setAircraftInfo(null)
         setAircraftPending(false)
@@ -377,15 +383,17 @@ export default function InspectorPanel({
         setAircraftPending(true)
         Promise.all([
             fetch(`${API_BASE}/api/aviation/route/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-            fetch(`${API_BASE}/api/aviation/photo/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
             // The live record with everything the feed sent (squawk,
             // climb, selected altitude, airspeeds, integrity, flags) —
             // kept out of the map payload, fetched here on open.
             fetch(`${API_BASE}/api/adsb/aircraft/${encodeURIComponent(icao24)}`).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-        ]).then(([route, photo, live]) => {
+        ]).then(([route, live]) => {
             if (cancelled) return
             setAircraftPending(false)
-            const merged = { ...route, ...photo, ...live }
+            setAircraftDoneFor(entityId)
+            // The photograph is its own lookup now (TrackPhoto.jsx), with
+            // the registration from here as its fallback key.
+            const merged = { ...route, ...live }
             const hasReal = Object.values(merged).some(v => v != null)
             setAircraftInfo(hasReal ? merged : null)
         })
@@ -511,6 +519,16 @@ export default function InspectorPanel({
             ? { ...(vesselOwner.registry || {}), ...data, ownership: vesselOwner }
             : data
     const normalized = normalizeEntity(entityType, enrichedData)
+
+    // THIS airframe's or THIS hull's photograph, with its credit
+    // (GET /api/photos/*). An aircraft waits for the route lookup so the
+    // registration goes with the hex and the photo is asked for once.
+    const isTrack = entityType === "aircraft" || entityType === "vessel"
+    const trackRecord = entityType === "aircraft"
+        ? (aircraftDoneFor !== entityId ? null : { icao: String(entityId || "").replace(/^adsb-/i, ""), registration: enrichedData?.registration || enrichedData?.r })
+        : entityType === "vessel" ? { mmsi: data?.mmsi, imo: vesselImo } : null
+    const { photo: trackPhoto, pending: trackPhotoPending } = useTrackPhoto(entityType === "vessel" ? "vessel" : "aircraft", trackRecord || {})
+    const flagCountry = isTrack ? trackCountry(entityType, entityType === "aircraft" ? { icao: String(entityId || "").replace(/^adsb-/i, "") } : data) : null
     const { identity, provenance, actions, media, description } = normalized
     const [titleOpen, setTitleOpen] = useState(false)
     useEffect(() => { setTitleOpen(false) }, [entityId])
@@ -640,6 +658,7 @@ export default function InspectorPanel({
                                 overflow: "hidden",
                             }),
                         }}>
+                        {flagCountry && <CountryFlag iso2={flagCountry.iso2} name={flagCountry.name} size={17} style={{ marginRight: 7, position: "relative", top: -1 }} />}
                         {identity.title}
                     </div>
                     {identity.subtitle && (
@@ -749,7 +768,11 @@ export default function InspectorPanel({
                     ship name, which is the vessel CLASS or that ship on
                     another day — so it is labelled as a reference image and
                     never presented as current imagery of this contact. */}
-                {!media?.photoUrl && !facilityPhoto && !vesselPhoto
+                {isTrack && (trackPhoto || trackPhotoPending || (entityType === "aircraft" && aircraftDoneFor !== entityId)) && (
+                    <TrackPhotoView photo={trackPhoto} pending={trackPhotoPending || (entityType === "aircraft" && aircraftDoneFor !== entityId)}
+                                    alt={identity.title} style={{ marginBottom: "var(--space-4)" }} />
+                )}
+                {!isTrack && !media?.photoUrl && !facilityPhoto && !vesselPhoto
                     && (facilityPending || vesselPending || aircraftPending) && (
                     <div style={{ marginBottom: "var(--space-4)" }}><PhotoFrame pending /></div>
                 )}
@@ -765,7 +788,7 @@ export default function InspectorPanel({
                         </div>
                     </div>
                 )}
-                {!media?.photoUrl && !facilityPhoto && vesselPhoto?.thumbnail_url && (
+                {!media?.photoUrl && !facilityPhoto && !trackPhoto && !trackPhotoPending && vesselPhoto?.thumbnail_url && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
                         <PhotoFrame src={vesselPhoto.thumbnail_url} alt={vesselPhoto.title || identity.title} />
                         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-dim)", marginTop: 4 }}>

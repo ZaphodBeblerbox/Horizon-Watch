@@ -10,6 +10,7 @@ import { TipLines } from "../components/MapTip.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import { normalizeEntity } from "../inspector/adapters.js"
 import API_BASE                  from "../apiBase.js"
+import { trackCountry, flagEmoji } from "../lib/icaoCountry.js"
 
 // Entity types InspectorPanel (Round 2's unified detail panel) renders
 // directly. "html" — the raw Cesium entity-description fallback for
@@ -208,10 +209,18 @@ export default function GlobePopup({
                             hoveredIdRef.current = entityId
                             const normalized = normalizeEntity(stored.type, stored.data)
                             const pos = (normalized.attributes || []).find(a => a.label === "Position")?.value || null
+                            // A ship's flag state / an aircraft's state of registry,
+                            // as a small flag before the name and in words below it.
+                            const ctry = (stored.type === "vessel" || stored.type === "aircraft")
+                                ? trackCountry(stored.type, stored.type === "aircraft"
+                                    ? { icao: stored.data?.icao || stored.data?.hex || entityId } : stored.data)
+                                : null
                             tipContentRef.current = (
                                 <TipLines
-                                    title={normalized.identity.title}
-                                    lines={[normalized.identity.subtitle, pos]}
+                                    title={ctry ? `${flagEmoji(ctry.iso2)} ${normalized.identity.title}` : normalized.identity.title}
+                                    lines={[normalized.identity.subtitle,
+                                            ctry ? (stored.type === "vessel" ? `Flag: ${ctry.name}` : `Registered in ${ctry.name}`) : null,
+                                            pos]}
                                 />
                             )
                         }

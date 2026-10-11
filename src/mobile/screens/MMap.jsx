@@ -23,6 +23,9 @@ import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { PHONE_LAYERS, layerGroups } from "../mapLayers.js"
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 import { deleteTheater } from "../../lib/theatersApi.js"
+import TrackPhoto from "../../components/TrackPhoto.jsx"
+import CountryFlag from "../../components/CountryFlag.jsx"
+import { trackCountry } from "../../lib/icaoCountry.js"
 
 
 // Esri's public base maps, credited as their terms ask (CARTO's now want a key).
@@ -450,6 +453,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
 
 /** A ship or an aircraft, in the words a tracker app uses. */
 export function TrackSheet({ t, onClose }) {
+    const country = trackCountry(t.kind === "ship" ? "vessel" : "aircraft", t)
     const rows = t.kind === "ship" ? [
         ["Flag", [t.flag_emoji, t.flag].filter(Boolean).join(" ")],
         ["Type", t.ship_type || t.ship_type_text],
@@ -461,6 +465,7 @@ export function TrackSheet({ t, onClose }) {
         ["Sanctions", t.sanctioned ? "listed" : null],
     ] : [
         ["Type", t.type], ["Operator", t.airline || (t.military ? "military" : null)],
+        ["Registered in", country?.name],
         ["Altitude", Number.isFinite(+t.alt_baro) ? `${Math.round(+t.alt_baro).toLocaleString()} ft` : t.alt_baro],
         ["Ground speed", Number.isFinite(+t.gs) ? `${Math.round(+t.gs)} kn` : null],
         ["Track", Number.isFinite(+t.track) ? `${Math.round(+t.track)}°` : null],
@@ -470,8 +475,13 @@ export function TrackSheet({ t, onClose }) {
     return (
         <Sheet onClose={onClose}>
             <div data-testid="track-sheet">
+                {/* This airframe or this hull, with its credit; nothing if there is no photograph. */}
+                <TrackPhoto kind={t.kind === "ship" ? "vessel" : "aircraft"} track={t} alt={title} style={{ marginBottom: 12 }} />
                 <div className="m2-eyebrow">{t.kind === "ship" ? "Ship" : t.military ? "Military aircraft" : "Aircraft"}</div>
-                <div style={{ fontSize: 20, fontWeight: 650, margin: "2px 0 10px" }}>{title}</div>
+                <div style={{ fontSize: 20, fontWeight: 650, margin: "2px 0 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    {country && <CountryFlag iso2={country.iso2} name={country.name} size={20} />}
+                    <span>{title}</span>
+                </div>
                 <div className="m2-card">
                     {rows.filter(([, v]) => v != null && v !== "").map(([k, v]) => (
                         <div key={k} className="m2-row" style={{ cursor: "default", gridTemplateColumns: "110px 1fr" }}>

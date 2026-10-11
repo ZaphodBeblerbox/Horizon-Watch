@@ -5636,6 +5636,28 @@ async def vessel_photo(mmsi: str):
     return data
 
 
+@app.get("/api/photos/aircraft")
+async def photos_aircraft(hex: Optional[str] = None, reg: Optional[str] = None):
+    """This airframe's photograph with its credit (services/track_photos.py):
+    planespotters.net by ICAO24 then registration, Wikimedia by registration."""
+    from services import track_photos as _tp
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _tp.aircraft_photo, hex, reg)
+
+
+@app.get("/api/photos/vessel")
+async def photos_vessel(mmsi: Optional[str] = None, imo: Optional[str] = None):
+    """This ship's photograph with its credit and licence, by IMO number
+    (Wikidata → Wikimedia Commons). With only an MMSI, the IMO is taken from
+    the live AIS record when the ship has sent its static message."""
+    from services import track_photos as _tp
+    if not imo and mmsi:
+        with _AIS_LOCK:
+            imo = (_AIS_VESSELS.get(str(mmsi).strip()) or {}).get("imo")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _tp.vessel_photo, imo, mmsi)
+
+
 def _db_gen():
     """One-shot generator yielding a single DB session."""
     from database import get_db as _gdb_ip
