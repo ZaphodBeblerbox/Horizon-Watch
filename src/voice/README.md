@@ -88,6 +88,8 @@ rules in `voiceCommands.js` decide exactly as before, so offline still works.
 | open Imagery / take me to the inbox | `akili:navigate` |
 | turn on the heat layer / hide GDELT | `akili:voice-layer` in Situation; a child layer brings its group on; Undo restores |
 | zoom in / out | `akili:voice-zoom` in GlobeView |
+| generate overwatch zones for Ukraine / … for the Ukraine war | `POST /api/overwatch/generate` — proposals only (nothing scanned until accepted); opens Imagery on them; Undo deletes exactly those proposals |
+| start / pause / stop the border sweep (in Ukraine) | `POST /api/overwatch/sweep/{start,pause,stop}`; no conflict named means Ukraine; Undo reverses it |
 | go to / explain / risk / message / note … | as before |
 
 The bar is on every page: the map has its own, app.jsx mounts a floating

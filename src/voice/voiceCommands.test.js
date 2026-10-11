@@ -561,3 +561,39 @@ describe("taking a place out of a question", () => {
         }
     })
 })
+
+describe("overwatch zones and the border sweep", () => {
+    it("generates overwatch zones for a named conflict, aliases included", () => {
+        for (const q of ["Generate overwatch zones for Ukraine",
+                         "please create overwatch zones for the Ukraine war",
+                         "make watch zones for the war in Ukraine",
+                         "overwatch for Russia-Ukraine"]) {
+            const r = parseCommand(q, ctx)
+            expect(r.intent, q).toBe("generate_overwatch")
+            expect(r.actions[0], q).toEqual({ type: "generate_overwatch", conflict: "ukraine" })
+            expect(r.confident, q).toBe(true)
+        }
+        expect(parseCommand("generate overwatch zones for South Sudan", ctx).actions[0].conflict).toBe("south_sudan")
+        expect(parseCommand("set up overwatch zones in Gaza", ctx).actions[0].conflict).toBe("gaza")
+    })
+
+    it("asks which conflict rather than guessing", () => {
+        const r = parseCommand("generate overwatch zones for Atlantis", ctx)
+        expect(r.intent).toBe("generate_overwatch")
+        expect(r.confident).toBe(false)
+        expect(r.actions).toEqual([])
+    })
+
+    it("does not steal other commands", () => {
+        expect(parseCommand("add this to Thursday", ctx).intent).toBe("add_to_basket")
+        expect(parseCommand("fly to Ukraine", ctx).intent).toBe("navigate")
+        expect(parseCommand("generate a briefing", ctx).intent).toBe("generate_briefing")
+    })
+
+    it("starts, pauses and stops the sweep", () => {
+        expect(parseCommand("start the border sweep", ctx).actions[0]).toEqual({ type: "sweep", action: "start", conflict: "ukraine" })
+        expect(parseCommand("pause the sweep in Ukraine", ctx).actions[0].action).toBe("pause")
+        expect(parseCommand("stop sweeping", ctx).actions[0].action).toBe("stop")
+        expect(parseCommand("sweep the border in Lebanon", ctx).actions[0]).toEqual({ type: "sweep", action: "start", conflict: "lebanon" })
+    })
+})

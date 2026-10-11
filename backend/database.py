@@ -936,6 +936,63 @@ class WatchZone(Base):
     sensor_preference   = Column(String, nullable=False, default="sentinel2_optical")
 
 
+class OverwatchSweep(Base):
+    """One user's border sweep over one conflict (backend/overwatch.py).
+
+    A sweep walks the staging band beside a border tile by tile — each tile
+    a TEMPORARY watch zone that is scanned once and then deleted unless
+    something was found there. This row is the sweep's own state; the
+    per-tile outcome lives in OverwatchSweepTile, which outlives the tile's
+    zone so coverage can be shown and a tile is not re-swept for days."""
+    __tablename__ = "overwatch_sweeps"
+
+    id              = Column(Integer, primary_key=True)
+    conflict        = Column(String, nullable=False, index=True)
+    owner           = Column(String, nullable=True, index=True)
+    status          = Column(String, nullable=False, default="running")   # running|paused|stopped|done
+    plan_zone_id    = Column(String, nullable=True)       # the accepted "Border sweep" proposal's system_id
+    tiles_total     = Column(Integer, nullable=False, default=0)
+    order_json      = Column(Text, nullable=True)         # tile ids, most suspicious first
+    current_tile    = Column(String, nullable=True)
+    last_error      = Column(Text, nullable=True)
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at      = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    ordered_at      = Column(DateTime, nullable=True)
+
+
+class OverwatchSweepTile(Base):
+    """The compact log a swept tile leaves behind — the zone itself is
+    deleted when nothing was found, so this is the only record of the look."""
+    __tablename__ = "overwatch_sweep_log"
+
+    id           = Column(Integer, primary_key=True)
+    sweep_id     = Column(Integer, nullable=True, index=True)
+    conflict     = Column(String, nullable=False, index=True)
+    owner        = Column(String, nullable=True, index=True)
+    tile_id      = Column(String, nullable=False, index=True)
+    band         = Column(String, nullable=True)
+    min_lon      = Column(Float, nullable=False)
+    min_lat      = Column(Float, nullable=False)
+    max_lon      = Column(Float, nullable=False)
+    max_lat      = Column(Float, nullable=False)
+    scanned_at   = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, index=True)
+    result       = Column(String, nullable=False)   # clean|found|no_data|inconclusive|error
+    summary      = Column(Text, nullable=True)      # JSON: what was measured, one line of prose
+    zone_id      = Column(String, nullable=True)    # the kept zone's system_id when result == found
+
+
+class OverwatchDeclined(Base):
+    """A proposal the user declined, so a re-run of generation does not
+    offer the same place again the next day."""
+    __tablename__ = "overwatch_declined"
+
+    id          = Column(Integer, primary_key=True)
+    owner       = Column(String, nullable=True, index=True)
+    conflict    = Column(String, nullable=False, index=True)
+    source_key  = Column(String, nullable=False, index=True)
+    declined_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class UcdpEvent(Base):
     """A UCDP georeferenced conflict event — the free conflict baseline.
 

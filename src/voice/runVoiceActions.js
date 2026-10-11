@@ -340,6 +340,67 @@ export async function runVoiceActions(result, ctx) {
                 }
                 break
             }
+            /* "Generate overwatch zones for Ukraine." Proposals only — the
+               server never scans one until it is accepted on the Imagery
+               page, which this opens on them. Undo deletes exactly the
+               proposals this made, without marking them declined. */
+            case "generate_overwatch": {
+                const API_BASE = (await import("../apiBase.js")).default
+                const { CONFLICT_NAME } = await import("./overwatchConflict.js")
+                try {
+                    const r = await fetch(`${API_BASE}/api/overwatch/generate`, {
+                        method: "POST", credentials: "include",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ conflict: a.conflict }),
+                    })
+                    const d = await r.json().catch(() => ({}))
+                    if (!r.ok) return { ran: false, label: "", problem: d?.detail || "Generation failed." }
+                    const made = Array.isArray(d.created) ? d.created : []
+                    const upd = Array.isArray(d.updated) ? d.updated.length : 0
+                    window.__plxImageryOverwatch = { conflict: d.conflict, group: d.group }
+                    window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "imagery" } }))
+                    window.dispatchEvent(new CustomEvent("akili:imagery-overwatch", { detail: window.__plxImageryOverwatch }))
+                    label = `Proposed ${made.length} overwatch zone${made.length === 1 ? "" : "s"} for ${CONFLICT_NAME[a.conflict] || d.group}`
+                        + (upd ? ` (${upd} updated)` : "") + " — accept them in Imagery"
+                    if (made.length) {
+                        done.push(undoable(label, () => fetch(`${API_BASE}/api/overwatch/decline`, {
+                            method: "POST", credentials: "include",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ ids: made, remember: false }),
+                        }).then(() => window.dispatchEvent(new CustomEvent("akili:imagery-overwatch",
+                            { detail: { conflict: d.conflict, group: d.group } }))).catch(() => {})))
+                    }
+                } catch (e) {
+                    return { ran: false, label: "", problem: e.message || "Generation failed." }
+                }
+                break
+            }
+            case "sweep": {
+                const API_BASE = (await import("../apiBase.js")).default
+                const { CONFLICT_NAME } = await import("./overwatchConflict.js")
+                const post = (action) => fetch(`${API_BASE}/api/overwatch/sweep/${action}`, {
+                    method: "POST", credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ conflict: a.conflict }),
+                })
+                try {
+                    const r = await post(a.action)
+                    const d = await r.json().catch(() => ({}))
+                    if (!r.ok) return { ran: false, label: "", problem: d?.detail || "The sweep did not change." }
+                    const where = CONFLICT_NAME[a.conflict] || a.conflict
+                    label = a.action === "start"
+                        ? `Border sweep running for ${where} — ${d.tiles_total || 0} tiles, one or two every 15 minutes`
+                        : `Border sweep ${a.action === "pause" ? "paused" : "stopped"} for ${where}`
+                    window.__plxImageryOverwatch = { conflict: a.conflict }
+                    window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "imagery" } }))
+                    window.dispatchEvent(new CustomEvent("akili:imagery-overwatch", { detail: window.__plxImageryOverwatch }))
+                    // Undo puts it back the way it was: a start is paused, a pause or stop resumed.
+                    done.push(undoable(label, () => post(a.action === "start" ? "pause" : "start").catch(() => {})))
+                } catch (e) {
+                    return { ran: false, label: "", problem: e.message || "The sweep did not change." }
+                }
+                break
+            }
             default:
                 break
         }

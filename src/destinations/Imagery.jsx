@@ -30,6 +30,7 @@ import {
     AOI_CLASSES, fmtDate, SceneComparison,
 } from "../components/imagery/sceneComparison.jsx"
 import { acquisitions, changeHeadline, countSeries, DET_COLORS, fmtDay, groupDetections, noun } from "./imageryModel.js"
+import { buildZoneTree, isBackground, isProposal } from "./overwatchTree.js"
 import { hm } from "../utils/clock.js"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
@@ -84,6 +85,10 @@ export default function Imagery() {
     const [loadingScene, setLoadingScene] = useState(false)
     const [err, setErr] = useState(null)
     const [target, setTarget] = useState(() => window.__plxImageryTarget || null)
+    // Overwatch: which conflict the panel is on, and the group to open —
+    // set by the voice command "generate overwatch zones for Ukraine".
+    const [owConflict, setOwConflict] = useState(() => window.__plxImageryOverwatch?.conflict || "ukraine")
+    const [owFocus, setOwFocus] = useState(() => window.__plxImageryOverwatch?.group || null)
 
     const [sar, setSar] = useState({})                    // {loading, error, data}
     const [sarDate, setSarDate] = useState(null)
@@ -132,17 +137,38 @@ export default function Imagery() {
         } else go(target.systemId, target.scanId)
     }, [target])
 
+    const loadZonesRef = useRef(null)
+    useEffect(() => {
+        const open = (d) => {
+            if (!d) return
+            window.__plxImageryOverwatch = null
+            if (d.conflict) setOwConflict(d.conflict)
+            if (d.group) setOwFocus(d.group)
+            setManage(true)
+            loadZonesRef.current?.()
+        }
+        open(window.__plxImageryOverwatch)
+        const h = (e) => open(e.detail)
+        window.addEventListener("akili:imagery-overwatch", h)
+        return () => window.removeEventListener("akili:imagery-overwatch", h)
+    }, [])
     const loadZones = useCallback(() => {
         fetch(`${API_BASE}/api/watch-zones`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
             .then((d) => {
                 const list = Array.isArray(d) ? d : safeArray(d?.zones)
                 setZones(list)
-                setZoneId((cur) => cur || list[0]?.system_id || null)
+                // Never open on a proposal or the sweep's bookkeeping zones.
+                setZoneId((cur) => cur || list.find((z) => !isBackground(z))?.system_id || null)
             })
             .catch((e) => setErr(e.message))
     }, [])
-    useEffect(() => { loadZones() }, [loadZones])
+    useEffect(() => { loadZonesRef.current = loadZones; loadZones() }, [loadZones])
+    // The strip holds the hand-drawn areas as buttons; generated overwatch
+    // zones (forty at a time) go in one grouped picker beside them.
+    const stripZones = useMemo(() => safeArray(zones).filter((z) => !isBackground(z) && !z.metadata?.group), [zones])
+    const pickerTree = useMemo(() => buildZoneTree(safeArray(zones).filter((z) => !isBackground(z) && z.metadata?.group)), [zones])
+    const proposedCount = useMemo(() => safeArray(zones).filter(isProposal).length, [zones])
 
     const loadScans = useCallback((zid) => {
         if (!zid) { setScans([]); return }
@@ -411,7 +437,7 @@ export default function Imagery() {
             }}>
                 <h2 style={{ margin: "0 8px 0 0", fontWeight: 600, fontSize: 18, letterSpacing: "-.01em" }}>Imagery</h2>
                 <nav aria-label="Watched areas" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {zones.map((z) => (
+                    {stripZones.map((z) => (
                         <button key={z.system_id} onClick={() => {
                             setManage(false)
                             // Clearing the pass only when the area changes: re-clicking
@@ -427,6 +453,23 @@ export default function Imagery() {
                         </button>
                     ))}
                 </nav>
+                {pickerTree.length > 0 && (
+                    <select aria-label="Overwatch zones" value={!manage && zone?.metadata?.group ? zone.system_id : ""}
+                        onChange={(e) => { if (e.target.value) { setManage(false); setZoneId(e.target.value); setScanId(null) } }}
+                        style={{ ...FIELD, width: 240, height: 30, background: !manage && zone?.metadata?.group ? ON : "var(--glass2)" }}>
+                        <option value="">Overwatch zones ({pickerTree.reduce((n, g) => n + g.count, 0)})…</option>
+                        {pickerTree.flatMap((g) => g.subgroups.map((sg) => (
+                            <optgroup key={`${g.group}/${sg.subgroup}`} label={`${g.group} · ${sg.subgroup}`}>
+                                {sg.zones.map((z) => <option key={z.system_id} value={z.system_id}>{z.name}</option>)}
+                            </optgroup>
+                        )))}
+                    </select>
+                )}
+                {proposedCount > 0 && (
+                    <button onClick={() => setManage(true)} title="Generated overwatch zones waiting for your yes or no" style={{ ...BTN, height: 30, borderColor: "var(--acchi)" }}>
+                        {proposedCount} proposed
+                    </button>
+                )}
                 <button onClick={() => setAdding((v) => !v)} style={{ ...BTN, height: 30, color: "var(--acchi)" }}>+ Watch a place</button>
                 <button onClick={() => drawOnMap()} title="Draw the area yourself, as a box or a polygon" style={{ ...BTN, height: 30, color: "var(--acchi)" }}>✎ Draw an area on the map</button>
                 <div style={{ flex: 1 }} />
@@ -438,7 +481,12 @@ export default function Imagery() {
             {adding && <NewArea onDone={(z) => { setAdding(false); loadZones(); if (z?.system_id) { setManage(false); setZoneId(z.system_id) } }} onCancel={() => setAdding(false)} />}
 
             {manage ? (
-                <AreasTab zones={zones} onChanged={loadZones} onOpen={(z) => { setZoneId(z); setManage(false) }} />
+                <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <OverwatchPanel conflict={owConflict} setConflict={setOwConflict}
+                        onChanged={(group) => { if (group) setOwFocus(group); loadZones() }} />
+                    <AreasTab zones={zones} onChanged={loadZones} focusGroup={owFocus}
+                        onOpen={(z) => { setZoneId(z); setManage(false) }} />
+                </div>
             ) : !zone ? (
                 <div style={{ padding: 24, color: "var(--txt3)", maxWidth: 560, textWrap: "pretty" }}>
                     No area is being watched yet. “Watch an area” picks a place and has the satellites
@@ -925,9 +973,40 @@ const areaKm = (z) => {
     return `${w.toFixed(w < 10 ? 1 : 0)} × ${h.toFixed(h < 10 ? 1 : 0)} km`
 }
 
-function AreasTab({ zones, onChanged, onOpen }) {
+const AREA_GRID = "1.6fr .9fr .7fr 1fr .7fr auto"
+
+/** POST to the overwatch API; throws with the server's own reason. */
+async function owPost(path, body) {
+    const r = await fetch(`${API_BASE}/api/overwatch/${path}`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    })
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`)
+    return d
+}
+
+/**
+ * ▣ Areas — what is being watched, as a tree: conflict → kind of place →
+ * areas (overwatchTree.js). Generated proposals sit in the same tree with
+ * their one-line reason and Accept / Decline, by the area, the subgroup or
+ * the whole group — nothing generated is scanned until accepted.
+ *
+ * Interval, sensor and class stay on the row rather than behind an edit
+ * dialog: changing a cadence should not be a four-click operation.
+ */
+function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
     const [editing, setEditing] = useState(null)
     const [draft, setDraft] = useState({})
+    const tree = useMemo(() => buildZoneTree(zones), [zones])
+    // Groups start open when small or when they hold proposals to decide on.
+    const [closed, setClosed] = useState({})
+    const isOpen = (key, dflt) => (key in closed ? !closed[key] : dflt)
+    const toggle = (key, dflt) => setClosed((c) => ({ ...c, [key]: isOpen(key, dflt) }))
+    useEffect(() => {
+        if (focusGroup) setClosed((c) => ({ ...c, [focusGroup]: false }))
+    }, [focusGroup])
 
     const start = (z) => { setEditing(z.system_id); setDraft({ ...z }) }
     const save = async (z) => {
@@ -974,81 +1053,316 @@ function AreasTab({ zones, onChanged, onOpen }) {
             toast("Area deleted"); onChanged()
         } catch (e) { toast(`Could not delete it — ${e.message}`, { icon: "i-alert" }) }
     }
+    /** Accept or decline proposals: {ids} | {group, subgroup?}. */
+    const decide = async (verb, sel, what) => {
+        try {
+            const d = await owPost(verb, sel)
+            if (verb === "accept") {
+                const n = safeArray(d.activated).length
+                toast(`${what}: ${n} area${n === 1 ? "" : "s"} now watched${safeArray(d.sweeps).length ? " · border sweep started" : ""}`)
+            } else toast(`${what}: ${safeArray(d.declined).length} declined`)
+            onChanged()
+        } catch (e) { toast(`Could not ${verb} — ${e.message}`, { icon: "i-alert" }) }
+    }
 
-    return (
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
-            <div style={{ display: "flex", flexDirection: "column", border: "1px solid var(--gline)" }}>
-                <div style={{
-                    display: "grid", gridTemplateColumns: "1.6fr .9fr .7fr 1fr .7fr auto",
-                    gap: 12, padding: "9px 14px", borderBottom: "1px solid var(--gline)", ...EYE,
+    const SMALL = { ...BTN, height: 24, padding: "0 9px", fontSize: 11.5 }
+    const head = () => ({
+        display: "flex", alignItems: "center", gap: 10, width: "100%", border: 0, background: "transparent",
+        color: "var(--txt)", font: "inherit", cursor: "pointer", padding: 0, textAlign: "left", flex: 1, minWidth: 0,
+    })
+
+    const row = (z) => {
+        const on = editing === z.system_id
+        const m = z.metadata || {}
+        if (isProposal(z)) {
+            return (
+                <div key={z.system_id} data-proposal={z.system_id} style={{
+                    display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center",
+                    padding: "8px 14px 8px 34px", borderBottom: "1px solid var(--gline)", fontSize: 12.5,
+                    background: "color-mix(in srgb, var(--acc) 5%, transparent)",
                 }}>
-                    <span>Area</span><span>Class</span><span>Every</span>
-                    <span>Sensors · size</span><span>Last pass</span><span />
+                    <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                            <span style={{ fontWeight: 600 }}>{z.name}</span>
+                            <span style={{ ...EYE, fontSize: 9.5, color: "var(--acchi)" }}>proposed</span>
+                            {m.score != null && <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt3)" }}>score {Math.round(m.score)}</span>}
+                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt4)" }}>
+                                {z.aoi_class === "sweep_plan" ? "starts the sweep" : `every ${z.scan_interval_hours}h · ${areaKm(z)}`}
+                            </span>
+                        </div>
+                        <div style={{ color: "var(--txt3)", marginTop: 2, textWrap: "pretty" }}>{m.reason || z.description}</div>
+                    </div>
+                    <span style={{ display: "flex", gap: 4 }}>
+                        <button onClick={() => decide("accept", { ids: [z.system_id] }, z.name)}
+                            style={{ ...SMALL, border: 0, background: "var(--acc)", color: "var(--mz-cream)" }}>
+                            {z.aoi_class === "sweep_plan" ? "Start sweep" : "Accept"}
+                        </button>
+                        <button onClick={() => decide("decline", { ids: [z.system_id] }, z.name)} style={SMALL}>Decline</button>
+                    </span>
                 </div>
-                {zones.map((z) => {
-                    const on = editing === z.system_id
-                    return (
-                        <div key={z.system_id} style={{
-                            display: "grid", gridTemplateColumns: "1.6fr .9fr .7fr 1fr .7fr auto",
-                            gap: 12, alignItems: "center", padding: "10px 14px",
-                            borderBottom: "1px solid var(--gline)", fontSize: 13,
-                        }}>
-                            {on ? (
-                                <>
-                                    <input value={draft.name || ""} style={FIELD}
-                                        onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
-                                    <select value={draft.aoi_class || "custom"} style={FIELD}
-                                        onChange={(e) => setDraft((d) => ({ ...d, aoi_class: e.target.value }))}>
-                                        {AOI_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}
-                                    </select>
-                                    <input type="number" min={1} value={draft.scan_interval_hours || 24} style={FIELD}
-                                        onChange={(e) => setDraft((d) => ({ ...d, scan_interval_hours: e.target.value }))} />
-                                    <span style={{ color: "var(--txt3)", fontSize: 12 }}>optical + radar · {areaKm(z)}</span>
-                                    <span style={{ color: "var(--txt4)", fontSize: 11 }}>—</span>
-                                    <span style={{ display: "flex", gap: 4 }}>
-                                        <button onClick={() => save(z)} style={{ ...BTN, border: 0, background: "var(--acc)", color: "var(--mz-cream)" }}>Save</button>
-                                        <button onClick={() => setEditing(null)} style={BTN}>Cancel</button>
-                                    </span>
-                                </>
+            )
+        }
+        return (
+            <div key={z.system_id} style={{
+                display: "grid", gridTemplateColumns: AREA_GRID,
+                gap: 12, alignItems: "center", padding: "10px 14px 10px 34px",
+                borderBottom: "1px solid var(--gline)", fontSize: 13,
+            }}>
+                {on ? (
+                    <>
+                        <input value={draft.name || ""} style={FIELD}
+                            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
+                        <select value={draft.aoi_class || "custom"} style={FIELD}
+                            onChange={(e) => setDraft((d) => ({ ...d, aoi_class: e.target.value }))}>
+                            {[...new Set([...AOI_CLASSES, draft.aoi_class || "custom"])].map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <input type="number" min={1} value={draft.scan_interval_hours || 24} style={FIELD}
+                            onChange={(e) => setDraft((d) => ({ ...d, scan_interval_hours: e.target.value }))} />
+                        <span style={{ color: "var(--txt3)", fontSize: 12 }}>optical + radar · {areaKm(z)}</span>
+                        <span style={{ color: "var(--txt4)", fontSize: 11 }}>—</span>
+                        <span style={{ display: "flex", gap: 4 }}>
+                            <button onClick={() => save(z)} style={{ ...BTN, border: 0, background: "var(--acc)", color: "var(--mz-cream)" }}>Save</button>
+                            <button onClick={() => setEditing(null)} style={BTN}>Cancel</button>
+                        </span>
+                    </>
+                ) : (
+                    <>
+                        <button onClick={() => onOpen(z.system_id)} title={m.reason || z.description || ""} style={{
+                            border: 0, background: "transparent", color: "var(--txt)",
+                            font: "inherit", fontWeight: 600, textAlign: "left",
+                            cursor: "pointer", padding: 0, minWidth: 0,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>{z.name}</button>
+                        <span style={{ color: "var(--txt2)" }}>{z.aoi_class}</span>
+                        <span style={{ fontFamily: "var(--mz-font-mono)", color: "var(--txt2)" }}>
+                            {z.aoi_class === "sweep_plan" ? "—" : `${z.scan_interval_hours}h`}
+                        </span>
+                        <span style={{ color: "var(--txt2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {z.aoi_class === "sweep_plan" ? "radar, tile by tile" : `optical + radar · ${areaKm(z)}`}
+                        </span>
+                        <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt3)" }}>
+                            {z.last_scanned_at ? fmtDate(z.last_scanned_at) : "never"}
+                        </span>
+                        <span style={{ display: "flex", gap: 4 }}>
+                            {z.aoi_class === "sweep_plan" ? (
+                                <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>controlled in the sweep panel above</span>
                             ) : (
                                 <>
-                                    <button onClick={() => onOpen(z.system_id)} style={{
-                                        border: 0, background: "transparent", color: "var(--txt)",
-                                        font: "inherit", fontWeight: 600, textAlign: "left",
-                                        cursor: "pointer", padding: 0, minWidth: 0,
-                                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                                    }}>{z.name}</button>
-                                    <span style={{ color: "var(--txt2)" }}>{z.aoi_class}</span>
-                                    <span style={{ fontFamily: "var(--mz-font-mono)", color: "var(--txt2)" }}>
-                                        {z.scan_interval_hours}h
-                                    </span>
-                                    <span style={{ color: "var(--txt2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                        optical + radar · {areaKm(z)}
-                                    </span>
-                                    <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt3)" }}>
-                                        {z.last_scanned_at ? fmtDate(z.last_scanned_at) : "never"}
-                                    </span>
-                                    <span style={{ display: "flex", gap: 4 }}>
-                                        <button onClick={() => start(z)} style={BTN}>Edit</button>
-                                        <button onClick={() => drawOnMap(z)} title="Draw a new boundary for this area on the map" style={BTN}>Redraw</button>
-                                        <button onClick={() => scanNow(z)} style={BTN}>Scan now</button>
-                                        <button onClick={() => togglePause(z)} style={BTN}>
-                                            {z.status === "active" ? "Pause" : "Resume"}
-                                        </button>
-                                        <button onClick={() => del(z)} style={{ ...BTN, color: "var(--red)" }}>Delete</button>
-                                    </span>
+                                    <button onClick={() => start(z)} style={BTN}>Edit</button>
+                                    <button onClick={() => drawOnMap(z)} title="Draw a new boundary for this area on the map" style={BTN}>Redraw</button>
+                                    <button onClick={() => scanNow(z)} style={BTN}>Scan now</button>
+                                    <button onClick={() => togglePause(z)} style={BTN}>
+                                        {z.status === "active" ? "Pause" : "Resume"}
+                                    </button>
                                 </>
                             )}
-                        </div>
-                    )
-                })}
-                {!zones.length && (
-                    <div style={{ padding: 16, fontSize: 12.5, color: "var(--txt3)", textWrap: "pretty" }}>
-                        No areas are being watched. Draw one on the map with the Overwatch panel —
-                        that is where tasking happens; this screen is for looking at what came back.
-                    </div>
+                            <button onClick={() => del(z)} style={{ ...BTN, color: "var(--red)" }}>Delete</button>
+                        </span>
+                    </>
                 )}
             </div>
+        )
+    }
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", border: "1px solid var(--gline)" }} data-testid="areas-tree">
+            <div style={{
+                display: "grid", gridTemplateColumns: AREA_GRID,
+                gap: 12, padding: "9px 14px 9px 34px", borderBottom: "1px solid var(--gline)", ...EYE,
+            }}>
+                <span>Area</span><span>Class</span><span>Every</span>
+                <span>Sensors · size</span><span>Last pass</span><span />
+            </div>
+            {tree.map((g) => {
+                const gOpen = isOpen(g.group, g.proposed > 0 || g.count <= 12 || g.group === focusGroup)
+                return (
+                    <div key={g.group} data-group={g.group}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: "1px solid var(--gline)", background: "var(--glass2)" }}>
+                            <button onClick={() => toggle(g.group, gOpen)} style={head(gOpen)} aria-expanded={gOpen}>
+                                <span style={{ width: 12, color: "var(--txt3)" }}>{gOpen ? "▾" : "▸"}</span>
+                                <span style={{ fontWeight: 600, fontSize: 14 }}>{g.group}</span>
+                                <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>
+                                    {g.count - g.proposed} watched{g.proposed ? ` · ${g.proposed} proposed` : ""}
+                                </span>
+                            </button>
+                            {g.proposed > 0 && g.group !== "Other" && (
+                                <span style={{ display: "flex", gap: 4, flex: "none" }}>
+                                    <button onClick={() => decide("accept", { group: g.group }, `${g.group}, all`)}
+                                        style={{ ...SMALL, border: 0, background: "var(--acc)", color: "var(--mz-cream)" }}>Accept all</button>
+                                    <button onClick={() => decide("decline", { group: g.group }, `${g.group}, all`)} style={SMALL}>Decline all</button>
+                                </span>
+                            )}
+                        </div>
+                        {gOpen && g.subgroups.map((s) => {
+                            const key = `${g.group}/${s.subgroup}`
+                            const sOpen = isOpen(key, true)
+                            return (
+                                <div key={key} data-subgroup={s.subgroup}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 14px 7px 26px", borderBottom: "1px solid var(--gline)" }}>
+                                        <button onClick={() => toggle(key, sOpen)} style={head(sOpen)} aria-expanded={sOpen}>
+                                            <span style={{ width: 12, color: "var(--txt4)" }}>{sOpen ? "▾" : "▸"}</span>
+                                            <span style={{ ...EYE, color: "var(--txt2)" }}>{s.subgroup}</span>
+                                            <span style={{ fontSize: 11, color: "var(--txt4)" }}>
+                                                {s.zones.length - s.proposed ? `${s.zones.length - s.proposed} watched` : ""}
+                                                {s.zones.length - s.proposed && s.proposed ? " · " : ""}
+                                                {s.proposed ? `${s.proposed} proposed` : ""}
+                                            </span>
+                                        </button>
+                                        {s.proposed > 0 && g.group !== "Other" && (
+                                            <span style={{ display: "flex", gap: 4, flex: "none" }}>
+                                                <button onClick={() => decide("accept", { group: g.group, subgroup: s.subgroup }, s.subgroup)} style={SMALL}>
+                                                    {s.subgroup === "Border sweep" ? "Start sweep" : "Accept subgroup"}
+                                                </button>
+                                                <button onClick={() => decide("decline", { group: g.group, subgroup: s.subgroup }, s.subgroup)} style={SMALL}>Decline</button>
+                                            </span>
+                                        )}
+                                    </div>
+                                    {sOpen && s.zones.map(row)}
+                                </div>
+                            )
+                        })}
+                    </div>
+                )
+            })}
+            {!zones.length && (
+                <div style={{ padding: 16, fontSize: 12.5, color: "var(--txt3)", textWrap: "pretty" }}>
+                    No areas are being watched. Generate overwatch zones for a conflict above, or draw an
+                    area on the map — this screen is for looking at what came back.
+                </div>
+            )}
+        </div>
+    )
+}
+
+/**
+ * Overwatch — "generate overwatch zones for <conflict>", and the border
+ * sweep. Generation proposes (never scans); the report says how many of
+ * each kind were proposed and how many more are available.
+ */
+function OverwatchPanel({ conflict, setConflict, onChanged }) {
+    const [conflicts, setConflicts] = useState([])
+    const [busy, setBusy] = useState(false)
+    const [report, setReport] = useState(null)
+    useEffect(() => {
+        fetch(`${API_BASE}/api/conflicts`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => setConflicts(safeArray(d?.conflicts)))
+            .catch(() => {})
+    }, [])
+    const generate = async () => {
+        setBusy(true)
+        try {
+            const d = await owPost("generate", { conflict })
+            setReport(d)
+            toast(`${safeArray(d.created).length} new proposal${safeArray(d.created).length === 1 ? "" : "s"}${safeArray(d.updated).length ? `, ${d.updated.length} updated` : ""} for ${d.group}`)
+            onChanged(d.group)
+        } catch (e) { toast(`Could not generate — ${e.message}`, { icon: "i-alert" }) }
+        setBusy(false)
+    }
+    return (
+        <div style={{ ...CARD, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }} data-testid="overwatch-panel">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={EYE}>Overwatch</span>
+                <select value={conflict} onChange={(e) => setConflict(e.target.value)} style={{ ...FIELD, width: 260 }} aria-label="Conflict">
+                    {(conflicts.length ? conflicts : [{ id: conflict, name: conflict }]).map((c) => (
+                        <option key={c.id} value={c.id}>{c.name || c.id}</option>
+                    ))}
+                </select>
+                <button onClick={generate} disabled={busy} style={PRIMARY}>{busy ? "Generating…" : "Generate overwatch zones"}</button>
+                <span style={{ fontSize: 11.5, color: "var(--txt3)", flex: 1, minWidth: 220, textWrap: "pretty" }}>
+                    Proposes up to 40 places where a change seen from orbit would say what a side does next.
+                    Nothing is scanned until you accept it.
+                </span>
+            </div>
+            {report && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 12, color: "var(--txt2)" }} data-testid="overwatch-report">
+                    {Object.entries(report.report || {}).map(([sub, r]) => (
+                        <span key={sub}>
+                            <b style={{ fontWeight: 600 }}>{sub}</b> {r.proposed} proposed
+                            {r.more_available ? ` · ${r.more_available} more available` : ""}
+                            {r.already_watched ? ` · ${r.already_watched} already watched` : ""}
+                        </span>
+                    ))}
+                    {safeArray(report.notes).map((n) => <span key={n} style={{ color: "var(--txt3)" }}>{n}</span>)}
+                </div>
+            )}
+            <SweepPanel conflict={conflict} onChanged={onChanged} />
+        </div>
+    )
+}
+
+const RESULT_C = { found: "var(--red)", clean: "var(--green)", no_data: "var(--txt4)", inconclusive: "var(--amber, #d8a24a)", error: "var(--txt4)" }
+
+/** The border sweep: progress, what it found, start / pause / stop, and
+ *  the tiles looked at most recently. */
+function SweepPanel({ conflict, onChanged }) {
+    const [st, setSt] = useState(null)
+    const read = useCallback(() => {
+        fetch(`${API_BASE}/api/overwatch/sweep/status?conflict=${encodeURIComponent(conflict)}`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null)).then((d) => setSt(d)).catch(() => {})
+    }, [conflict])
+    useEffect(() => {
+        read()
+        const t = setInterval(read, 30000)
+        return () => clearInterval(t)
+    }, [read])
+    const act = async (action) => {
+        try {
+            setSt(await owPost(`sweep/${action}`, { conflict }))
+            toast(action === "start" ? "Border sweep running — one or two tiles every 15 minutes" : `Sweep ${action === "pause" ? "paused" : "stopped"}`)
+            onChanged()
+        } catch (e) { toast(`Could not ${action} the sweep — ${e.message}`, { icon: "i-alert" }) }
+    }
+    if (!st) return null
+    const total = st.tiles_total || st.tiles_planned || 0
+    const done = st.tiles_done || 0
+    const status = st.status || "none"
+    if (!total) return (
+        <div style={{ fontSize: 12, color: "var(--txt3)" }}>No border band to sweep for this conflict.</div>
+    )
+    return (
+        <div style={{ borderTop: "1px solid var(--gline)", paddingTop: 10, display: "flex", flexDirection: "column", gap: 8 }} data-testid="sweep-panel">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={EYE}>Border sweep</span>
+                <span style={{ fontSize: 12, color: "var(--txt2)" }}>
+                    {status === "none" ? `${total} tiles of ~20 km planned — not started`
+                        : `${status} · ${done} of ${total} tiles swept · ${st.found || 0} found`}
+                    {st.current_tile ? ` · looking at ${st.current_tile}` : ""}
+                </span>
+                <div style={{ flex: 1, minWidth: 120, height: 4, background: "var(--gline)" }}>
+                    <div style={{ width: `${total ? Math.min(100, (done / total) * 100) : 0}%`, height: "100%", background: "var(--acc)" }} />
+                </div>
+                {status === "running"
+                    ? <button onClick={() => act("pause")} style={BTN}>Pause</button>
+                    : <button onClick={() => act("start")} style={{ ...BTN, color: "var(--acchi)" }}>{status === "none" ? "Start sweep" : "Resume sweep"}</button>}
+                {status !== "none" && status !== "stopped" && <button onClick={() => act("stop")} style={BTN}>Stop</button>}
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--txt3)", textWrap: "pretty" }}>
+                Radar change, one ~20 km tile at a time, 20–150 km in from the border on the side that would stage.
+                A tile with nothing new is deleted again; a new cluster of bright radar returns is kept and notified.
+                At 10–20 m a field hospital, a tent camp and a vehicle park look alike — a find is a reason to look, not an identification.
+                {st.last_error ? ` Last error: ${st.last_error}` : ""}
+            </div>
+            {safeArray(st.found_items).length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {st.found_items.map((f) => (
+                        <div key={`${f.tile_id}-${f.scanned_at}`} style={{ fontSize: 12, color: "var(--txt)" }}>
+                            <span style={{ color: "var(--red)" }}>●</span> {f.title || f.summary}
+                            <span style={{ color: "var(--txt4)", fontFamily: "var(--mz-font-mono)", fontSize: 10.5 }}> · {f.tile_id} · {fmtDate(f.scanned_at)}{f.zone_id ? ` · ${f.zone_id}` : ""}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {safeArray(st.recent).length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }} aria-label="Tiles swept">
+                    {st.recent.slice(0, 40).map((r) => (
+                        <span key={`${r.tile_id}-${r.scanned_at}`} title={`${r.tile_id} · ${r.result} · ${r.scanned_at}\n${r.summary?.summary || ""}`} style={{
+                            fontFamily: "var(--mz-font-mono)", fontSize: 10, padding: "1px 5px",
+                            border: `1px solid ${RESULT_C[r.result] || "var(--gline2)"}`, color: "var(--txt3)",
+                        }}>{r.tile_id} {r.result}</span>
+                    ))}
+                </div>
+            )}
         </div>
     )
 }

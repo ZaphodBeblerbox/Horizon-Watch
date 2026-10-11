@@ -90,6 +90,10 @@ export function stepToAction(st, ctx) {
             return ctx?.selectedId ? { action: { type: "file_to", itemId: ctx.selectedId, folder: s.folder }, label: `Filed under ${s.folder}` } : null
         case "add_to_basket":
             return ctx?.selectedId ? { action: { type: "add_to_basket", itemId: ctx.selectedId }, label: "Added" } : null
+        case "generate_overwatch":
+            return { action: { type: "generate_overwatch", conflict: s.conflict }, label: `Overwatch zones for ${s.conflict}` }
+        case "sweep":
+            return { action: { type: "sweep", action: s.action, conflict: s.conflict }, label: `Border sweep: ${s.action}` }
         case "generate_briefing":
             return { action: { type: "generate_briefing", basketId: ctx?.activeBasketId }, label: "Generating" }
         default:

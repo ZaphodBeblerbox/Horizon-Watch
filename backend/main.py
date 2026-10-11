@@ -14950,6 +14950,9 @@ async def _sentinel_zone_scheduler_loop():
                         WatchZone.enabled == True,
                         WatchZone.next_scan_at <= now_sched,
                     )
+                    # Oldest-due first, so a deferral below waits exactly
+                    # one pass and is then at the front of the queue.
+                    .order_by(WatchZone.next_scan_at)
                     .all()
                 )
                 zone_data = [
@@ -14973,6 +14976,20 @@ async def _sentinel_zone_scheduler_loop():
             # sensor-pipeline gate for free (a zone left on a non-deployed
             # sensor no longer gets silently retried every 15 minutes
             # forever with no real chance of succeeding).
+            # SCAN BUDGET PER PASS (overwatch, 2026-10-11). This used to
+            # launch every due zone at once, so accepting forty overwatch
+            # proposals meant eighty Sentinel requests in one tick. At most
+            # OVERWATCH_MAX_SCANS_PER_PASS now (two of them reserved for the
+            # border sweep while one runs); the rest keep their due time and
+            # go first next pass. Deferrals are logged, never silent.
+            import overwatch as _ow_cap
+            _cap = OVERWATCH_MAX_SCANS_PER_PASS - (OVERWATCH_SWEEP_TILES_PER_PASS if _OVERWATCH_SWEEP_ACTIVE else 0)
+            zone_data, _deferred = _ow_cap.scan_budget(zone_data, max(1, _cap))
+            if _deferred:
+                print(f"[sentinel-scheduler] scan budget: {len(zone_data)} scanned this pass, "
+                      f"{len(_deferred)} deferred to the next "
+                      f"({', '.join(z['system_id'] for z in _deferred[:8])}{' …' if len(_deferred) > 8 else ''})",
+                      flush=True)
             for zd in zone_data:
                 print(f"[sentinel-scheduler] Scan triggered for zone {zd['system_id']} ({zd['name']})")
                 _launch_zone_scan_background(zd, "schedule")
@@ -16478,6 +16495,7 @@ async def startup_event():
     # uncomment — the detector itself needs no rebuild.
     # _spawn(_sts_detection_loop)
     _spawn(_sentinel_zone_scheduler_loop)
+    _spawn(_overwatch_sweep_loop)        # the border sweep (overwatch.py), one or two tiles a pass
     _spawn(_auto_ingest_task)
     _spawn(_zone_images_warmup_task)
     _spawn(_threat_matrix_loop)
@@ -22866,9 +22884,13 @@ def _derive_bbox(polygon_geojson: dict) -> tuple:
 
 
 def _next_zone_system_id(db) -> str:
+    """max+1 over the ZONE-### ids in use (overwatch.next_zone_ids).
+
+    It was count+1: with ZONE-001..004 and ZONE-002 deleted that gives
+    ZONE-004 again — a unique-index failure on the next "Watch it"."""
     from database import WatchZone
-    count = db.query(WatchZone).count()
-    return f"ZONE-{(count + 1):03d}"
+    import overwatch as _ow_id
+    return _ow_id.next_zone_ids([r[0] for r in db.query(WatchZone.system_id).all()], 1)[0]
 
 
 def _next_scan_system_id(db) -> str:
@@ -23510,14 +23532,17 @@ async def api_imagery_propose_coverage(request: Request):
     country_code = (body.get("country_code") or "").strip()
     if not country_code:
         raise HTTPException(400, "country_code is required")
+    _uid_pc = str(_zone_user(request).get("id"))
     import imagery_pipeline
     from database import get_db as _gdb_im2
     with _gdb_im2() as db:
-        return imagery_pipeline.propose_coverage(db, country_code, created_by=body.get("created_by") or "operator")
+        # Owned by the caller: owner="operator" matched nobody, so the
+        # proposals were invisible to the person who asked for them.
+        return imagery_pipeline.propose_coverage(db, country_code, created_by=_uid_pc, owner=_uid_pc)
 
 
 @app.post("/api/imagery/aois/{system_id}/accept", dependencies=[Depends(_zone_guard)])
-def api_imagery_accept_aoi(system_id: str):
+def api_imagery_accept_aoi(system_id: str, request: Request):
     """Promotes a real proposed AOI to active and starts its real scan
     loop (the existing scheduler already only scans enabled=True zones —
     no separate 'loop' to start beyond flipping these two real fields)."""
@@ -23526,6 +23551,10 @@ def api_imagery_accept_aoi(system_id: str):
         zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
         if not zone:
             raise HTTPException(404, f"AOI {system_id} not found")
+        if zone.aoi_class == "sweep_plan":
+            # A border-sweep plan spans a whole border: never scan it as
+            # one zone. Accepting it starts the sweep (overwatch.py).
+            return _overwatch_accept_rows(db, str(_zone_user(request).get("id")), [zone])
         zone.status = "active"
         zone.enabled = True
         zone.next_scan_at = datetime.utcnow()
@@ -24381,6 +24410,394 @@ def _launch_zone_scan_background(zone_dict: dict, triggered_by: str) -> None:
         _scan_executor.submit(_blocking_scan)
 
 
+# ── Overwatch: generated zones and the border sweep (overwatch.py) ─────────
+#
+# "Generate overwatch zones for Ukraine" proposes up to 40 places where a
+# change seen from orbit would say what a side does next; the user accepts
+# them (all, a subgroup, one) before anything is scanned. The border sweep
+# walks the staging band beside a border one ~20 km radar tile at a time,
+# keeping only tiles where something new appeared. What counts as
+# interesting, and what 10 m radar can and cannot say, is written down in
+# overwatch.py.
+
+OVERWATCH_MAX_SCANS_PER_PASS = int(os.getenv("OVERWATCH_MAX_SCANS_PER_PASS", "12"))
+OVERWATCH_SWEEP_TILES_PER_PASS = max(1, min(2, int(os.getenv("OVERWATCH_SWEEP_TILES_PER_PASS", "1"))))
+OVERWATCH_SWEEP_INTERVAL_S = int(os.getenv("OVERWATCH_SWEEP_INTERVAL_S", "900"))
+# Radar change per tile: DEPTH acquisitions a side (2×DEPTH Sentinel Hub
+# requests plus two catalogue searches), rendered at PX across a 20 km
+# tile (~20 m/px), the "before" stack ending GAP days ago.
+OVERWATCH_SWEEP_DEPTH = max(3, int(os.getenv("OVERWATCH_SWEEP_DEPTH", "3")))
+OVERWATCH_SWEEP_PX = max(256, min(1024, int(os.getenv("OVERWATCH_SWEEP_PX", "1024"))))
+OVERWATCH_SWEEP_GAP_DAYS = max(32, int(os.getenv("OVERWATCH_SWEEP_GAP_DAYS", "45")))
+_OVERWATCH_SWEEP_ACTIVE = False
+_OVERWATCH_OSM_BUSY: set = set()
+
+
+def _overwatch_owner(request: Request) -> tuple:
+    """(owner id, user) — overwatch zones belong to whoever asked."""
+    user = _zone_user(request)
+    return str(user.get("id")), user
+
+
+def _overwatch_conflict(text) -> dict:
+    import overwatch as _ow
+    c = _ow.resolve_conflict(str(text or ""))
+    if c is None:
+        raise HTTPException(422, f"Unknown conflict {text!r} — say one of: "
+                                 + ", ".join(x["id"] for x in _ow.load_conflicts()))
+    return c
+
+
+def _overwatch_osm_refresh_bg(conflict: dict, components: list) -> None:
+    """Refresh the conflict's OpenStreetMap cache in a thread, once at a
+    time, through the shared Overpass helper and its breaker."""
+    import overwatch as _ow
+    cid = conflict["id"]
+    if cid in _OVERWATCH_OSM_BUSY:
+        return
+    tiles = _ow.osm_tiles(components)
+    if not tiles or not _ow.osm_stale_tiles(_ow.load_osm(cid), tiles):
+        return
+    _OVERWATCH_OSM_BUSY.add(cid)
+
+    def _run():
+        try:
+            r = _ow.refresh_osm(cid, tiles, lambda q: _fetch_overpass(q, retries=2, timeout=150))
+            print(f"[overwatch] OSM cache for {cid}: {r}", flush=True)
+        except Exception as e:                              # noqa: BLE001
+            print(f"[overwatch] error: OSM refresh for {cid}: {type(e).__name__}: {e}", flush=True)
+        finally:
+            _OVERWATCH_OSM_BUSY.discard(cid)
+    threading.Thread(target=_run, name=f"overwatch-osm-{cid}", daemon=True).start()
+
+
+def _overwatch_generate_sync(owner: str, conflict: dict, cap: int, admin: bool = False) -> dict:
+    import overwatch as _ow
+    from database import get_db as _gdb_ow
+    theatre = _ow.theatre_for(conflict)
+    front = _ow.front_inputs(theatre)
+    with _gdb_ow() as db:
+        out = _ow.generate(db, owner, conflict, front=front, cap=cap, include_unowned=admin)
+    _overwatch_osm_refresh_bg(conflict, _ow.contact_components(theatre, front[0]))
+    return out
+
+
+@app.post("/api/overwatch/generate")
+async def api_overwatch_generate(request: Request):
+    """Propose overwatch zones for a conflict: {conflict: "ukraine" | "Ukraine war"}.
+    Proposals only (status=proposed, never scanned until accepted)."""
+    body = await request.json()
+    owner, _u = _overwatch_owner(request)
+    conflict = _overwatch_conflict(body.get("conflict"))
+    import overwatch as _ow
+    cap = max(1, min(int(body.get("cap") or _ow.MAX_PROPOSALS), 200))
+    try:
+        return await asyncio.get_running_loop().run_in_executor(
+            _executor, _overwatch_generate_sync, owner, conflict, cap, bool(_u.get("is_super_admin")))
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[overwatch] error: generate {conflict['id']}: {type(e).__name__}: {e}", flush=True)
+        raise HTTPException(500, f"Generation failed: {type(e).__name__}: {e}")
+
+
+def _overwatch_start_sweep_sync(db, owner: str, conflict_id: str, plan_zone: str | None = None) -> dict:
+    import overwatch as _ow
+    global _OVERWATCH_SWEEP_ACTIVE
+    conflict = _overwatch_conflict(conflict_id)
+    order = _ow.sweep_order(db, conflict)
+    if not order:
+        raise HTTPException(409, f"{conflict.get('name')} has no border band to sweep")
+    s = _ow.start_sweep(db, owner, conflict["id"], order, plan_zone)
+    _OVERWATCH_SWEEP_ACTIVE = True
+    print(f"[overwatch] sweep started: {conflict['id']} for user {owner}, {len(order)} tiles", flush=True)
+    return _ow.sweep_status(db, s)
+
+
+def _overwatch_accept_rows(db, owner: str, zones: list) -> dict:
+    import overwatch as _ow
+    out = _ow.accept(db, owner, zones)
+    out["sweep_status"] = []
+    for sw in out["sweeps"]:
+        if sw.get("conflict"):
+            out["sweep_status"].append(_overwatch_start_sweep_sync(db, owner, sw["conflict"], sw["zone"]))
+    return out
+
+
+def _overwatch_selection(db, owner: str, body: dict) -> list:
+    import overwatch as _ow
+    ids = body.get("ids") or ([body["id"]] if body.get("id") else None)
+    if not ids and not (body.get("group") or body.get("subgroup") or body.get("conflict")):
+        raise HTTPException(422, "say which proposals: ids, group, subgroup or conflict")
+    conflict = body.get("conflict")
+    if conflict:
+        conflict = _overwatch_conflict(conflict)["id"]
+    return _ow.proposals_query(db, owner, ids=ids, group=body.get("group"),
+                               subgroup=body.get("subgroup"), conflict=conflict)
+
+
+@app.post("/api/overwatch/accept")
+async def api_overwatch_accept(request: Request):
+    """Accept proposals: {ids: [...]} | {group, subgroup?} | {conflict}. Site
+    zones start scanning (24 h; strike targets 72 h) under the per-pass scan
+    budget; an accepted "Border sweep" starts the sweep."""
+    body = await request.json()
+    owner, _u = _overwatch_owner(request)
+    from database import get_db as _gdb_ow
+
+    def _do():
+        with _gdb_ow() as db:
+            rows = _overwatch_selection(db, owner, body)
+            return _overwatch_accept_rows(db, owner, rows)
+    return await asyncio.get_running_loop().run_in_executor(_executor, _do)
+
+
+@app.post("/api/overwatch/decline")
+async def api_overwatch_decline(request: Request):
+    """Delete proposals. remember=false (the voice Undo) does not record
+    them as declined, so a later generation may offer them again."""
+    body = await request.json()
+    owner, _u = _overwatch_owner(request)
+    import overwatch as _ow
+    from database import get_db as _gdb_ow
+
+    def _do():
+        with _gdb_ow() as db:
+            rows = _overwatch_selection(db, owner, body)
+            return _ow.decline(db, owner, rows, remember=body.get("remember", True) is not False)
+    return await asyncio.get_running_loop().run_in_executor(_executor, _do)
+
+
+@app.post("/api/overwatch/sweep/{action}")
+async def api_overwatch_sweep_action(action: str, request: Request):
+    """start | pause | stop the caller's border sweep of {conflict}."""
+    if action not in ("start", "pause", "stop"):
+        raise HTTPException(404, "start, pause or stop")
+    body = await request.json()
+    owner, _u = _overwatch_owner(request)
+    conflict = _overwatch_conflict(body.get("conflict"))
+    import overwatch as _ow
+    from database import WatchZone, get_db as _gdb_ow
+
+    def _do():
+        with _gdb_ow() as db:
+            if action == "start":
+                plan = next((z for z in _ow.proposals_query(db, owner, conflict=conflict["id"], subgroup="Border sweep")), None)
+                if plan is not None:
+                    plan.status = "active"
+                    plan.enabled = False      # the plan itself is never scanned
+                    db.commit()
+                existing = _ow.sweep_for(db, owner, conflict["id"])
+                return _overwatch_start_sweep_sync(db, owner, conflict["id"],
+                                                   plan.system_id if plan is not None else
+                                                   (existing.plan_zone_id if existing else None))
+            s = _ow.set_sweep_status(db, owner, conflict["id"], "paused" if action == "pause" else "stopped")
+            if s is None:
+                raise HTTPException(404, "no sweep for that conflict")
+            if s.plan_zone_id:
+                z = db.query(WatchZone).filter(WatchZone.system_id == s.plan_zone_id).first()
+                if z is not None and z.status != "proposed":
+                    z.status = "paused"
+                    db.commit()
+            print(f"[overwatch] sweep {action}: {conflict['id']} for user {owner}", flush=True)
+            return _ow.sweep_status(db, s)
+    return await asyncio.get_running_loop().run_in_executor(_executor, _do)
+
+
+@app.get("/api/overwatch/sweep/status")
+def api_overwatch_sweep_status(request: Request, conflict: str = "ukraine"):
+    """Progress (tiles done/total, found), found items and the recent tile
+    log for the caller's sweep of one conflict."""
+    owner, _u = _overwatch_owner(request)
+    c = _overwatch_conflict(conflict)
+    import overwatch as _ow
+    from database import get_db as _gdb_ow
+    with _gdb_ow() as db:
+        s = _ow.sweep_for(db, owner, c["id"])
+        out = _ow.sweep_status(db, s)
+        out.setdefault("conflict", c["id"])
+        out["tiles_planned"] = len(_ow.sweep_tiles_for(c))
+        return out
+
+
+# ── the sweep runner ──────────────────────────────────────────────────────
+
+def _overwatch_pick_tiles(budget: int) -> list:
+    """Claim the next tile(s) of the running sweeps, round-robin, and
+    create each as a temporary zone (aoi_class "sweep", enabled=False so
+    the optical scheduler never touches it). Runs in a worker thread."""
+    import json as _jow
+    import overwatch as _ow
+    from database import OverwatchSweep, WatchZone, get_db as _gdb_ow
+    global _OVERWATCH_SWEEP_ACTIVE
+    now = datetime.utcnow()
+    jobs = []
+    with _gdb_ow() as db:
+        sweeps = db.query(OverwatchSweep).filter(OverwatchSweep.status == "running").order_by(OverwatchSweep.updated_at).all()
+        _OVERWATCH_SWEEP_ACTIVE = bool(sweeps)
+        for s in sweeps:
+            if len(jobs) >= budget:
+                break
+            conflict = _ow.resolve_conflict(s.conflict)
+            if conflict is None:
+                s.status, s.last_error = "stopped", f"unknown conflict {s.conflict}"
+                db.commit()
+                continue
+            # The order is re-ranked daily: new reports move tiles forward.
+            if not s.ordered_at or now - s.ordered_at > timedelta(hours=24):
+                s.order_json = _jow.dumps(_ow.sweep_order(db, conflict))
+                s.ordered_at = now
+            order = _jow.loads(s.order_json or "[]")
+            log = _ow.sweep_log(db, conflict_id=s.conflict, owner=s.owner)
+            for tid in _ow.next_tiles(order, log, now, n=budget - len(jobs)):
+                tile = _ow.tile_by_id(conflict, tid)
+                if tile is None:
+                    continue
+                w, so, e, n = tile["bbox"]
+                sid = _next_zone_system_id(db)
+                db.add(WatchZone(
+                    system_id=sid, name=f"Sweep tile {tid}", description=f"Border sweep tile ({tile['band']}) — temporary",
+                    polygon_geojson=_jow.dumps(_ow.bbox_polygon(tile["bbox"])),
+                    bbox_min_lon=w, bbox_min_lat=so, bbox_max_lon=e, bbox_max_lat=n,
+                    priority="low", scan_interval_hours=24, enabled=False, status="active",
+                    aoi_class="sweep", owner=s.owner, created_by=s.owner, created_at=now,
+                    ml_tasks="[]", alert_threshold="both", sensor_preference="sentinel1_sar",
+                    zone_metadata=_jow.dumps({"group": _ow._group_name(conflict), "subgroup": _ow.SWEEP_IN_PROGRESS,
+                                              "generated_by": "overwatch", "conflict": conflict["id"],
+                                              "tile_id": tid, "band": tile["band"], "kind": "other",
+                                              "reason": "Border sweep tile being looked at now — deleted again if nothing new is there"}),
+                ))
+                db.flush()
+                zid = db.query(WatchZone.id).filter(WatchZone.system_id == sid).scalar()
+                s.current_tile = tid
+                db.commit()
+                jobs.append({"sweep_id": s.id, "owner": s.owner, "conflict": conflict, "tile": tile,
+                             "zone_pk": zid, "system_id": sid})
+    return jobs
+
+
+def _overwatch_finish_tile(job: dict, verdict: dict, scan_id: str | None) -> dict:
+    """Keep or delete the tile's zone, log it, and on a find raise the
+    notification. Runs in a worker thread."""
+    import json as _jow
+    import overwatch as _ow
+    from database import OverwatchSweep, SentinelDetection, SentinelScan, WatchZone, get_db as _gdb_ow
+    tile, conflict = job["tile"], job["conflict"]
+    kept = None
+    with _gdb_ow() as db:
+        sweep = db.query(OverwatchSweep).filter(OverwatchSweep.id == job["sweep_id"]).first()
+        z = db.query(WatchZone).filter(WatchZone.system_id == job["system_id"]).first()
+        if verdict["keep"] and z is not None:
+            top = verdict["findings"][0]
+            osm = _ow.load_osm(conflict["id"]).get("elements") or []
+            places = _ow.places_for(osm, _ow.load_airports(db, [tile["stager"]]))
+            title = _ow.sweep_finding_title(top, tile, places, _ow.shared_border(tile["stager"], tile["facing"]))
+            verdict["title"] = title
+            meta = _jow.loads(z.zone_metadata or "{}")
+            meta.update({"subgroup": _ow.FOUND_BY_SWEEP, "reason": verdict["summary"], "finding": top,
+                         "findings": verdict["findings"][:5], "found_at": datetime.utcnow().isoformat(timespec="seconds"),
+                         "title": title, "sweep_scan_id": scan_id,
+                         "caveat": "At 10-20 m a field hospital, a tent camp and a vehicle park look alike — identify on high-resolution imagery."})
+            z.zone_metadata = _jow.dumps(meta)
+            z.name = title.replace(" — found by sweep", "")[:120]
+            z.description = verdict["summary"]
+            z.aoi_class = "border"
+            z.enabled = True
+            z.status = "active"
+            z.priority = "high"
+            z.scan_interval_hours = 24
+            z.next_scan_at = datetime.utcnow()       # an optical look at what radar found, next pass
+            db.commit()
+            kept = z.system_id
+        elif z is not None:
+            scans = db.query(SentinelScan).filter(SentinelScan.zone_id == z.id).all()
+            for sc in scans:
+                db.query(SentinelDetection).filter(SentinelDetection.scan_id == sc.scan_id).delete()
+            db.query(SentinelScan).filter(SentinelScan.zone_id == z.id).delete()
+            db.delete(z)
+            db.commit()
+        if sweep is not None:
+            sweep.current_tile = None
+            sweep.last_error = verdict["summary"][:300] if verdict["result"] == "error" else None
+            db.commit()
+        _ow.record_tile(db, sweep, {**tile, "conflict": conflict["id"]}, verdict, kept)
+    print(f"[overwatch] sweep tile {tile['tile_id']} ({tile['band']}): {verdict['result']}"
+          f"{' — kept as ' + kept if kept else ''} — {verdict['summary'][:160]}", flush=True)
+    if kept:
+        top = verdict["findings"][0]
+        # The first finds of a day interrupt; later ones are kept and listed
+        # but written at medium (overwatch.SWEEP_MAX_ALERTS_PER_DAY).
+        with _gdb_ow() as db:
+            today = [r for r in _ow.sweep_log(db, conflict_id=conflict["id"], owner=job["owner"], limit=200)
+                     if r["result"] == "found" and (r["scanned_at"] or "")[:10] == datetime.utcnow().date().isoformat()]
+        sev = "high" if len(today) <= _ow.SWEEP_MAX_ALERTS_PER_DAY else "medium"
+        write_alert({
+            "source": "OVERWATCH", "alert_type": "Imagery signal", "title": verdict["title"],
+            "severity": sev, "lat": top["lat"], "lon": top["lon"],
+            "entity_type": "sweep_finding", "entity_id": kept, "region": _ow._group_name(conflict),
+            "country_code": str(tile["stager"]).upper(),
+            "raw_json": {"zone_id": kept, "scan_id": scan_id, "kind": "sweep_find", "tile_id": tile["tile_id"],
+                         "reason": f"found by the border sweep — {verdict['summary']}",
+                         "findings": verdict["findings"][:5], "actions": ["image"]},
+        })
+    return {"tile_id": tile["tile_id"], "result": verdict["result"], "kept": kept, "summary": verdict["summary"]}
+
+
+async def _overwatch_sweep_tile(job: dict) -> dict:
+    """Radar change over one tile, then the keep-or-delete decision."""
+    import overwatch as _ow
+    w, s, e, n = job["tile"]["bbox"]
+    bounds = {"west": w, "south": s, "east": e, "north": n}
+    today = datetime.utcnow().date()
+    post_end = today.isoformat()
+    pre_end = (today - timedelta(days=OVERWATCH_SWEEP_GAP_DAYS)).isoformat()
+    job_id = f"chg-sweep-{uuid.uuid4().hex[:8]}"
+    try:
+        await _run_pwtt_job(job_id, bounds, pre_end, post_end, OVERWATCH_SWEEP_DEPTH, 1.63, _ow.SWEEP_DIRECTION,
+                            OVERWATCH_SWEEP_PX, job["zone_pk"])
+        out = _PWTT_RESULTS.pop(job_id, None) or {"status": "error", "error": "no result"}
+        if out.get("status") == "completed" and out.get("detections"):
+            # Which land each region is on — cropland change in this band is
+            # the farming season, not a build-up (overwatch.py, measured).
+            import land_water as _lw
+
+            def _lc():
+                try:
+                    return _lw.worldcover_classes(w, s, e, n, OVERWATCH_SWEEP_PX, OVERWATCH_SWEEP_PX)
+                except Exception as _le:                     # noqa: BLE001
+                    print(f"[overwatch] error: WorldCover for {job['tile']['tile_id']}: {_le}", flush=True)
+                    return None
+            _ow.annotate_landcover(out, await asyncio.get_running_loop().run_in_executor(_executor, _lc))
+    except Exception as ex:                                  # noqa: BLE001
+        out = {"status": "error", "error": f"{type(ex).__name__}: {ex}"}
+    verdict = _ow.evaluate_sweep_result(out)
+    if verdict["result"] == "error":
+        print(f"[overwatch] error: sweep tile {job['tile']['tile_id']}: {verdict['summary']}", flush=True)
+    return await asyncio.get_running_loop().run_in_executor(
+        _executor, _overwatch_finish_tile, job, verdict, out.get("scan_id"))
+
+
+async def _overwatch_sweep_pass(budget: int | None = None) -> list:
+    if not _SENTINEL_IMAGERY_ENABLED:
+        return []
+    jobs = await asyncio.get_running_loop().run_in_executor(
+        _executor, _overwatch_pick_tiles, budget or OVERWATCH_SWEEP_TILES_PER_PASS)
+    out = []
+    for job in jobs:              # one at a time: each is a dozen Sentinel requests
+        out.append(await _overwatch_sweep_tile(job))
+    return out
+
+
+async def _overwatch_sweep_loop():
+    """Every OVERWATCH_SWEEP_INTERVAL_S, one or two border-sweep tiles —
+    the sweep's share of the scheduler's scan budget."""
+    await asyncio.sleep(240)
+    while True:
+        try:
+            await _overwatch_sweep_pass()
+        except Exception as e:                               # noqa: BLE001
+            print(f"[overwatch] error: sweep pass: {type(e).__name__}: {e}", flush=True)
+        await asyncio.sleep(OVERWATCH_SWEEP_INTERVAL_S)
+
+
 @app.post("/api/watch-zones/{system_id}/scan-now", dependencies=[Depends(_zone_guard)])
 def api_watch_zone_scan_now(system_id: str):
     from database import WatchZone, SentinelScan, get_db
@@ -24389,6 +24806,10 @@ def api_watch_zone_scan_now(system_id: str):
         zone = db.query(WatchZone).filter(WatchZone.system_id == system_id).first()
         if not zone:
             raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
+        if zone.aoi_class == "sweep_plan":
+            # A border-sweep plan spans a whole border; it is swept tile by
+            # tile (overwatch.py), never fetched as one scene.
+            raise HTTPException(status_code=409, detail="This is a border-sweep plan — start the sweep instead of scanning it as one area.")
         sensor = getattr(zone, "sensor_preference", None) or "sentinel2_optical"
         if sensor not in _SENSOR_PIPELINES_DEPLOYED:
             # Real, honest, immediate rejection — never silently run one of

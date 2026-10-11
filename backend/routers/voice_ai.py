@@ -63,6 +63,13 @@ INTENTS = {
     "file_to":    "file the selected thing into a named folder. slots: folder",
     "add_to_basket": "add the selected thing to the briefing basket. slots: none",
     "generate_briefing": "open the briefing generator. slots: none",
+    "generate_overwatch": ("propose satellite overwatch zones (air bases, ports, strike targets, front hotspots, "
+                           "a border sweep) for a conflict — 'generate overwatch zones for Ukraine', 'what should we "
+                           "watch in Sudan'. Proposals only; nothing is scanned until accepted. slots: conflict "
+                           "(one of the conflict ids listed)"),
+    "sweep": ("start, pause or stop the radar border sweep of a conflict — 'start the border sweep', 'pause the "
+              "sweep in Ukraine'. slots: action ('start', 'pause' or 'stop'), conflict (an id listed; 'ukraine' if "
+              "none is named)"),
     "none":       "nothing in this sentence is an instruction to the console",
 }
 
@@ -96,6 +103,15 @@ SYSTEM = (
     "Never invent a name, place or folder that is not in the sentence; fix only obvious dictation misspellings of "
     "place names (\"hormoose\" -> \"Hormuz\")."
 )
+
+
+def _conflict_menu() -> str:
+    """The conflict ids a sentence may name, with their names."""
+    try:
+        import overwatch
+        return ", ".join(f"{c['id']} ({c.get('name') or c['id']})" for c in overwatch.load_conflicts())
+    except Exception:                                      # noqa: BLE001
+        return "ukraine"
 
 
 def _me(request: Request) -> dict:
@@ -154,6 +170,21 @@ def _clean(intent: str, slots: dict, ctx: dict) -> dict | None:
         on = str(slots.get("on")).strip().lower()             # "True"/"False"/"None" after coercion
         return {"intent": intent, "slots": {"layer": layer,
                                             "on": True if on == "true" else False if on == "false" else None}}
+
+    if intent in ("generate_overwatch", "sweep"):
+        # Validated against seed/conflicts.json (ids, names and aliases
+        # such as "Ukraine war"), so a model cannot invent a conflict.
+        import overwatch
+        said = (slots.get("conflict") or "").strip() or ("ukraine" if intent == "sweep" else "")
+        c = overwatch.resolve_conflict(said) if said else None
+        if c is None:
+            return None
+        if intent == "sweep":
+            action = (slots.get("action") or "start").strip().lower()
+            if action not in ("start", "pause", "stop"):
+                return None
+            return {"intent": intent, "slots": {"action": action, "conflict": c["id"]}}
+        return {"intent": intent, "slots": {"conflict": c["id"]}}
 
     if intent == "zoom":
         d = (slots.get("direction") or "").strip().lower()
@@ -245,6 +276,7 @@ async def interpret(request: Request):
             f"Intents:\n{menu}\n\n"
             f"Pages: {pages}\n"
             f"Map layers: {layers}\n"
+            f"Conflicts: {_conflict_menu()}\n"
             f"Page open now: {ctx['page'] or 'unknown'}\n"
             f"People and groups that can be addressed: {who}\n"
             f"Something is selected on the map: {'yes' if ctx['selected'] else 'no'}")

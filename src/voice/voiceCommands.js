@@ -24,6 +24,8 @@
  * }} Context
  */
 
+import { conflictFromText } from "./overwatchConflict.js"
+
 // ---------- text helpers ----------
 
 const FILLERS = /\b(please|uh+|um+|hey|okay|ok|can you|could you|would you|i want to|i'd like to|let's|just|my colleague|my coworker|said)\b/g
@@ -290,6 +292,34 @@ const unsure = (raw, problem, actions = []) =>
     ({ actions, confident: false, needsConfirm: true, problem, raw })
 
 const RULES = [
+    /* ── "GENERATE OVERWATCH ZONES FOR UKRAINE" ──────────────────────
+       Proposes zones (backend/overwatch.py) — nothing is scanned until
+       the analyst accepts them on the Imagery page, so it needs no
+       confirmation here, and Undo deletes the proposals it made. First in
+       the list: "make overwatch zones for Ukraine" would otherwise be
+       read by nothing, and "add watch zones in Gaza" by add_to_basket. */
+    {
+        name: "generate_overwatch",
+        test: /\b(generate|create|make|set up|build|propose|suggest|give me|add)\b[^.]*\b(overwatch|watch ?zones?|zones? to watch|areas? to watch)\b|^overwatch\b|\boverwatch (zones? )?(for|on|over|in)\b/,
+        build: (t, raw) => {
+            const conflict = conflictFromText(t)
+            return conflict
+                ? ok(raw, [{ type: "generate_overwatch", conflict }])
+                : unsure(raw, "Overwatch for which conflict? Say \u201cgenerate overwatch zones for Ukraine\u201d.")
+        },
+    },
+    /* ── "START THE BORDER SWEEP IN UKRAINE" / "PAUSE THE SWEEP" ─────
+       With no conflict named it means Ukraine — the one sweep the owner
+       runs today; the server refuses a conflict it cannot sweep. */
+    {
+        name: "sweep",
+        test: /\b(start|begin|run|launch|resume|continue|pause|stop|halt|cancel)\b[^.]*\bsweep(ing)?\b|\bsweep (the )?borders?\b/,
+        build: (t, raw) => {
+            const action = /\b(pause|halt)\b/.test(t) ? "pause" : /\b(stop|cancel)\b/.test(t) ? "stop" : "start"
+            const conflict = conflictFromText(t) || "ukraine"
+            return ok(raw, [{ type: "sweep", action, conflict }])
+        },
+    },
     /* ── "EXPLAIN THE CURRENT SITUATION IN MALI" ─────────────────────
        Not a send and not a navigation: a question. It goes above both
        because "explain the situation in Mali" contains neither a send verb

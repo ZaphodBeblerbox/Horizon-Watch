@@ -281,14 +281,14 @@ def _persistent_false_positives(db, zone, current_scan, current_dets):
 
 # ── Propose coverage for scope (§B3) ──────────────────────────────────────
 
-def propose_coverage(db, iso3_or_country_code: str, created_by: str = "operator"):
+def propose_coverage(db, iso3_or_country_code: str, created_by: str = "operator", owner: str | None = None):
     """Real proposed AOIs derived from the real Airport register (the only
     well-populated real infrastructure table today — ports/military/energy
     have no real ingested source in this deployment, see the module's own
     audit note below) for the given country. Inserted as status='proposed',
     enabled=False — never auto-started."""
     from database import Airport, WatchZone
-    import uuid
+    import overwatch
 
     country_upper = iso3_or_country_code.upper()
     airports = (
@@ -299,6 +299,9 @@ def propose_coverage(db, iso3_or_country_code: str, created_by: str = "operator"
         .all()
     )
     existing_names = {z.name for z in db.query(WatchZone).filter(WatchZone.status == "proposed").all()}
+    # Same id scheme as every other zone (max+1, overwatch.next_zone_ids) —
+    # these used random ZONE-XXXXXXXX ids that sorted nowhere.
+    free_ids = overwatch.next_zone_ids([r[0] for r in db.query(WatchZone.system_id).all()], len(airports))
 
     created = []
     for a in airports:
@@ -313,12 +316,14 @@ def propose_coverage(db, iso3_or_country_code: str, created_by: str = "operator"
             [a.longitude - d, a.latitude - d],
         ]]}
         row = WatchZone(
-            system_id=f"ZONE-{uuid.uuid4().hex[:8].upper()}", name=name, description=f"Proposed from real airport register: {a.ident}",
+            system_id=free_ids.pop(0), name=name, description=f"Proposed from real airport register: {a.ident}",
             polygon_geojson=json.dumps(polygon),
             bbox_min_lon=a.longitude - d, bbox_min_lat=a.latitude - d,
             bbox_max_lon=a.longitude + d, bbox_max_lat=a.latitude + d,
             priority="medium", scan_interval_hours=72, enabled=False,
-            aoi_class="airport", status="proposed", owner=created_by,
+            # OWNED BY WHOEVER ASKED. owner="operator" matched no user, so
+            # _zones_visible hid every proposal from the person it was for.
+            aoi_class="airport", status="proposed", owner=owner if owner is not None else created_by,
             ml_tasks=json.dumps(["ship_detection"]), created_by=created_by,
         )
         db.add(row)
