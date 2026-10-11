@@ -27,7 +27,7 @@ const TYPE = {
     body: { fontSize: 34, fontWeight: 400, lineHeight: 1.5 },
     bigBody: { fontSize: 46, fontWeight: 400, lineHeight: 1.35 },
     quote: { fontSize: 52, fontWeight: 500, lineHeight: 1.25 },
-    statistic: { fontSize: 76, fontWeight: 400, fontFamily: "var(--mono, monospace)" },
+    statistic: { fontSize: 76, fontWeight: 400, fontFamily: "var(--font)", fontVariantNumeric: "tabular-nums" },
     table: { fontSize: 27, fontWeight: 400 },
     eyebrow: { fontSize: 22, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" },
     footer: { fontSize: 19, fontWeight: 400 },

@@ -264,7 +264,10 @@
             /* ── Typography — system font stack only, no @font-face, no
                font CDN, anywhere. ────────────────────────────────────── */
             --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-            --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+            /* NO TYPEWRITER FONTS (owner, 2026-10-11): what was the mono is
+               the clean system font; numbers keep their columns with
+               font-variant-numeric: tabular-nums where it matters. */
+            --mono: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
             --r: 2px; /* radius everywhere, never more */
             --ease: cubic-bezier(.3,.7,.4,1);

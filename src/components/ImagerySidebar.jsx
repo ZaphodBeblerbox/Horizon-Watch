@@ -97,7 +97,7 @@ function compositeDatestamp(base64Png, label) {
             ctx.fillStyle = "rgba(0,0,0,0.62)"
             ctx.fillRect(0, canvas.height - barH, canvas.width, barH)
             ctx.fillStyle = "#ffffff"
-            ctx.font = `${Math.max(11, Math.round(barH * 0.55))}px "SF Mono", Menlo, monospace`
+            ctx.font = `${Math.max(11, Math.round(barH * 0.55))}px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif`
             ctx.textBaseline = "middle"
             ctx.textAlign = "center"
             ctx.fillText(label, canvas.width / 2, canvas.height - barH / 2)
@@ -164,7 +164,7 @@ async function renderAnnotatedScene(base64Png, { bounds, detections = [], meta =
 
         const label = detectionLabel(det)
         const fs = Math.max(11, Math.round(12 * scale))
-        ctx.font = `${fs}px "SF Mono", Menlo, monospace`
+        ctx.font = `${fs}px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif`
         const w = ctx.measureText(label).width
         const top = Math.min(...px.points.map((p) => p.y))
         const left = Math.min(...px.points.map((p) => p.x))
@@ -185,7 +185,7 @@ async function renderAnnotatedScene(base64Png, { bounds, detections = [], meta =
     ctx.fillStyle = "rgba(0,0,0,0.66)"
     ctx.fillRect(0, canvas.height - barH, canvas.width, barH)
     ctx.fillStyle = "#ffffff"
-    ctx.font = `${Math.max(11, Math.round(barH * 0.42))}px "SF Mono", Menlo, monospace`
+    ctx.font = `${Math.max(11, Math.round(barH * 0.42))}px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif`
     ctx.textBaseline = "middle"
     ctx.textAlign = "center"
     ctx.fillText(line, canvas.width / 2, canvas.height - barH / 2)

@@ -205,7 +205,7 @@ class ErrorBoundary extends React.Component {
       return (
         <div style={{
           position: 'fixed', inset: 0, background: '#0a0e14', overflow: 'auto',
-          fontFamily: 'monospace', color: '#e8edf2', padding: 24,
+          fontFamily: '-apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, sans-serif', color: '#e8edf2', padding: 24,
         }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#ef4444', marginBottom: 12 }}>
             App crashed

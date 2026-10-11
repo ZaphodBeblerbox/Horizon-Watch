@@ -84,7 +84,7 @@ export default function PageFrame({ children, id, className = "", footerNote = n
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
             }}>
                 {footerNote && (
-                    <span style={{ font: "400 8px var(--mono, monospace)", color: "#9aa0a8", letterSpacing: "0.04em" }}>
+                    <span style={{ font: "400 8px var(--font)", color: "#9aa0a8", letterSpacing: "0.04em" }}>
                         {footerNote}
                     </span>
                 )}

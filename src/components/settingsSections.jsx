@@ -241,7 +241,7 @@ export function GeneralSection({ settings }) {
             <HereRow settings={settings} />
             <LiveShareRow Row={Row} Toggle={Toggle} />
 
-            <div style={{ margin: "6px 0 14px", font: "400 11px var(--mono, monospace)", color: "var(--txt4)" }} data-testid="build-stamp">
+            <div style={{ margin: "6px 0 14px", font: "400 11px var(--font)", color: "var(--txt4)" }} data-testid="build-stamp">
                 Parallax {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : ""} · build {typeof __PLX_BUILD__ !== "undefined" ? __PLX_BUILD__ : "?"}
             </div>
             <SectionTitle>Locale</SectionTitle>

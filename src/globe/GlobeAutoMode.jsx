@@ -123,7 +123,7 @@ export default function GlobeAutoMode({ enabled }) {
                     bottom:         48,
                     right:          16,
                     color:          'rgba(0,212,255,0.75)',
-                    fontFamily:     '"IBM Plex Mono", monospace',
+                    fontFamily:     'var(--font)',
                     fontSize:       11,
                     background:     'rgb(5, 10, 20)',
                     padding:        '8px 14px',

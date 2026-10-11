@@ -48,7 +48,6 @@ import { getActiveViews, subscribeActiveSession, saveCurrentAsView, applyView, d
 import { replayOnMap } from "../services/replayOnMap.js"
 import { useInspectorExtensions } from "../inspector/extensionRegistry.js"
 import { publishFilterState } from "../state/situationFilterState.js"
-import { tintBackground } from "./criticalTint.js"
 import SignalsExportPanel from "./SignalsExportPanel.jsx"
 import RiskIndexPanel from "../components/RiskIndexPanel.jsx"
 import CoveragePanel from "../components/CoveragePanel.jsx"
@@ -2284,13 +2283,16 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         <div style={{ marginTop: 12 }}>
                             <SeverityLegend legendCounts={legendCounts} />
                         </div>
-                        <div style={{ marginTop: 12 }}>
+                        {/* ONE RED FADE FOR THE WHOLE SECTION, top to bottom (owner,
+                            2026-10-11), not a fade on each row */}
+                        <div style={{ marginTop: 12, padding: "10px 10px 8px", borderRadius: 8,
+                                      background: newestCritical.length ? "linear-gradient(to bottom, rgba(229,72,77,.24), rgba(229,72,77,.08) 55%, rgba(229,72,77,0))" : "transparent" }}
+                             data-testid="newest-critical">
                             <div style={{ font: "600 11px var(--font)", color: "var(--txt-3)", marginBottom: 6 }}>Newest critical</div>
                             {newestCritical.length === 0 ? (
                                 <div style={{ font: "400 12px var(--font)", color: "var(--txt-4)" }}>No critical or high-severity signals in this window.</div>
                             ) : newestCritical.map((r) => (
                                 <div key={r.id} className="evrow"
-                                     style={{ background: tintBackground(r.severityRank, r.publishedAt, nowMs) }}
                                      onClick={() => openOverviewRow(r)}>
                                     <span className={`dia ${SEV_CLASS_BY_RANK[r.severityRank] || "moderate"}`} />
                                     <div>

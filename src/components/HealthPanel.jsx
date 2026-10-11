@@ -235,7 +235,7 @@ function StorageSection() {
                     </div>
                     {db.top_tables.slice(0, 6).map(t => (
                         <div key={t.table} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-                            <span style={{ fontSize: 10, color: "var(--akili-text-secondary)", fontFamily: "monospace" }}>{t.table}</span>
+                            <span style={{ fontSize: 10, color: "var(--akili-text-secondary)", fontFamily: "var(--font)" }}>{t.table}</span>
                             <span style={{ fontSize: 10, color: "var(--akili-text-primary)", fontWeight: 500 }}>{t.rows.toLocaleString()}</span>
                         </div>
                     ))}

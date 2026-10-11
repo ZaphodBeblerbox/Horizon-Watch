@@ -99,7 +99,7 @@ export default function NewsTicker({ visible }) {
                     animation:    'pulse-dot 1s ease infinite',
                 }} />
                 <span style={{
-                    fontFamily:    '"IBM Plex Mono", "Courier New", monospace',
+                    fontFamily:    'var(--font)',
                     fontSize:      8,
                     fontWeight:    700,
                     color:         '#FF3B30',
@@ -133,7 +133,7 @@ export default function NewsTicker({ visible }) {
                                 gap:         6,
                                 padding:     '0 24px',
                                 borderRight: '1px solid rgba(255,255,255,0.04)',
-                                fontFamily:  '"IBM Plex Mono", "Courier New", monospace',
+                                fontFamily:  'var(--font)',
                                 fontSize:    10,
                             }}>
                                 <span style={{ color, opacity: 0.6 }}>◆</span>

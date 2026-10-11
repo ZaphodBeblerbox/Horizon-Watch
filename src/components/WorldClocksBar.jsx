@@ -107,7 +107,7 @@ export default function WorldClocksBar({ visible }) {
             alignItems:      'center',
             overflowX:       'auto',
             scrollbarWidth:  'none',
-            fontFamily:      '"IBM Plex Mono", "Courier New", monospace',
+            fontFamily:      'var(--font)',
         }}>
             {STRATEGIC_CITIES.map(city => {
                 const w    = weather[city.name]

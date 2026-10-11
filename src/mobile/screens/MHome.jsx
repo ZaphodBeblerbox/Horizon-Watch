@@ -4,6 +4,8 @@
  *
  *   Most urgent for you   signals near the user's assets, then the most
  *                         severe in their theaters and interests; every 30 s
+ *   Live from Telegram   one post at a time, full width, a headline in the
+ *                         manner of a front page, fading to the next (TelegramStory)
  *   From the ground       the three most breaking places for them, on
  *                         video (Telegram, 48 h, one per place) — swipe
  *   The brief             what happened (overnight / this morning / this
@@ -151,30 +153,9 @@ export default function MHome({ onShowOnMap, onOpen }) {
             </div>
             <button className="m2-cta" onClick={() => onOpen?.("map")} data-testid="m2-open-map"><Icon id="g-globe" size={22} />Open the map</button>
 
-            <div style={{ padding: "0 16px" }}><LiveNow compact /></div>
+            <LiveNow compact />
             {arr(live).length > 0 && (
-                <section className="m2-section" data-screen-label="Phone live">
-                    <header><span className="m2-eyebrow">Live from Telegram</span><span className="m2-when" style={{ flex: 1 }}>newest first</span>
-                        <button className="m2-chip" onClick={() => { window.__m2DeskTab = "general"; onOpen?.("desk") }}>All posts</button></header>
-                    <div className="m2-hscroll m2-live">
-                        {arr(live).map((t) => (
-                            <button key={t.id} className="m2-card m2-tap" onClick={() => setOpen(t)} style={{ textAlign: "left", padding: 0, cursor: "pointer", width: "72%", height: 236, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                                {/* the same top band on every card, so the strip is even:
-                                    the picture, or the place on a tint */}
-                                {t.media === "video"
-                                    ? <span style={{ display: "block", height: 120, overflow: "hidden", background: "#000" }} onClick={(e) => e.stopPropagation()}><TelegramMedia post={t} maxHeight="120px" radius="0" /></span>
-                                    : t.thumb_url
-                                    ? <img src={`${API_BASE}${t.thumb_url}`} alt="" style={{ width: "100%", height: 120, objectFit: "cover", display: "block" }} />
-                                    : <span style={{ height: 120, display: "flex", alignItems: "flex-end", padding: "10px 12px", background: "linear-gradient(160deg, rgba(122,167,255,.16), rgba(122,167,255,.03))",
-                                                     fontSize: 17, fontWeight: 650, color: "var(--txt2, #c3c7cf)" }}>{String(t.place || t.channel_title || "Telegram").split(",")[0]}</span>}
-                                <span style={{ padding: "10px 12px" }}>
-                                    <span className="m2-eyebrow" style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ago(t.posted_at)} · {t.channel_title || t.channel}</span>
-                                    <span className="m2-t" style={{ marginTop: 4, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.headline || String(t.summary_en || t.text || "").slice(0, 160)}</span>
-                                </span>
-                            </button>
-                        ))}
-                    </div>
-                </section>
+                <TelegramStory posts={arr(live)} onOpen={setOpen} onAll={() => { window.__m2DeskTab = "general"; onOpen?.("desk") }} />
             )}
             {videos.length > 0 && (
                 <section className="m2-section" data-screen-label="Phone ground">
@@ -255,5 +236,54 @@ function AlertsOffer() {
                 </span>
             </span>
         </div>
+    )
+}
+
+
+/** LIVE FROM TELEGRAM, ONE AT A TIME (owner, 2026-10-11): not a swiper —
+ *  one post across the full width, its picture or video, WHEN it was posted
+ *  and by whom in plain sight, and the headline set large like a front page;
+ *  every few seconds it fades to the next. Tap to open it; the dots jump. */
+const STORY_MS = 7000
+function TelegramStory({ posts, onOpen, onAll }) {
+    const list = posts.slice(0, 8)
+    const [i, setI] = useState(0)
+    const [shown, setShown] = useState(true)
+    const [hold, setHold] = useState(false)
+    const go = (n) => { setShown(false); setTimeout(() => { setI(((n % list.length) + list.length) % list.length); setShown(true) }, 320) }
+    useEffect(() => {
+        if (hold || list.length < 2) return undefined
+        const t = setTimeout(() => go(i + 1), STORY_MS)
+        return () => clearTimeout(t)
+    }, [i, hold, list.length]) // eslint-disable-line react-hooks/exhaustive-deps
+    const t = list[Math.min(i, list.length - 1)]
+    if (!t) return null
+    const place = String(t.place || "").split(",").map((x) => x.trim()).filter((x) => x && !/^(none|null|unknown)$/i.test(x)).slice(0, 2).join(", ")
+    const posted = ago(t.posted_at)
+    return (
+        <section className="m2-section m2-story" data-screen-label="Phone live" data-testid="m2-telegram-story">
+            <header><span className="m2-eyebrow">Live from Telegram</span><span style={{ flex: 1 }} />
+                <button className="m2-chip" onClick={onAll}>All posts</button></header>
+            <div className="m2-card m2-story-card" style={{ opacity: shown ? 1 : 0 }}
+                 onTouchStart={() => setHold(true)} onTouchEnd={() => setHold(false)}>
+                <button className={`m2-story-media${t.media === "video" || t.thumb_url ? "" : " bare"}`} onClick={() => onOpen(t)} aria-label="Open this post">
+                    {t.media === "video"
+                        ? <span onClick={(e) => e.stopPropagation()} style={{ display: "block" }}><TelegramMedia key={t.id} post={t} maxHeight="220px" radius="0" active={shown} /></span>
+                        : t.thumb_url
+                        ? <img src={`${API_BASE}${t.thumb_url}`} alt="" />
+                        : <span className="m2-story-place">{String(t.place || t.channel_title || "Telegram").split(",")[0]}</span>}
+                </button>
+                <button className="m2-story-text" onClick={() => onOpen(t)}>
+                    <span className="m2-story-when"><b>{posted && !/ago$|now/i.test(posted) ? `${posted} ago` : posted}</b><span>{t.channel_title || t.channel}</span></span>
+                    <span className="m2-story-head">{t.headline || String(t.summary_en || t.text || "").slice(0, 160)}</span>
+                    {place && <span className="m2-sub">{place}</span>}
+                </button>
+            </div>
+            {list.length > 1 && (
+                <div className="m2-story-dots" role="tablist">
+                    {list.map((p, n) => <button key={p.id} role="tab" aria-selected={n === i} aria-label={`Post ${n + 1}`} onClick={() => go(n)} />)}
+                </div>
+            )}
+        </section>
     )
 }

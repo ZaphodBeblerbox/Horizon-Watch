@@ -107,7 +107,7 @@ export function fusionLabel(f) {
 function labelOpts(text, color) {
     return {
         text,
-        font: "600 10px ui-monospace, SF Mono, Menlo, monospace",
+        font: "600 10px -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, sans-serif",
         fillColor: color,
         // paint-order:stroke in SVG; Cesium's equivalent is an outline in the
         // page ground colour so the label survives over a bright basemap.

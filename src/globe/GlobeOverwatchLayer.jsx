@@ -229,7 +229,7 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                 position: positions[0],
                 label: {
                     text: `${_tag}${_conf}`,
-                    font: "11px monospace",
+                    font: "11px -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, sans-serif",
                     fillColor: color,
                     outlineColor: Color.BLACK.withAlpha(0.85),
                     outlineWidth: 2.5,

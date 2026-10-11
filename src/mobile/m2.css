@@ -23,7 +23,7 @@
                  gap: 3px; font-size: 10.5px; color: var(--txt3, #8a909b); cursor: pointer; position: relative; }
 .m2-nav button[aria-current="true"] { color: var(--txt, #fff); }
 .m2-nav button[aria-current="true"] svg { color: var(--acchi, #7aa7ff); }
-.m2-eyebrow { font-family: var(--mz-font-mono, ui-monospace, monospace); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--txt4, #6b7280); }
+.m2-eyebrow { font-family: inherit; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--txt4, #6b7280); }
 .m2-card { border: 1px solid var(--gline, rgba(255,255,255,.08)); background: var(--glass2, rgba(255,255,255,.03)); }
 .m2-section { margin-bottom: 18px; }
 .m2-section > header { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 8px; }
@@ -260,3 +260,19 @@
 .m2-banner-body .m2-sub { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m2-banner-x { border: 0; background: none; color: var(--txt3); font-size: 22px; height: 40px; cursor: pointer; }
 @keyframes m2-banner-in { from { transform: translateY(-120%); opacity: 0; } to { transform: none; opacity: 1; } }
+/* LIVE FROM TELEGRAM, one post at a time (MHome.jsx TelegramStory) */
+.m2-story-card { transition: opacity .32s ease; }
+.m2-story-media { display: block; width: 100%; height: 210px; padding: 0; border: 0; background: #000; overflow: hidden; cursor: pointer; }
+.m2-story-media img { width: 100%; height: 210px; object-fit: cover; display: block; }
+.m2-story-place { display: flex; align-items: flex-end; height: 100%; padding: 14px 16px; font-size: 26px; font-weight: 700; letter-spacing: -.01em; color: var(--txt2, #c3c7cf);
+                  background: linear-gradient(160deg, rgba(122,167,255,.18), rgba(122,167,255,.03)); }
+.m2-story-text { display: block; width: 100%; padding: 14px 16px 16px; border: 0; background: none; color: var(--txt); text-align: left; font: inherit; cursor: pointer; }
+.m2-story-when { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--txt2); }
+.m2-story-when b { padding: 3px 9px; border-radius: 11px; background: rgba(229,72,77,.16); color: #ff8a8d; font-weight: 650; font-variant-numeric: tabular-nums; }
+.m2-story-when span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.m2-story-head { display: block; margin: 10px 0 6px; font-size: 22px; line-height: 1.22; font-weight: 700; letter-spacing: -.015em;
+                 display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.m2-story-dots { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
+.m2-story-dots button { width: 6px; height: 6px; padding: 0; border: 0; border-radius: 3px; background: var(--txt4, #6b7280); opacity: .5; cursor: pointer; transition: width .25s ease, opacity .25s ease; }
+.m2-story-dots button[aria-selected="true"] { width: 18px; opacity: 1; background: var(--txt2); }
+.m2-story-media.bare { height: 110px; }

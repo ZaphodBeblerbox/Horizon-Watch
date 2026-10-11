@@ -211,7 +211,7 @@ export function MProfile() {
             <div className="m2-sub" style={{ marginBottom: 14, lineHeight: 1.5 }}>Your picture, header, theaters and interests are set on the desktop under Profile and Settings; the phone follows them.</div>
             <button className="m2-btn ghost" onClick={() => logout().then(() => window.location.reload())}>Sign out</button>
             {/* which build this phone is running: a cached copy looks like a fix that did not ship */}
-            <div className="m2-sub" data-testid="build-stamp" style={{ marginTop: 18, fontFamily: "var(--mz-font-mono, monospace)", fontSize: 11 }}>
+            <div className="m2-sub" data-testid="build-stamp" style={{ marginTop: 18, fontFamily: "inherit", fontVariantNumeric: "tabular-nums", fontSize: 11 }}>
                 Parallax {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : ""} · build {typeof __PLX_BUILD__ !== "undefined" ? __PLX_BUILD__ : "?"}
             </div>
         </div>
@@ -293,7 +293,7 @@ export function MSettings() {
                     <PhoneToggle value={st?.media?.warnGraphic !== false} onChange={(v) => set("media.warnGraphic", v)} />
                 </PhoneRow>
             </Group>
-            <div className="m2-sub" data-testid="build-stamp" style={{ marginTop: 16, fontFamily: "var(--mz-font-mono, monospace)", fontSize: 11 }}>
+            <div className="m2-sub" data-testid="build-stamp" style={{ marginTop: 16, fontFamily: "inherit", fontVariantNumeric: "tabular-nums", fontSize: 11 }}>
                 Parallax {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : ""} · build {typeof __PLX_BUILD__ !== "undefined" ? __PLX_BUILD__ : "?"}
             </div>
         </div>

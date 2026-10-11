@@ -125,7 +125,7 @@ export default function PinMap({ center, zoom = 15, pin, onPin, radiusKm = null,
                     }}>{b.label}</button>
                 ))}
             </div>
-            <span style={{ position: "absolute", left: 8, bottom: 6, font: "10px var(--mz-font-mono, monospace)", color: "#fff", textShadow: "0 1px 3px #000", pointerEvents: "none" }}>
+            <span style={{ position: "absolute", left: 8, bottom: 6, font: "10px var(--font)", color: "#fff", textShadow: "0 1px 3px #000", pointerEvents: "none" }}>
                 {onPin ? `${pin ? "Click elsewhere to move the pin" : "Click where it is"} · ` : ""}Esri · z{z}
             </span>
         </div>

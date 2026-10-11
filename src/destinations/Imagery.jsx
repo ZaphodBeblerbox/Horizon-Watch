@@ -338,7 +338,7 @@ export default function Imagery() {
             ctx.drawImage(img, 0, 0)
             if (showBoxes) {
                 ctx.lineWidth = Math.max(2, Math.round(c.width / 500))
-                ctx.font = `${Math.max(11, Math.round(c.width / 90))}px monospace`
+                ctx.font = `${Math.max(11, Math.round(c.width / 90))}px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif`
                 for (const d of changes) {
                     ctx.strokeStyle = d.type === "new" ? "#d8a24a" : d.type === "removed" ? "#f46043" : "#a0b2d2"
                     ctx.beginPath()
