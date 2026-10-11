@@ -147,6 +147,7 @@ def series(country: str, days: int = WINDOW_DAYS, now: _dt.datetime | None = Non
     that call people to act."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     start = (now - _dt.timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    live = rows is None
     rows = rows if rows is not None else _rows(country.lower(), start)
     dates = [(now - _dt.timedelta(days=days - 1 - i)).strftime("%Y-%m-%d") for i in range(days)]
     by = {d: [] for d in dates}
@@ -169,7 +170,11 @@ def series(country: str, days: int = WINDOW_DAYS, now: _dt.datetime | None = Non
     base_ix = index_of([r["mood_tension"] for r in before], [r["mood_mobilise"] for r in before])
     allr = recent + before
     calls = sorted((r for r in allr if (r["mood_mobilise"] or 0) >= 2), key=lambda r: r["posted_at"], reverse=True)
+    conflict = None
+    if live:                                   # read from the database, not handed rows (tests)
+        conflict = _conflict_readings().get(country.lower())
     return {
+        "conflict": conflict,
         "country": country.lower(), "days": out_days, "n": len(allr),
         "index_recent": now_ix, "index_before": base_ix,
         "index_window": index_of([r["mood_tension"] for r in allr], [r["mood_mobilise"] for r in allr]),
@@ -188,6 +193,7 @@ def series(country: str, days: int = WINDOW_DAYS, now: _dt.datetime | None = Non
 
 def countries(days: int = WINDOW_DAYS, now: _dt.datetime | None = None) -> list[dict]:
     """Every country with enough rated posts, the sharpest rise first."""
+    live = now is None
     now = now or _dt.datetime.now(_dt.timezone.utc)
     start = (now - _dt.timedelta(days=days - 1)).strftime("%Y-%m-%d")
     by: dict[str, list] = {}
@@ -198,15 +204,28 @@ def countries(days: int = WINDOW_DAYS, now: _dt.datetime | None = None) -> list[
         from location_extract import country_name_from_code
     except Exception:                                          # noqa: BLE001
         country_name_from_code = lambda c: None  # noqa: E731
+    conflict = _conflict_readings(None if live else now)
     out = []
     for cc, rows in by.items():
-        if len(rows) < MIN_POSTS:
+        if len(rows) < MIN_POSTS and not (conflict.get(cc) or {}).get("rising"):
             continue
         s = series(cc, days, now, rows)
         out.append({"country": cc, "name": country_name_from_code(cc) or cc.upper(), "n": s["n"],
                     "index_window": s["index_window"], "index_recent": s["index_recent"], "change": s["change"],
-                    "topics": s["topics"][:2]})
-    # The sharpest rise first; without a comparison (no recent or no
-    # earlier posts), the highest two-week index.
-    out.sort(key=lambda x: (x["change"] is None, -(x["change"] or 0), -(x["index_window"] or 0)))
+                    "topics": s["topics"][:2], "conflict": conflict.get(cc)})
+    # Calls for armed conflict rising first (telegram_mood_alert.py), then
+    # the sharpest rise; without a comparison (no recent or no earlier
+    # posts), the highest two-week index.
+    out.sort(key=lambda x: (not (x["conflict"] or {}).get("rising"), x["change"] is None,
+                            -(x["change"] or 0), -(x["index_window"] or 0)))
     return out
+
+
+def _conflict_readings(now: _dt.datetime | None = None) -> dict:
+    """{country: calls-for-conflict summary} — never fails the mood page."""
+    try:
+        import telegram_mood_alert as tma
+        return {cc: tma.summary(ind) for cc, ind in tma.evaluate(now).items()}
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[tg-mood] error: conflict readings: {type(e).__name__}: {e}", flush=True)
+        return {}

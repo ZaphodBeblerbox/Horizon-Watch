@@ -214,6 +214,10 @@ def derived_items(limit: int = 20) -> list[dict]:
             # Named by kind of evidence, never by feed — and counted by kind
             # too, so the number in the sentence matches the list after it.
             mods = _D.modality_labels(f.get("mods") or [])
+            # News is not one of our witnesses (owner, 2026-10-11): a fusion
+            # counts toward a notification only by its own-sensor kinds.
+            own_mods = _D.modality_labels([m for m in (f.get("mods") or [])
+                                           if str(m).lower() not in ("signal", "press", "news", "gdelt")])
             labels = []
             for it in f.get("items") or []:
                 lab = _plain(it.get("label"))
@@ -233,7 +237,7 @@ def derived_items(limit: int = 20) -> list[dict]:
                 # Two kinds of evidence in the same 250 km cell over three
                 # days is too loose to interrupt for (a tanker and an
                 # unrelated RAF flight 50 km apart); three is not.
-                "notify": len(mods) >= 3,
+                "notify": len(own_mods) >= 3,
                 "kind": "fusion",
                 "source": "fusion",
                 "lat": f.get("lat"), "lon": f.get("lon"),

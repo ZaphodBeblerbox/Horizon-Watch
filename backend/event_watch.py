@@ -318,6 +318,15 @@ def cards_for(uid: str, now: _dt.datetime | None = None) -> list[dict]:
             "url": ev.get("url"), "notify": True, "created_at": ev["posted_at"],
         })
     cards += nows[:CAPS["live"]]
+
+    # Calls for armed conflict rising on Telegram about a country this user
+    # has an asset in, a theater over, or an interest in
+    # (telegram_mood_alert.py): the alert's own card, with their reason.
+    try:
+        import telegram_mood_alert as tma
+        cards += tma.cards_for(c)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[tg-mood] error: cards for {uid}: {type(e).__name__}: {e}", flush=True)
     return cards
 
 

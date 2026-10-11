@@ -10951,6 +10951,9 @@ def _check_sanctions_on_update_sync(vessel: dict) -> None:
             "heading":             vessel.get("heading"),
             "rule_name":           "Sanctioned Vessel",
             "sanctions_confirmed": confirmed,
+            # how the ship matched the list (mmsi / imo / exact_name): the
+            # General desk shows identifier matches only (general_feed)
+            "match":               hit.get("_match_type"),
             "explanation":         explanation,
         },
     }
@@ -12285,36 +12288,13 @@ def api_analytics_day(date: str, country: str = "", kind: str = ""):
 
 @app.get("/api/general")
 def api_general(before: str = "", limit: int = Query(40, ge=5, le=100), kinds: str = "signal,geoconfirmed,telegram"):
-    """What is generally happening, newest first (general_feed.py): serious
-    events, GeoConfirmed's verified events with their X posts, Telegram
-    posts — and the news signals of the surface pool — as one timeline.
-    `next` pages on."""
+    """What is generally happening, newest first (general_feed.py): our own
+    alerts, GeoConfirmed's verified events with their X posts and Telegram
+    posts, one card per event. NO NEWS (owner, 2026-10-11): news belongs to
+    a country's page, never to the General desk. `next` pages on."""
     import general_feed as _gf
     want = tuple(k for k in kinds.split(",") if k in _gf.KINDS) or _gf.KINDS
-    out = _gf.feed(_akili_db_path(), before or None, limit, want)
-    items = list(out["items"])
-    if "signal" in want:
-        # the surface pool's news, merged BEFORE the page is cut: a page is
-        # `limit` items, whatever their source
-        cursor = (before or "9999").replace(" ", "T")[:19]
-        with _SURFACE_POOL_LOCK:
-            pool = list(_SURFACE_POOL)
-        have = {i["headline"].strip().lower() for i in items}
-        for it in pool:
-            at = str(it.get("published_at") or "").replace(" ", "T")[:19]
-            head = (it.get("headline") or it.get("title") or "").strip()
-            if not at or not head or not at < cursor or head.lower() in have:
-                continue
-            if str(it.get("source_type") or "").startswith("telegram"):
-                continue                                   # Telegram comes as its own posts
-            have.add(head.lower())
-            items.append({"id": f"news:{it.get('id')}", "kind": "signal", "at": at, "headline": head,
-                          "text": (it.get("summary") or it.get("context") or "")[:400],
-                          "severity": str(it.get("severity_tier") or "").lower(), "lat": it.get("lat"), "lon": it.get("lon"),
-                          "place": it.get("location"), "source": it.get("source"), "url": it.get("url")})
-    items.sort(key=lambda x: x["at"], reverse=True)
-    page = items[:limit]
-    return {"items": page, "next": page[-1]["at"] if len(page) == limit else None}
+    return _gf.feed(_akili_db_path(), before or None, limit, want)
 
 
 @app.get("/api/telegram/live")
@@ -12986,8 +12966,9 @@ def _live_notification_sources(hours: int, force: bool = False) -> list:
 def _build_live_notification_sources(key, hours: int) -> list:
     import live_notifications as _ln
     built: list = []
-    for name, fn in (("gdelt", lambda: _ln.gdelt_items(hours=hours)),
-                     ("geoconfirmed", lambda: _ln.geoconfirmed_items(hours=hours)),
+    # No GDELT: news never raises a notification (owner, 2026-10-11) — it
+    # lives on a country's page. Our own sources only.
+    for name, fn in (("geoconfirmed", lambda: _ln.geoconfirmed_items(hours=hours)),
                      ("derived", _ln.derived_items),
                      ("frontline", lambda: _ln.frontline_items(days=30))):
         try:
@@ -13543,6 +13524,28 @@ async def _russia_loiter_loop():
             import traceback as _tb
             print(f"[russia-loiter] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}")
         await asyncio.sleep(300)
+
+
+async def _telegram_mood_alert_loop():
+    """Calls for armed conflict rising on Telegram about a country
+    (telegram_mood_alert.py, owner 2026-10-11): read from the posts the mood
+    pass already rated, every 45 minutes, in a thread of its own; each rise
+    written through write_alert() (fusion feed, entity links, the record)."""
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="tg-mood")
+    await asyncio.sleep(300)
+    while True:
+        try:
+            if not HEAVY_FEEDS_PAUSED:
+                import telegram_mood_alert as _tma
+                alerts = await asyncio.get_running_loop().run_in_executor(_pool, _tma.detect)
+                for a in alerts:
+                    await _write_alert_off_loop(a)
+                    print(f"[tg-mood] ALERT ({a['severity']}): {a['title']}", flush=True)
+        except Exception as _e:                              # noqa: BLE001
+            import traceback as _tb
+            print(f"[tg-mood] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}", flush=True)
+        await asyncio.sleep(45 * 60)
 
 
 async def _global_adsb_cache_loop():
@@ -16444,6 +16447,7 @@ async def startup_event():
     _spawn(_global_adsb_cache_loop)
     _spawn(_gps_interference_alert_loop)
     _spawn(_russia_loiter_loop)
+    _spawn(_telegram_mood_alert_loop)
 
     # WARM THE FINDINGS CACHE ONCE, IN THE BACKGROUND. The walk takes about
     # a minute, so whoever opens Ontology first would otherwise pay for it.
@@ -28914,10 +28918,13 @@ def _surface_signal_cards(hours: int, cap: int = 40) -> list:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     with _SURFACE_POOL_LOCK:
         pool = list(_SURFACE_POOL)
+    import general_feed as _gf
     out = []
     for it in pool:
         if not isinstance(it, dict) or not it.get("id") or str(it.get("source_type") or "").startswith("telegram"):
             continue
+        if not _gf.is_own_source(it.get("source")):
+            continue                                    # news never notifies (owner, 2026-10-11); app.jsx matches
         tier = it.get("severity_tier")
         if tier not in ("critical", "significant"):
             continue                                    # only what takes the desktop's screen
@@ -28933,6 +28940,21 @@ def _surface_signal_cards(hours: int, cap: int = 40) -> list:
         })
     out.sort(key=lambda o: o["created_at"], reverse=True)
     return out[:cap]
+
+
+# Not "escalate": each town that changed hands, each risk-band move, is its
+# own fact, not one more report of another card's event.
+_CLUSTER_KINDS = ("signal", "detector", "confirm", "telegram", "fusion", "surge")
+
+
+def _notif_source_label(d: dict) -> str:
+    """What a notification's source is called in "+2 more reports (...)"."""
+    k = str(d.get("kind") or "")
+    if k == "telegram":
+        return "Telegram"
+    if k == "confirm" or "geoconfirmed" in str(d.get("source") or "").lower():
+        return "GeoConfirmed"
+    return str(d.get("alert_type") or d.get("source") or k or "alert")
 
 
 def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, include_silent: bool = False) -> list:
@@ -29024,8 +29046,13 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
     _timings["scan"] = round(time.monotonic() - _t_start, 2)
     _timings["rows"] = len(judged)
 
+    import general_feed as _gf
     out = []
     for r, verdict, headline in judged:
+        if _gf.is_news(r.source, r.alert_type):
+            continue                    # news (and article surges) never notify — a country's page shows them
+        if str(r.alert_type or "").startswith(_gf.OWN_TYPE_PREFIXES) and not verdict["notify"]:
+            verdict = {**verdict, "notify": True, "reason": verdict.get("reason") if verdict.get("reason") not in (None, "routine feed traffic") else "Telegram channels' mood"}
         if not verdict["notify"] and not include_silent:
             continue
         _acts = None
@@ -29172,6 +29199,32 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
         if k not in newest or str(o.get("created_at") or "") > str(newest[k].get("created_at") or ""):
             newest[k] = o
     out = list(newest.values())
+
+    # ONE EVENT, ONE CARD (owner, 2026-10-11): reports of the same thing in
+    # the same place and window become one card that says how many more
+    # there were (event_cluster). The headline is the most severe, then the
+    # FIRST report, so its id — what push remembers — does not move as more
+    # reports arrive.
+    try:
+        import event_cluster as _ec
+        # Only reports of events: a card about YOUR asset, a livestream or an
+        # announcement stays a card of its own.
+        # Pinned points (a GeoConfirmed pin, a fire pixel) cluster within a
+        # few km, not a city's 40.
+        _ev = [{**o, "precise": o.get("kind") == "confirm" or o.get("alert_type") in ("Heat", "Imagery signal")}
+               for o in out if (o.get("kind") or "signal") in _CLUSTER_KINDS]
+        _keep = [o for o in out if (o.get("kind") or "signal") not in _CLUSTER_KINDS]
+        _ev = _ec.cluster(_ev, at="created_at", text=("title",), sev="sev", prefer="first",
+                          source_of=lambda d: _notif_source_label(d))
+        for o in _ev:
+            o.pop("precise", None)
+        out = _keep + _ev
+        for o in out:
+            line = _ec.also_line(o)
+            if line:
+                o["reason"] = " · ".join(x for x in (o.get("reason"), line) if x)
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] clustering: {type(ex).__name__}: {ex}", flush=True)
 
     by_kind: dict = {}
     for o in out:

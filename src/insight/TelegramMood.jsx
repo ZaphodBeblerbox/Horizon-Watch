@@ -20,6 +20,23 @@ const EYEBROW = { fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing
 const ROLE = { official: "official", local: "local", outlet: "news outlets", aggregator: "OSINT aggregators", partisan: "partisan channels" }
 const fmtDay = (iso) => new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
 const signed = (n) => (n == null ? "" : n > 0 ? `+${n}` : String(n))
+const pct = (x) => (x == null ? "—" : `${Math.round(x * 100)}%`)
+const times = (r) => `${Math.round(r * 10) / 10}×`
+
+/** The red marker on a country whose calls for armed conflict are rising
+ *  (backend/telegram_mood_alert.py): the rate of the last 24 h against the
+ *  two weeks before. */
+export function ConflictChip({ c, name = null, onClick = null }) {
+    if (!c?.rising) return null
+    const crit = c.severity === "critical"
+    const style = { display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 999,
+                    font: "600 11.5px/1.3 var(--font)", color: "#fff", background: crit ? "var(--sev-critical, var(--red))" : "var(--red)",
+                    border: 0, cursor: onClick ? "pointer" : "default", whiteSpace: "nowrap" }
+    const label = `${name ? `${name} · ` : ""}Calls for conflict ↑ ${times(c.ratio)}`
+    const title = `Calls for armed conflict on Telegram: ${c.calls_24h} of ${c.n_24h} posts in the last 24 h (${pct(c.rate_24h)}), against ${pct(c.base_rate)} over the two weeks before · ${c.channels_24h} channels`
+    return onClick ? <button data-testid="conflict-chip" onClick={onClick} title={title} style={style}>{label}</button>
+                   : <span data-testid="conflict-chip" title={title} style={style}>{label}</span>
+}
 
 export default function TelegramMood() {
     const [list, setList] = useState(null)
@@ -42,12 +59,20 @@ export default function TelegramMood() {
         return <div style={{ color: "var(--txt3)", maxWidth: 620 }}>Not enough rated posts yet. Each post is rated once as it arrives; a country appears here once it has a dozen in the last two weeks.</div>
     }
     const calls = s ? (day ? s.calls.filter((c) => String(c.posted_at).slice(0, 10) === day) : s.calls) : []
+    const rising = list.filter((c) => c.conflict?.rising)
+    const cf = s?.conflict
     const sources = s ? Object.entries(s.sources).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} from ${ROLE[k] || k}`).join(", ") : ""
     return (
         <div data-testid="telegram-mood" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))", gap: 24, alignItems: "start" }}>
             <div>
+                {rising.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+                        {rising.map((c) => <ConflictChip key={c.country} c={c.conflict} name={c.name} onClick={() => setPick(c.country)} />)}
+                    </div>
+                )}
                 <div style={{ ...EYEBROW, marginBottom: 8 }}>Countries · two-week index</div>
-                <BarList rows={list.map((c) => ({ key: c.country, label: `${c.name}${c.change != null ? `  ${signed(c.change)}` : ""}`, value: c.index_window ?? 0,
+                <BarList rows={list.map((c) => ({ key: c.country, label: `${c.name}${c.change != null ? `  ${signed(c.change)}` : ""}${c.conflict?.rising ? `  ↑ calls for conflict ${times(c.conflict.ratio)}` : ""}`,
+                                                  value: c.index_window ?? 0, color: c.conflict?.rising ? "var(--red)" : undefined,
                                                   title: `${c.name}: two-week index ${c.index_window}${c.index_recent != null ? `, last three days ${c.index_recent}` : ", no posts in the last three days"}${c.change != null ? `, ${signed(c.change)} against the days before` : ""} · ${c.n} posts · ${c.topics.join(", ")}` }))}
                          selected={pick} onSelect={(k) => k && setPick(k)} max={100} />
                 <p style={{ font: "400 11px/1.5 var(--font)", color: "var(--txt4)", marginTop: 10 }}>
@@ -69,6 +94,28 @@ export default function TelegramMood() {
                             )}
                         </div>
                         <div style={{ font: "400 12px var(--font)", color: "var(--txt3)", margin: "4px 0 14px" }}>{s.n} rated posts · {sources}</div>
+
+                        {cf && (cf.rising || cf.series.some((d) => d.calls)) && (
+                            <div data-testid="conflict-panel" style={{ margin: "0 0 18px", padding: cf.rising ? "10px 12px" : 0, borderRadius: 10,
+                                                                      border: cf.rising ? "1px solid var(--red)" : 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                                    <span style={EYEBROW}>Calls for armed conflict, per day</span>
+                                    <ConflictChip c={cf} />
+                                </div>
+                                <div style={{ font: "400 12.5px/1.5 var(--font)", color: cf.rising ? "var(--txt)" : "var(--txt3)", marginBottom: 6 }}>
+                                    {cf.calls_24h} of {cf.n_24h} posts in the last 24 h ({pct(cf.rate_24h)}) call for armed action, retaliation or war, or threaten violence
+                                    {cf.base_rate != null ? `, against ${pct(cf.base_rate)} over the two weeks before (${cf.n_base} posts)` : ", with no two weeks before to compare"}
+                                    {cf.channels_24h ? ` · ${cf.channels_24h} channels` : ""}
+                                </div>
+                                <Columns data={cf.series.map((d) => ({ key: d.date, label: fmtDay(d.date), value: d.calls }))} height={44}
+                                         tip={(x) => `calls for conflict on ${x.label}`} label={`Calls for armed conflict per day, ${name}`} empty="None in the last two weeks." />
+                                {cf.rising && cf.examples?.map((e) => (
+                                    <div key={e.id} style={{ font: "400 12.5px/1.5 var(--font)", color: "var(--txt2)", padding: "6px 0", borderBottom: "1px solid var(--gline)" }}>
+                                        {e.text} <span style={{ color: "var(--txt4)", fontSize: 11 }}>· {e.channel}{e.url && <> · <SourceLink url={e.url}>post</SourceLink></>}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
 
                         <div style={{ ...EYEBROW, marginBottom: 6 }}>Tension index per day</div>
                         <Columns data={s.days.map((d) => ({ key: d.date, label: fmtDay(d.date), value: d.index ?? 0 }))} height={90}

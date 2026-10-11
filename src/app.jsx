@@ -1086,12 +1086,22 @@ export default function App() {
        keeps a late-ingested old event from interrupting. Telegram announces
        itself below. */
     const surfaceSeenRef = useRef(null)
+    const OWN_SOURCES = ["geoconfirmed", "firms", "sat-task", "imagery", "ais", "adsb", "corroborated", "fusion", "telegram", "deepstate", "frontline", "overwatch"]
+    const isOwnSource = (src) => {
+        const s = String(src || "").trim().toLowerCase()
+        if (!s || /\b(gdelt|rss|news)\b/.test(s.replace(/_/g, " ")) || s.includes("news")) return false
+        return OWN_SOURCES.some((o) => s.startsWith(o))
+    }
     useEffect(() => {
         if (!surfaceItems?.length) return
         const first = surfaceSeenRef.current === null
         if (first) surfaceSeenRef.current = new Set()
         for (const it of surfaceItems) {
             if (!it?.id || String(it.source_type || "").startsWith("telegram") || surfaceSeenRef.current.has(it.id)) continue
+            // OUR OWN SOURCES ONLY — news never raises a card (owner,
+            // 2026-10-11); the same rule as the server's feed
+            // (general_feed.is_own_source), so desktop and phone match.
+            if (!isOwnSource(it.source)) continue
             surfaceSeenRef.current.add(it.id)
             pushNotification({
                 silent: first, id: `sig-${it.id}`, kind: "signal",

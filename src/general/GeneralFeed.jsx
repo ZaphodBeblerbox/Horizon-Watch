@@ -2,8 +2,10 @@
  * GeneralFeed.jsx — what is generally happening, as a timeline.
  *
  * The Desk's General tab on the desktop and the phone (owner, 2026-10-10):
- * serious signals, GeoConfirmed's verified events with the X post each
- * cites, and the Telegram posts we publish, newest first, read like a
+ * our own alerts (imagery, heat, sanctioned ships, loitering — never news:
+ * news is for a country's page, owner 2026-10-11), GeoConfirmed's verified
+ * events with the X post each cites, and the Telegram posts we publish,
+ * one card per event ("+3 reports"), newest first, read like a
  * Twitter timeline — a round avatar for the source, the source's name, the
  * place and the time, the post, its media, and what can be done with it.
  * Backend: /api/general (general_feed.py). It loads more as you scroll, and
@@ -18,9 +20,11 @@ import SourceLink from "../components/SourceLink.jsx"
 import { agoLabel } from "../utils/formatTime.js"
 
 const SEV = { critical: "#E5484D", high: "#F5A524", significant: "#F5A524", elevated: "#F5A524", moderate: "#8FB4E8" }
-const FILTERS = [["all", "All"], ["signal", "Signals"], ["geoconfirmed", "Verified"], ["telegram", "Telegram"]]
+// "signal" is the backend's kind for our own alerts
+const FILTERS = [["all", "All"], ["signal", "Alerts"], ["geoconfirmed", "GeoConfirmed"], ["telegram", "Telegram"]]
 
 const ago = (iso) => (agoLabel(iso) || "").replace(/ ago$/, "")
+const shownIds = (list) => new Set((list || []).flatMap((x) => [x.id, ...(Array.isArray(x.also) ? x.also.map((a) => a.id) : [])]))
 
 function Avatar({ it }) {
     const base = { width: 40, height: 40, borderRadius: 20, flex: "none", display: "grid", placeItems: "center", fontWeight: 700, fontSize: 14, color: "#fff" }
@@ -38,8 +42,8 @@ function Avatar({ it }) {
 }
 
 // What a feed is called, in words — never its internal code ("gdelt", "ais").
-const SOURCE_NAME = { gdelt: "News", rss: "News", news: "News", ais: "Ship tracking", adsb: "Air tracking", firms: "Heat (satellite)", gps: "GPS watch",
-                      fusion: "Fusion", imagery: "Imagery", sentinel: "Imagery", surge: "Conflict surge", ucdp: "Conflict data", forge: "Analysis" }
+const SOURCE_NAME = { ais: "Ship tracking", adsb: "Air tracking", firms: "Heat (satellite)", gps: "GPS watch", "sat-task": "Imagery",
+                      corroborated: "Our sensors agree", fusion: "Fusion", imagery: "Imagery", sentinel: "Imagery", telegram: "Telegram", forge: "Analysis" }
 function sourceName(it) {
     if (it.kind === "telegram") return it.channel_title || it.channel
     if (it.kind === "geoconfirmed") return "GeoConfirmed"
@@ -61,7 +65,9 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
         return () => io.disconnect()
     }, [])
     const place = String(it.place || "").split(",").slice(0, 2).join(",")
-    const kindLabel = it.kind === "geoconfirmed" ? "verified" : it.kind === "telegram" ? (it.role === "official" ? "official" : "Telegram") : (it.severity || "signal")
+    const kindLabel = it.kind === "geoconfirmed" ? "verified" : it.kind === "telegram" ? (it.role === "official" ? "official" : "Telegram") : (it.severity || "alert")
+    const [openAlso, setOpenAlso] = useState(false)
+    const also = Array.isArray(it.also) ? it.also : []
     return (
         <article data-testid="general-item" className="plx-gi" style={{ display: "grid", gridTemplateColumns: "40px minmax(0,1fr)", gap: 12, padding: compact ? "12px 0" : "14px 4px",
                                                                       borderBottom: "1px solid var(--gline)" }}>
@@ -82,6 +88,24 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
                     </div>
                 )}
                 {it.x_url && <div ref={it.media === "video" ? undefined : media} style={{ marginTop: 10 }}><XPost url={it.x_url} active={inView} /></div>}
+                {also.length > 0 && (
+                    <div data-testid="general-also" style={{ marginTop: 8 }}>
+                        <button onClick={() => setOpenAlso((o) => !o)} aria-expanded={openAlso}
+                                style={{ ...ACT, minHeight: 26, padding: "0 10px", borderRadius: 13, border: "1px solid var(--gline2)", color: "var(--txt2)" }}>
+                            +{also.length} {also.length === 1 ? "report" : "reports"}
+                            {it.also_sources?.length ? <span style={{ color: "var(--txt4)", marginLeft: 6 }}>{it.also_sources.slice(0, 3).join(", ")}</span> : null}
+                        </button>
+                        {openAlso && (
+                            <ul style={{ listStyle: "none", margin: "8px 0 0", padding: "0 0 0 10px", borderLeft: "2px solid var(--gline2)", display: "grid", gap: 6 }}>
+                                {also.map((a) => (
+                                    <li key={a.id} style={{ fontSize: 13.5, lineHeight: 1.4, color: "var(--txt2)", overflowWrap: "anywhere" }}>
+                                        <span style={{ color: "var(--txt4)" }}>{a.source}{a.at ? ` · ${ago(a.at)}` : ""} · </span>{a.headline}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                )}
                 <div style={{ display: "flex", gap: 22, marginTop: 8, alignItems: "center", fontSize: 13 }}>
                     {Number.isFinite(+it.lat) && it.lat !== null && (
                         <button onClick={() => onMap?.(it)} style={ACT}>On the map</button>
@@ -120,7 +144,7 @@ export default function GeneralFeed({ onMap, onShare, compact = false }) {
         if (!items) return undefined
         const t = setInterval(() => {
             get().then((d) => {
-                const have = new Set([...(items || []), ...fresh].map((x) => x.id))
+                const have = shownIds([...(items || []), ...fresh])
                 const nw = (d.items || []).filter((x) => !have.has(x.id))
                 if (nw.length) setFresh((f) => [...nw, ...f])
             }).catch(() => {})
@@ -132,7 +156,9 @@ export default function GeneralFeed({ onMap, onShare, compact = false }) {
         if (!next || loading) return
         setLoading(true)
         get(next).then((d) => {
-            setItems((cur) => { const have = new Set((cur || []).map((x) => x.id)); return [...(cur || []), ...(d.items || []).filter((x) => !have.has(x.id))] })
+            // an event already shown (as itself or as one of a card's other
+            // reports) is not shown again on the next page
+            setItems((cur) => { const have = shownIds(cur); return [...(cur || []), ...(d.items || []).filter((x) => !have.has(x.id))] })
             setNext(d.next)
         }).finally(() => setLoading(false))
     }, [next, loading]) // eslint-disable-line react-hooks/exhaustive-deps
