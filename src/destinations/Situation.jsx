@@ -1436,13 +1436,6 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         onToggle={() => setAssetsOn((v) => !v)} />
                 </LayerGroup>
 
-                <LayerGroup id="endangered-places" title="Endangered places" activeCount={endangeredOn ? 1 : 0}>
-                    <SubLayerRow
-                        label="Places called to be blocked"
-                        hint="Refineries, fuel depots, fuel stations and rally points named in public calls for roadblocks, slow-drive convoys and other actions (gilets jaunes, 17octobregiletjaune.net), and arms-industry companies an anti-militarist map lists as targets. Red: a roadblock, convoy or picket within 48 h; amber: other calls; grey: listed, no call. A click lists the calls and the source."
-                        on={endangeredOn} parentOn={true}
-                        onToggle={() => setEndangeredOn((v) => !v)} />
-                </LayerGroup>
 
                 <LayerGroup id="event-domains" title="Event domains"
                             activeCount={LAYER_GROUPS.filter((g) => groupsOn[g.key]).length}>
@@ -1794,8 +1787,15 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     epistemic sub-line (§L2): "the cheapest honesty mechanism
                     in the product, and it costs one line per row." */}
                 <LayerGroup id="infrastructure" title="Global infrastructure"
-                            note={`${Object.values(infraOn).filter(Boolean).length}/${Object.keys(infraOn).length}`}
-                            activeCount={Object.values(infraOn).filter(Boolean).length}>
+                            note={`${Object.values(infraOn).filter(Boolean).length + (endangeredOn ? 1 : 0)}/${Object.keys(infraOn).length + 1}`}
+                            activeCount={Object.values(infraOn).filter(Boolean).length + (endangeredOn ? 1 : 0)}>
+                    {/* ENDANGERED PLACES live under infrastructure (owner, 2026-10-12) */}
+                    <SubLayerRow
+                        label="Endangered places"
+                        hint="Refineries, fuel depots, fuel stations and rally points named in public calls for roadblocks, slow-drive convoys and other actions (gilets jaunes, 17octobregiletjaune.net), and arms-industry companies an anti-militarist map lists as targets. Red: a roadblock, convoy or picket within 48 h; amber: other calls; grey: listed, no call. A click lists the calls and the source."
+                        on={endangeredOn} parentOn={true}
+                        onToggle={() => setEndangeredOn((v) => !v)} />
+
                     {INFRA_LAYERS.map((l) => (
                         <button key={l.key} type="button" className="layer"
                                 aria-pressed={!!infraOn[l.key]}

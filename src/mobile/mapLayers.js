@@ -1075,14 +1075,6 @@ export const PHONE_LAYERS = [
         legendIcon: assetIcon("Sites", "quiet"), load: loadAssets,
     },
 
-    // Endangered places — Situation's own group, on while a call is within 7 days.
-    {
-        key: "endangered", label: "Endangered places", group: G.endangered,
-        get defaultOn() { return endangeredDefaultOn() },
-        kind: "points", minZoom: 0,
-        legendIcon: placeIconUri({ kind: "fuel_depot", alarm: "red", hasCall: true, size: 22 }), load: loadEndangered,
-    },
-
     // Maritime (LAYER_GROUPS.maritime; live vessels are the phone's own).
     {
         key: "ports", label: "Ports", group: G.maritime, defaultOn: true, kind: "points", minZoom: 3,
@@ -1201,6 +1193,13 @@ export const PHONE_LAYERS = [
         key: "facSecurity", label: "Security facilities", group: G.infra, defaultOn: false, kind: "points", minZoom: 7,
         legendIcon: getFacilityMarkerDataUri({ kind: "police", color: FAC_COLOUR.security, size: FAC_SIZE }),
         load: facilityLoader("security"),
+    },
+    // Endangered places — under Infrastructure (owner, 2026-10-12), on while a call is within 7 days.
+    {
+        key: "endangered", label: "Endangered places", group: G.infra,
+        get defaultOn() { return endangeredDefaultOn() },
+        kind: "points", minZoom: 0,
+        legendIcon: placeIconUri({ kind: "fuel_depot", alarm: "red", hasCall: true, size: 22 }), load: loadEndangered,
     },
 ]
 
