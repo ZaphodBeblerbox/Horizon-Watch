@@ -27,8 +27,10 @@ import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeTelegramLayer        from "../globe/GlobeTelegramLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
+import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
 import GlobeAssetsLayer          from "../globe/GlobeAssetsLayer.jsx"
 import GlobeMeLayer              from "../globe/GlobeMeLayer.jsx"
+import GlobeVesselThreatLayer    from "../globe/GlobeVesselThreatLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
 import GlobeWarMapLayer          from "../globe/GlobeWarMapLayer.jsx"
@@ -123,6 +125,7 @@ export default function GlobeView({
     adsbEnabled      = false,
     aisEnabled       = false,
     eezEnabled       = false,
+    aoisEnabled      = false,
     cablesEnabled    = false,
     riskEnabled      = false,
     chokepointsEnabled = false,
@@ -1218,8 +1221,11 @@ export default function GlobeView({
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} limit={1500} />
                 <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={Math.max(48, signalWindowHours || 48)} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
+                {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}
+                <GlobeAoisLayer enabled={aoisEnabled} />
                 <GlobeAssetsLayer enabled={assetsEnabled} />
                 <GlobeMeLayer />
+                <GlobeVesselThreatLayer />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
                 <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds}
                                       onStatus={onFacilityStatus} />

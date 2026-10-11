@@ -43,10 +43,19 @@ THREE TESTS, ALL REQUIRED.
 
 3. IN DRONE RANGE OF A EUROPEAN NATION. Distance to the nearest land of a
    European country (EUROPE below) <= RUSSIA_LOITER_DRONE_RANGE_KM (default
-   100 km: fixed-wing Group 2/3 drones reach 100+ km; quadcopters 10-30 km,
-   hence "critical" inside 25 km). A ship within 22 km of Russian land
+   100 km). The threat model (owner, 2026-10-11) is a FIXED-WING
+   Shahed-136/Geran-2-class drone launched from a container, so how close
+   the ship is no longer decides "critical" on its own. A ship within 22 km of Russian land
    (Kaliningrad and, in this dataset, Crimea included) is a ship at home and
    is skipped; so is the Sea of Azov, whose Ukrainian shore is occupied.
+
+HOW MUCH IT MATTERS (vessel_threat.py): every alert carries the
+vessel-of-concern reading — link strength, behaviour (live loitering, GFW
+history), position, the weighted targets within drone reach, precursors and
+time multipliers — as explanation lines and a ranked target list. Severity
+is "high", or "critical" when the link is strong, the loitering long and
+many high-weight targets are in range. An episode that becomes critical
+after its alert is ESCALATED IN PLACE (same alert id; take_updates()).
 
 One alert per vessel per loitering episode. A 12-hour cooldown per vessel
 applies unless it has moved on (> 10 km) since the last alert — which also
@@ -85,7 +94,7 @@ SOURCE = "ais"
 
 MIN_HOURS = _env_float("RUSSIA_LOITER_MIN_HOURS", 2.0)
 DRONE_RANGE_KM = _env_float("RUSSIA_LOITER_DRONE_RANGE_KM", 100.0)
-QUADCOPTER_KM = 25.0          # within this: "critical"
+QUADCOPTER_KM = 25.0          # kept for reference; no longer decides severity (fixed-wing threat model)
 HOME_WATERS_KM = 22.0         # 12 nm territorial sea, rounded up
 PORT_KM = 5.0
 # A port's own anchorage: hugging the shore close to a known port is waiting
@@ -572,7 +581,11 @@ class RussiaLoiterWatch:
                  index_loader: Optional[Callable[[], dict]] = None,
                  enrich: Optional[Callable[[dict], dict]] = None,
                  recent_alert_lookup: Optional[Callable[[str, float], list]] = None,
-                 min_hours: float = MIN_HOURS, range_km: float = DRONE_RANGE_KM):
+                 min_hours: float = MIN_HOURS, range_km: float = DRONE_RANGE_KM,
+                 targets: Optional[Callable[[], object]] = None,
+                 history: Optional[Callable[[str], Optional[dict]]] = None,
+                 config: Optional[Callable[[], dict]] = None,
+                 gnss: Optional[Callable[[float, float, float], list]] = None):
         self.coasts = coasts
         self.ports = ports
         self.index_loader = index_loader
@@ -586,6 +599,14 @@ class RussiaLoiterWatch:
         self.alerted: dict[str, list] = {}       # mmsi -> [(ts, lat, lon)]
         self._lock = threading.Lock()
         self.last_stats: dict = {}
+        # vessel-of-concern inputs (vessel_threat.py)
+        self.targets = targets
+        self.history = history
+        self.config = config
+        self.gnss = gnss
+        self.last_seen: dict[str, float] = {}    # mmsi -> last report time (24 h)
+        self.gaps: dict[str, list] = {}          # mmsi -> [{"t", "hours"}] AIS silences, 24 h
+        self.updates: list[dict] = []            # escalations in place, drained by take_updates()
 
     # -- the Russia-link index ------------------------------------------
     def index(self, now: float) -> Optional[dict]:
@@ -704,6 +725,10 @@ class RussiaLoiterWatch:
             stats["linked"] += 1
             seen.add(mmsi)
             t_obs = float(v.get("last_update") or now)
+            prev = self.last_seen.get(mmsi)
+            if prev is not None and t_obs - prev >= 3600:
+                self.gaps.setdefault(mmsi, []).append({"t": t_obs, "hours": round((t_obs - prev) / 3600.0, 2)})
+            self.last_seen[mmsi] = t_obs
             st = self.state.setdefault(mmsi, {"cogs": [], "start": None})
             # Continuity: a long silence, or a jump slow drift cannot explain,
             # ends the episode.
@@ -756,12 +781,16 @@ class RussiaLoiterWatch:
                 continue
             stats["loitering"] += 1
             if st.get("alerted"):
+                self._maybe_escalate(v, links, st, hours, geo, lat, lon, speed, mmsi, now)
                 continue
             if self._recently_alerted_here(mmsi, lat, lon, now):
                 st["alerted"] = True          # same place within the cooldown
                 continue
-            alert = self._alert(self._identify(v, links, mmsi), links, st, hours, geo, lat, lon, speed, mmsi)
+            alert = self._alert(self._identify(v, links, mmsi), links, st, hours, geo, lat, lon, speed, mmsi,
+                                now=now)
             st["alerted"] = True
+            st["alert_id"] = alert["id"]
+            st["severity"] = alert["severity"]
             self.alerted.setdefault(mmsi, []).append((now, lat, lon))
             alerts.append(alert)
             stats["alerts"] += 1
@@ -770,22 +799,94 @@ class RussiaLoiterWatch:
             del self.state[m]
         for m in [m for m, h in self.alerted.items() if all(now - x[0] >= COOLDOWN_S for x in h)]:
             del self.alerted[m]
+        for m in [m for m, t in self.last_seen.items() if now - t > 86400]:
+            del self.last_seen[m]
+        for m in list(self.gaps):
+            self.gaps[m] = [g for g in self.gaps[m] if now - g["t"] <= 86400]
+            if not self.gaps[m]:
+                del self.gaps[m]
         self.last_stats = stats
         return alerts
 
-    def _alert(self, v, links, st, hours, geo, lat, lon, speed, mmsi) -> dict:
+    # -- vessel of concern ------------------------------------------------
+    def _cfg(self) -> dict:
+        import vessel_threat as vt
+        try:
+            return self.config() if self.config else vt.load_config()
+        except Exception as e:                               # noqa: BLE001
+            print(f"[russia-loiter] error: config load failed ({type(e).__name__}: {e}); built-in defaults")
+            return vt.DEFAULTS
+
+    def _targets(self):
+        if not self.targets:
+            return None
+        try:
+            return self.targets()
+        except Exception as e:                               # noqa: BLE001
+            print(f"[russia-loiter] error: target index unavailable: {type(e).__name__}: {e}")
+            return None
+
+    def assess(self, v: dict, links: list[dict], hours: float, geo: dict, lat: float, lon: float,
+               speed: Optional[float], mmsi: str, now: float, history: Optional[dict] = None) -> tuple:
+        import vessel_threat as vt
+        cfg = self._cfg()
+        if history is None and self.history:
+            try:
+                history = self.history(mmsi)
+            except Exception as e:                           # noqa: BLE001
+                print(f"[russia-loiter] error: history for {mmsi}: {type(e).__name__}: {e}")
+                history = {"available": False, "reason": type(e).__name__}
+        gnss = []
+        if self.gnss:
+            try:
+                gnss = self.gnss(lat, lon, float((cfg.get("precursors") or {}).get("gnss_radius_km", 150)))
+            except Exception as e:                           # noqa: BLE001
+                print(f"[russia-loiter] error: GNSS lookup for {mmsi}: {type(e).__name__}: {e}")
+        navy = ship_word(v) == "military vessel" and any(l["kind"] == "flag" for l in links)
+        a = vt.assess(links=links, hours=hours, speed=speed, dist_km=geo.get("dist_km"),
+                      country_phrase=geo.get("phrase"), lat=lat, lon=lon, index=self._targets(), cfg=cfg,
+                      history=history, ais_gaps=self.gaps.get(mmsi), russian_navy=navy, gnss=gnss, now=now)
+        return a, history
+
+    def _maybe_escalate(self, v, links, st, hours, geo, lat, lon, speed, mmsi, now) -> None:
+        """An alerted episode that has become critical: escalate the SAME
+        alert in place (one alert per episode)."""
+        if not st.get("alert_id") or st.get("severity") == "critical":
+            return
+        import vessel_threat as vt
+        cfg = self._cfg()
+        a = cfg["alert"]
+        if hours < float(a["long_loiter_hours"]) or vt.link_strength(links)[0] < float(a["strong_link"]):
+            return
+        alert = self._alert(self._identify(v, links, mmsi), links, st, hours, geo, lat, lon, speed, mmsi,
+                            now=now, history=st.get("history"))
+        if alert["severity"] != "critical":
+            return
+        alert["id"] = st["alert_id"]
+        st["severity"] = "critical"
+        self.updates.append(alert)
+
+    def take_updates(self) -> list[dict]:
+        with self._lock:
+            out, self.updates = self.updates, []
+        return out
+
+    def _alert(self, v, links, st, hours, geo, lat, lon, speed, mmsi, now=None, history=None) -> dict:
         dist = geo["dist_km"]
+        now = time.time() if now is None else now
         place = None
         if self.ports:
             _d, place = self.ports.nearest(lat, lon, country=geo["country"], max_km=max(60.0, dist + 30))
         title = build_title(v, links, hours, dist, geo["phrase"], place)
-        severity = "critical" if dist <= QUADCOPTER_KM else "high"
+        threat, history = self.assess(v, links, hours, geo, lat, lon, speed, mmsi, now, history)
+        st["history"] = history
+        severity = threat["severity"]
+        import vessel_threat as vt
         name = _clean_name(v) or None
         imo = str(v.get("imo") or "").strip() or None
         reasons = [l["reason"] for l in links]
         bases = [l["basis"] for l in links]
-        within = (f"within {QUADCOPTER_KM:.0f} km quadcopter range" if dist <= QUADCOPTER_KM
-                  else f"within {self.range_km:.0f} km fixed-wing drone range")
+        within = f"within {self.range_km:.0f} km of the coast, in fixed-wing drone range"
         dest = str(v.get("destination") or "").strip()
         ctx = []
         if v.get("nav_status"):
@@ -799,8 +900,10 @@ class RussiaLoiterWatch:
             f"{within}. Russia link: {'; '.join(reasons)} ({', '.join(bases)})."
             + (f" {'; '.join(ctx)}." if ctx else "")
             + f" Position {lat:.4f}, {lon:.4f}."
+            + f" Vessel of concern: {threat['score']}/100 ({threat['tier_label']}). "
+            + " ".join(f"{x}." for x in threat["lines"][1:-1])
         )
-        reason = f"{'; '.join(reasons)}; {_km(dist)} off {geo['phrase']}, {within}"
+        reason = f"{'; '.join(reasons)}; {_km(dist)} off {geo['phrase']}; {vt.reason_tail(threat)}"
         return {
             "id": f"RUL-{mmsi}-{int(st['start'])}",
             "source": SOURCE,
@@ -832,7 +935,10 @@ class RussiaLoiterWatch:
                 "nearest_country_iso2": geo["iso2"],
                 "near_place": place,
                 "drone_range_km": self.range_km,
-                "quadcopter_range": dist <= QUADCOPTER_KM,
+                "threat": {k: threat[k] for k in ("score", "tier", "tier_label", "components", "lines",
+                                                   "in_range_count", "high_value_count", "drone",
+                                                   "weights_source")},
+                "targets": threat["targets"],
                 "lat": lat, "lon": lon,
                 "mmsi": mmsi, "imo": imo, "name": name,
                 "ship_type": ship_word(v),
@@ -880,6 +986,12 @@ def _identity_enricher() -> Optional[Callable[[dict], dict]]:
         return None
 
 
+def _target_index():
+    import coastal_targets
+    import vessel_threat
+    return coastal_targets.index(vessel_threat.load_config())
+
+
 _WATCH: Optional[RussiaLoiterWatch] = None
 _WATCH_LOCK = threading.Lock()
 
@@ -891,6 +1003,7 @@ def default_watch() -> RussiaLoiterWatch:
     with _WATCH_LOCK:
         if _WATCH is None:
             import paths
+            import vessel_threat as _vt
             t0 = time.monotonic()
             geo = paths.CODE_DIR / "geo" / "countries.geojson"
             coasts = Coasts(str(geo))
@@ -901,6 +1014,9 @@ def default_watch() -> RussiaLoiterWatch:
                 index_loader=lambda: build_russia_index(db),
                 enrich=_identity_enricher(),
                 recent_alert_lookup=recent_alerts_from_db(db),
+                targets=_target_index,
+                history=_vt.history_provider(),
+                gnss=_vt.gnss_near,
             )
             print(f"[russia-loiter] prepared {len(coasts.polys)} coastline polygons and "
                   f"{ports.count} ports in {time.monotonic() - t0:.1f}s "

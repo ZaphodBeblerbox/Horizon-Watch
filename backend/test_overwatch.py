@@ -372,3 +372,37 @@ def test_ground_bases_only_on_a_sides_territory():
            {"kind": "military", "military": "office", "name": "HQ office", "lat": 47.9, "lon": 28.95, "osm": "way/3"},
            {"kind": "military", "military": "", "name": "Колишній полігон", "lat": 47.85, "lon": 28.9, "osm": "way/4"}]
     assert [c["name"] for c in ow.ground_base_candidates(ctx, osm)] == ["Range in Ukraine"]
+
+
+# ── what each zone is scanned for (2026-10-11: "we detect nothing") ──────
+
+def test_generated_zones_get_tasks_per_subgroup(db):
+    cands = [_cand("Air bases", "airport:A", 50, 30, 80), _cand("Strike targets", "gppd:B", 52, 32, 70),
+             _cand("Naval & ports", "port:C", 46, 31, 60),
+             {**_cand("Border sweep", "sweep:ukraine", 51, 30, 100), "bbox": (25.0, 48.0, 35.0, 53.0)}]
+    sel = ow.select_proposals(cands, [])
+    ow.apply_selection(db, owner="u1", conflict=UKRAINE, selection=sel, all_keys={c["key"] for c in cands})
+    by_sub = {json.loads(z.zone_metadata)["subgroup"]: json.loads(z.ml_tasks) for z in db.query(WatchZone).all()}
+    assert "radar_change" in by_sub["Air bases"] and "object_detection" in by_sub["Air bases"]
+    assert "radar_change" in by_sub["Strike targets"]
+    assert "ship_detection" in by_sub["Naval & ports"]
+    assert by_sub["Border sweep"] == []                    # the plan is swept, never scanned
+
+
+def test_backfill_touches_only_empty_overwatch_zones(db):
+    sel = ow.select_proposals([_cand("Front hotspots", "front:1", 48, 37, 70)], [])
+    ow.apply_selection(db, owner="u1", conflict=UKRAINE, selection=sel, all_keys={"front:1"})
+    z = db.query(WatchZone).first()
+    z.ml_tasks = "[]"                                       # as the zones in production were made
+    db.add(WatchZone(system_id="ZONE-900", name="Hand drawn", polygon_geojson="{}", bbox_min_lon=0, bbox_min_lat=0,
+                     bbox_max_lon=1, bbox_max_lat=1, ml_tasks="[]", zone_metadata="{}"))
+    db.add(WatchZone(system_id="ZONE-901", name="Own tasks", polygon_geojson="{}", bbox_min_lon=0, bbox_min_lat=0,
+                     bbox_max_lon=1, bbox_max_lat=1, ml_tasks='["ship_detection"]',
+                     zone_metadata=json.dumps({"generated_by": "overwatch", "subgroup": "Air bases"})))
+    db.commit()
+    changed = ow.backfill_tasks(db)
+    assert changed == [z.system_id]
+    assert "radar_change" in json.loads(db.query(WatchZone).filter_by(system_id=z.system_id).first().ml_tasks)
+    assert db.query(WatchZone).filter_by(system_id="ZONE-900").first().ml_tasks == "[]"
+    assert json.loads(db.query(WatchZone).filter_by(system_id="ZONE-901").first().ml_tasks) == ["ship_detection"]
+    assert ow.backfill_tasks(db) == []                      # idempotent

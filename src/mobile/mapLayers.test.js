@@ -58,3 +58,12 @@ describe("phone map layer registry", () => {
         expect(decodeURIComponent(f.iconUri)).toContain("#d4553f")
     })
 })
+
+describe("aois — fresh findings", () => {
+    it("reads a zone's fresh finding or null", async () => {
+        const { aoiFresh } = await import("./mapLayers.js")
+        expect(aoiFresh({})).toBeNull()
+        expect(aoiFresh({ findings: { fresh: null } })).toBeNull()
+        expect(aoiFresh({ findings: { fresh: { count: 3, text: "radar change" } } })).toEqual({ count: 3, text: "radar change" })
+    })
+})

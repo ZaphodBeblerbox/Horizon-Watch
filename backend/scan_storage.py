@@ -74,6 +74,9 @@ def previous_scan(db, zone_id, before_scan_id=None, instrument=None):
                              SentinelScan.image_timestamp_utc < cur.image_timestamp_utc - _dt_ps.timedelta(minutes=15)))
     if instrument:
         q = q.filter(SentinelScan.instrument == instrument)
+    # A radar CHANGE run (triggered_by="change-detect") stores change
+    # regions, not objects; it is no baseline for a radar ship scan.
+    q = q.filter(or_(SentinelScan.triggered_by.is_(None), SentinelScan.triggered_by != "change-detect"))
     return q.order_by(SentinelScan.created_at.desc()).first()
 
 

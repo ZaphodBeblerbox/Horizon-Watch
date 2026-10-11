@@ -16,6 +16,8 @@ import Loading from "../ui/Loading.jsx"
 import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 import VesselHistorySection from "./VesselHistorySection.jsx"
+import VesselThreatSection from "./VesselThreatSection.jsx"
+import { isVesselThreatAlert, mmsiOf } from "../globe/vesselThreat.js"
 import TelegramMedia from "./TelegramMedia.jsx"
 import XPost, { xPostId } from "./XPost.jsx"
 import TradeRouteSection from "./TradeRouteSection.jsx"
@@ -818,6 +820,9 @@ export default function InspectorPanel({
                 )}
 
                 {/* Where it has been — warnings lead, so they sit above the facts. */}
+                {isVesselThreatAlert(data, entityId) && mmsiOf(data, entityId) && (
+                    <VesselThreatSection mmsi={mmsiOf(data, entityId)} lat={data?.lat ?? null} lon={data?.lon ?? null} />
+                )}
                 {entityType === "vessel" && data?.mmsi && <VesselHistorySection mmsi={String(data.mmsi)} />}
 
                 {/* Key attributes */}

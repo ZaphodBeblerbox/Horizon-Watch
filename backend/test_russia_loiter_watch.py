@@ -87,18 +87,18 @@ def test_not_before_min_hours(coasts, ports):
     assert _run(w, lambda t: [_vessel("273123451", lat, lon)], hours=1.5) == []
 
 
-def test_critical_inside_quadcopter_range_and_high_beyond(coasts, ports):
+def test_proximity_alone_is_not_critical_fixed_wing_threat_model(coasts, ports):
+    # Owner, 2026-10-11: the threat is a fixed-wing Shahed-class drone, so a
+    # ship 20 km out is not critical for being close; critical needs a strong
+    # link, long loitering and many high-weight targets (vessel_threat.py).
     lat, lon = OFF_DENMARK
-    d = coasts.distances(lat, lon, 100)
-    near = min(v for k, v in d.items() if k in rlw.EUROPE)
     w = _watch(coasts, ports)
     a = _run(w, lambda t: [_vessel("273123452", lat, lon)])[0]
-    assert a["severity"] == ("critical" if near <= rlw.QUADCOPTER_KM else "high")
-    # North Sea, ~60-90 km off the Danish/German coast: high.
+    assert a["severity"] == "high"                      # flag only, 2.5 h
+    assert "threat" in a["raw"] and a["raw"]["threat"]["lines"]
     w2 = _watch(coasts, ports)
     far = _run(w2, lambda t: [_vessel("273123453", 55.6, 7.0)])
     assert len(far) == 1 and far[0]["severity"] == "high"
-    assert far[0]["raw"]["distance_km"] > rlw.QUADCOPTER_KM
 
 
 def test_russian_flag_in_russian_waters_no_alert(coasts, ports):

@@ -330,13 +330,11 @@ def geotiff_to_amplitude(image_bytes):
     appears or collapses. VV is more sensitive to surface roughness and
     therefore to soil moisture — the false positive this is trying to avoid.
     """
-    import io
-
     import numpy as np
-    import rasterio
 
-    with rasterio.open(io.BytesIO(image_bytes)) as src:
-        return src.read(1).astype(np.float32)
+    import geotiff_io
+    arr, _t = geotiff_io.read(image_bytes)
+    return np.asarray(arr[0]).astype(np.float32)
 
 
 def acquisition_dates(end, count, step_days=6, skip_days=0):

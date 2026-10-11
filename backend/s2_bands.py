@@ -12,7 +12,6 @@ threads and for scripts.
 """
 from __future__ import annotations
 
-import io
 import json
 import os
 import time
@@ -70,7 +69,6 @@ function evaluatePixel(s){return[s.B02,s.B03,s.B04,s.B08,s.B11,s.B12,s.SCL,s.dat
 def fetch(west, south, east, north, date: str, width: int, height: int, upsampling: str = "BICUBIC"):
     """float32 array (8, H, W): B02 B03 B04 B08 B11 B12 SCL mask, for one day."""
     import numpy as np
-    import rasterio
     body = {
         "input": {"bounds": {"bbox": [west, south, east, north],
                              "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}},
@@ -84,9 +82,21 @@ def fetch(west, south, east, north, date: str, width: int, height: int, upsampli
     }
     req = urllib.request.Request(PROCESS_URL, data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": f"Bearer {_token()}"})
-    raw = urllib.request.urlopen(req, timeout=120).read()
-    with rasterio.open(io.BytesIO(raw)) as src:
-        return src.read().astype(np.float32)
+    # Sentinel Hub answers 429 when the account's rate is spent: wait and
+    # retry a few times rather than fail the whole smoke pass.
+    import time
+    import urllib.error
+    for attempt in range(4):
+        try:
+            raw = urllib.request.urlopen(req, timeout=120).read()
+            break
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == 3:
+                raise
+            time.sleep((5, 15, 40)[attempt])
+    import geotiff_io
+    arr, _t = geotiff_io.read(raw)
+    return np.asarray(arr).astype(np.float32)
 
 
 def size_at(west, south, east, north, m_per_px: float) -> tuple[int, int]:

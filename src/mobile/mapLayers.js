@@ -936,6 +936,14 @@ async function loadFlows({ bounds }) {
     return cullLines(out, normBounds(bounds))
 }
 
+const AOI_FRESH_COLOR = "#FF3B30"
+
+/** The zone's fresh finding ({count, text}) or null — /api/imagery/aois `findings.fresh`. */
+export function aoiFresh(z) {
+    const f = z?.findings?.fresh
+    return f && typeof f === "object" ? { count: Number(f.count) || 0, text: f.text || null } : null
+}
+
 async function loadAois({ bounds }) {
     const d = await getJson(`${API_BASE}/api/imagery/aois`, { ttlMs: 60_000, credentials: false })
     const out = []
@@ -946,10 +954,18 @@ async function loadAois({ bounds }) {
             rings = [[[bb.min_lat, bb.min_lon], [bb.min_lat, bb.max_lon], [bb.max_lat, bb.max_lon], [bb.max_lat, bb.min_lon]]]
         }
         if (!rings) continue
+        // WHERE SOMETHING WAS FOUND (owner, 2026-10-11): a zone whose latest
+        // scans found something new (backend/zone_change.py) is drawn red,
+        // pulsing, with the count; the rest stay plain.
+        const fresh = aoiFresh(z)
+        const centre = [bb.min_lat, bb.max_lat, bb.min_lon, bb.max_lon].every((v) => Number.isFinite(num(v)))
+            ? [(num(bb.min_lat) + num(bb.max_lat)) / 2, (num(bb.min_lon) + num(bb.max_lon)) / 2] : null
         out.push({
-            id: `aoi-${z.system_id || z.id}`, rings, color: AOI_COLOR,
-            fillOpacity: z.status === "active" ? 0.10 : 0.04, weight: 1.2,
-            title: z.name || "Area of interest",
+            id: `aoi-${z.system_id || z.id}`, rings, color: fresh ? AOI_FRESH_COLOR : AOI_COLOR,
+            fillOpacity: fresh ? 0.16 : z.status === "active" ? 0.10 : 0.04, weight: fresh ? 2.6 : 1.2,
+            className: fresh ? "m2-aoi-fresh" : undefined,
+            badge: fresh && centre ? { lat: centre[0], lon: centre[1], text: fresh.count > 0 ? String(fresh.count) : "!" } : null,
+            title: fresh ? `${z.name || "Area of interest"} — new finding: ${fresh.text || "something new"}` : (z.name || "Area of interest"),
             raw: z,
         })
     }

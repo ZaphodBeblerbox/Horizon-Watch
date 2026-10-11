@@ -74,6 +74,9 @@ sortedcontainers==2.4.0
 soupsieve==2.8.3
 shapely==2.1.2
 rasterio
+# GeoTIFF reader without GDAL (geotiff_io.py): keeps radar working when the
+# image lacks GDAL's system libraries (libexpat — the 2026-10-11 outage).
+tifffile
 reportlab==5.0.1
 # Office exports for the briefing studio. A briefing that can only leave as
 # a PDF cannot be edited by the person who receives it, and the two formats

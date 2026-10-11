@@ -481,16 +481,18 @@ def preprocess_raw_geotiff_bytes(tiff_bytes: bytes) -> dict:
     approximation of the model's real training distribution, not a claim
     of bit-exact calibration match. Named explicitly as a real limitation
     in this round's own report."""
-    import rasterio
-    from rasterio.io import MemoryFile
-
-    with MemoryFile(tiff_bytes) as memfile:
-        with memfile.open() as src:
-            arr = src.read()  # [bands, H, W]
-            transform = src.transform
-            if arr.shape[0] < 2:
-                raise SarDetectorError(f"expected a 2-band (VH, VV) GeoTIFF, got {arr.shape[0]} band(s)")
-            vh, vv = arr[0], arr[1]
+    # rasterio when GDAL loads, tifffile when it does not (geotiff_io.py) —
+    # a missing system library must not take radar down with it.
+    import geotiff_io
+    try:
+        arr, transform = geotiff_io.read(tiff_bytes)  # [bands, H, W]
+    except geotiff_io.RadarUnavailable as e:
+        raise SarDetectorError(str(e)) from e
+    if transform is None:
+        raise SarDetectorError("the Sentinel-1 GeoTIFF carries no georeferencing")
+    if arr.shape[0] < 2:
+        raise SarDetectorError(f"expected a 2-band (VH, VV) GeoTIFF, got {arr.shape[0]} band(s)")
+    vh, vv = arr[0], arr[1]
 
     def _rescale_to_uint8(band: np.ndarray) -> np.ndarray:
         band = np.nan_to_num(band, nan=0.0, posinf=0.0, neginf=0.0)

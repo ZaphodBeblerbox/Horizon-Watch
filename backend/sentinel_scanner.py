@@ -50,7 +50,11 @@ import json
 import uuid
 
 # Only these produce real, schema-matching detections today.
-_IMPLEMENTED_TASKS = {"ship_detection", "vessel_cluster_detection"}
+_IMPLEMENTED_TASKS = {"ship_detection", "vessel_cluster_detection", "object_detection"}
+# Run, but not by this optical scan: radar change (PWTT over Sentinel-1
+# stacks) is main._change_detect_pass on its own cadence. Listed so a zone
+# asking for it is not told the task is "not implemented".
+_TASKS_RUN_ELSEWHERE = {"radar_change"}
 
 
 
@@ -468,6 +472,18 @@ class SentinelScanner:
                     )
                     print(f"[sentinel-scanner] change vs {change.get('compared_to') or 'no baseline'}: "
                           f"{change['headline']}")
+                    # WHAT CHANGED, ON THE SCAN ITSELF, so the zone list and
+                    # the map can say "new since the last pass" without
+                    # re-diffing every scan on every read.
+                    if isinstance(result.get("result_summary"), dict):
+                        result["result_summary"]["what_changed"] = {
+                            "baseline": bool(change.get("baseline")),
+                            "compared_to_date": change.get("compared_to_date"),
+                            "new_by_type": change.get("new_by_type") or {},
+                            "gone_by_type": change.get("gone_by_type") or {},
+                            "headline": change.get("headline"),
+                        }
+                        scan_row.result_summary = json.dumps(result["result_summary"])
                 except Exception as _ce:
                     # Never let the comparison take the scan down with it —
                     # the detections are real and worth keeping even if the
@@ -571,7 +587,7 @@ class SentinelScanner:
             requested_tasks = []
 
         run_tasks = [t for t in requested_tasks if t in _IMPLEMENTED_TASKS]
-        skipped_tasks = [t for t in requested_tasks if t not in _IMPLEMENTED_TASKS]
+        skipped_tasks = [t for t in requested_tasks if t not in _IMPLEMENTED_TASKS and t not in _TASKS_RUN_ELSEWHERE]
 
         # -- 1. Find the most recent real scene, for honest freshness metadata --
         search = await _satellite_search_impl(stac_bbox, max_cloud=20, days_back=30)
@@ -632,7 +648,7 @@ class SentinelScanner:
         #
         # Only a zone that asked for a task we genuinely cannot run is worth
         # reporting on, and that is a note on the result, not a failure.
-        if requested_tasks and not run_tasks:
+        if requested_tasks and not run_tasks and not set(requested_tasks) & _TASKS_RUN_ELSEWHERE:
             skipped_tasks.append(
                 f"none of the requested tasks are implemented "
                 f"(requested={requested_tasks}, implemented={sorted(_IMPLEMENTED_TASKS)}) — "
@@ -879,7 +895,19 @@ class SentinelScanner:
         from main import (_fetch_sentinel1_raw_bands_geotiff, _satellite_search_sentinel1_impl,
                           _sar_grey_b64, _water_mask, _on_water)
         import numpy as np
-        import sar_detector
+        import geotiff_io
+
+        # Say why BEFORE spending a single Sentinel Hub request: without a
+        # GeoTIFF reader every fetched radar pass is unreadable (production,
+        # 2026-10-11: 31 scans "crashed: ImportError: libexpat.so.1").
+        why = geotiff_io.unavailable_reason()
+        if why:
+            return {"status": "error", "instrument": "SAR", "error_message": why}
+        try:
+            import sar_detector
+        except Exception as e:                              # noqa: BLE001
+            return {"status": "error", "instrument": "SAR",
+                    "error_message": f"radar ship detector could not be loaded: {type(e).__name__}: {e}"}
 
         # Which radar pass: the latest Sentinel-1 acquisition over the area,
         # by date — so a pass already held is skipped before any download.

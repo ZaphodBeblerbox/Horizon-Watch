@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "deploy": {
+    "aptPackages": [
+      "libexpat1",
+      "libgl1",
+      "libglib2.0-0t64",
+      "libxcb1",
+      "libx11-6",
+      "libxext6",
+      "libsm6",
+      "libice6"
+    ]
+  }
+}

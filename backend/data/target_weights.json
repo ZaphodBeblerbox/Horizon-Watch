@@ -1,0 +1,121 @@
+{
+  "_comment": [
+    "Vessel-of-concern configuration (backend/vessel_threat.py, backend/coastal_targets.py).",
+    "Edit this file to change behaviour without a code change; it is re-read when it changes.",
+    "TARGET WEIGHTS (0..1): the ```json block of docs/research/russia_hybrid_targeting.md is the authority",
+    "and overrides 'weights' below when present; these are the same values, kept as the fallback.",
+    "Finding of the brief: the targets so far were military air bases, nuclear-sharing and naval bases, aid",
+    "logistics and civil airports - not stadiums. Stadiums/venues stay in the list at a low weight, raised",
+    "during major events (multipliers.mass_event_weight)."
+  ],
+  "weights": {
+    "airport_military": 0.95,
+    "military_base": 0.85,
+    "logistics_aid_hub": 0.85,
+    "arms_industry": 0.7,
+    "airport_civil": 0.65,
+    "port": 0.55,
+    "lng_terminal": 0.55,
+    "power_plant": 0.5,
+    "government": 0.4,
+    "oil_terminal": 0.4,
+    "cable_landing": 0.35,
+    "substation": 0.3,
+    "rail_hub": 0.3,
+    "shopping_centre": 0.15,
+    "stadium_venue": 0.15,
+    "data_centre": 0.15
+  },
+  "drone": {
+    "_comment": [
+      "Shahed-136 / Geran-2 class fixed-wing one-way attack drone. PUBLIC OPEN-SOURCE ESTIMATES ONLY",
+      "(press reporting, think-tank and government briefings, e.g. CSIS, RUSI, ISW, Ukrainian Air Force):",
+      "maximum range roughly 1,500-2,500 km; cruise roughly 150-185 km/h; flies low, often 100-500 m,",
+      "on the approach. These are planning figures for 'what is in reach', not performance data."
+    ],
+    "class": "Shahed-136 / Geran-2 class (fixed-wing, container-launched)",
+    "cruise_kmh": 170,
+    "altitude_m": [
+      100,
+      500
+    ],
+    "ring_km": [
+      100,
+      300,
+      1000
+    ],
+    "max_range_km": 2000,
+    "in_range_km": 300
+  },
+  "targets": {
+    "_comment": "Coastal target set: everything within coastal_band_km of the sea, top N per country per type.",
+    "coastal_band_km": 300,
+    "per_country_per_type": {
+      "airport_civil": 15,
+      "airport_military": 15,
+      "military_base": 25,
+      "arms_industry": 10,
+      "logistics_aid_hub": 5,
+      "power_plant": 15,
+      "substation": 10,
+      "lng_terminal": 10,
+      "oil_terminal": 10,
+      "port": 10,
+      "cable_landing": 15,
+      "rail_hub": 6,
+      "government": 8,
+      "stadium_venue": 10,
+      "shopping_centre": 6,
+      "data_centre": 8
+    },
+    "stadium_min_capacity": 20000,
+    "power_plant_min_mw": 200,
+    "refresh_days": 7,
+    "top_n": 10
+  },
+  "alert": {
+    "_comment": "Severity: critical when ALL of: link strength >= strong_link, loitering >= long_loiter_hours, and at least many_targets targets of weight >= high_weight (0.65 = civil airports and above in the brief) within in_range_km. Otherwise high.",
+    "strong_link": 0.75,
+    "long_loiter_hours": 6,
+    "high_weight": 0.65,
+    "many_targets": 5
+  },
+  "multipliers": {
+    "_comment": [
+      "Time multipliers from the research brief (section 5). They raise the TARGETS component of the score",
+      "(and the rank of the targets they touch); they never change whether an alert is raised.",
+      "night: local solar time from longitude. wave_days/wave_factor: after an entry in 'incidents'.",
+      "events: calendar entries {name, kind: summit|vip_visit|exercise|port_call|aid_delivery|mass_event|election,",
+      "lat, lon, radius_km, start, end (ISO dates), factor (optional), types (optional list of target types)}.",
+      "A mass_event raises stadium_venue to mass_event_weight inside its radius; an election raises government x election_factor."
+    ],
+    "night_factor": 1.5,
+    "night_hours": [
+      18,
+      4
+    ],
+    "event_factor": 1.5,
+    "mass_event_weight": 0.35,
+    "election_factor": 1.2,
+    "wave_factor": 1.3,
+    "wave_days": 7,
+    "wave_radius_km": 600,
+    "events": [],
+    "incidents": []
+  },
+  "precursors": {
+    "_comment": "Precursor indicators from the brief (section 6) scored as one component: each adds its points (0..1 in total).",
+    "near_site_km": [
+      10,
+      100
+    ],
+    "near_site": 0.3,
+    "ais_gap_live": 0.2,
+    "ais_gap_min_h": 1.0,
+    "name_flag_change": 0.25,
+    "name_flag_change_days": 365,
+    "russian_navy": 0.35,
+    "gnss_interference": 0.2,
+    "gnss_radius_km": 150
+  }
+}

@@ -12535,6 +12535,52 @@ async def _telegram_loop():
         await asyncio.sleep(60)
 
 
+@app.get("/api/vessel-threat/config")
+async def api_vessel_threat_config():
+    """Target weights, drone figures (public open-source estimates) and the
+    alert thresholds the vessel-of-concern score runs on (vessel_threat.py)."""
+    import vessel_threat as _vt
+    cfg = await asyncio.get_running_loop().run_in_executor(_executor, _vt.load_config)
+    return {k: v for k, v in cfg.items() if k in ("weights", "drone", "alert", "multipliers", "precursors",
+                                                  "weights_source")}
+
+
+@app.get("/api/vessel-threat/top")
+async def api_vessel_threat_top(limit: int = Query(20, ge=1, le=200)):
+    """Every Russia-linked vessel in the live AIS picture, scored."""
+    import russia_loiter_watch as _rlw, vessel_threat as _vt
+    with _AIS_LOCK:
+        snap = [dict(v) for v in _AIS_VESSELS.values()]
+
+    def _run():
+        return _vt.score_snapshot(snap, _rlw.default_watch(), time.time(), limit)
+    rows = await asyncio.get_running_loop().run_in_executor(_executor, _run)
+    return {"vessels": rows, "snapshot": len(snap)}
+
+
+@app.get("/api/vessel-threat/vessel/{mmsi}")
+async def api_vessel_threat_vessel(mmsi: str, lat: float | None = Query(None), lon: float | None = Query(None),
+                                   synthetic: bool = Query(False)):
+    """A vessel of concern, LIVE: position (live AIS, else its last alert),
+    the last 24 h trail, the drone rings, the ranked targets in reach and
+    the score with its reasons. `synthetic=true` with lat/lon scores a
+    demonstration point (labelled as such) instead of a real ship."""
+    import russia_loiter_watch as _rlw, vessel_threat as _vt
+    with _AIS_LOCK:
+        live = dict(_AIS_VESSELS.get(str(mmsi)) or {}) or None
+    if live:
+        try:
+            import vessel_identity as _vi
+            live = _vi.enrich(live) or live
+        except Exception as ex:                             # noqa: BLE001
+            print(f"[vessel-threat] identity enrich failed: {type(ex).__name__}: {ex}")
+
+    def _run():
+        return _vt.live_view(str(mmsi), live=None if synthetic else live, watch=_rlw.default_watch(),
+                             db_path=str(_paths.DB_PATH), now=time.time(), lat=lat, lon=lon, synthetic=synthetic)
+    return await asyncio.get_running_loop().run_in_executor(_executor, _run)
+
+
 @app.get("/api/vessels/{mmsi}/history")
 async def get_vessel_history(mmsi: str):
     """A ship's last 90 days from GFW: port calls, meetings at sea, loitering,
@@ -13499,7 +13545,15 @@ def _russia_loiter_cycle() -> list:
     watch = _rlw.default_watch()
     alerts = watch.run_cycle(snap)
     print(f"[russia-loiter] cycle: {watch.last_stats}")
-    return alerts
+    return {"alerts": alerts, "updates": watch.take_updates()}
+
+
+def _russia_loiter_escalate(a: dict) -> bool:
+    """An episode that became critical: its alert, escalated in place
+    (vessel_threat.update_alert — one alert per episode). Worker thread."""
+    import vessel_threat as _vt
+    return _vt.update_alert(a["id"], severity=a["severity"], title=a["title"], message=a["message"],
+                            reason=a["reason"], raw=a["raw"])
 
 
 async def _russia_loiter_loop():
@@ -13514,16 +13568,66 @@ async def _russia_loiter_loop():
     while True:
         try:
             if not HEAVY_FEEDS_PAUSED:
-                alerts = await asyncio.get_running_loop().run_in_executor(_pool, _russia_loiter_cycle)
-                for a in alerts:
+                res = await asyncio.get_running_loop().run_in_executor(_pool, _russia_loiter_cycle)
+                for a in res["alerts"]:
                     # THROUGH write_alert() — fusion feed, entity links, and
                     # the notification feed all read what it writes.
                     await _write_alert_off_loop(a)
                     print(f"[russia-loiter] ALERT ({a['severity']}): {a['title']}")
+                for a in res["updates"]:
+                    ok = await asyncio.get_running_loop().run_in_executor(_pool, _russia_loiter_escalate, a)
+                    print(f"[russia-loiter] {'ESCALATED' if ok else 'error: escalation found no alert'} "
+                          f"{a['id']} -> {a['severity']}: {a['title']}")
         except Exception as _e:                              # noqa: BLE001
             import traceback as _tb
             print(f"[russia-loiter] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}")
         await asyncio.sleep(300)
+
+
+async def _coastal_targets_loop():
+    """The coastal target set (coastal_targets.py): the static sources
+    (airports, power plants, ports, cable landings) at start, then one stale
+    OpenStreetMap region at a time from public Overpass, weekly. Blocking
+    work in a thread of its own; a failed region keeps its old copy."""
+    if os.getenv("COASTAL_TARGETS_ENABLED", "true").strip().lower() in ("0", "false", "no"):
+        print("[coastal-targets] disabled via COASTAL_TARGETS_ENABLED")
+        return
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="coastal-targets")
+    await asyncio.sleep(180)
+
+    def _static():
+        import coastal_targets as _ct, vessel_threat as _vt
+        cfg = _vt.load_config()
+        data = _ct.load_cache()
+        if not data.get("static") or time.time() - (data.get("static_built_at") or 0) > 7 * 86400:
+            n = _ct.build_static(cfg, data)
+            _ct.save_cache(data)
+            print(f"[coastal-targets] static sources: {n} targets in the coastal band")
+
+    def _one_region():
+        import coastal_targets as _ct, vessel_threat as _vt
+        cfg = _vt.load_config()
+        todo = _ct.stale_regions(_ct.load_cache(), cfg["targets"].get("refresh_days", 7))
+        if todo:
+            _ct.refresh(cfg, todo[:1], static=False)
+        return todo[1:]
+
+    try:
+        await asyncio.get_running_loop().run_in_executor(_pool, _static)
+    except Exception as _e:                                  # noqa: BLE001
+        import traceback as _tb
+        print(f"[coastal-targets] error: static build: {type(_e).__name__}: {_e}\n{_tb.format_exc()}")
+    while True:
+        rest = []
+        try:
+            if not HEAVY_FEEDS_PAUSED:
+                rest = await asyncio.get_running_loop().run_in_executor(_pool, _one_region)
+        except Exception as _e:                              # noqa: BLE001
+            import traceback as _tb
+            print(f"[coastal-targets] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}")
+        # Stale regions one every few minutes; otherwise look again in 6 h.
+        await asyncio.sleep(300 if rest else 6 * 3600)
 
 
 async def _telegram_mood_alert_loop():
@@ -15057,6 +15161,64 @@ CHANGE_INTERVAL_DAYS = float(os.getenv("CHANGE_DETECT_INTERVAL_DAYS", "7"))
 CHANGE_MAX_ZONES_PER_PASS = int(os.getenv("CHANGE_DETECT_MAX_ZONES", "2"))
 
 
+# Overwatch sites ask for "radar_change" (overwatch.TASKS) and are compared
+# on Sentinel-1's own revisit (~6 days) rather than weekly: a new pass is
+# what makes a new comparison worth its requests. Each run is 2×5 Process
+# API requests plus two catalogue searches; CHANGE_DETECT_MAX_ZONES per
+# 15-minute pass bounds the rate, so 40 sites rotate through in a few hours
+# and then wait for the next pass.
+OVERWATCH_CHANGE_DAYS = float(os.getenv("OVERWATCH_CHANGE_DAYS", "6"))
+CHANGE_RETRY_AFTER_ERROR_DAYS = 1.0
+_CHANGE_JOBS: set = set()
+RADAR_CHANGE_HIGH_PER_DAY = int(os.getenv("RADAR_CHANGE_HIGH_PER_DAY", "5"))
+_CHANGE_UNAVAILABLE_SAID = False
+
+
+def _change_due_zones(now_naive) -> list:
+    """Zones whose radar change pass is due, best first. Runs in a thread:
+    reads the zones and each one's last change-detect scan from the DB, so
+    a restart does not re-run every zone at once (the in-memory record was
+    lost on every deploy)."""
+    from sqlalchemy import func as _fn
+    from database import SentinelScan, WatchZone, get_db as _gdbch
+
+    with _gdbch() as _db:
+        last = {}
+        for zid, created, status in (_db.query(SentinelScan.zone_id, SentinelScan.created_at, SentinelScan.status)
+                                       .filter(SentinelScan.triggered_by == "change-detect")
+                                       .order_by(SentinelScan.created_at).all()):
+            last[zid] = (created, status)           # ordered ascending: the newest wins
+        out = []
+        for z in _db.query(WatchZone).filter(WatchZone.enabled == True).all():  # noqa: E712
+            if None in (z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat):
+                continue
+            if (z.status or "active") in ("proposed", "paused") or z.aoi_class in ("sweep", "sweep_plan"):
+                continue
+            try:
+                tasks = _json.loads(z.ml_tasks) if z.ml_tasks else []
+            except ValueError:
+                tasks = []
+            wants = "radar_change" in (tasks or [])
+            prev = last.get(z.id)
+            mem = _CHANGE_LAST_RUN.get(z.system_id)
+            prev_at = prev[0] if prev else None
+            if mem is not None:
+                mem_naive = mem.replace(tzinfo=None)
+                prev_at = max(prev_at, mem_naive) if prev_at else mem_naive
+            days = OVERWATCH_CHANGE_DAYS if wants else CHANGE_INTERVAL_DAYS
+            if prev and prev[1] == "error":
+                days = min(days, CHANGE_RETRY_AFTER_ERROR_DAYS)
+            if prev_at is not None and (now_naive - prev_at).total_seconds() < days * 86400:
+                continue
+            out.append({"id": z.id, "system_id": z.system_id, "name": z.name, "wants": wants,
+                        "west": z.bbox_min_lon, "south": z.bbox_min_lat,
+                        "east": z.bbox_max_lon, "north": z.bbox_max_lat,
+                        "last": prev_at})
+    # Zones that asked for radar change first, then the longest-waiting.
+    out.sort(key=lambda z: (not z["wants"], z["last"] or datetime.min))
+    return out
+
+
 async def _change_detect_pass() -> None:
     """Run radar change detection over watch zones, slowly.
 
@@ -15065,52 +15227,118 @@ async def _change_detect_pass() -> None:
     the question a standing watch exists to ask. Until now it ran only when
     someone pressed a button, which makes it a tool rather than a watch.
 
-    Deliberately slow and capped. Each pass is roughly a dozen Sentinel Hub
-    requests per zone, and structural change is not an hourly phenomenon —
-    a building does not appear between two passes of a satellite. Weekly per
-    zone, at most two zones per tick, so a large watch list degrades into a
-    longer rotation rather than a quota exhaustion.
+    Deliberately capped: at most CHANGE_DETECT_MAX_ZONES running at once,
+    started per 15-minute pass, overwatch sites (ml_tasks "radar_change")
+    first and every OVERWATCH_CHANGE_DAYS, other zones weekly. Every result
+    — changed, nothing new, error — is written as a scan (_persist_change_scan)
+    and a change raises one notification (_zone_change_job).
     """
     import datetime as _dtc2
-
-    from database import WatchZone, get_db as _gdbch
+    import geotiff_io as _gtio
+    global _CHANGE_UNAVAILABLE_SAID
 
     if not _SENTINEL_IMAGERY_ENABLED:
         return
-
-    now = _dtc2.datetime.now(_dtc2.timezone.utc)
-    with _gdbch() as _db:
-        zones = _db.query(WatchZone).filter(WatchZone.enabled == True).all()  # noqa: E712
-        zone_data = [{
-            "id": z.id, "system_id": z.system_id, "name": z.name,
-            "west": z.bbox_min_lon, "south": z.bbox_min_lat,
-            "east": z.bbox_max_lon, "north": z.bbox_max_lat,
-        } for z in zones
-            if None not in (z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat)]
-
-    due = []
-    for zd in zone_data:
-        last = _CHANGE_LAST_RUN.get(zd["system_id"])
-        if last is None or (now - last).total_seconds() >= CHANGE_INTERVAL_DAYS * 86400:
-            due.append(zd)
-    if not due:
+    why = _gtio.unavailable_reason()
+    if why:
+        if not _CHANGE_UNAVAILABLE_SAID:
+            print(f"[change] error: scheduled radar change disabled — {why}", flush=True)
+            _CHANGE_UNAVAILABLE_SAID = True
         return
 
-    # Oldest first, so a long watch list rotates fairly instead of always
-    # servicing whichever zone happens to sort first.
-    due.sort(key=lambda z: _CHANGE_LAST_RUN.get(z["system_id"], _dtc2.datetime.min.replace(tzinfo=_dtc2.timezone.utc)))
-
-    for zd in due[:CHANGE_MAX_ZONES_PER_PASS]:
+    budget = CHANGE_MAX_ZONES_PER_PASS - len(_CHANGE_JOBS)
+    if budget <= 0:
+        return
+    now = _dtc2.datetime.now(_dtc2.timezone.utc)
+    due = await asyncio.get_running_loop().run_in_executor(
+        _executor, _change_due_zones, now.replace(tzinfo=None))
+    running = {j.get_name() for j in _CHANGE_JOBS}
+    due = [z for z in due if f"chg-{z['system_id']}" not in running]
+    if not due:
+        return
+    if len(due) > budget:
+        print(f"[change] {len(due)} zone(s) due, {budget} started this pass — the rest wait their turn", flush=True)
+    for zd in due[:budget]:
         _CHANGE_LAST_RUN[zd["system_id"]] = now
-        bounds = {"west": zd["west"], "south": zd["south"],
-                  "east": zd["east"], "north": zd["north"]}
-        post_end = now.date().isoformat()
-        pre_end = (now.date() - _dtc2.timedelta(days=90)).isoformat()
-        job_id = f"chg-auto-{uuid.uuid4().hex[:8]}"
-        print(f"[change] scheduled radar change pass over {zd['system_id']} "
-              f"({pre_end} → {post_end})")
-        asyncio.create_task(_run_pwtt_job(
-            job_id, bounds, pre_end, post_end, 5, 1.63, "both", 448, zd["id"]))
+        t = asyncio.create_task(_zone_change_job(zd, now), name=f"chg-{zd['system_id']}")
+        _CHANGE_JOBS.add(t)
+        t.add_done_callback(_CHANGE_JOBS.discard)
+
+
+async def _zone_change_job(zd: dict, now) -> dict:
+    """One zone's scheduled radar change pass: run, record, notify once."""
+    import datetime as _dtc3
+    bounds = {"west": zd["west"], "south": zd["south"], "east": zd["east"], "north": zd["north"]}
+    post_end = now.date().isoformat()
+    pre_end = (now.date() - _dtc3.timedelta(days=90)).isoformat()
+    job_id = f"chg-auto-{uuid.uuid4().hex[:8]}"
+    print(f"[change] scheduled radar change pass over {zd['system_id']} ({zd['name']}) "
+          f"({pre_end} → {post_end})", flush=True)
+    try:
+        await _run_pwtt_job(job_id, bounds, pre_end, post_end, 5, 1.63, "both", 448, zd["id"])
+        out = _PWTT_RESULTS.pop(job_id, None) or {"status": "error", "error": "no result"}
+        if out.get("status") != "completed" or out.get("persist_error"):
+            if out.get("status") != "completed":
+                # A failed comparison is written too, with its reason: a
+                # silent failure looks exactly like "nothing changed".
+                await asyncio.get_running_loop().run_in_executor(
+                    _executor, _persist_change_scan, zd["id"], out, [])
+            print(f"[change] error: {zd['system_id']} ({zd['name']}): "
+                  f"{out.get('error') or out.get('persist_error')}", flush=True)
+            return out
+        block = out.get("change") or {}
+        print(f"[change] {zd['system_id']} ({zd['name']}): {block.get('headline')}", flush=True)
+        if block.get("verdict") == "changed":
+            await asyncio.get_running_loop().run_in_executor(_executor, _notify_zone_change, zd, out)
+        return out
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[change] error: job for {zd['system_id']}: {type(e).__name__}: {e}", flush=True)
+        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+
+
+def _notify_zone_change(zd: dict, out: dict) -> None:
+    """One notification per zone per radar comparison (high, then medium past the daily cap) —
+    "Change detected at Vuglegirska power station — radar, 12 ha brighter
+    since 2 Oct". Deduped by a deterministic alert id (zone + the newest
+    radar date compared), so a re-run of the same pass cannot notify twice;
+    a region already reported by the previous comparison is not "new" and
+    never reaches here (zone_change.new_regions)."""
+    import zone_change as _zc
+    from database import WatchZone, get_db as _gdbn
+    block = out.get("change") or {}
+    with _gdbn() as db:
+        z = db.query(WatchZone).filter(WatchZone.id == zd["id"]).first()
+        try:
+            meta = _json.loads(z.zone_metadata) if z is not None and z.zone_metadata else {}
+        except ValueError:
+            meta = {}
+        # The first comparison over forty new sites could otherwise buzz
+        # forty times in an afternoon: the first RADAR_CHANGE_HIGH_PER_DAY
+        # interrupt, later ones are written and listed at medium (the
+        # border sweep's rule, overwatch.SWEEP_MAX_ALERTS_PER_DAY).
+        from database import Alert as _AlertN
+        day0 = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = db.query(_AlertN.alert_id).filter(_AlertN.alert_id.like("RCHG-%"), _AlertN.created_at >= day0).count()
+    sev = "high" if today < RADAR_CHANGE_HIGH_PER_DAY else "medium"
+    top = (block.get("where") or [{}])[0]
+    lat = top.get("lat") or (zd["south"] + zd["north"]) / 2
+    lon = top.get("lon") or (zd["west"] + zd["east"]) / 2
+    why = meta.get("reason") or ""
+    write_alert({
+        "id": f"RCHG-{zd['system_id']}-{block.get('until') or 'x'}",
+        "source": "OVERWATCH" if meta.get("generated_by") == "overwatch" else "SAT-TASK",
+        "alert_type": "Imagery signal", "severity": sev,
+        "title": _zc.alert_title(zd["name"], block),
+        "lat": lat, "lon": lon, "entity_type": "radar_change", "entity_id": zd["system_id"],
+        "region": meta.get("group") or zd["name"],
+        "raw_json": {"zone_id": zd["system_id"], "scan_id": out.get("scan_id"), "kind": "radar_change",
+                     "instrument": "SAR", "change": block, "captured": block.get("until"),
+                     "reason": (f"Sentinel-1 radar, {block.get('new_regions')} new change region(s) "
+                                f"compared with {block.get('since') or 'the earlier passes'}"
+                                + (f" — {why}" if why else "")),
+                     "caveat": "Radar change is a cue to look at the optical scene, not an identification.",
+                     "actions": ["image"]},
+    })
 
 
 async def _corroboration_trigger_pass() -> None:
@@ -16447,6 +16675,7 @@ async def startup_event():
     _spawn(_global_adsb_cache_loop)
     _spawn(_gps_interference_alert_loop)
     _spawn(_russia_loiter_loop)
+    _spawn(_coastal_targets_loop)
     _spawn(_telegram_mood_alert_loop)
 
     # WARM THE FINDINGS CACHE ONCE, IN THE BACKGROUND. The walk takes about
@@ -16500,6 +16729,7 @@ async def startup_event():
     # _spawn(_sts_detection_loop)
     _spawn(_sentinel_zone_scheduler_loop)
     _spawn(_overwatch_sweep_loop)        # the border sweep (overwatch.py), one or two tiles a pass
+    _spawn(_overwatch_tasks_backfill_once)   # one-off: ml_tasks for overwatch zones created with []
     _spawn(_auto_ingest_task)
     _spawn(_zone_images_warmup_task)
     _spawn(_threat_matrix_loop)
@@ -18001,6 +18231,50 @@ async def api_satellite_search_sar(
 
 _SH_PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
 
+# SENTINEL HUB RATE LIMIT (2026-10-11). Production scans were failing with
+# "Sentinel Hub API error 429": a scheduler pass, the change pass and the
+# border sweep each fired their requests at once. Every scan-path Process
+# API call now goes through _sh_process_post: at most
+# SENTINEL_HUB_MAX_CONCURRENT requests in flight across the whole process,
+# and a 429 is waited out (Retry-After when given, else 5/15/40 s) and
+# retried instead of failing the scan. A threading semaphore, polled, not
+# an asyncio one: the scanner drives its own event loop in a worker thread
+# and an asyncio.Semaphore would only govern the loop that created it.
+_SH_MAX_CONCURRENT = max(1, int(os.getenv("SENTINEL_HUB_MAX_CONCURRENT", "3")))
+_SH_SLOTS = threading.BoundedSemaphore(_SH_MAX_CONCURRENT)
+_SH_429_DELAYS = (5.0, 15.0, 40.0)
+
+
+def _sh_retry_after(resp) -> float | None:
+    """Seconds to wait from a 429's Retry-After (Sentinel Hub sends ms)."""
+    try:
+        v = float(resp.headers.get("Retry-After") or resp.headers.get("retry-after"))
+    except (TypeError, ValueError):
+        return None
+    if v > 120:            # milliseconds
+        v = v / 1000.0
+    return max(0.5, min(60.0, v))
+
+
+async def _sh_process_post(client_h, payload: dict, token: str, label: str = "process"):
+    """POST to the Process API under the shared concurrency cap, backing off on 429."""
+    resp = None
+    for attempt in range(len(_SH_429_DELAYS) + 1):
+        while not _SH_SLOTS.acquire(blocking=False):
+            await asyncio.sleep(0.25)
+        try:
+            resp = await client_h.post(_SH_PROCESS_URL, json=payload,
+                                       headers={"Authorization": f"Bearer {token}"})
+        finally:
+            _SH_SLOTS.release()
+        if resp.status_code != 429 or attempt == len(_SH_429_DELAYS):
+            return resp
+        wait = _sh_retry_after(resp) or _SH_429_DELAYS[attempt]
+        print(f"[sentinel-hub] 429 on {label} — waiting {wait:.1f}s, retry {attempt + 1}/{len(_SH_429_DELAYS)}",
+              flush=True)
+        await asyncio.sleep(wait)
+    return resp
+
 _EVALSCRIPT_TRUE_COLOUR = """//VERSION=3
 function setup() {
   return { input: ["B04", "B03", "B02", "dataMask"], output: { bands: 4 } }
@@ -18269,11 +18543,7 @@ async def _fetch_sentinel_image_bytes(bounds: dict, image_type: str = "true-colo
             if not token:
                 return {"error": f"Sentinel Hub auth failed: {err}"}
 
-            resp = await client_h.post(
-                _SH_PROCESS_URL,
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            resp = await _sh_process_post(client_h, payload, token, "sentinel-2 image")
 
         if resp.status_code == 200:
             return {
@@ -18447,10 +18717,7 @@ async def _fetch_sentinel1_image_bytes(bounds: dict, max_age_days: int = 30,
             if not token:
                 return {"error": f"Sentinel Hub auth failed: {err}"}
 
-            resp = await client_h.post(
-                _SH_PROCESS_URL, json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            resp = await _sh_process_post(client_h, payload, token, "sentinel-1")
 
         if resp.status_code == 200:
             with _DS_STATUS_LOCK:
@@ -18563,10 +18830,7 @@ async def _fetch_sentinel1_raw_bands_geotiff(bounds: dict, max_age_days: int = 3
             token, err = await _get_copernicus_access_token(client_h)
             if not token:
                 return {"error": f"Sentinel Hub auth failed: {err}"}
-            resp = await client_h.post(
-                _SH_PROCESS_URL, json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            resp = await _sh_process_post(client_h, payload, token, "sentinel-1")
         if resp.status_code == 200:
             return {"image_bytes": resp.content, "width": width, "height": height, "instrument": "SAR"}
         detail = resp.text[:500]
@@ -18887,10 +19151,17 @@ _PWTT_RESULTS: dict = {}
 
 
 def _persist_change_scan(zone_id: int, out: dict, dates_after: list) -> str:
-    """Write radar change regions as a scan and its detections."""
+    """Write a radar change pass as a scan with its regions as detections.
+
+    EVERY pass is written, not only one with regions (2026-10-11): "radar
+    compared, nothing new" is a result the zone list must be able to show,
+    and an error with its reason is how a broken pass stops looking like a
+    quiet one. result_summary.change says WHAT changed (zone_change.py):
+    the significant regions not seen by this zone's previous comparison."""
     import datetime as _dtq
     import uuid as _uidq
 
+    import zone_change as _zc
     from database import SentinelScan, SentinelDetection, get_db as _gdbq
 
     scan_id = str(_uidq.uuid4())
@@ -18900,21 +19171,47 @@ def _persist_change_scan(zone_id: int, out: dict, dates_after: list) -> str:
             when = _dtq.datetime.fromisoformat(dates_after[0])
         except Exception:
             when = None
+    completed = (out or {}).get("status") == "completed"
     with _gdbq() as db:
+        prev = (db.query(SentinelScan)
+                  .filter(SentinelScan.zone_id == zone_id, SentinelScan.triggered_by == "change-detect",
+                          SentinelScan.status == "completed")
+                  .order_by(SentinelScan.created_at.desc()).first())
+        prev_regions, prev_until = None, None
+        if prev is not None:
+            try:
+                prev_until = ((_json.loads(prev.result_summary or "{}") or {}).get("change") or {}).get("until")
+            except ValueError:
+                prev_until = None
+            if not prev_until and prev.image_timestamp_utc:
+                prev_until = prev.image_timestamp_utc.date().isoformat()
+            rows = []
+            for d in db.query(SentinelDetection).filter(SentinelDetection.scan_id == prev.scan_id).all():
+                try:
+                    a = _json.loads(d.attributes or "{}")
+                except ValueError:
+                    a = {}
+                rows.append({"centroid_lat": d.centroid_lat, "centroid_lon": d.centroid_lon,
+                             "area_m2": d.area_m2, "t_peak": a.get("t_peak"),
+                             "change_direction": a.get("change_direction")})
+            prev_regions = _zc.significant(rows)
+        block = _zc.summarize(out, prev_regions, prev_until)
+        out["change"] = block
+        summary = {"total_detections": len(out.get("detections") or []) if completed else 0,
+                   "method": "PWTT", "change": block}
+        if completed:
+            summary.update({"m_per_px": out.get("m_per_px"), "stack_before": out.get("stack_before"),
+                            "stack_after": out.get("stack_after"), "threshold": out.get("threshold"),
+                            "dates_before": out.get("dates_before"), "dates_after": out.get("dates_after")})
         db.add(SentinelScan(
             scan_id=scan_id, zone_id=zone_id, triggered_by="change-detect",
-            status="completed", created_at=_dtq.datetime.utcnow(),
+            status="completed" if completed else "error", created_at=_dtq.datetime.utcnow(),
             completed_at=_dtq.datetime.utcnow(), image_timestamp_utc=when,
             instrument="SAR",
-            result_summary=_json.dumps({
-                "total_detections": len(out["detections"]),
-                "method": "PWTT", "m_per_px": out.get("m_per_px"),
-                "stack_before": out.get("stack_before"),
-                "stack_after": out.get("stack_after"),
-                "threshold": out.get("threshold"),
-            }),
+            error_message=None if completed else f"radar change: {str(out.get('error') or 'no result')[:400]}",
+            result_summary=_json.dumps(summary),
         ))
-        for d in out["detections"]:
+        for d in (out.get("detections") or []) if completed else []:
             db.add(SentinelDetection(
                 detection_id=f"CHG-{_uidq.uuid4().hex[:12]}",
                 scan_id=scan_id, zone_id=zone_id, instrument="SAR",
@@ -18944,6 +19241,13 @@ async def _run_pwtt_job(job_id: str, bounds: dict, pre_end: str, post_end: str,
                         px: int, zone_id: int | None = None) -> None:
     """Fetch both Sentinel-1 stacks and run the change detector."""
     import pwtt as _pwtt
+
+    import geotiff_io as _gtio
+    _why = _gtio.unavailable_reason()
+    if _why:
+        # Before any request is spent: every frame would be unreadable.
+        _PWTT_RESULTS[job_id] = {"status": "error", "error": _why}
+        return
 
     total = depth * 2
     _imagery_rt.start_progress(job_id, total, label="Sentinel-1 change detection")
@@ -19068,7 +19372,7 @@ async def _run_pwtt_job(job_id: str, bounds: dict, pre_end: str, post_end: str,
         # corroborated, cannot be compared against the next pass, and is
         # gone on restart — which would make the one detector that can see
         # through cloud the only one whose findings do not last.
-        if zone_id is not None and out.get("detections"):
+        if zone_id is not None:
             try:
                 out["scan_id"] = await _imagery_rt.run_cpu(
                     _persist_change_scan, zone_id, out, post_used,
@@ -23145,7 +23449,40 @@ def api_watch_zones_list(request: Request):
     user = _zone_user(request)
     with get_db() as db:
         zones = _zones_visible(db.query(WatchZone), user).order_by(WatchZone.id).all()
-        return [_zone_row_to_dict(z) for z in zones]
+        out = [_zone_row_to_dict(z) for z in zones]
+        # WHERE SOMETHING WAS FOUND (owner, 2026-10-11): each zone's badge —
+        # detections in its last scan and the last 7 days, and a "fresh"
+        # finding (radar change, objects new since the last pass) the list
+        # and the maps draw in red. Derived on read (zone_change.py) from
+        # the scans' own summaries; one query, image column never loaded.
+        try:
+            out = _attach_zone_findings(db, out)
+        except Exception as e:                               # noqa: BLE001
+            print(f"[watch-zones] error: findings badge skipped: {type(e).__name__}: {e}", flush=True)
+        return out
+
+
+def _attach_zone_findings(db, zones: list) -> list:
+    import zone_change as _zc
+    from database import SentinelScan
+    ids = [z["id"] for z in zones]
+    if not ids:
+        return zones
+    since = datetime.utcnow() - timedelta(days=7)
+    by_zone: dict = {}
+    for zid, scan_id, created, status, trig, summ in (
+            db.query(SentinelScan.zone_id, SentinelScan.scan_id, SentinelScan.created_at, SentinelScan.status,
+                     SentinelScan.triggered_by, SentinelScan.result_summary)
+              .filter(SentinelScan.zone_id.in_(ids), SentinelScan.created_at >= since).all()):
+        try:
+            rs = _json.loads(summ) if summ else {}
+        except ValueError:
+            rs = {}
+        by_zone.setdefault(zid, []).append({"scan_id": scan_id, "created_at": created, "status": status,
+                                            "triggered_by": trig, "result_summary": rs if isinstance(rs, dict) else {}})
+    for z in zones:
+        z["findings"] = _zc.zone_findings(by_zone.get(z["id"], []))
+    return zones
 
 
 @app.get("/api/watch-zones/{system_id}", dependencies=[Depends(_zone_guard)])
@@ -23526,7 +23863,13 @@ def api_imagery_aois(request: Request, status: str = None):
         q = _zones_visible(db.query(WatchZone), user)
         if status:
             q = q.filter(WatchZone.status == status)
-        return [_zone_row_to_dict(z) for z in q.order_by(WatchZone.created_at.desc()).all()]
+        out = [_zone_row_to_dict(z) for z in q.order_by(WatchZone.created_at.desc()).all()]
+        try:
+            # The maps highlight zones with fresh findings (zone_change.py).
+            out = _attach_zone_findings(db, out)
+        except Exception as e:                               # noqa: BLE001
+            print(f"[aois] error: findings skipped: {type(e).__name__}: {e}", flush=True)
+        return out
 
 
 @app.post("/api/imagery/propose-coverage")
@@ -23948,8 +24291,16 @@ async def api_imagery_zone_sar(system_id: str, date: str | None = Query(None, pa
     The radar passes of the last 60 days come back too, to pick another."""
     import base64 as _b64
     import numpy as _np
-    import sar_detector
-    from sentinel_scanner import _sar_preview_b64
+    import geotiff_io as _gtio
+    # A clear refusal, not a 500 with no CORS header that the page can only
+    # show as "Failed to fetch" (production 2026-10-11: libexpat missing).
+    _why = _gtio.unavailable_reason()
+    if _why:
+        raise HTTPException(503, _why)
+    try:
+        import sar_detector
+    except Exception as _se:                                 # noqa: BLE001
+        raise HTTPException(503, f"radar processing is unavailable on this server: {type(_se).__name__}: {_se}")
     from imagery_pipeline import polygon_percent
     z = _zone_by_system_id(system_id)
     b = z["bbox"]
@@ -23970,7 +24321,11 @@ async def api_imagery_zone_sar(system_id: str, date: str | None = Query(None, pa
             raise HTTPException(502, f"Sentinel-1 image for {day} unavailable: {r['error']}")
         tiff = r["image_bytes"]
         loop = asyncio.get_event_loop()
-        preview = await loop.run_in_executor(_executor, _sar_grey_b64, tiff, sar_detector, _np, (w, h))
+        try:
+            preview = await loop.run_in_executor(_executor, _sar_grey_b64, tiff, sar_detector, _np, (w, h))
+        except Exception as e:                               # noqa: BLE001
+            print(f"[sar] error: radar image for {system_id} {day} unreadable: {type(e).__name__}: {e}", flush=True)
+            raise HTTPException(502, f"The Sentinel-1 pass of {day} came back but could not be read: {type(e).__name__}: {e}")
         try:
             dets = await loop.run_in_executor(_executor, sar_detector.run_sar_ship_detection_from_geotiff_bytes, tiff)
         except Exception as e:                               # noqa: BLE001
@@ -24707,6 +25062,7 @@ def _overwatch_finish_tile(job: dict, verdict: dict, scan_id: str | None) -> dic
             z.name = title.replace(" — found by sweep", "")[:120]
             z.description = verdict["summary"]
             z.aoi_class = "border"
+            z.ml_tasks = _jow.dumps(_ow.tasks_for(_ow.FOUND_BY_SWEEP))
             z.enabled = True
             z.status = "active"
             z.priority = "high"
@@ -24791,6 +25147,27 @@ async def _overwatch_sweep_pass(budget: int | None = None) -> list:
     for job in jobs:              # one at a time: each is a dozen Sentinel requests
         out.append(await _overwatch_sweep_tile(job))
     return out
+
+
+async def _overwatch_tasks_backfill_once():
+    """One-off startup repair (2026-10-11): overwatch zones created before
+    overwatch.TASKS have ml_tasks=[] — give them their subgroup's tasks so
+    radar change runs over them. Only zones generated by overwatch with
+    empty tasks are touched (overwatch.backfill_tasks); idempotent."""
+    import overwatch as _ow
+    from database import get_db as _gdb_bf
+
+    def _do():
+        with _gdb_bf() as db:
+            return _ow.backfill_tasks(db)
+    await asyncio.sleep(30)
+    try:
+        changed = await asyncio.get_running_loop().run_in_executor(_executor, _do)
+        if changed:
+            print(f"[overwatch] ml_tasks backfilled on {len(changed)} zone(s): {', '.join(changed[:12])}"
+                  f"{' …' if len(changed) > 12 else ''}", flush=True)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[overwatch] error: ml_tasks backfill: {type(e).__name__}: {e}", flush=True)
 
 
 async def _overwatch_sweep_loop():

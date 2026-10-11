@@ -2078,6 +2078,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         assetsEnabled={!asCanvas && assetsOn}
                         nauticalEnabled={infraOnV.nautical}
                         eezEnabled={groupsOnV.zones}
+                        aoisEnabled={contextOnV.aois}
                         /* Context layers — separate from event domains, per build spec v2 §4.2 */
                         graticuleEnabled={contextOnV.graticule}
                         cityLabelsEnabled={contextOnV.labels}

@@ -111,6 +111,59 @@ AOI = {  # subgroup -> (aoi_class, metadata.kind)
     "Hot right now": ("border", "other"),
 }
 
+# What each subgroup is scanned FOR (2026-10-11). The zones were created
+# with ml_tasks=[] and the owner saw "we detect nothing": the optical
+# detectors find ships, aircraft and vehicles, which at 10 m a front line,
+# a power plant or a report cluster rarely shows. What those places show is
+# CHANGE — a hard scatterer appearing or going between radar passes — so
+# every overwatch site gets "radar_change" (main._change_detect_pass, PWTT
+# on Sentinel-1), plus the object tasks where objects are the point.
+TASKS = {
+    "Air bases": ["object_detection", "radar_change"],
+    "Naval & ports": ["ship_detection", "vessel_cluster_detection", "object_detection", "radar_change"],
+    "Strike targets": ["object_detection", "radar_change"],
+    "Ground bases & training grounds": ["object_detection", "radar_change"],
+    "Front hotspots": ["radar_change", "object_detection"],
+    "Hot right now": ["radar_change", "object_detection"],
+    FOUND_BY_SWEEP: ["radar_change", "object_detection"],
+}
+
+
+def tasks_for(subgroup: str | None) -> list[str]:
+    """The ml_tasks an overwatch zone of this subgroup is created with. The
+    sweep plan and its temporary tiles are never scanned as zones: none."""
+    if subgroup in ("Border sweep", SWEEP_IN_PROGRESS):
+        return []
+    return list(TASKS.get(subgroup or "", ["object_detection", "radar_change"]))
+
+
+def backfill_tasks(db) -> list[str]:
+    """One-off repair: overwatch zones created before TASKS existed have
+    ml_tasks=[] — give them their subgroup's tasks. Touches ONLY zones with
+    zone_metadata.generated_by == "overwatch" and empty ml_tasks, and never
+    the sweep plan or a sweep tile. Returns the system ids changed."""
+    from database import WatchZone
+    changed = []
+    for z in db.query(WatchZone).all():
+        m = _meta(z)
+        if m.get("generated_by") != "overwatch" or z.aoi_class in ("sweep_plan", "sweep"):
+            continue
+        try:
+            cur = json.loads(z.ml_tasks) if z.ml_tasks else []
+        except ValueError:
+            cur = []
+        if cur:
+            continue
+        tasks = tasks_for(m.get("subgroup"))
+        if not tasks:
+            continue
+        z.ml_tasks = json.dumps(tasks)
+        changed.append(z.system_id)
+    if changed:
+        db.commit()
+    return changed
+
+
 WHY = {   # the half-sentence that says what a change there would mean
     "Air bases": "aircraft arriving or dispersing precede strike waves",
     "Naval & ports": "ships entering or leaving show fleet and supply moves",
@@ -1664,7 +1717,7 @@ def apply_selection(db, *, owner: str | None, conflict: dict, selection: dict, a
             priority="high" if c["score"] >= 70 else "medium",
             scan_interval_hours=CADENCE_H.get(sub, DEFAULT_CADENCE_H),
             enabled=False, status="proposed", aoi_class=aoi_class, owner=owner, created_by=owner,
-            created_at=now, next_scan_at=None, ml_tasks=json.dumps([]), alert_threshold="both",
+            created_at=now, next_scan_at=None, ml_tasks=json.dumps(tasks_for(sub)), alert_threshold="both",
             zone_metadata=json.dumps(meta),
             sensor_preference="sentinel1_sar" if sub == "Border sweep" else "sentinel2_optical",
         ))

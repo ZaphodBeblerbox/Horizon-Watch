@@ -30,7 +30,7 @@ import {
     AOI_CLASSES, fmtDate, SceneComparison,
 } from "../components/imagery/sceneComparison.jsx"
 import { acquisitions, changeHeadline, countSeries, DET_COLORS, fmtDay, groupDetections, noun } from "./imageryModel.js"
-import { buildZoneTree, isBackground, isProposal } from "./overwatchTree.js"
+import { buildZoneTree, hasFindings, isBackground, isProposal, zoneFinding } from "./overwatchTree.js"
 import { hm } from "../utils/clock.js"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
@@ -112,11 +112,15 @@ export default function Imagery() {
 
     const zone = useMemo(() => safeArray(zones).find((z) => z.system_id === zoneId) || null, [zones, zoneId])
     const allPasses = useMemo(() => acquisitions(scans), [scans])
-    const sarPasses = useMemo(() => allPasses.filter((p) => p.instrument === "SAR"), [allPasses])
+    // A radar CHANGE run is stored as a SAR scan with regions and no image;
+    // counting it as a radar pass left the radar view on a pass with nothing
+    // to show (2026-10-11 "SAR loading doesn't work"). Only passes holding an
+    // image are viewable; with none, the latest pass is fetched live.
+    const sarPasses = useMemo(() => allPasses.filter((p) => p.instrument === "SAR" && p.hasImage), [allPasses])
     // The passes of the sensor being looked at. Radar passes stored by the
     // scanner are read like optical ones; with none stored, radar is
     // fetched live (liveRadar).
-    const passes = useMemo(() => allPasses.filter((p) => (p.instrument === "SAR") === (sensor === "radar")), [allPasses, sensor])
+    const passes = useMemo(() => allPasses.filter((p) => (sensor === "radar" ? p.instrument === "SAR" && p.hasImage : p.instrument !== "SAR")), [allPasses, sensor])
     const liveRadar = sensor === "radar" && sarPasses.length === 0
     const series = useMemo(() => countSeries(passes), [passes])
 
@@ -167,7 +171,8 @@ export default function Imagery() {
     // The strip holds the hand-drawn areas as buttons; generated overwatch
     // zones (forty at a time) go in one grouped picker beside them.
     const stripZones = useMemo(() => safeArray(zones).filter((z) => !isBackground(z) && !z.metadata?.group), [zones])
-    const pickerTree = useMemo(() => buildZoneTree(safeArray(zones).filter((z) => !isBackground(z) && z.metadata?.group)), [zones])
+    const pickerTree = useMemo(() => buildZoneTree(safeArray(zones).filter((z) => !isBackground(z) && z.metadata?.group), { findingsFirst: true }), [zones])
+    const freshCount = useMemo(() => safeArray(zones).filter((z) => !isBackground(z) && zoneFinding(z).fresh).length, [zones])
     const proposedCount = useMemo(() => safeArray(zones).filter(isProposal).length, [zones])
 
     const loadScans = useCallback((zid) => {
@@ -278,16 +283,32 @@ export default function Imagery() {
 
     // The radar pass, fetched when asked for (the first run downloads the
     // radar ship detector and can take a minute).
+    const [sarTry, setSarTry] = useState(0)
     useEffect(() => {
         if (!liveRadar || !zoneId) return undefined
         let live = true
-        setSar((cur) => ({ ...cur, loading: true, error: null }))
+        setSar({ loading: true, error: null, started: Date.now() })
         fetch(`${API_BASE}/api/imagery/zones/${zoneId}/sar${sarDate ? `?date=${sarDate}` : ""}`, { credentials: "include" })
-            .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d })
+            .then(async (r) => {
+                const d = await r.json().catch(() => ({}))
+                if (!r.ok) {
+                    const why = typeof d.detail === "string" ? d.detail : null
+                    throw new Error(why || (r.status === 503 ? "Radar processing is unavailable on the server right now."
+                        : r.status === 502 ? "Sentinel Hub did not return the radar pass." : `The server answered ${r.status}.`))
+                }
+                if (!d.image_b64) throw new Error("The radar pass came back without an image.")
+                return d
+            })
             .then((d) => { if (live) setSar({ data: d }) })
-            .catch((e) => { if (live) setSar({ error: e.message }) })
+            .catch((e) => {
+                if (!live) return
+                // A server error without CORS headers surfaces as a bare
+                // TypeError — say what that means instead of "Failed to fetch".
+                const msg = e instanceof TypeError ? "The server did not answer the radar request (network or server error)." : e.message
+                setSar({ error: msg })
+            })
         return () => { live = false }
-    }, [liveRadar, zoneId, sarDate])
+    }, [liveRadar, zoneId, sarDate, sarTry])
     useEffect(() => { setSar({}); setSarDate(null); setSensor("optical") }, [zoneId])
     useEffect(() => {
         const first = passes[0]?.scanId
@@ -448,7 +469,9 @@ export default function Imagery() {
                             background: !manage && z.system_id === zoneId ? ON : "transparent",
                             borderColor: !manage && z.system_id === zoneId ? "var(--acchi)" : "var(--gline2)",
                         }}>
-                            <i style={{ width: 7, height: 7, background: z.status === "active" ? "var(--green)" : "var(--txt4)" }} />
+                            {zoneFinding(z).fresh
+                                ? <FreshDot on size={7} />
+                                : <i style={{ width: 7, height: 7, background: z.status === "active" ? "var(--green)" : "var(--txt4)" }} />}
                             {z.name}
                         </button>
                     ))}
@@ -460,10 +483,15 @@ export default function Imagery() {
                         <option value="">Overwatch zones ({pickerTree.reduce((n, g) => n + g.count, 0)})…</option>
                         {pickerTree.flatMap((g) => g.subgroups.map((sg) => (
                             <optgroup key={`${g.group}/${sg.subgroup}`} label={`${g.group} · ${sg.subgroup}`}>
-                                {sg.zones.map((z) => <option key={z.system_id} value={z.system_id}>{z.name}</option>)}
+                                {sg.zones.map((z) => <option key={z.system_id} value={z.system_id}>{zoneFinding(z).fresh ? `● ${z.name} — new finding` : z.name}</option>)}
                             </optgroup>
                         )))}
                     </select>
+                )}
+                {freshCount > 0 && (
+                    <button onClick={() => setManage(true)} title="Areas whose latest scans found something new — listed first in Manage areas" style={{ ...BTN, height: 30, display: "flex", alignItems: "center", gap: 7, borderColor: "var(--red)", color: "var(--red)" }}>
+                        <FreshDot on size={7} />{freshCount} with new findings
+                    </button>
                 )}
                 {proposedCount > 0 && (
                     <button onClick={() => setManage(true)} title="Generated overwatch zones waiting for your yes or no" style={{ ...BTN, height: 30, borderColor: "var(--acchi)" }}>
@@ -508,6 +536,16 @@ export default function Imagery() {
                                         ? (sar.data ? `Radar: ${shown.length} ${noun("vessel", shown.length)} on the water${sar.data.date ? ` on ${fmtDay(sar.data.date)}` : ""}.` : sar.error ? "No radar pass to show." : "Reading the radar pass…")
                                         : loadingScene ? "Reading the pass…" : headline || (passes.length ? "Pick a pass." : "This area has not been photographed yet.")}
                                 </h3>
+                                {(() => {
+                                    const f = zoneFinding(zone)
+                                    if (!f.fresh && !f.radar) return null
+                                    return (
+                                        <div data-zone-finding style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 4, fontSize: 12.5, color: f.fresh ? "var(--red)" : "var(--txt3)" }}>
+                                            <FreshDot on={f.fresh} size={7} />
+                                            <span>{f.fresh ? `New finding: ${f.text}` : ""}{f.fresh && f.radar && f.kind !== "radar_change" ? " · " : ""}{f.radar && !(f.fresh && f.kind === "radar_change") ? `Radar change ${fmtDay(f.radar.at)}: ${f.radar.headline}` : ""}</span>
+                                        </div>
+                                    )
+                                })()}
                             </div>
                             <div style={{ display: "flex", gap: 6, flex: "none" }}>
                                 <button onClick={showOnMap} style={PRIMARY} disabled={!scene?.image_b64}>Show on the map</button>
@@ -603,8 +641,20 @@ export default function Imagery() {
                                     />
                                 </div>
                             )}
-                            {liveRadar && sar.loading && <Loading size={20} inline label="Fetching the radar pass and looking for ships — up to a minute the first time" style={{ padding: 16 }} />}
-                            {liveRadar && sar.error && <div style={{ padding: 16, color: "var(--txt3)" }}>{sar.error}</div>}
+                            {liveRadar && sar.loading && (
+                                <div data-sar-state="loading" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "var(--glass2)" }}>
+                                    <Loading size={20} inline label="Fetching the Sentinel-1 radar pass and looking for ships — up to a minute the first time" style={{ padding: 16 }} />
+                                </div>
+                            )}
+                            {liveRadar && sar.error && (
+                                <div data-sar-state="error" role="alert" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", padding: 24 }}>
+                                    <div style={{ maxWidth: 460, textAlign: "center", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+                                        <div style={{ fontWeight: 600 }}>The radar image could not be loaded</div>
+                                        <div style={{ color: "var(--txt3)", fontSize: 12.5, textWrap: "pretty" }}>{sar.error}</div>
+                                        <button onClick={() => setSarTry((n) => n + 1)} style={BTN}>Try again</button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* The comparison as a slider: how much of each image shows. */}
@@ -973,7 +1023,39 @@ const areaKm = (z) => {
     return `${w.toFixed(w < 10 ? 1 : 0)} × ${h.toFixed(h < 10 ? 1 : 0)} km`
 }
 
-const AREA_GRID = "1.6fr .9fr .7fr 1fr .7fr auto"
+const AREA_GRID = "1.6fr .9fr .7fr 1fr .9fr auto"
+
+/** The red dot: this zone's latest scans found something new (zone_change.py). */
+function FreshDot({ on, size = 8 }) {
+    if (!on) return null
+    return <i data-fresh-dot aria-label="new finding" style={{ width: size, height: size, borderRadius: "50%", background: "var(--red)", flex: "none", display: "inline-block", boxShadow: "0 0 0 3px color-mix(in srgb, var(--red) 22%, transparent)" }} />
+}
+
+/** "● 2 last · 5 in 7 d" — what a zone's scans found, with the finding as the tooltip. */
+function FindingBadge({ zone }) {
+    const f = zoneFinding(zone)
+    const tip = [f.text, f.radar?.headline && `Radar change: ${f.radar.headline}`].filter(Boolean).join("\n")
+    if (!f.fresh && !f.week && !f.radar) return <span style={{ fontSize: 11, color: "var(--txt4)" }}>nothing found</span>
+    return (
+        <span data-finding-badge title={tip || undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: f.fresh ? "var(--red)" : "var(--txt3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+            <FreshDot on={f.fresh} size={7} />
+            {f.fresh ? (f.kind === "radar_change" ? "radar change" : `${f.count} new`) : null}
+            {f.fresh && (f.last || f.week) ? " · " : ""}
+            {f.last || f.week ? `${f.last} last · ${f.week} in 7 d` : (!f.fresh && f.radar ? "radar: nothing new" : "")}
+        </span>
+    )
+}
+
+/** Group/subgroup roll-up: "2 with new findings · 14 detections in 7 days". */
+function RollUp({ fresh, week }) {
+    if (!fresh && !week) return null
+    return (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: fresh ? "var(--red)" : "var(--txt3)" }}>
+            <FreshDot on={fresh > 0} size={7} />
+            {fresh ? `${fresh} with new findings` : ""}{fresh && week ? " · " : ""}{week ? `${week} detection${week === 1 ? "" : "s"} in 7 days` : ""}
+        </span>
+    )
+}
 
 /** POST to the overwatch API; throws with the server's own reason. */
 async function owPost(path, body) {
@@ -999,7 +1081,13 @@ async function owPost(path, body) {
 function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
     const [editing, setEditing] = useState(null)
     const [draft, setDraft] = useState({})
-    const tree = useMemo(() => buildZoneTree(zones), [zones])
+    // "With findings first" is the default: the point of the list is where
+    // something was detected (owner, 2026-10-11). "Only with findings" filters.
+    const [findingsFirst, setFindingsFirst] = useState(true)
+    const [onlyFindings, setOnlyFindings] = useState(false)
+    const tree = useMemo(() => buildZoneTree(onlyFindings ? safeArray(zones).filter((z) => isProposal(z) || hasFindings(z)) : zones, { findingsFirst }),
+        [zones, findingsFirst, onlyFindings])
+    const freshTotal = useMemo(() => safeArray(zones).filter((z) => zoneFinding(z).fresh).length, [zones])
     // Groups start open when small or when they hold proposals to decide on.
     const [closed, setClosed] = useState({})
     const isOpen = (key, dflt) => (key in closed ? !closed[key] : dflt)
@@ -1127,12 +1215,12 @@ function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
                     </>
                 ) : (
                     <>
-                        <button onClick={() => onOpen(z.system_id)} title={m.reason || z.description || ""} style={{
+                        <button onClick={() => onOpen(z.system_id)} title={zoneFinding(z).text || m.reason || z.description || ""} style={{
                             border: 0, background: "transparent", color: "var(--txt)",
                             font: "inherit", fontWeight: 600, textAlign: "left",
-                            cursor: "pointer", padding: 0, minWidth: 0,
+                            cursor: "pointer", padding: 0, minWidth: 0, display: "flex", alignItems: "center", gap: 7,
                             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>{z.name}</button>
+                        }}><FreshDot on={zoneFinding(z).fresh} /><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{z.name}</span></button>
                         <span style={{ color: "var(--txt2)" }}>{z.aoi_class}</span>
                         <span style={{ fontFamily: "var(--mz-font-mono)", color: "var(--txt2)" }}>
                             {z.aoi_class === "sweep_plan" ? "—" : `${z.scan_interval_hours}h`}
@@ -1140,8 +1228,11 @@ function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
                         <span style={{ color: "var(--txt2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {z.aoi_class === "sweep_plan" ? "radar, tile by tile" : `optical + radar · ${areaKm(z)}`}
                         </span>
-                        <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt3)" }}>
-                            {z.last_scanned_at ? fmtDate(z.last_scanned_at) : "never"}
+                        <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: "var(--txt3)" }}>
+                                {z.last_scanned_at ? fmtDate(z.last_scanned_at) : "never"}
+                            </span>
+                            {z.aoi_class !== "sweep_plan" && <FindingBadge zone={z} />}
                         </span>
                         <span style={{ display: "flex", gap: 4 }}>
                             {z.aoi_class === "sweep_plan" ? (
@@ -1166,12 +1257,19 @@ function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", border: "1px solid var(--gline)" }} data-testid="areas-tree">
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid var(--gline)", flexWrap: "wrap" }}>
+                <RollUp fresh={freshTotal} week={0} />
+                {!freshTotal && <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>No new findings in the last 72 hours</span>}
+                <div style={{ flex: 1 }} />
+                <button onClick={() => setFindingsFirst((v) => !v)} aria-pressed={findingsFirst} style={{ ...SMALL, background: findingsFirst ? ON : "transparent" }}>With findings first</button>
+                <button onClick={() => setOnlyFindings((v) => !v)} aria-pressed={onlyFindings} style={{ ...SMALL, background: onlyFindings ? ON : "transparent" }}>Only with findings</button>
+            </div>
             <div style={{
                 display: "grid", gridTemplateColumns: AREA_GRID,
                 gap: 12, padding: "9px 14px 9px 34px", borderBottom: "1px solid var(--gline)", ...EYE,
             }}>
                 <span>Area</span><span>Class</span><span>Every</span>
-                <span>Sensors · size</span><span>Last pass</span><span />
+                <span>Sensors · size</span><span>Last pass · found</span><span />
             </div>
             {tree.map((g) => {
                 const gOpen = isOpen(g.group, g.proposed > 0 || g.count <= 12 || g.group === focusGroup)
@@ -1184,6 +1282,7 @@ function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
                                 <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>
                                     {g.count - g.proposed} watched{g.proposed ? ` · ${g.proposed} proposed` : ""}
                                 </span>
+                                <RollUp fresh={g.fresh} week={g.week} />
                             </button>
                             {g.proposed > 0 && g.group !== "Other" && (
                                 <span style={{ display: "flex", gap: 4, flex: "none" }}>
@@ -1207,6 +1306,7 @@ function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
                                                 {s.zones.length - s.proposed && s.proposed ? " · " : ""}
                                                 {s.proposed ? `${s.proposed} proposed` : ""}
                                             </span>
+                                            <RollUp fresh={s.fresh} week={s.week} />
                                         </button>
                                         {s.proposed > 0 && g.group !== "Other" && (
                                             <span style={{ display: "flex", gap: 4, flex: "none" }}>
@@ -1224,6 +1324,9 @@ function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
                     </div>
                 )
             })}
+            {onlyFindings && zones.length > 0 && !tree.length && (
+                <div style={{ padding: 16, fontSize: 12.5, color: "var(--txt3)" }}>No area has findings in the last 7 days.</div>
+            )}
             {!zones.length && (
                 <div style={{ padding: 16, fontSize: 12.5, color: "var(--txt3)", textWrap: "pretty" }}>
                     No areas are being watched. Generate overwatch zones for a conflict above, or draw an

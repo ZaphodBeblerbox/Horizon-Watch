@@ -17,6 +17,7 @@ import "leaflet/dist/leaflet.css"
 import { useMine, usePoll, arr } from "../useMine.js"
 import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
+import { drawVesselThreat } from "./MVesselThreat.jsx"
 import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { PHONE_LAYERS, layerGroups } from "../mapLayers.js"
@@ -88,6 +89,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const [open, setOpen] = useState(null)
     const [theater, setTheater] = useState("global")
     const [zoom, setZoom] = useState(2)
+    const threat = useRef(null)            // the vessel-of-concern live view (MVesselThreat.jsx)
+    const [threatOn, setThreatOn] = useState(false)
     const mine = useMine()
 
     // the map itself, once
@@ -164,9 +167,19 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             for (const f of feats[l.key] || []) {
                 if (l.kind === "areas") {
                     if (!f.rings) continue
-                    const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, interactive: !!f.title })
+                    const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, interactive: !!f.title, className: f.className })
                     if (f.title) a.on("click", tap(f, l))
                     a.addTo(g)
+                    // A count on the area (a zone with a fresh finding).
+                    if (f.badge && Number.isFinite(+f.badge.lat) && Number.isFinite(+f.badge.lon)) {
+                        const b = L.marker([+f.badge.lat, +f.badge.lon], {
+                            icon: L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11],
+                                              html: `<div class="m2-aoi-badge">${String(f.badge.text).slice(0, 3).replace(/[<>&"]/g, "")}</div>` }),
+                            keyboard: false, zIndexOffset: 400,
+                        })
+                        if (f.title) b.on("click", tap(f, l))
+                        b.addTo(g)
+                    }
                 } else if (l.kind === "lines") {
                     if (!f.coords) continue
                     const ln = L.polyline(f.coords, { color: f.color, weight: f.weight || 2, dashArray: f.dash || undefined, opacity: 0.85, interactive: !!f.title })
@@ -222,9 +235,18 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     // something elsewhere asked to be shown here
     useEffect(() => {
         if (!focus || !map.current || !Number.isFinite(+focus.lat)) return
+        // a vessel of concern, live: rings, trail, targets, line to the top one
+        if (focus.vesselThreat) {
+            if (!threat.current) threat.current = L.layerGroup().addTo(map.current)
+            const b = drawVesselThreat(L, threat.current, focus.vesselThreat)
+            setThreatOn(true)
+            if (b) map.current.fitBounds(b, { animate: true })
+            return
+        }
         map.current.setView([+focus.lat, +focus.lon], Math.max(map.current.getZoom(), 9), { animate: true })
         if (focus.headline || focus.title) setOpen(focus)
     }, [focus])
+    const clearThreat = () => { threat.current?.clearLayers(); setThreatOn(false) }
 
     const goTheater = (id) => {
         setTheater(id)
@@ -318,6 +340,12 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         {zoom < TRACK_ZOOM ? "Zoom in for ships and aircraft"
                             : [on.ships && `${ships.length} ships`, on.aircraft && `${planes.length} aircraft`].filter(Boolean).join(" · ")}
                     </div>
+                )}
+                {threatOn && (
+                    <button className="m2-btn ghost" onClick={clearThreat} data-testid="m2-threat-clear"
+                            style={{ position: "absolute", top: "calc(env(safe-area-inset-top, 0px) + 64px)", right: 12, zIndex: 500 }}>
+                        Close vessel view
+                    </button>
                 )}
                 {/* the widgets, round and labelled, along the bottom */}
                 <div className="m2-widgets">
