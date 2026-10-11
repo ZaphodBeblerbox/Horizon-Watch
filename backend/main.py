@@ -22986,11 +22986,14 @@ def _zones_visible(q, user: dict):
 
 
 def _zone_guard(request: Request, system_id: str):
-    """Route dependency: the zone in the path must be the caller's."""
+    """Route dependency: the zone in the path must be the caller's. A
+    superadmin may act on any zone (2026-10-11: zones owned by "operator" or
+    an old account could be seen in some lists but never deleted)."""
     from database import WatchZone, get_db
     user = _zone_user(request)
     with get_db() as db:
-        z = _zones_visible(db.query(WatchZone).filter(WatchZone.system_id == system_id), user).first()
+        q = db.query(WatchZone).filter(WatchZone.system_id == system_id)
+        z = (q if user.get("is_super_admin") else _zones_visible(q, user)).first()
     if not z:
         raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
 

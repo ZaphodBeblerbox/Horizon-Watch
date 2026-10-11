@@ -39,7 +39,8 @@ export function useMine() {
         loadPlaces().then((ps) => { if (live) setCountries(ps.filter((p) => p.kind === "country")) }).catch(() => {})
         const again = () => getJSON("/api/theaters").then((d) => { if (live) setTheaters(arr(d)) })
         window.addEventListener("akili:theater-created", again)
-        return () => { live = false; window.removeEventListener("akili:theater-created", again) }
+        window.addEventListener("akili:theater-deleted", again)
+        return () => { live = false; window.removeEventListener("akili:theater-created", again); window.removeEventListener("akili:theater-deleted", again) }
     }, [])
     const w = useMemo(() => watched(interests || {}, theaters || [], countries, assets || []), [interests, theaters, countries, assets])
     const iso2Name = useMemo(() => new Map(countries.filter((p) => p.iso2).map((p) => [String(p.iso2).toLowerCase(), p.name])), [countries])

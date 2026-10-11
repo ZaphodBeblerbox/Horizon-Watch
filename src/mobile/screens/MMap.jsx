@@ -21,6 +21,7 @@ import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { PHONE_LAYERS, layerGroups } from "../mapLayers.js"
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
+import { deleteTheater } from "../../lib/theatersApi.js"
 
 
 // Esri's public base maps, credited as their terms ask (CARTO's now want a key).
@@ -375,7 +376,19 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     <div className="m2-tiles">
                         {mine.theaters.map((t) => (
                             <button key={t.id} className="m2-tile" aria-pressed={theater === t.id} onClick={() => { goTheater(t.id); setSheet(null) }}>
-                                <i style={{ background: "var(--accdim)", border: "2px solid var(--acchi)" }} /><b>{t.name}</b><small />
+                                <i style={{ background: "var(--accdim)", border: "2px solid var(--acchi)" }} /><b>{t.name}</b>
+                                {/* DELETE A THEATER here too (owner, 2026-10-11) */}
+                                <small role="button" tabIndex={0} aria-label={`Delete ${t.name}`} data-testid="m2-theater-delete"
+                                       style={{ fontSize: 20, lineHeight: 1, padding: "2px 4px", color: "var(--txt3)" }}
+                                       onClick={async (e) => {
+                                           e.stopPropagation()
+                                           if (!window.confirm(`Delete the theater “${t.name}”? Anything you filed while watching it stays.`)) return
+                                           try {
+                                               await deleteTheater(t.id)
+                                               if (theater === t.id) goTheater("global")
+                                               window.dispatchEvent(new CustomEvent("akili:theater-deleted", { detail: { id: t.id } }))
+                                           } catch (err) { window.alert(`Could not delete it — ${err.message}`) }
+                                       }}>×</small>
                             </button>
                         ))}
                     </div>

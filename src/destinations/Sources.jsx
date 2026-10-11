@@ -87,11 +87,13 @@ import Loading from "../ui/Loading.jsx"
 
 const API = API_BASE
 
+// The sign-in travels on its own (the session cookie, or the desktop and web
+// app's bearer added by lib/desktopAuth.js). An Authorization header set here
+// — empty, or a stale token — overrode that, so every change was refused
+// (2026-10-11: zones could not be deleted). Only send one that exists.
 function forgeHeaders() {
-    return {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem("hw-auth-token") || ""}`,
-    }
+    const tok = localStorage.getItem("hw-auth-token")
+    return { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }
 }
 
 const inputStyle = {
@@ -458,7 +460,9 @@ function WatchAreasTab({ zones, reloadZones }) {
         reloadZones()
     }
     const deleteZone = async (zone) => {
-        await fetch(`${API}/api/watch-zones/${zone.system_id}`, { method: "DELETE", headers: forgeHeaders() }).catch(() => {})
+        if (!window.confirm(`Delete "${zone.name}"? Its scans and detections go with it.`)) return
+        const r = await fetch(`${API}/api/watch-zones/${zone.system_id}`, { method: "DELETE", headers: forgeHeaders(), credentials: "include" }).catch(() => null)
+        if (!r?.ok) { window.alert(`Could not delete "${zone.name}"${r ? ` (HTTP ${r.status})` : " — no connection"}.`); return }
         if (inspectingZoneId === zone.system_id) setInspectingZoneId(null)
         if (editingZoneId === zone.system_id) setEditingZoneId(null)
         reloadZones()

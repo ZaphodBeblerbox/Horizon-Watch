@@ -198,10 +198,8 @@ def delete_theater(theater_id: str, request: Request):
     me = _me(request)
     with get_db() as db:
         t = _own(db, theater_id, me["id"])
-        left = db.query(Theater).filter(Theater.owner_user_id == me["id"]).count()
-        if left <= 1:
-            raise HTTPException(status_code=400,
-                                detail="that is your last theater — the tab strip cannot be empty")
+        # ANY theater, the last one too (owner, 2026-10-11): Global is not a
+        # row and is always on the strip, so it is never left empty.
         db.delete(t); db.commit()
     return {"ok": True, "deleted": theater_id}
 

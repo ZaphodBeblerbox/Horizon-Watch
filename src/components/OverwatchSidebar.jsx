@@ -164,12 +164,18 @@ export default function OverwatchSidebar({
     useEffect(() => { setSentinelLoaded(false); setSentinelError(null) }, [bounds])
 
     // Load saved watch zones
-    useEffect(() => {
-        fetch(`${API_BASE}/api/watch-zones`)
-            .then(r => r.ok ? r.json() : [])
-            .then(data => setSavedZones(safeArray(data)))
-            .catch(() => {})
-    }, [])
+    const loadZones = () => fetch(`${API_BASE}/api/watch-zones`, { credentials: "include" })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setSavedZones(safeArray(data)))
+        .catch(() => {})
+    useEffect(() => { loadZones() }, [])
+    // DELETE A ZONE from here too (owner, 2026-10-11): its scans and detections go with it
+    const deleteZone = async (zone) => {
+        if (!window.confirm(`Delete "${zone.name}"? Its scans and detections go with it.`)) return
+        const r = await fetch(`${API_BASE}/api/watch-zones/${zone.system_id}`, { method: "DELETE", credentials: "include" }).catch(() => null)
+        if (!r?.ok) { window.alert(`Could not delete "${zone.name}"${r ? ` (HTTP ${r.status})` : " — no connection"}.`); return }
+        setSavedZones((zs) => zs.filter((z) => z.system_id !== zone.system_id))
+    }
 
     // Group filtered detections by category
     const filtered = detections.filter(d => {
@@ -616,6 +622,8 @@ export default function OverwatchSidebar({
                                         </div>
                                     )}
                                 </div>
+                                <button onClick={() => deleteZone(zone)} title="Delete this zone" aria-label={`Delete ${zone.name}`}
+                                        style={{ border: 0, background: "none", color: "rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 14, padding: "0 4px", lineHeight: 1 }}>×</button>
                             </div>
                         ))}
                     </div>
