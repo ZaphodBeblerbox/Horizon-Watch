@@ -25,12 +25,12 @@ self.addEventListener('push', (event) => {
             wins.forEach((w) => w.postMessage({ type: 'PUSH_WHILE_OPEN', id: data.id }))
             return
         }
-        // The Parallax X and the headline (event_watch.bundle). The system
-        // already names the app beside the icon ("from Parallax"), so the
-        // title is the headline itself, not "Parallax" a second time.
-        const headline = data.body || data.title || 'Parallax'
-        await self.registration.showNotification(headline, {
-            body: '',
+        // The system names the app beside the X ("from Parallax"), so the
+        // title says what KIND of notification it is and the text under it
+        // carries the headline and context (event_watch.label_for/body_for).
+        const title = data.title && data.title !== 'Parallax' ? data.title : 'Notification'
+        await self.registration.showNotification(title, {
+            body: data.body || '',
             icon: '/icon-192.png',
             badge: '/icon-192.png',
             tag: data.id || 'parallax',

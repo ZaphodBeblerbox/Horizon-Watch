@@ -388,20 +388,46 @@ def notifies(card: dict, c: dict) -> bool:
     return interrupts(card)
 
 
+# The notification's title: what kind of thing it is, in a few words —
+# the same names the app's own cards use (notificationStore.js KIND).
+KIND_LABEL = {"escalate": "Escalation", "assign": "Assigned to you", "rfi": "Request for information",
+              "telegram": "Telegram report", "surge": "Surge", "fusion": "Fusion point", "live": "On the ground now",
+              "livestream": "Live on Telegram", "announcement": "Announced", "asset": "Near your asset",
+              "confirm": "Confirmed", "detector": "Detector", "signal": "Signal"}
+
+
+def label_for(card: dict) -> str:
+    kind = card.get("kind") or "signal"
+    if card.get("sev") == "critical" and kind in ("signal", "detector", "confirm"):
+        return "Critical alert"
+    label = KIND_LABEL.get(kind, "Notification")
+    return f"Critical · {label}" if card.get("sev") == "critical" else label
+
+
+def body_for(card: dict) -> str:
+    """The headline, then its context (where, why) when that adds something."""
+    head = str(card.get("title") or "").strip()
+    ctx = str(card.get("reason") or card.get("region") or "").strip()
+    return (f"{head} — {ctx}" if ctx and ctx.lower() not in head.lower() else head)[:220]
+
+
 def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
     """(title, body, data) to send: the first PUSH_SINGLES as themselves,
     the rest as one summary, so a burst is one buzz, not twelve."""
     rank = {"critical": 0, "high": 1}
     cards = sorted(cards, key=lambda x: (rank.get(x.get("sev"), 2), str(x.get("created_at") or "")))
-    # WHAT A CLOSED APP SHOWS (owner, 2026-10-10): the Parallax X, the app's
-    # name and the headline — nothing else. The data says where a click goes.
-    out = [(APP_NAME, str(x["title"])[:180], {"id": x["id"], "kind": x.get("kind"), "severity": x.get("sev"),
+    # WHAT A CLOSED APP SHOWS (owner, 2026-10-11): the system already says
+    # "from Parallax" beside the X, so the title is only what KIND of
+    # notification it is ("Critical alert", "Telegram report") and the text
+    # under it carries the headline and its context. The data says where a
+    # click goes.
+    out = [(label_for(x), body_for(x), {"id": x["id"], "kind": x.get("kind"), "severity": x.get("sev"),
                                               "lat": x.get("lat"), "lon": x.get("lon"),
                                               "asset_id": x.get("asset_id"), "livestream_id": x.get("livestream_id")})
            for x in cards[:PUSH_SINGLES]]
     rest = cards[PUSH_SINGLES:]
     if rest:
-        out.append((APP_NAME, f"{len(rest)} more: " + "; ".join(str(x["title"])[:60] for x in rest[:2]) + (" …" if len(rest) > 2 else ""),
+        out.append((f"{len(rest)} more notifications", "; ".join(str(x["title"])[:60] for x in rest[:2]) + (" …" if len(rest) > 2 else ""),
                     {"id": "more:" + rest[0]["id"], "kind": "signal"}))
     return out
 

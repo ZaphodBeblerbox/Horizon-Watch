@@ -19,7 +19,7 @@
  * opened (app.jsx, plx:open-notification).
  */
 import { isDesktop } from "../apiBase.js"
-import { setOffScreenHandler } from "../state/notificationStore.js"
+import { setOffScreenHandler, KIND } from "../state/notificationStore.js"
 
 const KEY = "plx-desktop-notify"
 const CLICK_WINDOW_MS = 2 * 60_000
@@ -35,10 +35,23 @@ function openLastOnReturn() {
     } }))
 }
 
-/** The notification's text: the headline only. */
+/** The notification: macOS already shows "Parallax" beside the X, so the
+ *  title is what kind of notification it is and the text is the headline
+ *  with its context — the same as the phone (event_watch.label_for). */
+// the same words as the phone's push (backend/event_watch.py KIND_LABEL)
+const LABEL = { escalate: "Escalation", assign: "Assigned to you", rfi: "Request for information", telegram: "Telegram report",
+                surge: "Surge", fusion: "Fusion point", live: "On the ground now", livestream: "Live on Telegram",
+                announcement: "Announced", asset: "Near your asset", confirm: "Confirmed", detector: "Detector", signal: "Signal" }
+
 export function nativeContent(item) {
+    const kind = LABEL[item?.kind] || KIND[item?.kind]?.name || "Notification"
+    const crit = item?.sev === "critical"
+    const title = crit && ["signal", "detector", "confirm"].includes(item?.kind) ? "Critical alert" : crit ? `Critical · ${kind}` : kind
+    const head = String(item?.title || "").trim()
+    const ctx = String(item?.sub || "").trim()
+    const body = ctx && !head.toLowerCase().includes(ctx.toLowerCase()) ? `${head} — ${ctx}` : head
     // the system's notification sound with it (macOS: a named system sound)
-    return { title: "Parallax", body: String(item?.title || "").slice(0, 220), sound: "Ping" }
+    return { title, body: body.slice(0, 220), sound: "Ping" }
 }
 
 export function desktopNotifyOn() {
@@ -67,7 +80,7 @@ export async function enableDesktopNotify() {
         installNativeNotify()
         // one now: it registers Parallax with macOS (System Settings ›
         // Notifications lists it from then on) and shows that it works
-        try { await nativeSend({ title: "Parallax", body: "Notifications are on — they arrive when Parallax is in the background or closed." }) }
+        try { await nativeSend({ title: "Notifications are on", body: "They arrive when Parallax is in the background or closed." }) }
         catch (e) { return { ok: false, error: `macOS refused it: ${e?.message || e}` } }
         return { ok: true }
     } catch (e) {
@@ -102,7 +115,7 @@ export async function testNativeNotify(delayMs = 5000) {
     if (!isDesktop()) return { ok: false, error: "not the desktop app" }
     await new Promise((ok) => setTimeout(ok, delayMs))
     try {
-        await nativeSend(nativeContent({ title: "Test notification — notifications reach this Mac." }))
+        await nativeSend({ title: "Test notification", body: "Notifications reach this Mac." })
         return { ok: true }
     } catch (e) {
         return { ok: false, error: e?.message || String(e) }

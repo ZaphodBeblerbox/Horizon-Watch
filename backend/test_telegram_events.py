@@ -159,9 +159,9 @@ def test_push_goes_once(monkeypatch, tmp_path):
     sent = []
     send = lambda uid, title, body, data: sent.append((uid, title, body))  # noqa: E731
     assert ew.sweep(send) == 1 and ew.sweep(send) == 0
-    # a closed app shows the app's name and the headline only (owner, 2026-10-10)
-    assert sent[0][1] == "Parallax"
-    assert sent[0][2] == "Police are kettling protesters on Boulevard Saint-Germain"
+    # the title is the kind (the system names the app); the headline and its context below (owner, 2026-10-11)
+    assert sent[0][1] == "On the ground now"
+    assert sent[0][2] == "Police are kettling protesters on Boulevard Saint-Germain — in your theater Paris"
 
 
 def test_push_follows_the_same_rule_as_the_screen():
@@ -189,4 +189,4 @@ def test_the_shared_feed_buzzes_only_where_this_user_looks():
 def test_a_burst_is_two_pushes_and_a_summary():
     cards = [{"id": f"c{i}", "title": f"Place {i} changed hands", "sev": "high", "created_at": f"2026-10-10T00:0{i}:00Z"} for i in range(6)]
     out = ew.bundle(cards)
-    assert len(out) == 3 and out[2][0] == "Parallax" and out[2][1].startswith("4 more: Place 2 changed hands")
+    assert len(out) == 3 and out[2][0] == "4 more notifications" and out[2][1].startswith("Place 2 changed hands")

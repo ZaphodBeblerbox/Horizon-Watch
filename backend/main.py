@@ -1592,7 +1592,7 @@ def api_push_test(request: Request):
     notification that never arrives can be told apart from one never sent."""
     user = _require_current_user(request)
     # sent even to a device with the app open: the test is pressed from inside it
-    rep = _send_push(str(user["id"]), "Parallax", "Test notification — notifications reach this device.",
+    rep = _send_push(str(user["id"]), "Test notification", "Notifications reach this device.",
                      {"id": f"test:{int(time.time())}", "kind": "system"}, skip_open=False)
     return {"devices": len(rep), "report": rep}
 
