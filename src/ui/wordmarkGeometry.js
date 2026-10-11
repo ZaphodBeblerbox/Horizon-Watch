@@ -23,7 +23,10 @@ export const LETTER_PATHS = [
     "M103.24 21.3 L108.8 1.3 H111.2 L116.76 21.3",                                                     // A
 ]
 export const X_PATHS = ["M121.2 0 L134.8 21.3", "M134.8 0 L121.2 21.3"]
-export const ECHO_PATHS = ["M139 0 L131.15 12.3", "M143.2 0 L139.18 6.3"]
+// The stripes in the app icon's proportion (public/favicon.svg): the first
+// runs half the X's height, the second a quarter (owner, 2026-10-11: the
+// first was too long — 58% and 30% — and did not match the logo).
+export const ECHO_PATHS = ["M139 0 L132.2 10.65", "M143.2 0 L139.8 5.33"]
 
 /* EVERY RENDERING CUTS THE STROKES AT THE TWO LINES (2026-10-10: "PARALLAX
    still looks misaligned"). A butt-capped diagonal ends square to itself,
