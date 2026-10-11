@@ -80,6 +80,12 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
                     </span>
                 </div>
                 <div style={{ fontSize: 15, lineHeight: 1.45, marginTop: 3, color: "var(--txt)", overflowWrap: "anywhere" }}>{it.headline}</div>
+                {it.kind === "geoconfirmed" && (it.faction || it.event_date) && (
+                    <div data-testid="gc-meta" style={{ fontSize: 12.5, marginTop: 3, color: "var(--txt4)" }}>
+                        {/* GeoConfirmed files civilian and infrastructure pins under "Neutral": not a side */}
+                        {[it.faction && !/^(neutral|unknown)/i.test(it.faction) && `Side: ${it.faction}`, it.event_date && `Event of ${it.event_date}`].filter(Boolean).join(" · ")}
+                    </div>
+                )}
                 {it.text && <div style={{ fontSize: 14, lineHeight: 1.5, marginTop: 4, color: "var(--txt2)", overflowWrap: "anywhere",
                                           display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.text}</div>}
                 {it.kind === "telegram" && (it.media === "video" || it.media === "photo") && (

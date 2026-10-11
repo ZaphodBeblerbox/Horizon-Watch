@@ -113,3 +113,62 @@ def test_own_source_rule():
     assert g.is_own_source("geoconfirmed") and g.is_own_source("FIRMS") and g.is_own_source("AIS")
     assert not g.is_own_source("gdelt") and not g.is_own_source("rss:reuters") and not g.is_own_source("News API")
     assert g.is_news("surge", "surge_volume_surge") and not g.is_news("SAT-TASK", "Imagery signal")
+
+
+def _flood(p, n_tg=120, n_gc=20, n_sig=20):
+    """Production's shape: Telegram every minute, GeoConfirmed and alerts a few an hour."""
+    c = sqlite3.connect(p)
+    c.executemany("INSERT INTO telegram_posts VALUES (?,?,?,?,?,'','',NULL,NULL,'Kharkiv','ua',?,?,'strike','local',0,1,NULL)",
+                  [("tg", 100 + i, "TG", f"2026-10-11T{12 + (59 - i % 60) // 60 + (1 - i // 60)}:{59 - i % 60:02d}:00+00:00",
+                    f"Telegram report {i} about item{i}", 40 + i, 20 + i) for i in range(n_tg)])
+    c.executemany("INSERT INTO geoconfirmed_placemarks (id, title, description, date, latitude, longitude, faction, original_source, theatre_slug,"
+                  " ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  [(f"m{i}", f"Verified strike number{i}", "", "2026-10-11", -10 - i, -10 - i, "Russia",
+                    f"https://x.com/gc/status/{9000 + i}", "ukraine", f"2026-10-11 {11 - i // 4:02d}:{(i % 4) * 15:02d}:00.{i:06d}") for i in range(n_gc)])
+    c.executemany("INSERT INTO alerts (alert_id, alert_type, title, severity, lat, lon, region, country_code, source, created_at)"
+                  " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  [(f"s{i}", "Heat", f"Heat signal place{i}", "high", 60 + i, 100 + i, "R", "ru", "firms", f"2026-10-11 {11 - i // 4:02d}:{(i % 4) * 15 + 5:02d}:00.1")
+                   for i in range(n_sig)])
+    c.commit(); c.close()
+
+
+def test_fair_mix_shares_chronology_and_cursor(tmp_path):
+    """A page of All is never one kind: GeoConfirmed and alerts get their
+    share even when Telegram has a minute-by-minute flood; each page reads
+    newest first; paging on reaches every item once."""
+    p = _db(tmp_path)
+    _flood(p)
+    total = {"telegram": 121, "geoconfirmed": 21, "signal": 21}
+    seen, before, pages = [], None, 0
+    while pages < 30:
+        d = g.feed(p, before=before, limit=20)
+        items = d["items"]
+        pages += 1
+        if pages == 1:
+            kinds = [i["kind"] for i in items]
+            assert kinds.count("geoconfirmed") >= 5 and kinds.count("signal") >= 5      # 25% of 20
+            assert kinds.count("telegram") >= 5
+            assert items[0]["kind"] == "telegram"                                       # the newest still leads
+            gc = next(i for i in items if i["kind"] == "geoconfirmed")
+            assert gc["place"] == "Ukraine" and gc["faction"] == "Russia" and gc["x_url"]
+        ats = [i["at"] for i in items]
+        assert ats == sorted(ats, reverse=True)
+        seen += [x["id"] for i in items for x in [i, *(i.get("also") or [])]]
+        before = d["next"]
+        if not before:
+            break
+    assert before is None
+    got = set(seen)
+    for kind, n in total.items():
+        pre = {"telegram": "tg/", "geoconfirmed": "gc:", "signal": "sig:"}[kind]
+        assert len([s for s in got if s.startswith(pre) or (kind == "telegram" and s.startswith("chan/"))]) == n, kind
+
+
+def test_single_kind_and_old_cursor_still_work(tmp_path):
+    p = _db(tmp_path)
+    _flood(p)
+    d = g.feed(p, limit=10, kinds=("geoconfirmed",))
+    assert {i["kind"] for i in d["items"]} == {"geoconfirmed"} and len(d["items"]) == 10
+    assert d["next"].startswith("g=") and "t=" not in d["next"]
+    old = g.feed(p, before="2026-10-11T12:00:00", limit=10)                           # a plain time: every kind from there
+    assert old["items"] and all(i["at"] < "2026-10-11T12:00:00" for i in old["items"])

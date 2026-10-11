@@ -12522,13 +12522,16 @@ async def api_telegram_login_code(request: Request):
 
 
 @app.get("/api/x/post/{post_id}")
+@app.get("/api/xpost/{post_id}")
 async def api_x_post(post_id: str):
-    """An X post's author, text, photos and video, for our own frame (x_posts.py)."""
+    """An X post's author, text, photos and video, for our own frame
+    (x_posts.py: FxTwitter, then X's syndication, then vxTwitter; cached a
+    day, a miss an hour; at most 4 fetches at once, off the event loop)."""
     import x_posts as _xp
     post = await asyncio.get_event_loop().run_in_executor(_executor, _xp.fetch, post_id)
     if not post:
         raise HTTPException(status_code=404, detail="X does not give this post (deleted, protected, or not a post)")
-    return post
+    return JSONResponse(post, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.get("/api/x/video")
@@ -12539,9 +12542,10 @@ def api_x_video(u: str, request: Request):
     streams it on, Range and all, so seeking works. Only X's video host."""
     import requests as _rq
     from fastapi.responses import StreamingResponse
-    if not re.match(r"^https://video\.twimg\.com/[\w./%-]+(\?[\w=&%.-]*)?$", u or ""):
+    # also X's photo host, for a client whose image request X refuses (XPost.jsx retries through here)
+    if not re.match(r"^https://(?:video|pbs)\.twimg\.com/[\w./%-]+(\?[\w=&%.-]*)?$", u or ""):
         raise HTTPException(status_code=400, detail="not an X video")
-    headers = {"User-Agent": "Mozilla/5.0 (Parallax)"}
+    headers = {"User-Agent": "HorizonWatch/1.0 (+https://github.com/ZaphodBeblerbox/Horizon-Watch)"}
     rng = request.headers.get("range")
     if rng:
         headers["Range"] = rng

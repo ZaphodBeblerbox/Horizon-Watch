@@ -19,6 +19,7 @@ nothing scans a whole table.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 
@@ -171,6 +172,12 @@ def _signals(con, before: str, limit: int) -> list[dict]:
     return out
 
 
+# GeoConfirmed's theatre slugs, as a place a reader recognises
+_THEATRE = {"ukraine": "Ukraine", "israel": "Israel and Gaza", "cartel": "Mexico", "drc": "DR Congo", "iran": "Iran",
+            "myanmar": "Myanmar", "syria": "Syria", "yemen": "Yemen", "indpak": "India and Pakistan", "world": None,
+            "thailandcambodia": "Thailand and Cambodia", "afghanistan": "Afghanistan", "sahel": "Sahel", "sudan": "Sudan"}
+
+
 def _geoconfirmed(con, before: str, limit: int) -> list[dict]:
     try:
         rows = con.execute(
@@ -191,6 +198,7 @@ def _geoconfirmed(con, before: str, limit: int) -> list[dict]:
         out.append({"id": f"gc:{r['id']}", "kind": "geoconfirmed", "at": _iso(r["ingested_at"] or r["date"]), "event_date": str(r["date"] or "")[:10], "headline": head,
                     "text": text if text != head else "", "lat": r["latitude"], "lon": r["longitude"],
                     "source": "GeoConfirmed", "faction": r["faction"], "theatre": r["theatre_slug"], "precise": True,
+                    "place": _THEATRE.get(r["theatre_slug"] or "", str(r["theatre_slug"] or "").replace("-", " ").title() or None),
                     "x_url": x.group(0) if x else None,
                     "url": x.group(0) if x else (_URL.search(src).group(0) if _URL.search(src) else None)})
     return out
@@ -216,40 +224,103 @@ def _telegram(con, before: str, limit: int) -> list[dict]:
     return out
 
 
+# FAIR MIX (owner, 2026-10-12: "I don't see a single GeoConfirmed post in the
+# General desk"). Telegram publishes dozens of posts an hour, GeoConfirmed a
+# few dozen a day, so one newest-first cut gave 21 Telegram, 4 alerts and 2
+# GeoConfirmed out of 40. In the All view each kind is now guaranteed SHARE
+# of the page when it has events within MIX_WINDOW_H of the page's newest;
+# the rest of the page goes to whatever is newest. The page is then sorted
+# newest first. Because the kinds no longer advance at the same pace, the
+# cursor holds one position per kind ("s=…|g=…|t=…"), opaque to the client.
+SHARE = 0.25
+MIX_WINDOW_H = 72
+_CODE = {"signal": "s", "geoconfirmed": "g", "telegram": "t"}
+_TOP = "9999-12-31T23:59:59"
+_CUR = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?~?$")
+_READERS = {"signal": _signals, "geoconfirmed": _geoconfirmed, "telegram": _telegram}
+
+
+def _parse_cursor(before, kinds) -> dict:
+    """{kind: position} for the kinds still to read. A plain time (the old
+    cursor, or a link) starts every kind there; a kind missing from a
+    composite cursor is finished."""
+    if not before:
+        return {k: _TOP for k in kinds}
+    s = str(before)
+    if "=" not in s:
+        return {k: _iso(s) for k in kinds}
+    out = {}
+    for part in s.split("|"):
+        code, _, v = part.partition("=")
+        kind = next((k for k, c in _CODE.items() if c == code), None)
+        if kind in kinds and _CUR.match(v):
+            out[kind] = v
+    return out
+
+
+def _hours(a: str, b: str) -> float:
+    from datetime import datetime
+    try:
+        return abs((datetime.fromisoformat(a[:26]) - datetime.fromisoformat(b[:26])).total_seconds()) / 3600
+    except ValueError:
+        return 0.0
+
+
 def feed(db_path: str, before: str | None = None, limit: int = 40, kinds: tuple = KINDS) -> dict:
-    """Newest first across the sources, one card per event; `next` is the
-    cursor for the page after."""
+    """Newest first across the sources, one card per event, each kind given
+    its share of the page; `next` is the cursor for the page after."""
     limit = max(5, min(100, int(limit or 40)))
-    cursor = _iso(before) if before else "9999-12-31T23:59:59"
+    kinds = tuple(k for k in KINDS if k in kinds)
+    pos = _parse_cursor(before, kinds)
     con = _con(db_path)
     try:
-        fetched = []                                   # (items, was the source's page full?)
-        if "signal" in kinds:
-            got = _signals(con, cursor, limit)
-            fetched.append((got, len(got) >= limit))
-        if "geoconfirmed" in kinds:
-            got = _geoconfirmed(con, cursor, limit)
-            fetched.append((got, len(got) >= limit))
-        if "telegram" in kinds:
-            got = _telegram(con, cursor, limit)
-            fetched.append((got, len(got) >= limit))
+        fetched = {}                                   # kind -> (items, was the source's page full?)
+        for k, at in pos.items():
+            got = _READERS[k](con, at, limit)       # "…~" sorts just above that time
+            fetched[k] = (got, len(got) >= limit)
     finally:
         con.close()
-    # Complete only down to the oldest item of the source that filled its
-    # page: below that, that source may have more we did not read.
-    floor = max((min(i["at"] for i in got) for got, full in fetched if full and got), default="")
-    items = [i for got, _ in fetched for i in got if i["at"] >= floor]
-    more = any(full for _, full in fetched)
+    items = [i for got, _ in fetched.values() for i in got]
     events = event_cluster.cluster(items, source_of=_source_label)
     for e in events:
         if e.get("also"):
             e["at"] = max([e["at"], *(a["at"] or "" for a in e["also"])])    # sorted by the latest report
     events.sort(key=lambda x: x["at"], reverse=True)
-    page = events[:limit]
+
+    # Complete only down to the oldest item of a source that filled its
+    # page: below that, that source may have more we did not read. Reserved
+    # shares may reach below it; the rest of the page does not.
+    floor = max((min(i["at"] for i in got) for got, full in fetched.values() if full and got), default="")
+    chosen: list[dict] = []
+    if len(fetched) > 1 and events:
+        quota = math.ceil(limit * SHARE)
+        top = events[0]["at"]
+        for k in fetched:
+            mine = [e for e in events if e.get("kind") == k and _hours(top, e["at"]) <= MIX_WINDOW_H]
+            chosen += mine[:quota]
+    ids = {id(e) for e in chosen}
+    for e in events:
+        if len(chosen) >= limit:
+            break
+        if id(e) not in ids and e["at"] >= floor:
+            chosen.append(e)
+            ids.add(id(e))
+    page = sorted(chosen, key=lambda x: x["at"], reverse=True)
+
+    # Where each kind goes on from: just above its newest item not shown
+    # (so the next page starts with it), else below the oldest read if the
+    # source has more, else that kind is finished.
+    shown = {x["id"] for e in page for x in [e, *(e.get("also") or [])]}
+    nxt = []
+    for k, (got, full) in fetched.items():
+        unshown = [i["at"] for i in got if i["id"] not in shown]
+        if unshown:
+            nxt.append(f"{_CODE[k]}={max(unshown)}~")
+        elif full and got:
+            nxt.append(f"{_CODE[k]}={min(i['at'] for i in got)}")
     for e in page:
         e.pop("precise", None)
-    nxt = page[-1]["at"] if page and (len(events) > limit or more) else None
-    return {"items": page, "next": nxt}
+    return {"items": page, "next": "|".join(nxt) or None}
 
 
 def _source_label(d: dict) -> str:
