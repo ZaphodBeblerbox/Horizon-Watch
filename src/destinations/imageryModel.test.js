@@ -42,3 +42,23 @@ describe("change headline", () => {
         expect(g[0].label).toBe("vessel")
     })
 })
+
+import { pickInitialPass } from "./imageryModel.js"
+
+describe("pickInitialPass — what an area opens on", () => {
+    const opt = (id, day, img = true) => ({ scan_id: id, status: "completed", image_timestamp_utc: `2026-10-${day}T08:00:00`, instrument: "OPTICAL", has_image: img, created_at: `2026-10-${day}T09:00:00` })
+    const sar = (id, day, img = true, trig = "schedule") => ({ ...opt(id, day, img), instrument: "SAR", triggered_by: trig })
+    it("a radar-only area (a border-sweep find) opens on radar, not on 'not photographed yet'", () => {
+        expect(pickInitialPass([sar("s1", "10"), sar("c1", "11", false, "change-detect")])).toEqual({ sensor: "radar", scanId: "s1" })
+    })
+    it("the newest optical pass that still holds its image, over a newer one that lost it", () => {
+        expect(pickInitialPass([opt("o2", "11", false), opt("o1", "09")])).toEqual({ sensor: "optical", scanId: "o1" })
+    })
+    it("the pass a notification asked for, on its own sensor", () => {
+        expect(pickInitialPass([opt("o1", "09"), sar("s1", "10")], "s1")).toEqual({ sensor: "radar", scanId: "s1" })
+        expect(pickInitialPass([opt("o1", "09"), sar("s1", "10")], "o1")).toEqual({ sensor: "optical", scanId: "o1" })
+    })
+    it("nothing at all: optical, no pass", () => {
+        expect(pickInitialPass([])).toEqual({ sensor: "optical", scanId: null })
+    })
+})

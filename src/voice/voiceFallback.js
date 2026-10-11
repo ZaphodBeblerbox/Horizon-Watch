@@ -96,6 +96,10 @@ export function stepToAction(st, ctx) {
             return { action: { type: "sweep", action: s.action, conflict: s.conflict }, label: `Border sweep: ${s.action}` }
         case "generate_briefing":
             return { action: { type: "generate_briefing", basketId: ctx?.activeBasketId }, label: "Generating" }
+        case "watch_place":
+            // the words only: the server finds the place in our own data
+            return { action: { type: "watch_place", query: s.place, place: s.place, sizeKm: s.size_km ?? null },
+                     label: `Watch area around ${s.place}` }
         default:
             return null
     }

@@ -291,7 +291,40 @@ const ok = (raw, actions, needsConfirm = false) =>
 const unsure = (raw, problem, actions = []) =>
     ({ actions, confident: false, needsConfirm: true, problem, raw })
 
+/* "a watch area around King Fahd Airport": ONE place, a singular area. The
+   plural ("watch zones for Ukraine") and "overwatch" are the conflict-wide
+   generator below; this must not take those. */
+const WATCH_PLACE = {
+    test: (t) => !/\boverwatch\b|\b(zones|areas)\b/.test(t)
+        && (/\b(watch(ing)? (area|zone|box|region)|satellite (watch|area|zone)|imagery (area|zone)|area to watch)\b[^.]*\b(around|over|at|near|on|of|for)\b/.test(t)
+            || /\b(watch|monitor|keep an eye on)\b[^.]*\bwith (the )?satellites?\b/.test(t)),
+}
+/** The place as said, for the label (the server parses the sentence itself). */
+function watchPlaceText(raw) {
+    const m = [...String(raw).matchAll(/\b(?:around|over|near|at|of|on|for)\s+(?:the\s+)?(.+?)(?:\s+with\b.*|\s*,.*|\s+\d+(?:[.,]\d+)?\s*(?:km|kilomet\w*)\b.*)?$/gi)]
+    const last = m[m.length - 1]
+    return (last ? last[1] : raw).replace(/\b(with (the )?satellites?|please|now)\b/gi, "")
+        .replace(/^\s*(please\s+)?(watch|monitor|keep an eye on)\s+(the\s+)?/i, "").replace(/[.!?]+$/, "").trim()
+}
+
 const RULES = [
+    /* ── "GENERATE A WATCH AREA AROUND KING FAHD AIRPORT" ────────────
+       One place, resolved by the server against our airports, ports and
+       gazetteer (GET /api/voice/resolve-place) — never a guessed
+       coordinate — and created as an Imagery area sized by what the place
+       is. Above the overwatch generator, which wants a conflict. */
+    {
+        name: "watch_place",
+        test: WATCH_PLACE,
+        build: (t, raw) => {
+            const place = watchPlaceText(raw)
+            const m = t.match(/(\d+(?:\.\d+)?)\s*(?:km|kilomet\w*)\b/)
+            const sizeKm = m ? Math.max(1, Math.min(50, +m[1])) : null
+            return place && place.length > 1
+                ? ok(raw, [{ type: "watch_place", query: raw, place, sizeKm }])
+                : unsure(raw, "Around which place? Say \u201ca watch area around King Fahd Airport\u201d.")
+        },
+    },
     /* ── "GENERATE OVERWATCH ZONES FOR UKRAINE" ──────────────────────
        Proposes zones (backend/overwatch.py) — nothing is scanned until
        the analyst accepts them on the Imagery page, so it needs no

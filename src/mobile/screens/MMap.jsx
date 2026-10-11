@@ -25,6 +25,7 @@ import EndangeredCountryChips, { useEndangeredCountries } from "../../components
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
+import { attachFindings } from "../findingsLeaflet.js"
 import CountryFlag from "../../components/CountryFlag.jsx"
 import { trackCountry } from "../../lib/icaoCountry.js"
 
@@ -113,6 +114,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         tracks.current = L.layerGroup().addTo(map.current)
         setBounds(map.current.getBounds())
     }, [])
+    // what the automatic watch found, as boxes (a finding's notification puts them on show)
+    useEffect(() => attachFindings(L, map.current), [])
     // visible again after another tab: Leaflet must re-measure
     useEffect(() => { if (active && map.current) setTimeout(() => map.current.invalidateSize(), 60) }, [active])
     useEffect(() => {

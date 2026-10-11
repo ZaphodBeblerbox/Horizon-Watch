@@ -1,0 +1,13 @@
+{
+  "_note": "Candidate rows as routers/voice_ai._place_candidates returns them (airports from OurAirports, ports from port_boundaries). King Fahd International is the real row ARPT-31028 of the local airports table; the air base and the port are the namesakes the resolver must rank below it.",
+  "candidates": [
+    {"kind": "airport", "name": "King Fahd Air Base", "lat": 21.4834, "lon": 40.5435, "type": "medium_airport",
+     "codes": ["OETF", "TIF"], "code": "OETF", "where": "Taif", "source": "airports"},
+    {"kind": "airport", "name": "King Fahd International Airport", "lat": 26.4691, "lon": 49.798209, "type": "large_airport",
+     "codes": ["OEDF", "DMM"], "code": "OEDF", "where": "Dammam", "source": "airports"},
+    {"kind": "port", "name": "King Fahd Industrial Port", "lat": 26.95, "lon": 49.68, "type": "L",
+     "where": "Saudi Arabia", "source": "ports"},
+    {"kind": "airport", "name": "King Khalid International Airport", "lat": 24.9576, "lon": 46.6988, "type": "large_airport",
+     "codes": ["OERK", "RUH"], "code": "OERK", "where": "Riyadh", "source": "airports"}
+  ]
+}

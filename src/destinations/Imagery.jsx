@@ -29,7 +29,8 @@ import { squareAround } from "../insight/respond.js"
 import {
     AOI_CLASSES, fmtDate, SceneComparison,
 } from "../components/imagery/sceneComparison.jsx"
-import { acquisitions, changeHeadline, countSeries, DET_COLORS, fmtDay, groupDetections, noun } from "./imageryModel.js"
+import { acquisitions, changeHeadline, countSeries, DET_COLORS, fmtDay, groupDetections, noun, pickInitialPass } from "./imageryModel.js"
+import { fetchFindings, findingCaption, findingOutlines as findingOutlinesFor, showFindings } from "../lib/findings.js"
 import { buildZoneTree, hasFindings, isBackground, isProposal, zoneFinding } from "./overwatchTree.js"
 import { hm } from "../utils/clock.js"
 
@@ -97,6 +98,7 @@ export default function Imagery() {
     const [mode, setMode] = useState("scene")
     const [against, setAgainst] = useState("prev")        // prev | hires | date:YYYY-MM-DD | pass:<scanId>
     const [compareImg, setCompareImg] = useState(null)    // {b64, label, date, loading, error}
+    const [compareTry, setCompareTry] = useState(0)
     const [dates, setDates] = useState([])
     const [context, setContext] = useState(null)
     const [fadeOpacity, setFadeOpacity] = useState(50)
@@ -182,19 +184,50 @@ export default function Imagery() {
     const freshCount = useMemo(() => safeArray(zones).filter((z) => !isBackground(z) && zoneFinding(z).fresh).length, [zones])
     const proposedCount = useMemo(() => safeArray(zones).filter(isProposal).length, [zones])
 
+    /* THE PASSES OF THE AREA ON SCREEN, AND ONLY THAT AREA (2026-10-12).
+       Switching areas used to leave the previous area's passes in place
+       until the new list arrived — the pass picker then chose one of the OLD
+       area's scans and its scene was fetched for the new area — and a slow
+       answer for the previous area could land after the new one. Each
+       request is numbered; only the latest is taken. A failed list says so. */
+    const scansReq = useRef(0)
+    const scanIdRef = useRef(scanId)
+    scanIdRef.current = scanId
+    const [scansErr, setScansErr] = useState(null)
     const loadScans = useCallback((zid) => {
+        const n = ++scansReq.current
         if (!zid) { setScans([]); return }
+        setScansErr(null)
         fetch(`${API_BASE}/api/watch-zones/${zid}/scans`, { credentials: "include" })
-            .then((r) => (r.ok ? r.json() : null))
+            .then(async (r) => { if (!r.ok) throw new Error(`the server answered ${r.status}`); return r.json() })
             .then((d) => {
+                if (n !== scansReq.current) return
                 const list = Array.isArray(d) ? d : safeArray(d?.scans)
                 setScans(list)
-                setScanId((cur) => (cur && list.some((s) => s.scan_id === cur) ? cur
-                    : acquisitions(list).find((p) => p.instrument !== "SAR")?.scanId || null))
+                const pick = pickInitialPass(list, scanIdRef.current)
+                if (pick.scanId && pick.scanId !== scanIdRef.current) setSensor(pick.sensor)
+                setScanId(pick.scanId)
             })
-            .catch(() => setScans([]))
+            .catch((e) => {
+                if (n !== scansReq.current) return
+                setScans([])
+                setScansErr(e instanceof TypeError ? "the server did not answer (network or server error)" : e.message)
+            })
     }, [])
-    useEffect(() => { loadScans(zoneId) }, [zoneId, loadScans])
+    useEffect(() => { setScans([]); loadScans(zoneId) }, [zoneId, loadScans])
+    // A NEW AREA'S FIRST PASS (a voice command, "Watch area" on a search
+    // result): the scan was started on creation and lands a minute or two
+    // later — look again every 20 s for ten minutes instead of leaving
+    // "not photographed yet" on screen until a reload.
+    const zoneCreated = safeArray(zones).find((z) => z.system_id === zoneId)?.created_at || null
+    const noPassYet = !scans.some((x) => x?.status === "completed")
+    useEffect(() => {
+        if (!zoneId || !noPassYet || !zoneCreated) return undefined
+        const ageMs = Date.now() - new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(zoneCreated) ? zoneCreated : `${zoneCreated}Z`).getTime()
+        if (!(ageMs < 10 * 60_000)) return undefined
+        const t = setInterval(() => loadScans(zoneId), 20_000)
+        return () => clearInterval(t)
+    }, [zoneId, noPassYet, zoneCreated, loadScans])
 
     // What to look for here — asked for first, because the imagery note is
     // written against it.
@@ -214,22 +247,55 @@ export default function Imagery() {
 
     // The scene, and — while the analyst's note is being written — a
     // re-read until it arrives.
+    /* THE SCENE, with a visible failure (2026-10-12). A failed read used to
+       be swallowed — the stage stayed empty under "Pick a pass." with no
+       reason and no retry, which is most of "the image sometimes doesn't
+       load". The note is then polled ALONE (?note_only=1): re-reading the
+       whole scene every 6 s re-sent one or two megabytes of image each time
+       and held a server worker while doing it. */
+    const [sceneErr, setSceneErr] = useState(null)
+    const [sceneTry, setSceneTry] = useState(0)
     useEffect(() => {
-        if (!scanId) { setScene(null); return undefined }
-        let live = true, timer = null, tries = 0
-        setLoadingScene(true); setScene(null); setSelectedDet(null)
-        const read = (first) => fetch(`${API_BASE}/api/imagery/scenes/${scanId}`, { credentials: "include" })
-            .then((r) => (r.ok ? r.json() : null))
+        if (!scanId) { setScene(null); setSceneErr(null); return undefined }
+        let live = true, timer = null, tries = 0, full = 0
+        const ctl = typeof AbortController !== "undefined" ? new AbortController() : null
+        setLoadingScene(true); setScene(null); setSelectedDet(null); setSceneErr(null)
+        const url = `${API_BASE}/api/imagery/scenes/${scanId}`
+        const pollNote = () => {
+            if (tries++ >= 15) return
+            timer = setTimeout(() => {
+                // A note not even requested yet (the area's context was not
+                // known at the first read) needs the full read to start it.
+                const fullRead = full < 2 && tries % 5 === 4
+                if (fullRead) full += 1
+                fetch(fullRead ? url : `${url}?note_only=1`, { credentials: "include" })
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((d) => {
+                        if (!live) return
+                        if (d?.note) setScene((cur) => (cur ? { ...cur, note: d.note, note_pending: false } : cur))
+                        else pollNote()
+                    })
+                    .catch(() => { if (live) pollNote() })
+            }, 6000)
+        }
+        fetch(url, { credentials: "include", signal: ctl?.signal })
+            .then(async (r) => {
+                const d = await r.json().catch(() => null)
+                if (!r.ok) throw new Error(typeof d?.detail === "string" ? d.detail : `the server answered ${r.status}`)
+                return d
+            })
             .then((d) => {
                 if (!live) return
-                if (first || d?.note) setScene((cur) => (first ? d : { ...cur, note: d.note, note_pending: false }))
-                if (d && !d.note && d.image_b64 !== null && tries++ < 15) timer = setTimeout(() => read(false), 6000)
+                setScene(d)
+                if (d && !d.note && d.image_b64) pollNote()
             })
-            .catch(() => {})
-            .finally(() => { if (live && first) setLoadingScene(false) })
-        read(true)
-        return () => { live = false; clearTimeout(timer) }
-    }, [scanId])
+            .catch((e) => {
+                if (!live || e?.name === "AbortError") return
+                setSceneErr(e instanceof TypeError ? "the server did not answer (network or server error)" : e.message)
+            })
+            .finally(() => { if (live) setLoadingScene(false) })
+        return () => { live = false; clearTimeout(timer); ctl?.abort() }
+    }, [scanId, sceneTry])
 
     const note = scene?.note || null
     const allChanges = useMemo(() => {
@@ -264,7 +330,7 @@ export default function Imagery() {
             })
             .catch((e) => { if (live) setCompareImg({ error: e.message }) })
         return () => { live = false }
-    }, [against, scene, zoneId])
+    }, [against, scene, zoneId, compareTry])
 
     const compareScene = useMemo(() => {
         if (!scene) return null
@@ -351,6 +417,31 @@ export default function Imagery() {
     const displayScene = liveRadar ? radarScene : compareScene
     const shown = liveRadar ? safeArray(sar.data?.changes) : changes
 
+    /* WHAT THE AUTOMATIC WATCH FOUND HERE (owner, 2026-10-12): border-sweep
+       finds, radar change regions, new objects — each a box on the ground
+       (GET /api/watch-zones/{id}/findings), drawn on whichever image of the
+       area is showing (every image of an area is laid on the area's own
+       frame), listed beside it, and put on the map with one click. */
+    const [findings, setFindings] = useState({ list: [], loading: false })
+    const [findTry, setFindTry] = useState(0)
+    useEffect(() => {
+        if (!zoneId) { setFindings({ list: [], loading: false }); return undefined }
+        let live = true
+        setFindings({ list: [], loading: true })
+        fetchFindings(zoneId)
+            .then((d) => { if (live) setFindings({ list: safeArray(d?.findings), loading: false }) })
+            .catch((e) => { if (live) setFindings({ list: [], loading: false, error: e.message }) })
+        return () => { live = false }
+    }, [zoneId, findTry])
+    const findingOutlines = useMemo(
+        () => (zone?.bbox ? findingOutlinesFor(findings.list, zone.bbox) : []),
+        [findings, zone])
+    const showFindingsOnMap = useCallback((focusId = null) => {
+        if (!findings.list.length) return
+        showFindings({ zoneId, findings: findings.list, title: zone?.name, focusId, fit: true })
+        window.dispatchEvent(new CustomEvent("akili:open-map"))
+    }, [findings, zoneId, zone])
+
     const exportPixels = useCallback(async () => {
         const b64 = scene?.image_b64
         if (!b64) { toast("No image to export", { icon: "i-alert" }); return }
@@ -404,12 +495,13 @@ export default function Imagery() {
             changes: allChanges, headline,
         }
         window.dispatchEvent(new CustomEvent("akili:map-show-scene", { detail: window.__plxMapScene }))
+        if (findings.list.length) showFindings({ zoneId: zone.system_id, findings: findings.list, title: zone.name })
         window.dispatchEvent(new CustomEvent("akili:open-map"))
         const spanKm = Math.max((b.max_lat - b.min_lat) * 111, (b.max_lon - b.min_lon) * 111 * Math.cos(((b.min_lat + b.max_lat) / 2) * Math.PI / 180))
         window.dispatchEvent(new CustomEvent("akili:fly-to", {
             detail: { lat: (b.min_lat + b.max_lat) / 2, lon: (b.min_lon + b.max_lon) / 2, altitude: Math.max(4000, spanKm * 1600) },
         }))
-    }, [scene, zone, allChanges, headline])
+    }, [scene, zone, allChanges, headline, findings])
 
     const deleteScene = useCallback(async () => {
         if (!zone || !scanId) return
@@ -541,7 +633,10 @@ export default function Imagery() {
                                 <h3 style={{ margin: "3px 0 0", fontWeight: 600, fontSize: 18, lineHeight: 1.3, letterSpacing: "-.01em", textWrap: "pretty" }}>
                                     {liveRadar
                                         ? (sar.data ? `Radar: ${shown.length} ${noun("vessel", shown.length)} on the water${sar.data.date ? ` on ${fmtDay(sar.data.date)}` : ""}.` : sar.error ? "No radar pass to show." : "Reading the radar pass…")
-                                        : loadingScene ? "Reading the pass…" : headline || (passes.length ? "Pick a pass." : "This area has not been photographed yet.")}
+                                        : loadingScene ? "Reading the pass…" : headline || (passes.length ? "Pick a pass."
+                                            : scans.some((x) => x?.status === "pending" || x?.status === "running") || (zone?.created_at && Date.now() - new Date(`${String(zone.created_at).replace(/Z$/, "")}Z`).getTime() < 10 * 60_000)
+                                                ? "The first satellite pass is on its way — this page shows it when it lands."
+                                                : "This area has not been photographed yet.")}
                                 </h3>
                                 {(() => {
                                     const f = zoneFinding(zone)
@@ -623,7 +718,7 @@ export default function Imagery() {
                                     when={displayScene.scan?.image_timestamp_utc} />
                                 {mode !== "scene" && (
                                     compareImg?.loading ? <span style={{ fontSize: 12, color: "var(--txt3)" }}>Loading the comparison…</span>
-                                    : compareImg?.error ? <span style={{ fontSize: 12, color: "var(--amber)" }}>Comparison unavailable — {compareImg.error}</span>
+                                    : compareImg?.error ? <span data-image-state="error" style={{ fontSize: 12, color: "var(--amber)" }}>Comparison unavailable — {compareImg.error} <button onClick={() => setCompareTry((n) => n + 1)} style={{ ...BTN, height: 22, fontSize: 11, padding: "0 8px" }}>Try again</button></span>
                                     : (against === "hires" ? compareImg?.date : displayScene.reference_date)
                                         ? <Stamp align="right" dim={mode === "blink" && blinkOn}
                                             label={`${against === "hires" ? "Sharp reference" : compareLabel?.split(" · ")[0] || "Comparison"}${mode === "split" ? " · right" : mode === "swipe" ? " · right of the handle" : ""}`}
@@ -639,13 +734,38 @@ export default function Imagery() {
                             {displayScene && fit.w > 0 && (
                                 <div style={{ position: "absolute", left: (fit.cw - fit.w) / 2, top: 0, width: fit.w, height: fit.h }}>
                                     <SceneComparison
-                                        scene={displayScene} view={view} showBoxes={showBoxes} changes={shown}
+                                        scene={displayScene} view={view} showBoxes={showBoxes} changes={[...shown, ...findingOutlines]}
                                         swipePos={pos} onSwipePos={setSwipePos}
                                         fadeOn={mode === "fade"} fadeOpacity={fadeOpacity}
                                         swipeHandle={mode === "swipe"} refLabel={compareLabel} stretch stamped
                                         clipRef={clipRef} fadeRef={fadeRef} viewerRef={viewerRef}
                                         onSelectDet={setSelectedDet} selectedDet={selectedDet}
                                     />
+                                </div>
+                            )}
+                            {!liveRadar && loadingScene && (
+                                <div data-image-state="loading" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "var(--glass2)" }}>
+                                    <Loading size={20} inline label="Loading the pass and its image" style={{ padding: 16 }} />
+                                </div>
+                            )}
+                            {!liveRadar && !loadingScene && (sceneErr || scansErr) && (
+                                <div data-image-state="error" role="alert" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", padding: 24 }}>
+                                    <div style={{ maxWidth: 460, textAlign: "center", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+                                        <div style={{ fontWeight: 600 }}>{sceneErr ? "This pass could not be loaded" : "The passes of this area could not be listed"}</div>
+                                        <div style={{ color: "var(--txt3)", fontSize: 12.5, textWrap: "pretty" }}>{sceneErr || scansErr}</div>
+                                        <button onClick={() => (sceneErr ? setSceneTry((n) => n + 1) : loadScans(zoneId))} style={BTN}>Try again</button>
+                                    </div>
+                                </div>
+                            )}
+                            {!liveRadar && !loadingScene && !sceneErr && !scansErr && !displayScene && findings.list.length > 0 && (
+                                <div data-image-state="none" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", padding: 24 }}>
+                                    <div style={{ maxWidth: 460, textAlign: "center", display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+                                        <div style={{ fontWeight: 600 }}>No image of this area is held yet</div>
+                                        <div style={{ color: "var(--txt3)", fontSize: 12.5, textWrap: "pretty" }}>
+                                            {findings.list.length} finding{findings.list.length === 1 ? "" : "s"} of the automatic watch {findings.list.length === 1 ? "is" : "are"} listed on the right; the first optical pass is on its way.
+                                        </div>
+                                        <button onClick={() => showFindingsOnMap()} style={PRIMARY}>Show the findings on the map</button>
+                                    </div>
                                 </div>
                             )}
                             {liveRadar && sar.loading && (
@@ -710,6 +830,32 @@ export default function Imagery() {
                                 {series.slice(0, 4).map((s) => (
                                     <CountChart key={s.label} s={s} selectedKey={pass?.key}
                                         onPick={(k) => { const p = passes.find((x) => x.key === k); if (p) setScanId(p.scanId) }} />
+                                ))}
+                            </div>
+                        )}
+                        {(findings.list.length > 0 || findings.error) && (
+                            <div data-findings-card={findings.list.length} style={{ ...CARD, borderColor: findings.list.some((f) => f.tone === "red") ? "var(--red)" : "var(--gline)" }}>
+                                <div style={{ padding: "10px 12px 6px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                                    <span style={EYE}>Found by the automatic watch</span>
+                                    {findings.list.length > 0 && <button onClick={() => showFindingsOnMap()} style={{ ...BTN, height: 24, fontSize: 11 }}>Show on the map</button>}
+                                </div>
+                                {findings.error && (
+                                    <div style={{ padding: "4px 12px 10px", fontSize: 12, color: "var(--amber)" }}>
+                                        Could not read them — {findings.error} <button onClick={() => setFindTry((n) => n + 1)} style={{ ...BTN, height: 22, fontSize: 11, padding: "0 8px" }}>Try again</button>
+                                    </div>
+                                )}
+                                {findingOutlines.map((o) => (
+                                    <button key={o.id} onClick={() => { setShowBoxes(true); setSelectedDet(o) }} style={{
+                                        display: "grid", gridTemplateColumns: "12px minmax(0,1fr)", gap: "2px 8px", alignItems: "center", width: "100%",
+                                        padding: "7px 12px", border: 0, borderTop: "1px solid var(--gline)", textAlign: "left", cursor: "pointer",
+                                        background: selectedDet?.id === o.id ? ON : "transparent", color: "var(--txt)", font: "inherit",
+                                    }}>
+                                        <i style={{ width: 10, height: 10, border: `2px ${o.estimate ? "dashed" : "solid"} ${o.color}` }} />
+                                        <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{findingCaption(o.finding)}</span>
+                                        <span style={{ gridColumn: 2, fontSize: 11, color: "var(--txt3)" }}>
+                                            {o.finding.sensor || "satellite"}{o.estimate ? " · size estimated from its area" : o.finding.box_source === "regions" ? " · extent rebuilt from its radar regions" : ""}
+                                        </span>
+                                    </button>
                                 ))}
                             </div>
                         )}

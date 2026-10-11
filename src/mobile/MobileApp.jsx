@@ -34,6 +34,7 @@ import SourceViewer from "../components/SourceViewer.jsx"
 import MNotifCards from "./screens/MNotifCards.jsx"
 import { openSignal, routeFor, setSignalSurface } from "../notify/openSignal.js"
 import { fetchVesselThreat } from "../state/vesselThreatStore.js"
+import { findingsForAlert, showFindings } from "../lib/findings.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
@@ -72,7 +73,8 @@ export default function MobileApp() {
             if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
             if (r.action === "asset") { go("assets", { asset: r.assetId }); return }
             const base = { id: r.alertId || r.id, alert_id: r.alertId || r.id, headline: r.title || "Signal", title: r.title, summary: r.sub,
-                           severity_tier: r.sev, lat: r.lat, lon: r.lon, mmsi: r.mmsi, entity_id: r.mmsi || undefined, alert_type: r.alertType, _route: r }
+                           severity_tier: r.sev, lat: r.lat, lon: r.lon, mmsi: r.mmsi, entity_id: r.mmsi || r.entityId || undefined, alert_type: r.alertType,
+                           entity_type: r.entityType || undefined, zone_id: r.zoneId || undefined, _route: r }
             setSig(base)
             if (r.alertId || r.id) {
                 fetch(`${API_BASE}/api/alerts/${encodeURIComponent(r.alertId || r.id)}`, { credentials: "include" })
@@ -100,6 +102,12 @@ export default function MobileApp() {
                 if (r.lat != null && r.lon != null) setFocus({ ...base, lat: r.lat, lon: r.lon, _t: Date.now() })
                 else go("alerts")
                 return
+            }
+            // an imagery finding: its boxes on the map (lib/findings.js, mobile/findingsLeaflet.js)
+            if (r.action === "finding") {
+                const { zoneId, findings } = await findingsForAlert(r.alert || { alert_id: r.alertId || r.id, alert_type: r.alertType,
+                    entity_type: r.entityType, entity_id: r.entityId, raw_json: { zone_id: r.zoneId } })
+                if (findings.length) { showFindings({ zoneId, findings, title: r.title, fit: true }); setTab("map"); return }
             }
             if (r.lat != null && r.lon != null) plainShowOnMap({ lat: r.lat, lon: r.lon, headline: r.title, id: r.alertId || r.id, severity_tier: r.sev })
             else go("alerts")

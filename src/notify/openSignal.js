@@ -27,6 +27,7 @@
  * without saying so.
  */
 import { ALERT_TYPE, isVesselThreatAlert, mmsiOf } from "../globe/vesselThreat.js"
+import { findingZoneOf, isFindingAlert } from "../lib/findings.js"
 
 const num = (v) => (v === null || v === undefined || v === "" || !Number.isFinite(+v) ? null : +v)
 
@@ -51,6 +52,8 @@ export function normalizeOpen(d) {
         alertType: d.alertType || d.alert_type || null,
         mmsi: d.mmsi || d.vessel || null,
         entityId: d.entityId || d.entity_id || null,
+        entityType: d.entityType || d.entity_type || null,
+        zoneId: d.zoneId || d.zone_id || findingZoneOf(d) || null,
         assetId: d.assetId || d.asset_id || null,
         livestreamId: d.livestreamId || d.livestream_id || null,
         inspect: d.inspect !== false,
@@ -69,6 +72,9 @@ export function routeFor(input) {
         const mmsi = n.mmsi ? String(n.mmsi) : mmsiOf(probe, n.alertId)
         if (mmsi) return { ...n, action: "vessel", mmsi: String(mmsi), alertType: n.alertType || ALERT_TYPE }
     }
+    // AN IMAGERY FINDING (owner, 2026-10-12): a border-sweep find, a radar
+    // change, an imagery signal — opened on what was found, drawn as boxes.
+    if (isFindingAlert(n)) return { ...n, action: "finding", zoneId: n.zoneId || findingZoneOf(n) || null }
     return { ...n, action: "signal" }
 }
 
@@ -106,6 +112,9 @@ export function fromAlertRow(n, row) {
         alertType: n.alertType || row.alert_type || null,
         mmsi: n.mmsi || raw.mmsi || (row.alert_type === ALERT_TYPE ? row.entity_id : null) || null,
         entityId: n.entityId || row.entity_id || null,
+        entityType: n.entityType || row.entity_type || null,
+        zoneId: n.zoneId || findingZoneOf(row) || null,
+        alert: row,
         lat: n.lat ?? num(row.lat), lon: n.lon ?? num(row.lon),
         title: n.title || row.title || "",
         sev: n.sev || row.severity || null,
@@ -164,6 +173,8 @@ export async function openSignal(input, { timeoutMs = 1500 } = {}) {
     // Not recognisably a vessel from what it carried: ask the alert itself.
     // (A known alert type that is not one needs no lookup.)
     if (r.action === "signal" && !r.alertType) r = routeFor(await resolve(r, timeoutMs)) || r
+    // A finding whose zone the notification did not carry: the alert says.
+    else if (r.action === "finding" && !r.zoneId) r = routeFor(await resolve(r, timeoutMs)) || r
     const fn = surfaces[surfaces.length - 1]
     if (fn) fn(r)
     else queued = r

@@ -145,10 +145,13 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
         w: scale * b[2] * imgW,
         h: scale * b[3] * imgH,
     })
-    const strokeFor = (c) => DET_COLORS[c.type] || DET_COLORS.existing
+    // A finding of the automatic watch (lib/findings.js) brings its own
+    // colour and caption — red: appeared, amber: went or changed.
+    const strokeFor = (c) => c.color || DET_COLORS[c.type] || DET_COLORS.existing
 
     // A caption earns its place by on-screen size; on a dense scene every
-    // box carrying one is an unreadable mass over the imagery.
+    // box carrying one is an unreadable mass over the imagery. A finding is
+    // always captioned: it is the thing the notification was about.
     const LABEL_MIN_PX = 44
 
     return (
@@ -160,13 +163,13 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
                 if (r.x + r.w < 0 || r.y + r.h < 0 || r.x > frameW || r.y > frameH) return null
                 const isSel = selectedDet?.id === c.id
                 const w = Math.max(r.w, 3), h = Math.max(r.h, 3)
-                const name = `${String(c.label || "").replace(/_/g, " ")} · ${Math.round(c.conf * 100)}%`
+                const name = c.caption || `${String(c.label || "").replace(/_/g, " ")} · ${Math.round(c.conf * 100)}%`
                 const shape = {
                     fill: isSel ? "rgba(0,229,255,0.18)" : "transparent",
                     stroke: c.doubtful ? "#B8BCC6" : strokeFor(c), strokeWidth: isSel ? 2.6 : 2,
                     // Dashed: gone since the last pass, doubted by the imagery
                     // note, or found by only one of the two models.
-                    strokeDasharray: c.type === "removed" || c.doubtful ? "4 3" : c.tier === "probable" ? "2 2" : undefined,
+                    strokeDasharray: c.type === "removed" || c.doubtful || c.estimate ? "4 3" : c.tier === "probable" ? "2 2" : undefined,
                     style: { pointerEvents: "auto", cursor: "pointer" },
                     onClick: (e) => { e.stopPropagation(); onSelectDet && onSelectDet(c) },
                 }
@@ -187,9 +190,11 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
                         {poly
                             ? <polygon points={poly} {...shape}><title>{name}</title></polygon>
                             : <rect x={r.x} y={r.y} width={w} height={h} {...shape}><title>{name}</title></rect>}
-                        {isSel || w >= LABEL_MIN_PX ? (
-                            <text x={r.x} y={r.y - 3}
-                                style={{ font: "400 9.5px var(--mono)", fill: "var(--txt)", paintOrder: "stroke",
+                        {isSel || w >= LABEL_MIN_PX || c.alwaysLabel ? (
+                            <text x={c.caption && r.x > frameW * 0.6 ? r.x + w : r.x} y={r.y - 3} data-finding-label={c.caption ? "" : undefined}
+                                textAnchor={c.caption && r.x > frameW * 0.6 ? "end" : "start"}
+                                style={{ font: c.caption ? "600 11px var(--font, -apple-system, sans-serif)" : "400 9.5px var(--mono)",
+                                         fill: c.caption ? strokeFor(c) : "var(--txt)", paintOrder: "stroke",
                                          stroke: "var(--bg-0, #000)", strokeWidth: 3 }}>
                                 {name}
                             </text>
@@ -264,6 +269,7 @@ function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
                         refDate, curDate, handle = true, stretch = false, showDates = true }) {
     const { scale, tx, ty, frameW, frameH } = useViewerView()
     const rootRef = useRef(null)
+    const [curBad, setCurBad] = useState(null)       // the src that failed to decode
     if (!frameW || !frameH) return null
     const x = (swipePos / 100) * frameW
 
@@ -300,11 +306,18 @@ function SwipeOverlay({ curSrc, swipePos, onSwipePos, fadeOn, fadeOpacity,
                                   transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
                                   transformOrigin: "0 0" }}>
                         <img src={curSrc} alt="current scene" draggable={false}
+                             onError={() => setCurBad(curSrc)} onLoad={() => setCurBad(null)}
                              style={{ display: "block", width: "100%", height: "100%",
                                       objectFit: stretch ? "fill" : "contain" }} />
                     </div>
                 </div>
             ) : null}
+            {curSrc && curBad === curSrc && (
+                <div data-image-state="error" role="alert" style={{ position: "absolute", left: 8, top: 8, fontSize: 12, padding: "4px 8px",
+                                                                   background: "var(--bg-0, rgba(0,0,0,.7))", color: "var(--txt2, #ccd)" }}>
+                    This pass's image did not decode — <button onClick={() => setCurBad(null)} style={{ border: 0, background: "none", color: "var(--acchi, #8ab4f8)", font: "inherit", cursor: "pointer", padding: 0 }}>try again</button>
+                </div>
+            )}
 
             <ScreenBoxes changes={changes} selectedDet={selectedDet}
                          onSelectDet={onSelectDet} arrowFor={arrowFor}

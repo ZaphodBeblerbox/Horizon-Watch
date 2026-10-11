@@ -89,6 +89,7 @@ rules in `voiceCommands.js` decide exactly as before, so offline still works.
 | turn on the heat layer / hide GDELT | `akili:voice-layer` in Situation; a child layer brings its group on; Undo restores |
 | zoom in / out | `akili:voice-zoom` in GlobeView |
 | generate overwatch zones for Ukraine / … for the Ukraine war | `POST /api/overwatch/generate` — proposals only (nothing scanned until accepted); opens Imagery on them; Undo deletes exactly those proposals |
+| generate a watch area around King Fahd Airport / … around the port of Tartus with 20 km | `watch_place` — rule first (no model call). `GET /api/voice/resolve-place` finds the place in OUR data (airports, ports, then the search box's geocoder; backend/place_resolve.py — the model only ever gives the words) and sizes the square by what it is (large airport 8 km, medium 5, small 3, port 6, city 15, other 5; a said size wins, 1-50 km). Several matches: the best is taken and named, the rest offered in the toast. `POST /api/watch-zones` creates it (first scan starts), `akili:zones-changed`, Imagery opens on it; Undo deletes it |
 | start / pause / stop the border sweep (in Ukraine) | `POST /api/overwatch/sweep/{start,pause,stop}`; no conflict named means Ukraine; Undo reverses it |
 | go to / explain / risk / message / note … | as before |
 

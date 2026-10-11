@@ -102,3 +102,27 @@ describe("openSignal — one route for every entry point", () => {
         expect(desktop).toHaveBeenLastCalledWith(expect.objectContaining({ alertId: "HEAT-3" }))
     })
 })
+
+describe("routeFor — an imagery finding opens on its boxes (2026-10-12)", () => {
+    it("a border-sweep push (Imagery signal, entity = the zone) routes to the finding", () => {
+        const r = routeFor({ eventId: "ALRT-9", alertType: "Imagery signal", entity_type: "sweep_finding", entity_id: "ZONE-061",
+                             lat: 52.0, lon: 29.2, headline: "Possible new vehicle or tent concentration 16 km inside Belarus" })
+        expect(r).toMatchObject({ action: "finding", zoneId: "ZONE-061", alertId: "ALRT-9" })
+    })
+    it("a radar change is recognised from its RCHG id alone", () => {
+        expect(routeFor({ id: "RCHG-ZONE-005-2026-10-11" })).toMatchObject({ action: "finding", zoneId: "ZONE-005" })
+    })
+    it("an imagery signal without its zone looks the alert up, and finds it there", async () => {
+        __resetSignalSurfaces()
+        const seen = []
+        setSignalSurface((x) => seen.push(x))
+        setAlertFetcher(async () => ({ alert_id: "IMG-1", alert_type: "Imagery signal", entity_type: "vessel",
+                                       raw_json: { zone_id: "ZONE-016", scan_id: "S1", kind: "naval_movement" } }))
+        const r = await openSignal({ id: "IMG-1", alertType: "Imagery signal" })
+        expect(r).toMatchObject({ action: "finding", zoneId: "ZONE-016" })
+        expect(seen[0].alert.raw_json.scan_id).toBe("S1")
+    })
+    it("heat stays a plain signal", () => {
+        expect(routeFor({ eventId: "HEAT-1", alertType: "Heat", lat: 1, lon: 2 }).action).toBe("signal")
+    })
+})

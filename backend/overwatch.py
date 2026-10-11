@@ -1094,6 +1094,40 @@ def next_tiles(order: list[str], log: list[dict], now: _dt.datetime, n: int = 1,
     return out
 
 
+def sweep_region(d: dict, m_per_px: float = 10.0) -> dict | None:
+    """One pwtt region as the sweep counts it (appeared / cleared, with its
+    area and |t|), or None when it does not qualify. Land cover is checked
+    by the caller; this is the strength-and-size rule alone."""
+    t = abs(float(d.get("t_peak") or 0))
+    area = float(d.get("pixels") or 0) * m_per_px * m_per_px
+    if d.get("change_direction") == "appeared" and t >= SWEEP_MIN_T and APPEAR_MIN_AREA_M2 <= area <= REGION_MAX_AREA_M2:
+        kind = "appeared"
+    elif d.get("change_direction") == "removed" and t >= CLEARED_MIN_T and area >= APPEAR_MIN_AREA_M2:
+        kind = "cleared"
+    else:
+        return None
+    return {**d, "area_m2": area, "kind": kind, "t": t, "lat": d["centroid_lat"], "lon": d["centroid_lon"]}
+
+
+def sweep_finding_regions(finding: dict, detections: list[dict], m_per_px: float = 10.0) -> list[dict]:
+    """The stored regions that made up a sweep finding, rebuilt for a finding
+    written before the sweep kept its own extent: the qualifying regions are
+    clustered exactly as the sweep clusters them, and the cluster holding
+    the region nearest the finding's centre is returned (empty when none is
+    within CLUSTER_KM of it). Land cover was not stored, so this can include
+    a region the sweep had excluded — the box is then a little larger, never
+    elsewhere."""
+    regs = [q for q in (sweep_region(d, m_per_px) for d in detections or []) if q is not None]
+    if not regs or finding.get("lat") is None:
+        return []
+    best, best_km = None, None
+    for cl in _cluster_points(regs, CLUSTER_KM):
+        km = min(km_between(finding["lat"], finding["lon"], r["lat"], r["lon"]) for r in cl)
+        if best_km is None or km < best_km:
+            best, best_km = cl, km
+    return best if best is not None and best_km <= CLUSTER_KM else []
+
+
 def evaluate_sweep_result(out: dict) -> dict:
     """Decide KEEP or DELETE for one swept tile from a pwtt job result.
 
@@ -1109,7 +1143,6 @@ def evaluate_sweep_result(out: dict) -> dict:
         return {"result": res, "keep": False, "findings": [], "summary": err[:300], "metrics": {}}
 
     m_per_px = float(out.get("m_per_px") or 10.0)
-    px_area = m_per_px * m_per_px
     metrics = {"m_per_px": m_per_px, "stack_before": out.get("stack_before"), "stack_after": out.get("stack_after"),
                "changed_fraction": out.get("changed_fraction"), "regions": len(out.get("detections") or [])}
     if out.get("suspect_wholesale_shift") or float(out.get("changed_fraction") or 0) > WIDESPREAD_FRACTION:
@@ -1131,14 +1164,9 @@ def evaluate_sweep_result(out: dict) -> dict:
             word = LANDCOVER_WORD.get(lc, str(lc))
             skipped[word] = skipped.get(word, 0) + 1
             continue
-        t = abs(float(d.get("t_peak") or 0))
-        area = float(d.get("pixels") or 0) * px_area
-        if d.get("change_direction") == "appeared" and t >= SWEEP_MIN_T and APPEAR_MIN_AREA_M2 <= area <= REGION_MAX_AREA_M2:
-            regions.append({**d, "area_m2": area, "kind": "appeared", "t": t,
-                            "lat": d["centroid_lat"], "lon": d["centroid_lon"]})
-        elif d.get("change_direction") == "removed" and t >= CLEARED_MIN_T and area >= APPEAR_MIN_AREA_M2:
-            regions.append({**d, "area_m2": area, "kind": "cleared", "t": t,
-                            "lat": d["centroid_lat"], "lon": d["centroid_lon"]})
+        q = sweep_region(d, m_per_px)
+        if q is not None:
+            regions.append(q)
 
     findings = []
     for cl in _cluster_points(regions, CLUSTER_KM):
@@ -1156,11 +1184,17 @@ def evaluate_sweep_result(out: dict) -> dict:
         lat = sum(r["lat"] * r["area_m2"] for r in cl) / sum(r["area_m2"] for r in cl)
         lon = sum(r["lon"] * r["area_m2"] for r in cl) / sum(r["area_m2"] for r in cl)
         cover = [LANDCOVER_WORD.get(r.get("landcover"), "") for r in cl if r.get("landcover") is not None]
+        # WHERE IT IS, AS A BOX (owner, 2026-10-12): the union of the member
+        # regions' real pixel extents, put on the ground with the tile's
+        # bounds — so a notification can draw what was found, not a dot.
+        import finding_boxes as _fb
+        box, box_src = _fb.cluster_extent(cl, out.get("bounds"))
         findings.append({
             "kind": kind, "lat": round(lat, 5), "lon": round(lon, 5),
             "landcover": max(set(cover), key=cover.count) if cover else None,
             "appeared_m2": round(app_area), "cleared_m2": round(clr_area), "regions": len(cl),
             "t_peak": round(max(r["t"] for r in cl), 2),
+            "box": box, "box_source": box_src,
         })
     findings.sort(key=lambda f: -(f["appeared_m2"] * 2 + f["cleared_m2"]))
     metrics["qualifying_regions"] = len(regions)

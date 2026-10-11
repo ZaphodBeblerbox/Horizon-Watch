@@ -32,6 +32,9 @@ import { buildVoiceContext, primeUsers, primeGroups } from "./voiceContext.js"
 import { interpretWithModel } from "./voiceFallback.js"
 import { places, a2ToA3 } from "./gazetteer.js"
 import { runVoiceActions } from "./runVoiceActions.js"
+
+/** Intents the rules read so plainly that the model is not asked. */
+const RULE_FIRST = new Set(["watch_place"])
 import { logParse, markUndone } from "./voiceLog.js"
 import { isDictation, mayTakeFocus, isShortcutPassthrough } from "./voiceField.js"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
@@ -140,7 +143,11 @@ export default function VoiceBar({ active: activeProp = true, floating = false }
            one to three steps the server has already checked against what
            the console can do. If it is unavailable, over budget, or finds
            nothing to do, the rules decide as before — offline still works. */
-        const guess = useModelRef.current ? await interpretWithModel(text, ctx) : null
+        // A rule that reads the sentence unambiguously goes first: a watch
+        // area around a named place is resolved by the server either way,
+        // and asking the model first only adds a round trip.
+        const ruleFirst = result.confident && RULE_FIRST.has(result.intent)
+        const guess = useModelRef.current && !ruleFirst ? await interpretWithModel(text, ctx) : null
         if (guess) {
             const out = await runVoiceActions({ ...result, actions: guess.actions, label: guess.label }, ctx)
             setState("idle")

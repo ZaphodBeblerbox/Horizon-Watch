@@ -24,6 +24,8 @@ import TradeRouteSection from "./TradeRouteSection.jsx"
 import { AroundSection, CableSection } from "./InfrastructureContext.jsx"
 import InfraDetail from "../inspector/InfraDetail.jsx"
 import OwnedAssetDetail from "../inspector/OwnedAssetDetail.jsx"
+import FindingPreview from "./FindingPreview.jsx"
+import { findingZoneOf, isFindingAlert, showFindings } from "../lib/findings.js"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
 import { shareToDesk } from "../desk/shareToDesk.js"
@@ -800,6 +802,18 @@ export default function InspectorPanel({
                         </div>
                     </div>
                 )}
+                {/* AN IMAGERY FINDING: what was found, cut out of the image with
+                    its box, and the boxes on the map (lib/findings.js) */}
+                {isFindingAlert(data) && findingZoneOf(data) && (
+                    <div style={{ marginBottom: "var(--space-4)" }}>
+                        <FindingPreview alert={data}
+                            onShowOnMap={(x) => showFindings({ ...x, title: data?.title || data?.headline, fit: true })}
+                            onOpenImagery={(t) => {
+                                window.__plxImageryTarget = t
+                                window.dispatchEvent(new CustomEvent("akili:imagery-open-scene", { detail: t }))
+                            }} />
+                    </div>
+                )}
                 {entityType === "infra_feature" && <InfraDetail feature={data} />}
                 {entityType === "owned_asset" && <OwnedAssetDetail asset={data} />}
 
@@ -1061,7 +1075,7 @@ export default function InspectorPanel({
                             Share to the desk
                         </Button>
                     )}
-                    {canWatch(entityType, data) && <WatchWithSatellites data={data} />}
+                    {canWatch(entityType, data) && <WatchWithSatellites data={data} entityType={entityType} />}
                 </div>
             )}
         </Wrapper>

@@ -10,9 +10,12 @@ import { useState } from "react"
 import API_BASE from "../apiBase.js"
 import { squareAround } from "../insight/respond.js"
 import { toast } from "../ui/toast.js"
+import { hitKind, sizeForKind } from "../lib/watchPlace.js"
 
 const WATCHABLE = new Set(["alert", "fusion", "surge", "gdelt_event", "event", "geoconfirmed", "telegram",
-                           "signal", "thermal_anomaly", "fire", "detection", "port", "airport"])
+                           "signal", "thermal_anomaly", "fire", "detection", "port", "airport",
+                           // a place found in the search box, a chokepoint, a military site (2026-10-12)
+                           "location", "place", "city", "chokepoint", "military_site", "infra_feature"])
 
 export function canWatch(entityType, data) {
     const lat = Number(data?.lat ?? data?.latitude ?? data?.centroid_lat)
@@ -20,9 +23,12 @@ export function canWatch(entityType, data) {
     return WATCHABLE.has(entityType) && Number.isFinite(lat) && Number.isFinite(lon)
 }
 
-export default function WatchWithSatellites({ data }) {
+export default function WatchWithSatellites({ data, entityType = null }) {
     const [open, setOpen] = useState(false)
-    const [km, setKm] = useState(6)
+    // Sized by what the place is (lib/watchPlace.js): a large airport 8 km,
+    // a port 6, a city 15 — else 6 as before.
+    const kind = hitKind({ type: entityType || data?.type, category: data?.category })
+    const [km, setKm] = useState(() => (kind === "place" ? 6 : sizeForKind(kind, data?.airport_type)))
     const [every, setEvery] = useState(24)
     const [busy, setBusy] = useState(false)
     const lat = Number(data?.lat ?? data?.latitude ?? data?.centroid_lat)
@@ -59,7 +65,7 @@ export default function WatchWithSatellites({ data }) {
             <input value={name} onChange={(e) => setName(e.target.value)} style={{ ...field, padding: "0 8px" }} aria-label="Name of the watched area" />
             <div style={{ display: "flex", gap: 6 }}>
                 <select value={km} onChange={(e) => setKm(Number(e.target.value))} style={{ ...field, flex: 1 }}>
-                    {[2, 6, 10, 20].map((k) => <option key={k} value={k}>{k} × {k} km</option>)}
+                    {[...new Set([2, 6, 10, 20, km])].sort((a, b) => a - b).map((k) => <option key={k} value={k}>{k} × {k} km</option>)}
                 </select>
                 <select value={every} onChange={(e) => setEvery(Number(e.target.value))} style={{ ...field, flex: 1 }}>
                     {[6, 12, 24, 48, 120].map((h) => <option key={h} value={h}>every {h} h</option>)}

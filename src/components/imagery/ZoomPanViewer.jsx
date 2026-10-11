@@ -91,6 +91,13 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
     }, [isControlled, onViewChange, controlledView])
     const [dragging, setDragging] = useState(false)
     const dragFrom = useRef(null)
+    // EVERY IMAGE SAYS WHERE IT IS (2026-10-12): decoding a multi-megabyte
+    // scene takes a moment, and one that fails to decode used to leave an
+    // empty pane — read as "nothing there". Loading, failed (with a retry),
+    // or shown.
+    const [imgState, setImgState] = useState(src ? "loading" : "none")
+    const [imgTry, setImgTry] = useState(0)
+    useEffect(() => { setImgState(src ? "loading" : "none") }, [src])
 
     const frameSize = () => {
         const el = frameRef.current
@@ -220,11 +227,15 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
                     transition: dragging ? "none" : "transform 120ms ease-out",
                 }}>
                     {src
-                        ? <img src={src} alt={alt} draggable={false}
-                               onLoad={(e) => setNatural({
-                                   w: e.currentTarget.naturalWidth,
-                                   h: e.currentTarget.naturalHeight,
-                               })}
+                        ? <img key={imgTry} src={src} alt={alt} draggable={false}
+                               onLoad={(e) => {
+                                   setImgState("ok")
+                                   setNatural({
+                                       w: e.currentTarget.naturalWidth,
+                                       h: e.currentTarget.naturalHeight,
+                                   })
+                               }}
+                               onError={() => setImgState("error")}
                                style={{ display: "block", width: "100%", height: "100%", objectFit: stretch ? "fill" : "contain" }} />
                         : null}
                     <ViewerScaleContext.Provider value={view.scale}>
@@ -245,6 +256,24 @@ const ZoomPanViewer = forwardRef(function ZoomPanViewer(
                     </ViewerViewContext.Provider>
                 ) : null}
             </div>
+
+            {imgState === "loading" && (
+                <div data-image-state="loading" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
+                    <span style={{ fontSize: 12, color: "var(--txt3, #aab)", background: "var(--bg-0, rgba(0,0,0,.6))", padding: "4px 10px" }}>Loading the image…</span>
+                </div>
+            )}
+            {imgState === "error" && (
+                <div data-image-state="error" role="alert" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+                    <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--txt2, #ccd)",
+                                   background: "var(--bg-0, rgba(0,0,0,.7))", padding: "10px 14px", textAlign: "center", maxWidth: 360 }}>
+                        <span>{alt ? `The ${alt} could not be shown` : "The image could not be shown"} — it arrived but did not decode.</span>
+                        <button onClick={() => { setImgState("loading"); setImgTry((n) => n + 1) }}
+                            style={{ height: 26, padding: "0 12px", border: "1px solid var(--gline2, #556)", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer" }}>
+                            Try again
+                        </button>
+                    </span>
+                </div>
+            )}
 
             {/* Zoom readout and reset. Without a visible level, a person who
                 has zoomed a long way in has no idea how far out they are

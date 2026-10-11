@@ -768,7 +768,17 @@ def query(bbox: str | None = None, status: str | None = None, kind: str | None =
     want_cc = {x.strip().upper() for x in (country or "").split(",") if x.strip()}
     out = []
     by_cc: dict[str, dict] = {}
+    # ONE ROW PER PLACE: a source can list the same place twice (XR UK did,
+    # 2026-10-12), and the map then drew one entity id twice. Merge their calls.
+    merged: dict = {}
     for p in d.get("places") or []:
+        pid = p.get("id")
+        if pid in merged:
+            seen = {(c.get("kind"), c.get("date"), c.get("time")) for c in merged[pid]["calls"]}
+            merged[pid]["calls"] += [c for c in p.get("calls") or [] if (c.get("kind"), c.get("date"), c.get("time")) not in seen]
+        else:
+            merged[pid] = {**p, "calls": list(p.get("calls") or [])}
+    for p in merged.values():
         cc = p.get("country") or "FR"
         row = by_cc.setdefault(cc, {"code": cc, "name": p.get("country_name") or cc, "places": 0, "with_calls": 0})
         row["places"] += 1

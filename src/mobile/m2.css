@@ -283,3 +283,8 @@
 .m2-story-dots button { width: 6px; height: 6px; padding: 0; border: 0; border-radius: 3px; background: var(--txt4, #6b7280); opacity: .5; cursor: pointer; transition: width .25s ease, opacity .25s ease; }
 .m2-story-dots button[aria-selected="true"] { width: 18px; opacity: 1; background: var(--txt2); }
 .m2-story-media.bare { height: 110px; }
+
+/* findings of the automatic watch, as boxes (mobile/findingsLeaflet.js) */
+.leaflet-tooltip.m2-finding-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    padding: 2px 6px; background: rgba(10, 18, 32, .88); color: #f2f4f8; border: 1px solid rgba(255, 255, 255, .22); box-shadow: none; }
+.leaflet-tooltip.m2-finding-label::before { border-top-color: rgba(10, 18, 32, .88); }

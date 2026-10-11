@@ -171,6 +171,7 @@ import Analytics from "./destinations/Analytics.jsx"
 import LocationPrompt from "./components/LocationPrompt.jsx"
 import LivePlayerHost, { watchLive } from "./telegram/LivePlayer.jsx"
 import { openSignal, setSignalSurface } from "./notify/openSignal.js"
+import { findingsForAlert, showFindings } from "./lib/findings.js"
 import { openVesselThreat } from "./state/vesselThreatStore.js"
 import { ALERT_TYPE as VESSEL_ALERT_TYPE } from "./globe/vesselThreat.js"
 import { exportPdf } from "./print/printSurface.jsx"
@@ -1724,17 +1725,46 @@ export default function App() {
         } })), 300)
     }, [openTab])
 
+    /* AN IMAGERY FINDING opens on what was found (owner, 2026-10-12): the
+       map, flown to the finding with its boxes drawn (GlobeFindingsLayer),
+       and the inspector on the alert with the cut-out of the image. */
+    const openFindingRoute = useCallback(async (r) => {
+        openTab("situation")
+        const aid = r.alertId || r.id
+        let alert = r.alert || null
+        if (!alert && aid) {
+            alert = await fetch(`${API_BASE}/api/alerts/${encodeURIComponent(aid)}`, { credentials: "include" })
+                .then((x) => (x.ok ? x.json() : null)).catch(() => null)
+        }
+        const a = alert && (alert.title || alert.alert_id) ? alert : {
+            alert_id: aid, title: r.title, severity: r.sev, lat: r.lat, lon: r.lon, alert_type: r.alertType,
+            entity_type: r.entityType, entity_id: r.entityId, raw_json: { zone_id: r.zoneId },
+        }
+        const { zoneId, findings } = await findingsForAlert(a)
+        if (findings.length) showFindings({ zoneId, findings, title: a.title || r.title, fit: true, alertId: aid })
+        else if (r.lat != null && r.lon != null) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: r.lat, lon: r.lon, altitude: 30000 } }))
+        // Twice: opened cold from a notification, the map (and its inspector)
+        // may still be mounting at the first dispatch; the second is the same
+        // entity, so it changes nothing when the first arrived.
+        const inspect = () => window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
+            entityType: "alert", entityId: aid, data: { ...a, id: aid, title: a.title || r.title, message: a.message || r.sub },
+        } }))
+        setTimeout(inspect, 300)
+        setTimeout(inspect, 2500)
+    }, [openTab])
+
     const openDesktopRoute = useCallback((r) => {
         if (!r) return
         if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
         if (r.action === "vessel") { openVesselRoute(r); return }
+        if (r.action === "finding") { openFindingRoute(r); return }
         // the tray's own item when there is one (it knows how it was drawn)
         const own = r._item || (r.id ? getNotifications().items.find((x) => x.id === r.id || x.alertId === r.id || (r.alertId && x.alertId === r.alertId)) : null)
         openSignalItem(own ? { ...own, inspect: r.inspect } : {
             id: r.id, alertId: r.alertId, assetId: r.assetId || null, title: r.title || "", sub: r.sub || "", sev: r.sev || "moderate", kind: r.kind || "signal",
             ref: r.lat != null && r.lon != null ? { lat: r.lat, lon: r.lon } : null, inspect: r.inspect,
         })
-    }, [openSignalItem, openVesselRoute])
+    }, [openSignalItem, openVesselRoute, openFindingRoute])
     // the desktop console is the surface (the phone shell registers its own)
     useEffect(() => (phoneMode ? undefined : setSignalSurface(openDesktopRoute)), [phoneMode, openDesktopRoute])
 

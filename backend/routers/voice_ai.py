@@ -70,6 +70,12 @@ INTENTS = {
     "sweep": ("start, pause or stop the radar border sweep of a conflict — 'start the border sweep', 'pause the "
               "sweep in Ukraine'. slots: action ('start', 'pause' or 'stop'), conflict (an id listed; 'ukraine' if "
               "none is named)"),
+    "watch_place": ("create a satellite watch area (an Imagery area scanned on a schedule) around ONE named place — "
+                    "an airport, port, base, city — 'generate a watch area around King Fahd Airport', 'watch the port "
+                    "of Tartus with satellites', 'set up a 20 km watch zone around Kherson'. Not for a whole conflict "
+                    "(that is generate_overwatch). slots: place (the place's name exactly as said, with its kind word "
+                    "such as 'airport' or 'port'), size_km (a number if a size was said, else null). Never give "
+                    "coordinates."),
     "none":       "nothing in this sentence is an instruction to the console",
 }
 
@@ -185,6 +191,17 @@ def _clean(intent: str, slots: dict, ctx: dict) -> dict | None:
                 return None
             return {"intent": intent, "slots": {"action": action, "conflict": c["id"]}}
         return {"intent": intent, "slots": {"conflict": c["id"]}}
+
+    if intent == "watch_place":
+        # The model extracts the name; place_resolve.py and our own tables
+        # resolve it (GET /api/voice/resolve-place). A size outside 1-50 km
+        # is clamped; one that is not a number is dropped.
+        import place_resolve
+        place = (slots.get("place") or "").strip()
+        if not place_resolve.name_tokens(place):
+            return None
+        return {"intent": intent, "slots": {"place": place[:120],
+                                            "size_km": place_resolve.clamp_km(slots.get("size_km"))}}
 
     if intent == "zoom":
         d = (slots.get("direction") or "").strip().lower()
@@ -560,3 +577,79 @@ async def explain_place(request: Request):
                      "lat": i.get("lat"), "lon": i.get("lon"), "url": i.get("url")}
                     for i in items],
     }
+
+
+# ── "generate a watch area around King Fahd Airport" ─────────────────────
+#
+# The model (or the rule parser) hands over the words; the place is found
+# in OUR tables — airports, ports, then the search box's geocoder — and
+# never taken from a model. The console creates the area itself
+# (POST /api/watch-zones) from the polygon returned here.
+
+def _place_candidates(place: str, kind: str | None) -> list[dict]:
+    import place_resolve
+    from database import Airport, PortBoundary, get_db
+    from sqlalchemy import and_, or_
+    toks = place_resolve.name_tokens(place)
+    if not toks:
+        return []
+    out: list[dict] = []
+    with get_db() as db:
+        if kind in (None, "airport"):
+            code = toks[0].upper() if len(toks) == 1 and len(toks[0]) in (3, 4) else None
+            cond = and_(*[Airport.airport_name.ilike(f"%{t}%") for t in toks])
+            if code:
+                cond = or_(cond, Airport.icao_code == code, Airport.iata_code == code)
+            for r in db.query(Airport).filter(cond, Airport.airport_type != "closed").limit(40).all():
+                out.append({"kind": "airport", "name": r.airport_name, "lat": r.latitude, "lon": r.longitude,
+                            "type": r.airport_type, "codes": [r.icao_code, r.iata_code],
+                            "code": r.icao_code or r.iata_code, "where": r.municipality or r.country_name,
+                            "country": r.country_name or r.country_code, "source": "airports", "id": r.system_id})
+        if kind in (None, "port"):
+            for r in (db.query(PortBoundary).filter(and_(*[PortBoundary.port_name.ilike(f"%{t}%") for t in toks]))
+                      .limit(20).all()):
+                out.append({"kind": "port", "name": r.port_name, "lat": r.latitude, "lon": r.longitude,
+                            "type": r.port_size, "where": r.country, "country": r.country,
+                            "source": "ports", "id": r.system_id})
+    return out
+
+
+async def _geocoded(place: str) -> list[dict]:
+    """The search box's own geocoder (Nominatim, cached) for a city or a
+    place our tables do not hold."""
+    try:
+        import main as _main
+        hits = await _main.unified_search(q=place, types="location", limit=5)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[voice] error: geocoding {place!r}: {type(e).__name__}: {e}", flush=True)
+        return []
+    out = []
+    for h in hits or []:
+        if h.get("lat") is None:
+            continue
+        cat = str(h.get("category") or "")
+        kind = "airport" if cat == "aeroway" else "city" if cat in ("place", "boundary") else "place"
+        out.append({"kind": kind, "name": h.get("name") or place, "lat": h["lat"], "lon": h["lon"],
+                    "where": ", ".join(str(h.get("display_name") or "").split(", ")[1:3]) or None,
+                    "source": "geocoder"})
+    return out
+
+
+@router.get("/resolve-place")
+async def resolve_place(request: Request, q: str, size_km: float | None = None, kind: str | None = None):
+    """What was said ("King Fahd Airport", "around Tartus port with 20 km")
+    → the place in our data, the box to watch, and the other places it
+    could have meant."""
+    import asyncio
+    import place_resolve
+    _me(request)
+    q = (q or "").strip()[:200]
+    req = place_resolve.parse_request(q)
+    want = (kind or req.get("kind") or None)
+    want = want if want in ("airport", "port", "city") else None
+    cands = await asyncio.to_thread(_place_candidates, req["place"], None if want == "city" else want)
+    if not cands or want == "city" or not place_resolve.rank(cands, req["place"], want):
+        cands += await _geocoded(req["place"])
+    out = place_resolve.resolve(cands, req["place"], kind=want, size_km=size_km or req.get("size_km"), parsed=True)
+    out["query"] = q
+    return out

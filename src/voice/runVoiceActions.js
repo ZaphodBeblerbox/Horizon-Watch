@@ -401,6 +401,35 @@ export async function runVoiceActions(result, ctx) {
                 }
                 break
             }
+            /* "Generate a watch area around King Fahd Airport." The server
+               finds the place in our airports, ports and gazetteer and sizes
+               the box by what it is (backend/place_resolve.py); the area is
+               created like any other (POST /api/watch-zones, first scan
+               started) and Imagery opens on it. Several matches: the best is
+               taken and named, the others offered. Undo deletes the area. */
+            case "watch_place": {
+                const W = await import("../lib/watchPlace.js")
+                try {
+                    const res = await W.resolvePlace(a.query || a.place, { sizeKm: a.sizeKm })
+                    if (!res?.ok) return { ran: false, label: "", problem: res?.why || `I could not find \u201c${a.place}\u201d.` }
+                    const p = res.place
+                    const z = await W.createWatchArea({
+                        name: `Watch · ${p.name}`, polygon: p.polygon, kind: p.kind, source: p.source,
+                        sizeKm: p.size_km, said: result.raw || a.query,
+                    })
+                    W.openInImagery(z)
+                    const others = (res.others || []).slice(0, 3).map((o) => o.label || o.name)
+                    label = `Watching ${p.label || p.name} — ${p.size_km} × ${p.size_km} km, first scan started`
+                        + (others.length ? `. Also matched: ${others.join("; ")} — say \u201ca watch area around …\u201d with the one you meant` : "")
+                    toast(label, { durationMs: others.length ? 9000 : 4500 })
+                    label = `Watching ${p.label || p.name}`
+                    done.push(undoable(label, () => W.deleteWatchArea(z.system_id)))
+                    result = { ...result, _toasted: true }
+                } catch (e) {
+                    return { ran: false, label: "", problem: `Could not create the watch area — ${e.message || e}` }
+                }
+                break
+            }
             default:
                 break
         }
@@ -408,7 +437,7 @@ export async function runVoiceActions(result, ctx) {
 
     if (result.actions.length > 1 && result.label) label = result.label
     if (!done.length && !label) return { ran: false, label: "", problem: "Nothing to do." }
-    if (label) toast(label)
+    if (label && !result._toasted) toast(label)
     return {
         ran: true,
         label,

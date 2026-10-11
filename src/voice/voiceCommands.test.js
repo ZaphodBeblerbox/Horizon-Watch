@@ -597,3 +597,22 @@ describe("overwatch zones and the border sweep", () => {
         expect(parseCommand("sweep the border in Lebanon", ctx).actions[0]).toEqual({ type: "sweep", action: "start", conflict: "lebanon" })
     })
 })
+
+describe("a watch area around one place (2026-10-12)", () => {
+    const C = { users: [], groups: [], baskets: [], signalTypes: [] }
+    it("reads the owner's sentence as watch_place, with the place as said", () => {
+        const r = parseCommand("Generate a watch area around King Fahd Airport", C)
+        expect(r.intent).toBe("watch_place")
+        expect(r.confident).toBe(true)
+        expect(r.actions[0]).toMatchObject({ type: "watch_place", place: "King Fahd Airport", sizeKm: null })
+    })
+    it("takes a size when one is said, clamped to 1-50 km", () => {
+        expect(parseCommand("create a satellite watch zone around Kherson with 20 km", C).actions[0].sizeKm).toBe(20)
+        expect(parseCommand("set up a watch area around Kherson, 400 km", C).actions[0].sizeKm).toBe(50)
+        expect(parseCommand("watch Sevastopol with satellites", C).actions[0].place).toBe("Sevastopol")
+    })
+    it("leaves the conflict-wide overwatch generator alone", () => {
+        expect(parseCommand("generate overwatch zones for Ukraine", C).intent).toBe("generate_overwatch")
+        expect(parseCommand("add watch zones in Gaza", C).intent).toBe("generate_overwatch")
+    })
+})

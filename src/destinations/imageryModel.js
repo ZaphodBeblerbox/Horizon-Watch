@@ -112,3 +112,36 @@ export function groupDetections(changes) {
     }
     return [...m.values()].sort((a, b) => (b.new + b.removed) - (a.new + a.removed) || b.items.length - a.items.length)
 }
+
+/**
+ * Which sensor and pass to open an area on, from its scans.
+ *
+ * WHY (2026-10-12, "the image sometimes doesn't load"): the page always
+ * opened on OPTICAL and picked the newest optical pass — so an area watched
+ * by radar only (every border-sweep find, radar-preferred overwatch sites)
+ * opened on "This area has not been photographed yet" while its radar passes
+ * sat one click away, and an area whose newest optical pass had lost its
+ * image opened on an empty frame. Now: the pass asked for (a notification's
+ * scan) when it is there; else the newest optical pass that HOLDS an image;
+ * else the newest radar pass with an image; else the newest optical pass.
+ */
+export function pickInitialPass(scans, wantScanId = null) {
+    const all = acquisitions(scans)
+    if (wantScanId) {
+        const hit = all.find((p) => p.scanId === wantScanId)
+            || (scans || []).find((s) => s?.scan_id === wantScanId)
+        if (hit) {
+            const inst = hit.instrument || "OPTICAL"
+            // a radar pass without an image (a change run) is not viewable as radar
+            const asPass = all.find((p) => p.scanId === wantScanId)
+            if (inst === "SAR" && asPass?.hasImage) return { sensor: "radar", scanId: wantScanId }
+            if (inst !== "SAR") return { sensor: "optical", scanId: wantScanId }
+        }
+    }
+    const optical = all.filter((p) => p.instrument !== "SAR")
+    const radar = all.filter((p) => p.instrument === "SAR" && p.hasImage)
+    const opt = optical.find((p) => p.hasImage)
+    if (opt) return { sensor: "optical", scanId: opt.scanId }
+    if (radar.length) return { sensor: "radar", scanId: radar[0].scanId }
+    return { sensor: "optical", scanId: optical[0]?.scanId || null }
+}

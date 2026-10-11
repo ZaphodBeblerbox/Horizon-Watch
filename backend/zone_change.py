@@ -27,6 +27,8 @@ from __future__ import annotations
 import datetime as _dt
 import math
 
+import finding_boxes as _fb
+
 # A region counts when it is strong AND big enough to be a structure or a
 # vehicle park rather than speckle: |t| ≥ 4 (the same line main.py uses to
 # mark a region "medium") and at least half a hectare.
@@ -121,8 +123,12 @@ def summarize(out: dict, previous: list[dict] | None, previous_until: str | None
         "brighter_m2": round(brighter), "darker_m2": round(darker),
         "since": since, "until": after[0] if after else None,
         "strongest_t": round(max((abs(float(r.get("t_peak") or 0)) for r in fresh), default=0.0), 2),
+        # Each with its real extent on the ground (finding_boxes.py): the
+        # region's pixel box put on the scene's bounds, so the notification
+        # can draw what changed instead of a dot (owner, 2026-10-12).
         "where": [{"lat": r["centroid_lat"], "lon": r["centroid_lon"], "direction": r.get("change_direction"),
-                   "area_m2": round(r["area_m2"]), "t_peak": r.get("t_peak")} for r in
+                   "area_m2": round(r["area_m2"]), "t_peak": r.get("t_peak"),
+                   "box": _fb.region_box(r, out.get("bounds"))[0]} for r in
                   sorted(fresh, key=lambda r: -r["area_m2"])[:5]],
         "changed_fraction": frac,
     }

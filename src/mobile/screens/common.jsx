@@ -12,6 +12,8 @@ import { createPost } from "../../lib/deskApi.js"
 import { whenLabel } from "../../utils/formatTime.js"
 import { VesselThreatBlock } from "./MVesselThreat.jsx"
 import { isVesselThreatAlert } from "../../globe/vesselThreat.js"
+import FindingPreview from "../../components/FindingPreview.jsx"
+import { findingZoneOf, isFindingAlert, showFindings } from "../../lib/findings.js"
 
 export const SEV = { critical: "var(--red, #e5484d)", significant: "var(--amber, #f5a623)", high: "var(--amber, #f5a623)",
     elevated: "var(--amber, #f5a623)", moderate: "#7aa7ff", medium: "#7aa7ff", low: "var(--txt4, #6b7280)" }
@@ -64,6 +66,7 @@ export function SignalSheet({ s, onClose, onShowOnMap }) {
     const [shared, setShared] = useState(null)
     if (!s) return null
     const title = s.headline || s.title || "Signal"
+    const finding = isFindingAlert(s) ? findingZoneOf(s) : null
     const where = String(s.place || s.location || s.geocoded_as || "").split(",").slice(0, 3).join(",")
     const xs = [...new Set(String(s.original_source || s.url || "").match(URLS) || [])].filter(xPostId).slice(0, 2)
     const share = async () => {
@@ -83,8 +86,11 @@ export function SignalSheet({ s, onClose, onShowOnMap }) {
                 <p style={{ fontSize: 14, lineHeight: 1.5, color: "var(--txt2, #c3c7cf)", margin: "0 0 12px" }}>{s.summary_en || s.context || s.summary || s.why || s.detail}</p>
             )}
             {isVesselThreatAlert(s, s.id) && <VesselThreatBlock s={s} onShowOnMap={onShowOnMap} onClose={onClose} />}
+            {/* AN IMAGERY FINDING: the cut-out with its box, and the map with the boxes */}
+            {finding && <FindingPreview key={`${s.id}:${finding}`} alert={s} compact
+                onShowOnMap={(x) => { showFindings({ ...x, title, fit: true }); window.dispatchEvent(new CustomEvent("m2:go", { detail: "map" })); onClose() }} />}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                {Number.isFinite(+s.lat) && Number.isFinite(+s.lon) && <button className="m2-btn" onClick={() => { onShowOnMap?.(s); onClose() }}>Show on the map</button>}
+                {!finding && Number.isFinite(+s.lat) && Number.isFinite(+s.lon) && <button className="m2-btn" onClick={() => { onShowOnMap?.(s); onClose() }}>Show on the map</button>}
                 {s.url && !xs.length && <SourceLink className="m2-btn ghost" url={s.url} style={{ display: "inline-flex", alignItems: "center", textDecoration: "none", color: "inherit" }}>Original</SourceLink>}
             </div>
             <div className="m2-eyebrow" style={{ marginBottom: 6 }}>Share to the desk</div>

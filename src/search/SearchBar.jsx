@@ -25,6 +25,20 @@ import { places as loadPlaces } from "../voice/gazetteer.js"
 import { closeOverlay, subscribeOverlay } from "../state/overlayManager.js"
 import { buildSuggestions, parseCoords } from "./searchModel.js"
 import PlxIcon from "../plx6/PlxIcon.jsx"
+import { watchHit } from "../lib/watchPlace.js"
+import { toast } from "../ui/toast.js"
+
+/** A search row that is one place (not a country or a region) can be watched
+ *  from satellite: the hit as watchPlace.watchHit reads it, or null. */
+export function watchableHit(it) {
+    if (!it) return null
+    if (it.kind === "place" && Number.isFinite(+it.lat) && Number.isFinite(+it.lon) && !["Country", "Region"].includes(it.sub)) {
+        return { name: it.label, lat: +it.lat, lon: +it.lon, type: "location", category: it.sub === "City" ? "place" : "" }
+    }
+    if (it.kind === "entity" && ["airport", "port", "chokepoint", "geoconfirmed", "military_site"].includes(it.raw?.type)
+        && Number.isFinite(+it.raw?.lat)) return it.raw
+    return null
+}
 
 const SEV = { critical: "var(--red)", high: "var(--amber)", significant: "var(--amber)" }
 
@@ -192,6 +206,20 @@ export default function SearchBar({
                                                                              background: SEV[it.severity] || "var(--txt4)" }} />}
                                         <span style={{ color: "var(--txt)", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 250 }}>{it.label}</span>
                                         {it.sub && <span style={{ color: "var(--txt4)", fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>{it.sub}</span>}
+                                        {watchableHit(it) && (
+                                            <button type="button" data-watch-place title="Watch area around this place — satellite scans every 24 h, sized by what it is"
+                                                onMouseDown={(e) => {
+                                                    e.preventDefault(); e.stopPropagation()
+                                                    setOpen(false)
+                                                    watchHit(watchableHit(it))
+                                                        .then(({ name, km }) => toast(`Watching ${name} — ${km} × ${km} km, first scan started (Imagery)`, { icon: "i-check" }))
+                                                        .catch((err) => toast(`Could not create the watch area — ${err.message}`, { icon: "i-alert" }))
+                                                }}
+                                                style={{ marginLeft: "auto", flex: "none", alignSelf: "center", height: 20, padding: "0 7px", border: "1px solid var(--gline2)",
+                                                         background: "transparent", color: "var(--acchi)", font: "inherit", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>
+                                                Watch area
+                                            </button>
+                                        )}
                                     </div>
                                 )
                             })}

@@ -41,6 +41,7 @@ import GlobeConnectorLinesLayer  from "../globe/GlobeConnectorLinesLayer.jsx"
 import GlobeHeatmapLayer        from "../globe/GlobeHeatmapLayer.jsx"
 import GlobeGpsInterferenceLayer from "../globe/GlobeGpsInterferenceLayer.jsx"
 import GlobeOverwatchLayer      from "../globe/GlobeOverwatchLayer.jsx"
+import GlobeFindingsLayer       from "../globe/GlobeFindingsLayer.jsx"
 import GlobeOverwatchDrawLayer  from "../globe/GlobeOverwatchDrawLayer.jsx"
 import GlobePopup               from "../globe/GlobePopup.jsx"
 import GlobeInfraLayer          from "../globe/GlobeInfraLayer.jsx"
@@ -1288,6 +1289,8 @@ export default function GlobeView({
                 {/* ── Overwatch ML detection boxes (portal sidebar already renders via document.body) ── */}
                 <GlobeOverwatchLayer enabled={overwatchEnabled} detections={overwatchDetections} sentinelOverlay={overwatchSentinelOverlay} />
                 {sceneOverlay && <GlobeOverwatchLayer enabled detections={sceneOverlay.detections || []} sentinelOverlay={sceneOverlay} onSceneRect={onSceneRect} />}
+                {/* what the automatic watch found, as boxes (lib/findings.js) */}
+                <GlobeFindingsLayer />
 
                 {/* ── Overwatch draw mode: rectangle or polygon selection on globe ── */}
                 <GlobeOverwatchDrawLayer

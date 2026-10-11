@@ -470,6 +470,9 @@ app.include_router(_desk_router.router)
 # The spoken sentence the rule parser could not place — see routers/voice_ai.py.
 from routers import voice_ai as _voice_ai_router
 app.include_router(_voice_ai_router.router)
+# A watch zone's automatic findings as boxes on the ground — routers/zone_findings.py.
+from routers import zone_findings as _zone_findings_router
+app.include_router(_zone_findings_router.router)
 # Making a signal usable, and making mentions of one thing converge —
 # see routers/enrichment.py and enrich.py.
 from routers import enrichment as _enrichment_router
@@ -15423,6 +15426,21 @@ async def _zone_change_job(zd: dict, now) -> dict:
         return {"status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
+def _zone_change_alert_findings(zd: dict, out: dict, block: dict) -> list:
+    """The new regions of a radar comparison as findings with boxes, for the
+    alert's raw_json (the notification draws them)."""
+    import finding_boxes as _fbz
+    try:
+        return [f for f in (_fbz.radar_change_finding(
+                    {**w, "centroid_lat": w.get("lat"), "centroid_lon": w.get("lon"),
+                     "change_direction": w.get("direction"), "geo_box": w.get("box")},
+                    out.get("bounds"), scan_id=out.get("scan_id"), zone_id=zd["system_id"], date=block.get("until"))
+                    for w in (block.get("where") or [])) if f]
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[change] error: finding boxes for {zd['system_id']}: {type(e).__name__}: {e}", flush=True)
+        return []
+
+
 def _notify_zone_change(zd: dict, out: dict) -> None:
     """One notification per zone per radar comparison (high, then medium past the daily cap) —
     "Change detected at Vuglegirska power station — radar, 12 ha brighter
@@ -15460,6 +15478,8 @@ def _notify_zone_change(zd: dict, out: dict) -> None:
         "region": meta.get("group") or zd["name"],
         "raw_json": {"zone_id": zd["system_id"], "scan_id": out.get("scan_id"), "kind": "radar_change",
                      "instrument": "SAR", "change": block, "captured": block.get("until"),
+                     # what changed, as boxes on the ground (finding_boxes.py)
+                     "findings": _zone_change_alert_findings(zd, out, block),
                      "reason": (f"Sentinel-1 radar, {block.get('new_regions')} new change region(s) "
                                 f"compared with {block.get('since') or 'the earlier passes'}"
                                 + (f" — {why}" if why else "")),
@@ -19328,6 +19348,9 @@ def _persist_change_scan(zone_id: int, out: dict, dates_after: list) -> str:
         summary = {"total_detections": len(out.get("detections") or []) if completed else 0,
                    "method": "PWTT", "change": block}
         if completed:
+            # The scene's bounds, so every region's pixel box can be put on
+            # the ground later (finding_boxes.py, owner 2026-10-12).
+            summary["bounds"] = out.get("bounds")
             summary.update({"m_per_px": out.get("m_per_px"), "stack_before": out.get("stack_before"),
                             "stack_after": out.get("stack_after"), "threshold": out.get("threshold"),
                             "dates_before": out.get("dates_before"), "dates_after": out.get("dates_after")})
@@ -19339,7 +19362,9 @@ def _persist_change_scan(zone_id: int, out: dict, dates_after: list) -> str:
             error_message=None if completed else f"radar change: {str(out.get('error') or 'no result')[:400]}",
             result_summary=_json.dumps(summary),
         ))
+        import finding_boxes as _fbq
         for d in (out.get("detections") or []) if completed else []:
+            _gbox = _fbq.frac_to_geo(d.get("bbox"), out.get("bounds")) if d.get("bbox") else None
             db.add(SentinelDetection(
                 detection_id=f"CHG-{_uidq.uuid4().hex[:12]}",
                 scan_id=scan_id, zone_id=zone_id, instrument="SAR",
@@ -19350,6 +19375,7 @@ def _persist_change_scan(zone_id: int, out: dict, dates_after: list) -> str:
                 confidence=d["strength"],
                 centroid_lat=d["centroid_lat"], centroid_lon=d["centroid_lon"],
                 area_m2=d.get("area_m2"),
+                geo_geometry=_json.dumps(_fbq.polygon(_gbox)) if _gbox else None,
                 severity="medium" if abs(d["t_peak"]) >= 4 else "info",
                 alert_tier="silent",
                 attributes=_json.dumps({
@@ -19358,6 +19384,7 @@ def _persist_change_scan(zone_id: int, out: dict, dates_after: list) -> str:
                     "pixels": d["pixels"], "method": d["method"],
                     "strength_not_probability": True,
                     "bbox": d.get("bbox"),
+                    "geo_box": _gbox,
                 }),
             ))
         db.commit()
@@ -24058,7 +24085,7 @@ def api_imagery_locate_detection(detection_id: str):
 
 
 @app.get("/api/imagery/scenes/{scan_id}")
-def api_imagery_scene(scan_id: str):
+def api_imagery_scene(scan_id: str, note_only: bool = False):
     """Real scene detail for the Imagery comparison view: the real persisted
     image, real scene metadata, and the real comparison against its real
     reference scan (backend/imagery_pipeline.compare_scans) — percent-of-
@@ -24068,6 +24095,14 @@ def api_imagery_scene(scan_id: str):
     completed scan, and the frontend shows an honest empty state otherwise."""
     from database import SentinelScan, WatchZone, get_db as _gdb_im4
     import imagery_pipeline
+    if note_only:
+        # THE NOTE, NOT THE PICTURE AGAIN (2026-10-12). The page polled this
+        # route every 6 s while the imagery note was being written, and every
+        # poll re-sent the scene AND its reference image (1-2 MB) and held a
+        # worker thread reading them — fifteen times per pass opened.
+        import scene_note
+        note = scene_note.cached(scan_id)
+        return {"note": note, "note_pending": note is None and scene_note.pending(scan_id)}
     with _gdb_im4() as db:
         scan = db.query(SentinelScan).filter(SentinelScan.scan_id == scan_id).first()
         if not scan:
@@ -25227,6 +25262,7 @@ def _overwatch_finish_tile(job: dict, verdict: dict, scan_id: str | None) -> dic
             "country_code": str(tile["stager"]).upper(),
             "raw_json": {"zone_id": kept, "scan_id": scan_id, "kind": "sweep_find", "tile_id": tile["tile_id"],
                          "reason": f"found by the border sweep — {verdict['summary']}",
+                         # each finding with its box on the ground (overwatch.py / finding_boxes.py)
                          "findings": verdict["findings"][:5], "actions": ["image"]},
         })
     return {"tile_id": tile["tile_id"], "result": verdict["result"], "kept": kept, "summary": verdict["summary"]}
