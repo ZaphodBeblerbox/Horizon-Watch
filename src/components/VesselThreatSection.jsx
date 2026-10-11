@@ -9,11 +9,11 @@
  * "Simulate" — a drone flown to a target on the globe, labelled as a
  * simulation of what is in reach, never a prediction.
  */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import Loading from "../ui/Loading.jsx"
 import {
-  closeVesselThreat, getVesselThreat, openVesselThreat, simulateVesselThreat, stopSimulation, subscribeVesselThreat,
+  closeVesselThreat, ensureVesselThreat, getVesselThreat, openVesselThreat, simulateVesselThreat, stopSimulation, subscribeVesselThreat,
 } from "../state/vesselThreatStore.js"
 import { SIM_LABEL, fmtMinutes } from "../globe/vesselThreat.js"
 
@@ -34,12 +34,20 @@ const btn = (primary) => ({
 
 export default function VesselThreatSection({ mmsi, lat, lon }) {
   const s = useVesselThreat()
+  const box = useRef(null)
   useEffect(() => {
     if (!mmsi) return undefined
     window.dispatchEvent(new CustomEvent("akili:open-map"))
-    openVesselThreat(mmsi, { lat, lon })
+    // opened from a notification (notify/openSignal.js): already opening,
+    // with the flight to start — keep it
+    ensureVesselThreat(mmsi, { lat, lon })
     return () => closeVesselThreat()
   }, [mmsi, lat, lon])
+  // opened from a notification: this section is what was asked for
+  const fromNote = s.from === "notification" && s.mmsi === String(mmsi)
+  useEffect(() => {
+    if (fromNote && s.data) box.current?.scrollIntoView?.({ block: "start", behavior: "smooth" })
+  }, [fromNote, !!s.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (s.mmsi !== String(mmsi) || (s.loading && !s.data)) {
     return (
@@ -61,7 +69,7 @@ export default function VesselThreatSection({ mmsi, lat, lon }) {
   const a = d.assessment || {}
   const simT = s.sim ? d.targets?.[s.sim.index] : null
   return (
-    <div style={{ marginBottom: "var(--space-4)" }} data-testid="vessel-threat-section">
+    <div ref={box} style={{ marginBottom: "var(--space-4)", scrollMarginTop: 8 }} data-testid="vessel-threat-section">
       <SectionLabel meta={d.vessel?.position_source}>Vessel of concern</SectionLabel>
       {d.synthetic && (
         <div role="note" style={{ margin: "0 0 6px", padding: "6px 9px", borderRadius: 6, border: "1px dashed var(--border-dim)", font: "600 12px var(--font)" }}>

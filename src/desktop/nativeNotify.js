@@ -32,6 +32,7 @@ function openLastOnReturn() {
     window.dispatchEvent(new CustomEvent("plx:open-notification", { detail: {
         id: item.alertId || item.id, lat: item.ref?.lat ?? null, lon: item.ref?.lon ?? null,
         livestreamId: item.livestreamId || null, assetId: item.assetId || null, title: item.title || "",
+        alertType: item.alertType || null, mmsi: item.mmsi || null,
     } }))
 }
 

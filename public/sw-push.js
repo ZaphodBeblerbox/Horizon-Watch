@@ -39,7 +39,9 @@ self.addEventListener('push', (event) => {
             requireInteraction: critical,
             vibrate: critical ? [300, 100, 300, 100, 300] : [200, 100, 200],
             data: { url: data.url || '/', eventId: data.id, lat: data.lat, lon: data.lon,
-                    livestreamId: data.livestream_id || null, assetId: data.asset_id || null, headline: data.body || '' },
+                    livestreamId: data.livestream_id || null, assetId: data.asset_id || null, headline: data.body || '',
+                    // a vessel of concern opens on the vessel itself (src/notify/openSignal.js)
+                    mmsi: data.mmsi || null, alertType: data.alert_type || null },
         })
     })())
 })
@@ -50,7 +52,8 @@ self.addEventListener('notificationclick', (event) => {
     event.waitUntil((async () => {
         const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true })
         const msg = { type: 'NOTIFICATION_CLICK', eventId: d.eventId, lat: d.lat, lon: d.lon,
-                      livestreamId: d.livestreamId, assetId: d.assetId, headline: d.headline }
+                      livestreamId: d.livestreamId, assetId: d.assetId, headline: d.headline,
+                      mmsi: d.mmsi || null, alertType: d.alertType || null }
         for (const w of wins) {
             if (w.url.startsWith(self.location.origin) && 'focus' in w) {
                 await w.focus()
@@ -64,6 +67,8 @@ self.addEventListener('notificationclick', (event) => {
         if (Number.isFinite(d.lat) && Number.isFinite(d.lon)) p.set('focus', `${d.lat},${d.lon}`)
         if (d.livestreamId) p.set('live', d.livestreamId)
         if (d.assetId) p.set('asset', d.assetId)
+        if (d.mmsi) p.set('vessel', d.mmsi)
+        if (d.alertType) p.set('type', d.alertType)
         if (d.headline) p.set('h', d.headline.slice(0, 160))
         if (clients.openWindow) await clients.openWindow(`/${p.toString() ? `?${p}` : ''}`)
     })())

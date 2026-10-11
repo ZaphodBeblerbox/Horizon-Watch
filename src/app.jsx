@@ -170,6 +170,9 @@ import Insight from "./destinations/Insight.jsx"
 import Analytics from "./destinations/Analytics.jsx"
 import LocationPrompt from "./components/LocationPrompt.jsx"
 import LivePlayerHost, { watchLive } from "./telegram/LivePlayer.jsx"
+import { openSignal, setSignalSurface } from "./notify/openSignal.js"
+import { openVesselThreat } from "./state/vesselThreatStore.js"
+import { ALERT_TYPE as VESSEL_ALERT_TYPE } from "./globe/vesselThreat.js"
 import { exportPdf } from "./print/printSurface.jsx"
 import { MODE_FRAME } from "./plx6/modeWindow.js"
 import { setActiveTheater } from "./state/filing.js"
@@ -1066,6 +1069,9 @@ export default function App() {
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
                 actions: i.actions || (i.livestream_id ? ["watch"] : null), alertId: i.id, assetId: i.asset_id || null,
                 livestreamId: i.livestream_id || null,
+                // a vessel of concern opens on the vessel (notify/openSignal.js)
+                alertType: i.alert_type || null,
+                mmsi: i.mmsi || (i.alert_type === VESSEL_ALERT_TYPE ? i.entity_id : null) || null,
                 // reaches a closed app only when the server says so (event_watch.notifies)
                 push: i.push === true,
                 // WHEN IT HAPPENED, in the order the fields mean it.
@@ -1659,8 +1665,10 @@ export default function App() {
     /* OPENING A NOTIFICATION opens the thing it is about, not just the
        place. Fly there, then find it among what the map has drawn (each
        layer keys its entities its own way) and put it in the inspector;
-       if the map is not drawing it, the notification itself is shown. */
-    const openNotificationItem = useCallback((n) => {
+       if the map is not drawing it, the notification itself is shown.
+       Every entry point goes through notify/openSignal.js, which decides
+       WHAT to open; this is how the desktop opens each kind. */
+    const openSignalItem = useCallback((n) => {
         if (!n) return
         // Near one of your assets: its page says what the signal means for it.
         if (n.assetId) {
@@ -1672,6 +1680,7 @@ export default function App() {
         const at = n.ref?.lat != null && n.ref?.lon != null ? n.ref : null
         openTab("situation")
         if (at) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: at.lat, lon: at.lon, altitude: 250000 } }))
+        if (n.inspect === false) return
         const raw = String(n.id || "").replace(/^sig-/, "")
         const keys = [n.id, raw, n.alertId, `geoconfirmed-${raw}`, `gdelt-${raw}`, `fusion-${n.alertId || raw}`,
                       `imgsig-${n.alertId || raw}`, `surge-${raw}`, `alert-forge-${n.alertId || raw}`].filter(Boolean)
@@ -1690,33 +1699,60 @@ export default function App() {
         }, at ? 1700 : 300)
     }, [openTab])
 
+    /* A VESSEL OF CONCERN opens on the vessel itself (owner, 2026-10-11):
+       the map, the globe flown to its LIVE position (the alert's position
+       when it is not in the AIS picture, and the inspector says so), the
+       inspector on the vessel-threat section, the drone rings and the top
+       targets, and the simulated drone flight to the top-ranked target
+       started — labelled a simulation, with a Stop. */
+    const openVesselRoute = useCallback((r) => {
+        openTab("situation")
+        openVesselThreat(r.mmsi, { lat: r.lat, lon: r.lon, simulate: true, from: "notification" })
+        const id = r.alertId || r.id || `RUL-${r.mmsi}`
+        setTimeout(() => window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
+            entityType: "alert", entityId: id,
+            data: { id, alert_id: id, alert_type: r.alertType || VESSEL_ALERT_TYPE, mmsi: r.mmsi, entity_id: r.mmsi,
+                    title: r.title || "Vessel of concern", entity_name: r.title || "Vessel of concern",
+                    message: r.sub || r.title, severity: r.sev || "critical",
+                    lat: r.lat, lon: r.lon, source: "russia_loiter_watch" },
+        } })), 300)
+    }, [openTab])
+
+    const openDesktopRoute = useCallback((r) => {
+        if (!r) return
+        if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
+        if (r.action === "vessel") { openVesselRoute(r); return }
+        // the tray's own item when there is one (it knows how it was drawn)
+        const own = r._item || (r.id ? getNotifications().items.find((x) => x.id === r.id || x.alertId === r.id || (r.alertId && x.alertId === r.alertId)) : null)
+        openSignalItem(own ? { ...own, inspect: r.inspect } : {
+            id: r.id, alertId: r.alertId, assetId: r.assetId || null, title: r.title || "", sub: r.sub || "", sev: r.sev || "moderate", kind: r.kind || "signal",
+            ref: r.lat != null && r.lon != null ? { lat: r.lat, lon: r.lon } : null, inspect: r.inspect,
+        })
+    }, [openSignalItem, openVesselRoute])
+    // the desktop console is the surface (the phone shell registers its own)
+    useEffect(() => (phoneMode ? undefined : setSignalSurface(openDesktopRoute)), [phoneMode, openDesktopRoute])
+
+    // cards, the tray: the same router as a notification clicked outside
+    const openNotificationItem = useCallback((n) => { if (n) openSignal(n) }, [])
+
     /* A NOTIFICATION CLICKED OUTSIDE THE APP (web push, the desktop app's
        macOS notification, or a cold start from one: main.jsx) opens the
-       signal it was about — the same as clicking its card in here: the
-       tray's own item when there is one, else what the notification
-       carried; a livestream starts playing. */
-    const openFromOutside = useCallback((d) => {
-        if (!d) return
-        if (d.livestreamId) { watchLive(d.livestreamId, d.title || ""); return }
-        const own = d.id ? getNotifications().items.find((x) => x.id === d.id || x.alertId === d.id) : null
-        openNotificationItem(own || {
-            id: d.id, alertId: d.id, assetId: d.assetId || null, title: d.title || "", sev: "moderate", kind: "signal",
-            ref: d.lat != null && d.lon != null ? { lat: d.lat, lon: d.lon } : null,
-        })
-    }, [openNotificationItem])
+       signal it was about — the same as clicking its card in here. */
+    const openFromOutside = useCallback((d) => { if (d) openSignal(d) }, [])
     useEffect(() => {
         const h = (e) => openFromOutside(e.detail)
         window.addEventListener("plx:open-notification", h)
-        // opened cold from one: once the map has drawn
+        // opened cold from one: once the map has drawn (the phone shell
+        // takes it itself — it has no globe to wait for)
         const pending = window.__plxPendingOpen
-        if (pending) {
+        if (pending && !phoneMode) {
             window.__plxPendingOpen = null
             const go = () => setTimeout(() => openFromOutside(pending), 400)
             if (window.__plxMapReady) go()
             else window.addEventListener("plx:map-ready", go, { once: true })
         }
         return () => window.removeEventListener("plx:open-notification", h)
-    }, [openFromOutside])
+    }, [openFromOutside, phoneMode])
 
 
     // Reverse direction — real deep links from non-map destinations (e.g.

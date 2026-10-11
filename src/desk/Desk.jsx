@@ -17,6 +17,7 @@
  * second person saying "I have the ADS-B for that window"; the fourth
  * nested reply is a conversation, and there is a chat for that.
  */
+import { openSignal } from "../notify/openSignal.js"
 import GeneralFeed from "../general/GeneralFeed.jsx"
 import { attachmentFor } from "../mobile/screens/common.jsx"
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -233,10 +234,9 @@ export default function Desk() {
                     {view === "general" ? (
                         <div key="general" style={{ maxWidth: 680, margin: "0 auto", padding: "14px 20px 60px", animation: "plx-fade-in .25s ease" }}>
                             <GeneralFeed
-                                onMap={(it) => {
-                                    window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "situation" } }))
-                                    setTimeout(() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: +it.lat, lon: +it.lon, altitude: 250_000 } })), 300)
-                                }}
+                                // the same router as a notification (a vessel of concern
+                                // opens on the vessel; anything else flies there)
+                                onMap={(it) => openSignal({ ...it, inspect: false })}
                                 onShare={(it) => { setPrefill({ attachment: attachmentFor(it), body: "" }); setView("team") }} />
                         </div>
                     ) : (

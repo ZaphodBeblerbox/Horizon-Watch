@@ -23,6 +23,8 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "owned_asset",
             // OpenInfraMap objects (GlobeInfraLayer).
             "infra_feature",
+            // Places public calls name for blockades (GlobeEndangeredPlacesLayer).
+            "endangered_place",
         ].sort())
     })
 

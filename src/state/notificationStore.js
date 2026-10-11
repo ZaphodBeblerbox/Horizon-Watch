@@ -239,6 +239,10 @@ export function pushNotification(n) {
         // new heat, "image" for an imagery signal.
         actions: Array.isArray(n.actions) ? n.actions : null,
         alertId: n.alertId || null,
+        // what kind of alert, and the vessel when it is a vessel of concern —
+        // so a click opens the vessel itself (notify/openSignal.js)
+        alertType: n.alertType || null,
+        mmsi: n.mmsi || null,
         assetId: n.assetId || null,
         onHome: !!n.onHome,
         livestreamId: n.livestreamId || null,

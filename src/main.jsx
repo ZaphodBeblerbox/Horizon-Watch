@@ -7,6 +7,7 @@ import LaunchIntro from './plx6/LaunchIntro.jsx'
 import './index.css'
 import './styles/designSystem.css'
 import { initPushNotifications } from './utils/pushNotifications.js'
+import { parseOpenParams } from './notify/openSignal.js'
 import { registerSW } from 'virtual:pwa-register'
 import { reloadOnceForStaleChunk } from './utils/staleChunkRecovery.js'
 import API_BASE from './apiBase.js'
@@ -70,13 +71,10 @@ if (typeof window !== 'undefined') window.__parallaxDesktop = isDesktop()
 // The signal itself is opened (app.jsx, plx:open-notification), not just
 // its place: ?signal=id&focus=lat,lon&live=stream&asset=id&h=headline.
 try {
-    const q = new URLSearchParams(window.location.search)
-    const [lat, lon] = (q.get('focus') || '').split(',').map(Number)
-    if (q.get('signal') || q.get('live') || q.get('asset') || (Number.isFinite(lat) && Number.isFinite(lon))) {
-        window.__plxPendingOpen = {
-            id: q.get('signal') || null, lat: Number.isFinite(lat) ? lat : null, lon: Number.isFinite(lon) ? lon : null,
-            livestreamId: q.get('live') || null, assetId: q.get('asset') || null, title: q.get('h') || '',
-        }
+    const pending = parseOpenParams(window.location.search)
+    if (pending) {
+        // ?signal=id&focus=lat,lon&live=…&asset=…&vessel=<mmsi>&type=…&h=…
+        window.__plxPendingOpen = pending
         window.history.replaceState(null, '', window.location.pathname + window.location.hash)
     }
 } catch { /* a bad link opens the app as usual */ }
@@ -106,6 +104,7 @@ try {
                 window.dispatchEvent(new CustomEvent('plx:open-notification', { detail: {
                     id: d.eventId || null, lat: Number.isFinite(d.lat) ? d.lat : null, lon: Number.isFinite(d.lon) ? d.lon : null,
                     livestreamId: d.livestreamId || null, assetId: d.assetId || null, title: d.headline || '',
+                    mmsi: d.mmsi || null, alertType: d.alertType || null,
                 } }))
             })
         }).catch((e) => console.warn('[push] unavailable:', e?.message || e))

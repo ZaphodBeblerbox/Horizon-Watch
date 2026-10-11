@@ -55,6 +55,8 @@ export const INSPECTOR_TYPES = new Set([
     "gfw_event",
     // Controlled airspace volumes, registered by GlobeAirspaceLayer.
     "airspace",
+    // Places public calls name for blockades (GlobeEndangeredPlacesLayer).
+    "endangered_place",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────

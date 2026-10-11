@@ -1059,6 +1059,9 @@ _HARD_AUTHORITIES = {
 RUSSIA_LOITER_TYPE = "Russia-linked vessel loitering"
 # telegram_mood_alert.ALERT_TYPE starts with this (lowercase).
 TELEGRAM_MOOD_PREFIX = "telegram mood"
+# endangered_places.ALERT_TYPES all start with this (lowercase): public calls
+# to block or act at named places (fuel sites), from monitored public maps.
+ENDANGERED_PREFIX = "endangered place"
 
 # Alert families that are notification-worthy by their nature: each one is a
 # discrete, human-verified or multi-signal finding, not a continuous feed.
@@ -1267,6 +1270,15 @@ def notification_relevance(alert: dict) -> dict:
         return {"notify": False, "sev": "high",
                 "reason": "for those with an asset, theater or interest in " + (a.get("region") or "that country")}
 
+    # Public calls to block or act at named places (endangered_places.py):
+    # already bounded at the source — one national summary per action day
+    # (updated in place), one per refinery or fuel depot with a roadblock,
+    # convoy or picket called, and one morning-of reminder — so each reaches
+    # everyone and says which call it is about.
+    if k.startswith(ENDANGERED_PREFIX):
+        return {"notify": True, "sev": sev if sev in ("critical", "high") else "high",
+                "reason": raw.get("reason") or "public calls to act at named places"}
+
     # New heat near what matters (heat_watch.py) and imagery signals
     # (imagery_signals.py) are already judged by their own rules — each says
     # why it counted.
@@ -1313,7 +1325,7 @@ def notification_relevance(alert: dict) -> dict:
 
 def notification_kind(alert_type: Optional[str]) -> str:
     k = (alert_type or "").strip().lower()
-    if k == RUSSIA_LOITER_TYPE.lower() or k.startswith(TELEGRAM_MOOD_PREFIX):
+    if k == RUSSIA_LOITER_TYPE.lower() or k.startswith((TELEGRAM_MOOD_PREFIX, ENDANGERED_PREFIX)):
         # "signal", not "detector": a high signal takes the screen and can
         # push (event_watch.interrupts); a high detector reading does not.
         return "signal"

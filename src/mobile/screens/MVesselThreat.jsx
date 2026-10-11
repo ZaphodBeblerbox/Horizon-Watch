@@ -12,9 +12,11 @@ const RING = ["#ff5a4f", "#ff9f43", "#ffd166"]
 
 export function VesselThreatBlock({ s, onShowOnMap, onClose }) {
   const mmsi = mmsiOf(s, s?.id)
-  const [d, setD] = useState(undefined)
+  // opened from its notification, the live view is already fetched
+  const [d, setD] = useState(s?.vesselThreat || undefined)
   useEffect(() => {
     if (!mmsi) return undefined
+    if (s?.vesselThreat && String(s.vesselThreat.mmsi) === String(mmsi)) { setD(s.vesselThreat); return undefined }
     let live = true
     setD(undefined)
     fetchVesselThreat(mmsi, { lat: s?.lat, lon: s?.lon }).then((x) => { if (live) setD(x) }).catch((e) => { if (live) setD({ available: false, reason: String(e?.message || e) }) })
@@ -27,6 +29,7 @@ export function VesselThreatBlock({ s, onShowOnMap, onClose }) {
   return (
     <div style={{ margin: "0 0 12px" }} data-testid="m2-vessel-threat">
       <div className="m2-eyebrow" style={{ marginBottom: 4 }}>Vessel of concern · {a.score}/100 · {a.tier_label}</div>
+      {d.vessel?.position_source && <div className="m2-sub" style={{ margin: "0 0 6px" }}>Position: {d.vessel.position_source}</div>}
       <ul style={{ margin: "0 0 8px", paddingLeft: 18, fontSize: 13, lineHeight: 1.45 }}>
         {(a.lines || []).slice(0, 4).map((l) => <li key={l}>{l}</li>)}
       </ul>

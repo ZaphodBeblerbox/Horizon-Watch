@@ -27,6 +27,7 @@ import { infraGlyphUri } from "../globe/infraGlyphs.js"
 import { styleFor as gfwStyleFor, summaryOf as gfwSummaryOf, ageLabel as gfwAgeLabel, KINDS as GFW_KINDS } from "../globe/gfwEvents.js"
 import { riskAlpha, buildA2ToA3, indexByIso3 } from "../globe/riskChoropleth.js"
 import { CAT } from "../components/timeStripMath.js"
+import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -972,10 +973,84 @@ async function loadAois({ bounds }) {
     return cullAreas(out, normBounds(bounds))
 }
 
+// ── endangered places (globe/GlobeEndangeredPlacesLayer.jsx) ─────────────
+
+const ALARM_SEV = { red: "high", amber: "medium", grey: "low" }
+const SEV_RANK = { high: 0, medium: 1, low: 2 }
+/** A place's severity on the sheet: its strongest call (a roadblock is high
+ *  even a week out — the colour says how soon); low when only listed. */
+const placeSev = (p) => (p.alarm === "grey" ? "low" : (p.level || ALARM_SEV[p.alarm] || "medium"))
+const ALARM_RANK = { red: 0, amber: 1, grey: 2 }
+/** Below this zoom, nearby places are drawn as one disc with their count. */
+export const ENDANGERED_CLUSTER_BELOW = 10
+
+function endangeredFeature(p) {
+    const hasCall = arr(p.calls).length > 0 && p.alarm !== "grey"
+    const size = hasCall ? (p.alarm === "red" ? 26 : 22) : 15
+    return {
+        id: `endangered-${p.id}`, lat: num(p.lat), lon: num(p.lon),
+        iconUri: placeIconUri({ kind: p.kind, alarm: p.alarm, hasCall, size }), size,
+        title: p.name || "Endangered place",
+        sub: placeSubtitle(p),
+        severity: placeSev(p),
+        raw: { ...p, kind: "endangered_place", place_kind: p.kind, detail: placeDetail(p), url: p.source_url,
+               source: p.source, location: placeSubtitle(p), place: placeSubtitle(p) },
+    }
+}
+
+/**
+ * Grid clustering for the phone (the desktop draws every place): one disc
+ * per cell of about 56 px, coloured by the worst place inside; a tap opens a
+ * sheet naming them, and "Show on the map" zooms in to split them.
+ */
+export function clusterPlaces(places, zoom, cellPx = 56) {
+    if (zoom >= ENDANGERED_CLUSTER_BELOW) return places.map(endangeredFeature)
+    const deg = (360 / 2 ** Math.max(0, zoom)) * (cellPx / 256)
+    const cells = new Map()
+    for (const p of places) {
+        if (!finite(p.lat, p.lon)) continue
+        const k = `${Math.floor(num(p.lat) / deg)}:${Math.floor(num(p.lon) / deg)}`
+        if (!cells.has(k)) cells.set(k, [])
+        cells.get(k).push(p)
+    }
+    const out = []
+    for (const [k, list] of cells) {
+        if (list.length === 1) { out.push(endangeredFeature(list[0])); continue }
+        const alarm = list.reduce((a, p) => worstAlarm(a, p.alarm), "grey")
+        const withCalls = list.filter((p) => arr(p.calls).length && p.alarm !== "grey")
+        const lat = list.reduce((a, p) => a + num(p.lat), 0) / list.length
+        const lon = list.reduce((a, p) => a + num(p.lon), 0) / list.length
+        const size = list.length >= 50 ? 36 : list.length >= 10 ? 32 : 28
+        const named = [...list].sort((a, b) => (ALARM_RANK[a.alarm] ?? 2) - (ALARM_RANK[b.alarm] ?? 2))
+            .slice(0, 8).map((p) => `${p.name}${p.city ? ` (${p.city})` : ""}${arr(p.calls)[0] ? ` — ${p.calls[0].label_en}` : ""}`)
+        const title = withCalls.length
+            ? `${list.length} endangered places here — ${withCalls.length} with calls to act`
+            : `${list.length} listed places here, no call`
+        out.push({
+            id: `endangered-cl-${zoom}-${k}`, lat, lon, iconUri: clusterIconUri({ count: list.length, alarm, size }), size,
+            title, sub: "Zoom in to see each place",
+            severity: list.map(placeSev).sort((a, b) => SEV_RANK[a] - SEV_RANK[b])[0],
+            raw: { kind: "endangered_cluster", detail: `${named.join("; ")}${list.length > 8 ? `; and ${list.length - 8} more` : ""}.`,
+                   lat, lon, source: "Endangered places" },
+        })
+    }
+    return out
+}
+
+async function loadEndangered({ bounds, zoom }) {
+    const d = await getJson(`${API_BASE}/api/endangered-places`, { ttlMs: 120_000 })
+    if (!d) return []
+    rememberWithin7(d.calls_within_7_days)
+    const b = normBounds(bounds)
+    const inView = arr(d.places).filter((p) => finite(p.lat, p.lon) && inBounds(p.lat, p.lon, b, 0.5))
+    return clusterPlaces(inView, Number.isFinite(zoom) ? zoom : 5).slice(0, MAX_FEATURES)
+}
+
 // ── the registry ──────────────────────────────────────────────────────────
 
 const G = {
     assets: "Our assets",
+    endangered: "Endangered places",
     maritime: "Maritime",
     air: "Air",
     news: "News",
@@ -998,6 +1073,14 @@ export const PHONE_LAYERS = [
     {
         key: "assets", label: "Our assets", group: G.assets, defaultOn: true, kind: "points", minZoom: 0,
         legendIcon: assetIcon("Sites", "quiet"), load: loadAssets,
+    },
+
+    // Endangered places — Situation's own group, on while a call is within 7 days.
+    {
+        key: "endangered", label: "Endangered places", group: G.endangered,
+        get defaultOn() { return endangeredDefaultOn() },
+        kind: "points", minZoom: 0,
+        legendIcon: placeIconUri({ kind: "fuel_depot", alarm: "red", hasCall: true, size: 22 }), load: loadEndangered,
     },
 
     // Maritime (LAYER_GROUPS.maritime; live vessels are the phone's own).

@@ -240,7 +240,10 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             if (!threat.current) threat.current = L.layerGroup().addTo(map.current)
             const b = drawVesselThreat(L, threat.current, focus.vesselThreat)
             setThreatOn(true)
-            if (b) map.current.fitBounds(b, { animate: true })
+            // a pan still running (centred early, MobileApp) would swallow the fit
+            if (b) { map.current.stop(); map.current.fitBounds(b, { animate: true }) }
+            // opened from its notification: the vessel's sheet with it
+            if (focus.headline || focus.title) setOpen(focus)
             return
         }
         map.current.setView([+focus.lat, +focus.lon], Math.max(map.current.getZoom(), 9), { animate: true })
@@ -429,7 +432,16 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         : <LiveNow compact />}
                 </Sheet>
             )}
-            {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={(s) => map.current?.setView([+s.lat, +s.lon], 11, { animate: true })} />}
+            {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={(s) => {
+                if (s?.vesselThreat && map.current) {
+                    if (!threat.current) threat.current = L.layerGroup().addTo(map.current)
+                    const b = drawVesselThreat(L, threat.current, s.vesselThreat)
+                    setThreatOn(true)
+                    if (b) map.current.fitBounds(b, { animate: true })
+                    return
+                }
+                map.current?.setView([+s.lat, +s.lon], 11, { animate: true })
+            }} />}
             {track && <TrackSheet t={track} onClose={() => setTrack(null)} />}
         </div>
     )

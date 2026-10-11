@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
+import re
 import threading
 import time
 
@@ -327,6 +328,14 @@ def cards_for(uid: str, now: _dt.datetime | None = None) -> list[dict]:
         cards += tma.cards_for(c)
     except Exception as e:                                     # noqa: BLE001
         print(f"[tg-mood] error: cards for {uid}: {type(e).__name__}: {e}", flush=True)
+    # Public calls to block or act at a place within 25 km of their asset or
+    # of where they are, and the count inside each theater
+    # (endangered_places.py).
+    try:
+        import endangered_places as ep
+        cards += ep.cards_for(c, now)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[endangered] error: cards for {uid}: {type(e).__name__}: {e}", flush=True)
     return cards
 
 
@@ -420,6 +429,28 @@ def body_for(card: dict) -> str:
     return (f"{head} — {ctx}" if ctx and ctx.lower() not in head.lower() else head)[:220]
 
 
+# russia_loiter_watch.ALERT_TYPE (not imported: that module pulls in the
+# AIS geometry this one never needs).
+VESSEL_THREAT_TYPE = "Russia-linked vessel loitering"
+_RUL_ID = re.compile(r"(?:^|[^A-Z])RUL-(\d{6,})-")
+
+
+def mmsi_of(card: dict) -> str | None:
+    """The MMSI of a vessel-of-concern card, so a click opens the vessel
+    itself even before (or without) the alert being fetched: the card's own
+    mmsi, its entity id when it is that alert type, else the one in its id
+    (RUL-<mmsi>-<episode start>)."""
+    m = str(card.get("mmsi") or "").strip()
+    if m.isdigit() and len(m) >= 6:
+        return m
+    if card.get("alert_type") == VESSEL_THREAT_TYPE:
+        e = str(card.get("entity_id") or "").strip()
+        if e.isdigit() and len(e) >= 6:
+            return e
+    hit = _RUL_ID.search(str(card.get("id") or ""))
+    return hit.group(1) if hit else None
+
+
 def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
     """(title, body, data) to send: the first PUSH_SINGLES as themselves,
     the rest as one summary, so a burst is one buzz, not twelve."""
@@ -432,7 +463,8 @@ def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
     # click goes.
     out = [(label_for(x), body_for(x), {"id": x["id"], "kind": x.get("kind"), "severity": x.get("sev"),
                                               "lat": x.get("lat"), "lon": x.get("lon"),
-                                              "asset_id": x.get("asset_id"), "livestream_id": x.get("livestream_id")})
+                                              "asset_id": x.get("asset_id"), "livestream_id": x.get("livestream_id"),
+                                              "alert_type": x.get("alert_type"), "mmsi": mmsi_of(x)})
            for x in cards[:PUSH_SINGLES]]
     rest = cards[PUSH_SINGLES:]
     if rest:

@@ -29,6 +29,7 @@ import { resolveSanctionsStatus } from "../globe/entityIcons.js"
 import { vesselShipType, acClassify } from "../globe/iconUtils.js"
 import { extentOf } from "../utils/extent.js"
 import { fmtWhen, whenLabel } from "../utils/formatTime.js"
+import { callLines, listedNote, KIND_LABEL as ENDANGERED_KIND } from "../globe/endangeredPlaces.js"
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -1251,6 +1252,46 @@ export function adaptGfwEvent(data = {}) {
     }
 }
 
+// ── Endangered place (a public call to block or act there) ─────────────
+/**
+ * A refinery, depot, fuel station or rally point that a public call names
+ * for a roadblock or another action, or a company an anti-militarist map
+ * lists as a target (backend/endangered_places.py). Each call is its own
+ * row in plain English with date, time and source; the source page is the
+ * last row, a link (splitSources makes it a Sources entry).
+ */
+export function adaptEndangeredPlace(data = {}) {
+    const calls = Array.isArray(data.calls) ? data.calls : []
+    const lines = callLines(data)
+    const where = [data.city, data.dept ? `(${data.dept})` : null].filter(Boolean).join(" ")
+    const attributes = compact([
+        attr("Status", data.status || null),
+        ...lines.map((l, i) => attr(lines.length > 1 ? `Call ${i + 1}` : "Call", l)),
+        !calls.length ? attr("Why it is listed", listedNote(data)) : null,
+        attr("Operator", data.operator || null),
+        attr("Place", [data.kind_label || ENDANGERED_KIND[data.kind], where].filter(Boolean).join(" · ") || null),
+        attr("Address", data.address || null),
+        attr("Activity", [data.sector, data.domain].filter(Boolean).join(" — ") || null),
+        attr("On the map's lists", Array.isArray(data.lists) && data.lists.length ? data.lists.join("; ") : null),
+        attr("Position", fmtCoord(data.lat, data.lon)),
+        attr("Source", data.source_url || null),
+    ])
+    const levelWord = data.alarm === "red" ? "Roadblock, convoy or picket within 48 h"
+        : data.alarm === "amber" ? "Call to act" : "Listed, no call"
+    return {
+        identity: {
+            title: data.name || "Endangered place",
+            subtitle: `${levelWord} · ${data.kind_label || ENDANGERED_KIND[data.kind] || "place"}`,
+            entityType: "endangered_place",
+            subtype: data.kind || null,
+            sanctionsStatus: null,
+        },
+        attributes,
+        provenance: { feed: data.source || null, ingestedAt: null },
+        actions: { canJumpToLocation: isFiniteNum(data.lat) && isFiniteNum(data.lon) },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -1280,6 +1321,7 @@ const ADAPTERS = {
     pipeline: adaptPipeline,
     infra_feature: adaptInfraFeature,
     owned_asset: adaptOwnedAsset,
+    endangered_place: adaptEndangeredPlace,
 }
 
 /**

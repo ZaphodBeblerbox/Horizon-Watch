@@ -13652,6 +13652,58 @@ async def _telegram_mood_alert_loop():
         await asyncio.sleep(45 * 60)
 
 
+async def _endangered_places_loop():
+    """Public calls to block or act at named places (endangered_places.py,
+    owner 2026-10-11): the gilets jaunes' map every 30 min, the
+    anti-militarist Framacarte daily. Fetch and build in a thread of its
+    own; new alerts through write_alert(), changed ones updated in place."""
+    if os.getenv("ENDANGERED_PLACES_ENABLED", "true").strip().lower() in ("0", "false", "no"):
+        print("[endangered] disabled via ENDANGERED_PLACES_ENABLED")
+        return
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="endangered")
+    await asyncio.sleep(120)
+    while True:
+        try:
+            import endangered_places as _ep
+            _loop = asyncio.get_running_loop()
+            res = await _loop.run_in_executor(_pool, _ep.refresh)
+            print(f"[endangered] {res['places']} places, {res['calls']} calls ({res['new_calls']} new)"
+                  + (f"; errors: {res['errors']}" if res["errors"] else ""), flush=True)
+            plan = await _loop.run_in_executor(_pool, _ep.due_alerts)
+            done = []
+            for a in plan["new"]:
+                if await _write_alert_off_loop(_ep.for_writer(a)) or await _loop.run_in_executor(_pool, _ep.update_alert, a):
+                    done.append(a)
+                    print(f"[endangered] ALERT ({a['severity']}): {a['title']}", flush=True)
+                else:
+                    print(f"[endangered] error: could not write {a['id']}", flush=True)
+            for a in plan["update"]:
+                if await _loop.run_in_executor(_pool, _ep.update_alert, a):
+                    done.append(a)
+                    print(f"[endangered] updated {a['id']}: {a['title']}", flush=True)
+                else:
+                    print(f"[endangered] error: update found no alert {a['id']}", flush=True)
+            if done:
+                await _loop.run_in_executor(_pool, _ep.mark_sent, done)
+        except Exception as _e:                              # noqa: BLE001
+            import traceback as _tb
+            print(f"[endangered] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}", flush=True)
+        await asyncio.sleep(30 * 60)
+
+
+@app.get("/api/endangered-places")
+async def api_endangered_places(bbox: str | None = None, status: str | None = None, kind: str | None = None):
+    """Places public calls name for blockades and other actions
+    (endangered_places.py): each with its calls in plain English, its
+    status (call active today / upcoming / listed (no call) / past) and
+    colour (red: a roadblock, convoy or picket within 48 h; amber: other
+    calls to come; grey: listed or over). bbox = south,west,north,east."""
+    import endangered_places as _ep
+    return await asyncio.get_running_loop().run_in_executor(
+        _executor, lambda: _ep.query(bbox=bbox, status=status, kind=kind))
+
+
 async def _global_adsb_cache_loop():
     """Poll ADS-B globally every 60s to populate _GLOBAL_ADSB_CACHE for anomaly detection."""
     global _GLOBAL_ADSB_CACHE
@@ -16677,6 +16729,7 @@ async def startup_event():
     _spawn(_russia_loiter_loop)
     _spawn(_coastal_targets_loop)
     _spawn(_telegram_mood_alert_loop)
+    _spawn(_endangered_places_loop)
 
     # WARM THE FINDINGS CACHE ONCE, IN THE BACKGROUND. The walk takes about
     # a minute, so whoever opens Ontology first would otherwise pay for it.

@@ -190,3 +190,20 @@ def test_a_burst_is_two_pushes_and_a_summary():
     cards = [{"id": f"c{i}", "title": f"Place {i} changed hands", "sev": "high", "created_at": f"2026-10-10T00:0{i}:00Z"} for i in range(6)]
     out = ew.bundle(cards)
     assert len(out) == 3 and out[2][0] == "4 more notifications" and out[2][1].startswith("Place 2 changed hands")
+
+
+def test_a_vessel_push_carries_its_mmsi_and_alert_type():
+    """A click on a vessel-of-concern push opens the vessel itself
+    (src/notify/openSignal.js), so the push says which vessel — without
+    waiting for the alert to be fetched."""
+    vessel = {"id": "RUL-667002574-1791715498", "kind": "signal", "sev": "critical", "lat": 59.85, "lon": 25.57,
+              "title": "Russia-sanctioned vessel VIXENA loitering 2.7 h, 20 km off Estonia",
+              "alert_type": "Russia-linked vessel loitering", "entity_id": "667002574"}
+    other = {"id": "heat-1", "kind": "signal", "sev": "high", "lat": 1.0, "lon": 2.0, "title": "Heat", "alert_type": "Heat", "entity_id": "x"}
+    (_, _, d), (_, _, o) = ew.bundle([vessel, other])
+    assert d["mmsi"] == "667002574" and d["alert_type"] == "Russia-linked vessel loitering"
+    assert d["id"] == vessel["id"] and d["lat"] == 59.85 and d["lon"] == 25.57
+    assert o["mmsi"] is None and o["alert_type"] == "Heat"
+    # the id alone is enough (a card that lost its entity id)
+    assert ew.mmsi_of({"id": "RUL-461000237-1791719982"}) == "461000237"
+    assert ew.mmsi_of({"id": "x", "mmsi": "273123456"}) == "273123456"

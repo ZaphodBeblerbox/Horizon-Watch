@@ -27,6 +27,7 @@ import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeTelegramLayer        from "../globe/GlobeTelegramLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
+import GlobeEndangeredPlacesLayer from "../globe/GlobeEndangeredPlacesLayer.jsx"
 import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
 import GlobeAssetsLayer          from "../globe/GlobeAssetsLayer.jsx"
 import GlobeMeLayer              from "../globe/GlobeMeLayer.jsx"
@@ -146,6 +147,8 @@ export default function GlobeView({
     telegramEnabled = false,
     unrestEnabled   = false,
     imagerySignalsEnabled = false,
+    // Places public calls name for blockades (endangered_places.py).
+    endangeredEnabled = false,
     assetsEnabled = true,
     gdeltTypes = null,
     frontlinesEnabled = false,
@@ -1221,6 +1224,7 @@ export default function GlobeView({
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} limit={1500} />
                 <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={Math.max(48, signalWindowHours || 48)} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
+                <GlobeEndangeredPlacesLayer enabled={endangeredEnabled} />
                 {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}
                 <GlobeAoisLayer enabled={aoisEnabled} />
                 <GlobeAssetsLayer enabled={assetsEnabled} />

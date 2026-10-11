@@ -28,9 +28,11 @@ import GeneralFeed from "../general/GeneralFeed.jsx"
 import MAdmin from "./screens/MAdmin.jsx"
 import { getCurrentUser, subscribeAuth } from "../state/authStore.js"
 import LocationPrompt from "../components/LocationPrompt.jsx"
-import LivePlayerHost from "../telegram/LivePlayer.jsx"
+import LivePlayerHost, { watchLive } from "../telegram/LivePlayer.jsx"
 import SourceViewer from "../components/SourceViewer.jsx"
 import MNotifCards from "./screens/MNotifCards.jsx"
+import { openSignal, routeFor, setSignalSurface } from "../notify/openSignal.js"
+import { fetchVesselThreat } from "../state/vesselThreatStore.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
@@ -50,7 +52,53 @@ export default function MobileApp() {
     useOnlineUsers("phone")
     const go = (t, opts) => { setMenu(false); if (opts?.asset) setAssetOpen(opts.asset); setTab(t) }
     useEffect(() => { const h = (e) => go(e.detail); window.addEventListener("m2:go", h); return () => window.removeEventListener("m2:go", h) }, []) // eslint-disable-line react-hooks/exhaustive-deps
-    const showOnMap = (s) => { if (!s || !Number.isFinite(+s.lat)) return; setFocus({ ...s, _t: Date.now() }); setTab("map") }
+    const plainShowOnMap = (s) => { if (!s || !Number.isFinite(+s.lat)) return; setFocus({ ...s, _t: Date.now() }); setTab("map") }
+    // a vessel of concern (from Alerts, the General feed, Home …) opens on
+    // the vessel, as its notification does; everything else as before
+    const showOnMap = (s) => (s && !s.vesselThreat && routeFor(s)?.action === "vessel" ? openSignal(s) : plainShowOnMap(s))
+
+    /* THE PHONE OPENS A NOTIFICATION (notify/openSignal.js decides what):
+       a vessel of concern on the Map — centred on the vessel, its drone
+       rings, last 24 h trail, top targets and the dashed line to the top
+       one with the drone's time to it — with the vessel's sheet open; a
+       livestream plays; an asset opens; any other signal is shown on the
+       map, or in Alerts when it has no place. */
+    useEffect(() => {
+        const open = async (r) => {
+            if (!r) return
+            setMenu(false)
+            if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
+            if (r.action === "asset") { go("assets", { asset: r.assetId }); return }
+            if (r.action === "vessel") {
+                setTab("map")
+                const base = { id: r.alertId || r.id, alert_id: r.alertId || r.id, alert_type: r.alertType, mmsi: r.mmsi, entity_id: r.mmsi,
+                               headline: r.title || "Vessel of concern", severity_tier: r.sev || "critical", source: "Vessel of concern" }
+                // there at once if the live view is slow to come (a pan still
+                // running would swallow the fit to the rings, so not before)
+                const early = r.lat != null && r.lon != null ? setTimeout(() => setFocus({ lat: r.lat, lon: r.lon, _t: Date.now() }), 700) : null
+                try {
+                    const d = await fetchVesselThreat(r.mmsi, { lat: r.lat, lon: r.lon }).finally(() => clearTimeout(early))
+                    if (d?.available !== false && d?.vessel) {
+                        setFocus({ ...base, lat: d.vessel.lat, lon: d.vessel.lon, vesselThreat: d, _t: Date.now() })
+                        return
+                    }
+                } catch { /* the sheet says why */ }
+                if (r.lat != null && r.lon != null) setFocus({ ...base, lat: r.lat, lon: r.lon, _t: Date.now() })
+                else go("alerts")
+                return
+            }
+            if (r.lat != null && r.lon != null) plainShowOnMap({ lat: r.lat, lon: r.lon, headline: r.title, id: r.alertId || r.id, severity_tier: r.sev })
+            else go("alerts")
+        }
+        const off = setSignalSurface(open)
+        // opened cold from a notification (main.jsx): no globe to wait for
+        const pending = window.__plxPendingOpen
+        if (pending) {
+            window.__plxPendingOpen = null
+            setTimeout(() => openSignal(pending), 300)
+        }
+        return off
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
     const [me, setMe] = useState(() => getCurrentUser())
     useEffect(() => subscribeAuth(setMe), [])
     const more = me?.is_super_admin ? [...MORE, ["admin", "Admin", "g-gear"]] : MORE
@@ -65,7 +113,7 @@ export default function MobileApp() {
                 <MMap active={tab === "map"} chrome={tab === "map"} focus={focus} onOpen={go} alerts={arr(notes).length} />
             </div>
             <LivePlayerHost />
-            <MNotifCards onOpen={(n) => (n.ref && Number.isFinite(+n.ref.lat) ? showOnMap({ lat: n.ref.lat, lon: n.ref.lon, headline: n.title, id: n.alertId || n.id }) : go("alerts"))} />
+            <MNotifCards onOpen={(n) => openSignal(n)} />
             <SourceViewer />
             {/* The map runs edge to edge (its own round controls carry the bell). */}
             {tab !== "map" && <header className="m2-top">

@@ -157,6 +157,7 @@ export const TRACK_TOGGLES = [
  */
 export const SUB_LAYERS = [
     { key: "assets",          label: "Our assets",               parent: null },
+    { key: "endangered",      label: "Endangered places",        parent: null },
     { key: "imagerySignals",  label: "Imagery signals",          parent: "imagery" },
     { key: "fires",           label: "Heat (thermal anomalies)", parent: "imagery" },
     { key: "satImage",        label: "Satellite base image",     parent: "imagery" },

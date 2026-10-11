@@ -63,6 +63,7 @@ import LayerStatus from "../components/LayerStatus.jsx"
 import FlowsPanel from "../components/FlowsPanel.jsx"
 import { whenLabel } from "../utils/formatTime.js"
 import { hm } from "../utils/clock.js"
+import { defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -423,6 +424,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const [imagerySignalsOn, setImagerySignalsOn] = useState(true)
     // Our assets on the map (GlobeAssetsLayer): on — they are the point.
     const [assetsOn, setAssetsOn] = useState(true)
+    // Places public calls name for blockades and other actions
+    // (GlobeEndangeredPlacesLayer): on by default while a call is within 7 days.
+    const [endangeredOn, setEndangeredOn] = useState(() => endangeredDefaultOn())
     const [satImageOn, setSatImageOn] = useState(false)
     // Default off: it is a specialist reading, and a globe that
     // opens with every layer lit is not a map of anything.
@@ -452,6 +456,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const subLayers = useRef(null)
     subLayers.current = {
         assets: [assetsOn, setAssetsOn],
+        endangered: [endangeredOn, setEndangeredOn],
         imagerySignals: [imagerySignalsOn, setImagerySignalsOn],
         fires: [firesOn, setFiresOn],
         satImage: [satImageOn, setSatImageOn],
@@ -1431,6 +1436,14 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         onToggle={() => setAssetsOn((v) => !v)} />
                 </LayerGroup>
 
+                <LayerGroup id="endangered-places" title="Endangered places" activeCount={endangeredOn ? 1 : 0}>
+                    <SubLayerRow
+                        label="Places called to be blocked"
+                        hint="Refineries, fuel depots, fuel stations and rally points named in public calls for roadblocks, slow-drive convoys and other actions (gilets jaunes, 17octobregiletjaune.net), and arms-industry companies an anti-militarist map lists as targets. Red: a roadblock, convoy or picket within 48 h; amber: other calls; grey: listed, no call. A click lists the calls and the source."
+                        on={endangeredOn} parentOn={true}
+                        onToggle={() => setEndangeredOn((v) => !v)} />
+                </LayerGroup>
+
                 <LayerGroup id="event-domains" title="Event domains"
                             activeCount={LAYER_GROUPS.filter((g) => groupsOn[g.key]).length}>
                     {LAYER_GROUPS.map((g) => (
@@ -2075,6 +2088,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         gpsInterferenceEnabled={groupsOnV.air && (!asCanvas && gpsInterferenceOn)}
                         satelliteEnabled={groupsOnV.imagery && satImageOn} infraEnabled={infraOnV.power}
                         imagerySignalsEnabled={groupsOnV.imagery && imagerySignalsOn}
+                        endangeredEnabled={endangeredOn}
                         assetsEnabled={!asCanvas && assetsOn}
                         nauticalEnabled={infraOnV.nautical}
                         eezEnabled={groupsOnV.zones}

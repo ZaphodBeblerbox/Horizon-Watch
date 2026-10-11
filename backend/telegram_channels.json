@@ -218,5 +218,13 @@
     "lang": "uk",
     "join": true,
     "note": "Ukraine's own statements; checked to exist and post 2026-10-10 (t.me/s preview); added at the owner's request"
+  },
+  "info17octobre": {
+    "role": "partisan",
+    "party": "Gilets jaunes — organisers of the 17 October 2026 mobilisation",
+    "lang": "fr",
+    "read_for": "announcements",
+    "join": true,
+    "note": "The organisers' own channel (linked from 17octobregiletjaune.net/carte): calls to act at fuel stations, refineries and depots, and rallies, for Sat 17 Oct 2026; checked to exist and post 2026-10-11 (t.me/s preview, ~1.1K subscribers); added for the Endangered places layer (endangered_places.py)"
   }
 }

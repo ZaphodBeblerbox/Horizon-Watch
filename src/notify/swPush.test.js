@@ -42,4 +42,23 @@ describe("sw-push.js", () => {
         await sw.fire("notificationclick", { notification: { close() {}, data: { eventId: "live:k", livestreamId: "k" } } })
         expect(sw.clients.openWindow).toHaveBeenCalledWith("/?signal=live%3Ak&live=k")
     })
+    it("a vessel of concern carries its MMSI into the click, open or closed (src/notify/openSignal.js)", async () => {
+        const sw = load()
+        await sw.fire("push", push({ title: "Critical alert", body: "VIXENA loitering off Estonia", id: "RUL-667002574-1791715498", kind: "signal",
+                                     severity: "critical", lat: 59.85, lon: 25.57, mmsi: "667002574", alert_type: "Russia-linked vessel loitering" }))
+        expect(sw.shown[0][1].data).toMatchObject({ eventId: "RUL-667002574-1791715498", mmsi: "667002574", alertType: "Russia-linked vessel loitering" })
+        const data = sw.shown[0][1].data
+        await sw.fire("notificationclick", { notification: { close() {}, data } })
+        const url = sw.clients.openWindow.mock.calls[0][0]
+        const q = new URLSearchParams(url.slice(2))
+        expect(q.get("signal")).toBe("RUL-667002574-1791715498")
+        expect(q.get("vessel")).toBe("667002574")
+        expect(q.get("type")).toBe("Russia-linked vessel loitering")
+        expect(q.get("focus")).toBe("59.85,25.57")
+
+        const w = { url: "https://parallax.example/", focus: vi.fn(async () => {}), postMessage: vi.fn() }
+        const open = load({ windows: [w] })
+        await open.fire("notificationclick", { notification: { close() {}, data } })
+        expect(w.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "NOTIFICATION_CLICK", eventId: data.eventId, mmsi: "667002574", alertType: "Russia-linked vessel loitering" }))
+    })
 })
