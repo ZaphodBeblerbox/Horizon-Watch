@@ -33,9 +33,11 @@ def user(app_mod):
         db.commit()
 
 
-def _login(app_mod, user, origin=None):
+def _login(app_mod, user, origin=None, host=None):
     c = TestClient(app_mod.app)
     h = {"Origin": origin} if origin else {}
+    if host:
+        h["Host"] = host
     return c, c.post("/api/auth/login",
                      json={"email": user["email"], "password": user["password"]},
                      headers=h)
@@ -49,10 +51,21 @@ def test_the_desktop_app_is_given_a_token(app_mod, user):
 
 def test_a_browser_is_never_given_the_token(app_mod, user):
     """Handing a raw JWT to a browser page puts it within reach of any
-    injected script — which is what httpOnly exists to prevent."""
-    _, r = _login(app_mod, user, origin="http://localhost:5173")
+    injected script — which is what httpOnly exists to prevent. A page on
+    the API's own site keeps the httpOnly cookie and gets no token."""
+    _, r = _login(app_mod, user, origin="http://localhost:5173", host="localhost:8000")
     assert r.status_code == 200
     assert "session_token" not in r.json()
+
+
+def test_a_page_on_another_site_is_given_the_token(app_mod, user):
+    """The deployed web page (Vercel) and the API (Railway) are different
+    sites: the cookie is third-party and dropped by Safari and Chrome's
+    tracking protection, so that page holds the token like the desktop app
+    (main._needs_bearer, 2026-10-10)."""
+    _, r = _login(app_mod, user, origin="https://parallax.vercel.app", host="horizon-watch.up.railway.app")
+    assert r.status_code == 200
+    assert r.json().get("session_token")
 
 
 def test_no_origin_is_treated_as_a_browser(app_mod, user):
