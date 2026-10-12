@@ -58,6 +58,8 @@ export const KIND = {
     // A channel we read went live on Telegram (telegram_live.py): the start
     // is the signal; Watch plays it.
     livestream: { icon: "i-feed",  name: "Live on Telegram" },
+    // Unrest near you, with the safest way out (safe_route.py)
+    exit:     { icon: "i-alert",   name: "Leave the area" },
 }
 
 /** Display severity vocabulary — the same four the diamond uses everywhere. */
@@ -134,6 +136,10 @@ export function interrupts(n, now = Date.now()) {
         // New on Home, unless Home is what you are looking at already.
         || (n.kind === "home" && !n.onHome)
         || n.kind === "livestream"
+        // Leave now: unrest near you, with your exit route (safe_route), and a
+        // warning sent to you by your team — the same as the server pushes
+        // (event_watch.INTERRUPT_KINDS), so phone and desktop agree.
+        || n.kind === "exit" || n.kind === "warning"
 }
 
 export function setMuted(v) {
