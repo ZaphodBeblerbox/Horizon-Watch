@@ -1,0 +1,53 @@
+/* The sea-route planner (MaritimeRoute.jsx). Clean sans only. */
+.plx-sea-panel { color: #fff; font-family: var(--mz-font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
+    font-size: 13.5px; line-height: 1.45; display: flex; flex-direction: column; }
+.plx-sea-panel.desktop { position: absolute; right: 16px; top: 70px; bottom: 60px; width: 420px; z-index: 46; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.5); background: rgba(12,16,24,.96); overflow: hidden; }
+.plx-sea-panel.phone { position: fixed; inset: 0; z-index: 4001; background: #0f141d; }
+.plx-sea-map { flex: 1 1 44%; min-height: 220px; }
+.plx-sea-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.1); }
+.plx-sea-panel.phone .plx-sea-head { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 10px); left: 10px; right: 10px; z-index: 1000;
+    background: rgba(12,16,24,.92); border-radius: 12px; border: 1px solid rgba(255,255,255,.1); }
+.plx-sea-body { overflow-y: auto; padding: 12px 14px calc(env(safe-area-inset-bottom, 0px) + 14px); -webkit-overflow-scrolling: touch; }
+.plx-sea-panel.desktop .plx-sea-body { flex: 1; }
+.plx-sea-panel.phone .plx-sea-body { flex: 0 1 56%; border-top: 1px solid rgba(255,255,255,.1); }
+.plx-sea-close { width: 34px; height: 34px; border-radius: 17px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #fff; font-size: 20px; cursor: pointer; flex: none; }
+.plx-sea-eyebrow { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #5cc8ff; }
+.plx-sea-title { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plx-sea { display: flex; flex-direction: column; gap: 12px; font-family: inherit; }
+.plx-sea-inputs { display: flex; flex-direction: column; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.plx-sea-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.plx-sea-lab { width: 44px; color: rgba(255,255,255,.55); font-size: 12px; flex: none; }
+.plx-sea-input { height: 30px; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.05); color: #fff;
+    font: inherit; padding: 0 8px; color-scheme: dark; width: 100%; box-sizing: border-box; }
+.plx-sea-row .plx-sea-input[type="date"] { width: auto; }
+.plx-sea-input.small { width: 70px; }
+.plx-sea-hits { position: absolute; left: 0; right: 0; top: 32px; z-index: 5; background: #141b26; border: 1px solid rgba(255,255,255,.15); border-radius: 8px; overflow: hidden; }
+.plx-sea-hit { display: block; width: 100%; text-align: left; padding: 7px 9px; border: 0; background: none; color: #fff; font: inherit; cursor: pointer; }
+.plx-sea-hit:hover, .plx-sea-hit:focus { background: rgba(92,200,255,.12); }
+.plx-sea-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.plx-sea-chip { height: 26px; padding: 0 9px; border-radius: 13px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+.plx-sea-chip[aria-pressed="true"] { background: rgba(229,72,77,.18); border-color: #E5484D; }
+.plx-sea-tradeoff { background: rgba(92,200,255,.08); border: 1px solid rgba(92,200,255,.35); border-radius: 8px; padding: 9px 11px; font-weight: 500; }
+.plx-sea-out { display: flex; flex-direction: column; gap: 12px; }
+.plx-sea-cands { display: flex; flex-direction: column; gap: 6px; }
+.plx-sea-cand { text-align: left; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); color: #fff; font: inherit; border-radius: 8px; padding: 8px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.plx-sea-cand[aria-pressed="true"] { border-color: #5cc8ff; background: rgba(92,200,255,.08); }
+.plx-sea-cand-top { display: flex; align-items: center; gap: 8px; }
+.plx-sea-cand-nums { font-size: 12.5px; color: rgba(255,255,255,.85); }
+.plx-sea-tag { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,.3); }
+.plx-sea-tag.go { border-color: #3ddc84; color: #3ddc84; }
+.plx-sea-bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
+.plx-sea-bar > i { display: block; height: 100%; border-radius: 3px; }
+.plx-sea-small { font-size: 12px; }
+.plx-sea-h { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.55); margin-bottom: 4px; }
+.plx-sea-haz { padding: 5px 0; border-top: 1px solid rgba(255,255,255,.08); }
+.plx-sea-sources { margin: 0; padding-left: 18px; font-size: 12px; }
+.plx-sea-sources a { color: #8fb4e8; }
+.plx-sea-alert { background: rgba(245,165,36,.16); border: 1px solid #F5A524; border-radius: 8px; padding: 8px 10px; }
+.plx-sea-offer { margin: 8px 0; padding: 9px 11px; border: 1px solid rgba(245,165,36,.45); background: rgba(245,165,36,.08); border-radius: 8px; display: flex; flex-direction: column; gap: 6px; }
+.plx-sea-btn { height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: #fff; font: inherit; font-size: 13px; cursor: pointer; align-self: flex-start; }
+.plx-sea-btn.go { border-color: #5cc8ff; }
+.plx-sea .plx-dim, .plx-sea-panel .plx-dim, .plx-sea-offer .plx-dim { color: rgba(255,255,255,.6); }
+.plx-sea .plx-link, .plx-sea-panel .plx-link { border: 0; background: none; color: #8fb4e8; font: inherit; cursor: pointer; padding: 0; }
+.leaflet-tooltip.plx-sea-label { background: rgba(15,20,29,.9); color: #fff; border: 0; border-radius: 6px; font-size: 11.5px; padding: 3px 7px; }

@@ -1,0 +1,700 @@
+{
+  "_about": "Airspace hazards for flight routing (air_route.py). CURATED BY HAND: every zone carries the bulletin it comes from, its revision date and the date it lapses. THIS FILE MUST BE KEPT CURRENT — EASA revises CZIBs every few weeks during an active conflict (the Middle East set was revised on 2026-09-30, Saudi Arabia on 2026-10-09). air_route.py flags a zone whose valid_until has passed and the whole file once `reviewed` is older than `review_every_days`. Check https://www.easa.europa.eu/en/domains/air-operations/czibs and https://www.faa.gov/air_traffic/publications/us_restrictions/ and update the dates.",
+  "reviewed": "2026-10-12",
+  "review_every_days": 14,
+  "geometry_note": "Zones are drawn from country outlines (backend/geo/countries.geojson) as an approximation of the FIR: a FIR also covers territorial and some international waters, and a few bulletins restrict only part of a FIR along waypoint lines that are not geocoded here (named in `geometry_caveat`).",
+  "zones": [
+    {
+      "id": "czib-iran",
+      "name": "Iran (FIR Tehran OIIX)",
+      "adj": "Iranian",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "IRN"
+        ]
+      },
+      "level": "all",
+      "weight": 1.0,
+      "why": "EASA: \"Not operate within the airspace of Iran, FIR Tehran (OIIX), at all altitudes and flight levels.\"",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2026-04-R2",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2026-04-r2",
+          "issued": "2026-07-08",
+          "revised": "2026-09-30",
+          "valid_until": "2026-11-16"
+        },
+        {
+          "issuer": "FAA",
+          "ref": "SFAR 117 (14 CFR part 91) — Tehran FIR (OIIX)",
+          "url": "https://www.faa.gov/air_traffic/publications/us_restrictions/",
+          "note": "standing US prohibition; faa.gov refused the automated check on 2026-10-12 — verify the current NOTAM"
+        }
+      ]
+    },
+    {
+      "id": "czib-iraq",
+      "name": "Iraq (FIR Baghdad ORBB)",
+      "adj": "Iraqi",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "IRQ"
+        ]
+      },
+      "level": "all",
+      "weight": 1.0,
+      "why": "EASA: \"Not operate within the airspace of Iraq, FIR Baghdad (ORBB), at all altitudes and flight levels.\"",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2026-05-R2",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2026-05-r2",
+          "issued": "2026-07-08",
+          "revised": "2026-09-30",
+          "valid_until": "2026-11-16"
+        },
+        {
+          "issuer": "FAA",
+          "ref": "SFAR 77 (14 CFR part 91) — Baghdad FIR (ORBB)",
+          "url": "https://www.faa.gov/air_traffic/publications/us_restrictions/",
+          "note": "standing US prohibition; verify the current NOTAM"
+        }
+      ]
+    },
+    {
+      "id": "czib-gulf",
+      "name": "Persian Gulf waters (FIRs Bahrain, Kuwait, Doha, Emirates)",
+      "adj": "Persian Gulf",
+      "kind": "czib",
+      "geometry": {
+        "polygon": [
+          [
+            29.95,
+            48.55
+          ],
+          [
+            28.5,
+            48.75
+          ],
+          [
+            27.2,
+            49.8
+          ],
+          [
+            26.3,
+            50.35
+          ],
+          [
+            25.3,
+            51.75
+          ],
+          [
+            24.9,
+            52.5
+          ],
+          [
+            24.3,
+            54.0
+          ],
+          [
+            24.6,
+            54.6
+          ],
+          [
+            25.3,
+            55.3
+          ],
+          [
+            25.7,
+            55.9
+          ],
+          [
+            26.4,
+            56.1
+          ],
+          [
+            26.6,
+            56.4
+          ],
+          [
+            27.0,
+            56.2
+          ],
+          [
+            26.6,
+            54.8
+          ],
+          [
+            27.4,
+            52.6
+          ],
+          [
+            28.3,
+            51.3
+          ],
+          [
+            29.3,
+            50.6
+          ],
+          [
+            29.9,
+            49.6
+          ],
+          [
+            30.0,
+            48.9
+          ]
+        ]
+      },
+      "geometry_caveat": "a hand-drawn outline of the Gulf waters; it includes Bahrain and Qatar, over which the bulletin says only \"exercise caution\"",
+      "level": "all",
+      "weight": 0.9,
+      "terminal_exception": true,
+      "why": "EASA: \"Not operate at all altitudes and flight levels within the airspace over the waters of the Persian Gulf\" — except as needed to arrive at or depart from aerodromes in those FIRs; caution over land.",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2026-07R3",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2026-07r3",
+          "issued": "2026-07-14",
+          "revised": "2026-09-30",
+          "valid_until": "2026-11-16"
+        }
+      ]
+    },
+    {
+      "id": "czib-gulf-oman",
+      "name": "Gulf of Oman west of 58°E (FIR Muscat)",
+      "adj": "Gulf of Oman",
+      "kind": "czib",
+      "geometry": {
+        "polygon": [
+          [
+            26.6,
+            56.5
+          ],
+          [
+            25.7,
+            57.8
+          ],
+          [
+            25.6,
+            58.0
+          ],
+          [
+            23.75,
+            58.0
+          ],
+          [
+            24.3,
+            56.9
+          ],
+          [
+            25.0,
+            56.4
+          ],
+          [
+            26.0,
+            56.4
+          ]
+        ]
+      },
+      "geometry_caveat": "hand-drawn outline of the waters west of 58°E",
+      "level": "all",
+      "weight": 0.9,
+      "terminal_exception": true,
+      "why": "EASA: do not operate at any altitude over the waters of the Gulf of Oman west of 58°E (FIR Muscat); caution over land.",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2026-07R3",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2026-07r3",
+          "issued": "2026-07-14",
+          "revised": "2026-09-30",
+          "valid_until": "2026-11-16"
+        }
+      ]
+    },
+    {
+      "id": "czib-saudi",
+      "name": "Saudi Arabia (FIR Jeddah OEJD)",
+      "adj": "Saudi",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "SAU"
+        ]
+      },
+      "level": "caution",
+      "weight": 0.45,
+      "geometry_caveat": "the no-operate portions are bounded by RIBOK–BOSUT–MIGDA–RAGNO–MIXUG–DEKLO–OBSAM–SILPA and ULBAM–TOTEB–DURMA–LAKSO–SOLAT, which are not geocoded here: the whole country is drawn at a caution weight instead",
+      "why": "EASA: \"Not operate, at all flight levels and altitudes, within the portions of the airspace of Saudi Arabia\" defined in the bulletin; exercise caution in the rest of FIR Jeddah.",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2026-09-R1",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2026-09-r1",
+          "issued": "2026-09-30",
+          "revised": "2026-10-09",
+          "valid_until": "2026-11-16"
+        }
+      ]
+    },
+    {
+      "id": "czib-jordan",
+      "name": "Jordan (FIR Amman OJAC)",
+      "adj": "Jordanian",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "JOR"
+        ]
+      },
+      "level": "all",
+      "weight": 1.0,
+      "why": "EASA: \"Not operate within the airspace of Jordan, FIR Amman (OJAC), at all altitudes and flight levels.\"",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2026-08-R2",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2026-08-r2",
+          "issued": "2026-07-22",
+          "revised": "2026-09-30",
+          "valid_until": "2026-10-16"
+        }
+      ]
+    },
+    {
+      "id": "czib-lebanon",
+      "name": "Lebanon (FIR Beirut OLBB)",
+      "adj": "Lebanese",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "LBN"
+        ]
+      },
+      "level": "all",
+      "weight": 1.0,
+      "terminal_exception": true,
+      "why": "EASA: \"Not operate within the airspace of Lebanon at all altitudes and flight levels\" — Beirut (OLBA) only with an approach from / departure over the sea and a current risk assessment.",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2026-06-R2",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2026-06-r2",
+          "issued": "2026-07-08",
+          "revised": "2026-09-30",
+          "valid_until": "2026-11-16"
+        }
+      ]
+    },
+    {
+      "id": "czib-syria",
+      "name": "Syria (FIR Damascus OSTT)",
+      "adj": "Syrian",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "SYR"
+        ]
+      },
+      "level": "all",
+      "weight": 0.85,
+      "geometry_caveat": "all altitudes west of ZELAF–BASEM–LOTAX–LATEB, below FL260 east of it; the line is not geocoded, so the whole country is drawn at all altitudes",
+      "why": "EASA: \"Not operate at all flight levels and altitudes, west of the line connecting ZELAF – BASEM – LOTAX – LATEB\" and \"Not operate below FL 260 in the remainder of the FIR Damascus\".",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2017-03R20",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2017-03r20",
+          "issued": "2017-03-31",
+          "revised": "2026-10-01",
+          "valid_until": "2026-11-30"
+        },
+        {
+          "issuer": "FAA",
+          "ref": "SFAR 114 (14 CFR part 91) — Damascus FIR (OSTT)",
+          "url": "https://www.faa.gov/air_traffic/publications/us_restrictions/",
+          "note": "verify the current NOTAM"
+        }
+      ]
+    },
+    {
+      "id": "czib-ukraine",
+      "name": "Ukraine (FIRs Lviv, Kyiv, Dnipro, Simferopol, Odesa)",
+      "adj": "Ukrainian",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "UKR"
+        ]
+      },
+      "level": "all",
+      "weight": 1.0,
+      "why": "EASA: \"Operators should not operate within the aforementioned airspace\" — FIRs UKLV, UKBV, UKBU, UKDV, UKFV, UKOV, all altitudes.",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2022-01R14",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2022-01r14",
+          "issued": "2022-02-24",
+          "revised": "2026-07-24",
+          "valid_until": "2027-01-31"
+        },
+        {
+          "issuer": "FAA",
+          "ref": "SFAR 113 (14 CFR part 91) — Simferopol and Dnipropetrovsk FIRs; KICZ NOTAM for the rest of Ukraine",
+          "url": "https://www.faa.gov/air_traffic/publications/us_restrictions/",
+          "note": "verify the current NOTAM"
+        }
+      ]
+    },
+    {
+      "id": "czib-russia-west",
+      "name": "Russia west of 60°E (FIRs Moscow, Rostov, St Petersburg, Samara, Yekaterinburg)",
+      "adj": "western Russian",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "RUS"
+        ],
+        "clip_lon": [
+          26.0,
+          60.0
+        ]
+      },
+      "geometry_caveat": "Kaliningrad (not named in the bulletin) is left out",
+      "level": "all",
+      "weight": 1.0,
+      "why": "EASA \"recommends not to operate within the affected airspace of the Russian Federation located west of longitude 60° East\" at all altitudes and flight levels.",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB 2025-01 R3",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/2025-01-r3",
+          "issued": "2025-01-09",
+          "revised": "2026-07-24",
+          "valid_until": "2027-01-31"
+        }
+      ]
+    },
+    {
+      "id": "sd-belarus",
+      "name": "Belarus (FIR Minsk UMMV)",
+      "adj": "Belarusian",
+      "kind": "state",
+      "geometry": {
+        "countries": [
+          "BLR"
+        ]
+      },
+      "level": "all",
+      "weight": 0.8,
+      "why": "EASA Safety Directives SD-2021-02 and SD-2021-03 prohibit EU operators from FIR Minsk (named in CZIB-2022-01R14).",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "SD-2021-02 / SD-2021-03 (cited in CZIB-2022-01R14)",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2022-01r14",
+          "revised": "2026-07-24"
+        }
+      ]
+    },
+    {
+      "id": "czib-sudan",
+      "name": "Sudan (FIR Khartoum HSSS)",
+      "adj": "Sudanese",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "SDN"
+        ]
+      },
+      "level": "all",
+      "weight": 1.0,
+      "why": "EASA \"recommends not to fly within the airspace over Sudan at all altitudes and flight levels.\"",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2023-01R8",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2023-01r8",
+          "issued": "2023-04-26",
+          "revised": "2026-07-24",
+          "valid_until": "2027-01-31"
+        }
+      ]
+    },
+    {
+      "id": "czib-libya",
+      "name": "Libya (FIR Tripoli HLLL)",
+      "adj": "Libyan",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "LBY"
+        ]
+      },
+      "level": "below_fl",
+      "below_fl": 320,
+      "weight": 1.0,
+      "why": "EASA: \"Not operate within the airspace of Libya (FIR Tripoli - HLLL) below FL 320\"; exercise caution above it.",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2017-02R20",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2017-02r20",
+          "issued": "2017-03-31",
+          "revised": "2026-07-24",
+          "valid_until": "2027-01-31"
+        },
+        {
+          "issuer": "FAA",
+          "ref": "SFAR 112 (14 CFR part 91) — Tripoli FIR (HLLL)",
+          "url": "https://www.faa.gov/air_traffic/publications/us_restrictions/",
+          "note": "verify the current NOTAM"
+        }
+      ]
+    },
+    {
+      "id": "czib-yemen",
+      "name": "Yemen (FIR Sana'a OYSC)",
+      "adj": "Yemeni",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "YEM"
+        ]
+      },
+      "level": "all",
+      "weight": 1.0,
+      "geometry_caveat": "the maritime routes east of B400, where the bulletin asks only for caution, are outside the land outline drawn here",
+      "why": "EASA: \"Not operate in the airspace of Yemen, Sana'a FIR, at all altitudes and flight levels.\"",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2017-07R20",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2017-07r20",
+          "issued": "2017-08-31",
+          "revised": "2026-09-30",
+          "valid_until": "2027-04-30"
+        },
+        {
+          "issuer": "FAA",
+          "ref": "SFAR 115 (14 CFR part 91) — Sana'a FIR (OYSC)",
+          "url": "https://www.faa.gov/air_traffic/publications/us_restrictions/",
+          "note": "verify the current NOTAM"
+        }
+      ]
+    },
+    {
+      "id": "czib-afghanistan",
+      "name": "Afghanistan (FIR Kabul OAKX)",
+      "adj": "Afghan",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "AFG"
+        ]
+      },
+      "level": "below_fl",
+      "below_fl": 320,
+      "weight": 1.0,
+      "why": "EASA: \"Not operate within the airspace of Afghanistan (FIR Kabul - OAKX) below FL 320.\"",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2017-08R19",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2017-08r19",
+          "issued": "2017-10-17",
+          "revised": "2026-07-24",
+          "valid_until": "2027-01-31"
+        }
+      ]
+    },
+    {
+      "id": "czib-pakistan-west",
+      "name": "Pakistan — Baluchistan and Khyber Pakhtunkhwa",
+      "adj": "western Pakistani",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "PAK"
+        ],
+        "clip_lon": [
+          60.0,
+          71.6
+        ]
+      },
+      "geometry_caveat": "the two provinces are approximated as Pakistan west of 71.6°E, which also takes in parts of Sindh and Punjab",
+      "level": "below_fl",
+      "below_fl": 260,
+      "weight": 1.0,
+      "why": "EASA: \"Not operate in the airspace of Pakistan, FIR Karachi (OPKR) and FIR Lahore (OPLR)\" below FL260 over Baluchistan and Khyber Pakhtunkhwa.",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2018-02R21",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2018-02r21",
+          "issued": "2018-01-10",
+          "revised": "2026-07-24",
+          "valid_until": "2027-01-31"
+        }
+      ]
+    },
+    {
+      "id": "czib-mali",
+      "name": "Mali (FIRs Niamey DRRR, Dakar GOOO)",
+      "adj": "Malian",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "MLI"
+        ]
+      },
+      "level": "below_fl",
+      "below_fl": 260,
+      "weight": 1.0,
+      "why": "EASA: \"Not operate in FIR Niamey (DRRR) and FIR Dakar (GOOO) within the territory and airspace of Mali below FL260.\"",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2017-01R21",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2017-01r21",
+          "issued": "2017-03-31",
+          "revised": "2026-09-30",
+          "valid_until": "2027-04-30"
+        }
+      ]
+    },
+    {
+      "id": "czib-somalia",
+      "name": "Somalia (FIR Mogadishu HCSM)",
+      "adj": "Somali",
+      "kind": "czib",
+      "geometry": {
+        "countries": [
+          "SOM"
+        ]
+      },
+      "level": "below_fl",
+      "below_fl": 260,
+      "weight": 1.0,
+      "why": "EASA: \"Not operate in the airspace of Somalia at or below FL 260.\"",
+      "sources": [
+        {
+          "issuer": "EASA",
+          "ref": "CZIB-2017-05R20",
+          "url": "https://www.easa.europa.eu/en/domains/air-operations/czibs/czib-2017-05r20",
+          "issued": "2017-03-31",
+          "revised": "2026-09-30",
+          "valid_until": "2027-04-30"
+        },
+        {
+          "issuer": "FAA",
+          "ref": "SFAR 107 (14 CFR part 91) — Mogadishu FIR (HCSM)",
+          "url": "https://www.faa.gov/air_traffic/publications/us_restrictions/",
+          "note": "verify the current NOTAM"
+        }
+      ]
+    },
+    {
+      "id": "faa-north-korea",
+      "name": "North Korea (FIR Pyongyang ZKKP)",
+      "adj": "North Korean",
+      "kind": "state",
+      "geometry": {
+        "countries": [
+          "PRK"
+        ]
+      },
+      "level": "all",
+      "weight": 0.8,
+      "why": "FAA SFAR 79 prohibits US operators in the Pyongyang FIR west of 132°E; unannounced missile launches. (EASA's CZIB-2017-06R2 was withdrawn.)",
+      "sources": [
+        {
+          "issuer": "FAA",
+          "ref": "SFAR 79 (14 CFR part 91) — Pyongyang FIR (ZKKP)",
+          "url": "https://www.faa.gov/air_traffic/publications/us_restrictions/",
+          "note": "verify the current NOTAM"
+        }
+      ]
+    }
+  ],
+  "sam_envelopes": [
+    {
+      "id": "sam-kaliningrad",
+      "name": "Kaliningrad S-400 envelope",
+      "lat": 54.71,
+      "lon": 20.51,
+      "radius_km": 250,
+      "weight": 0.25,
+      "level": "all",
+      "why": "S-400 (SA-21) batteries are based in the Kaliningrad exclave; the 48N6 interceptor is credited with about 250 km (the 40N6, up to 380–400 km). Civil traffic over the Baltic transits routinely: drawn as a low, standing weight so its overlap with the Baltic GPS jamming is visible, not as a no-fly recommendation.",
+      "sources": [
+        {
+          "issuer": "CSIS Missile Defense Project",
+          "ref": "Missile Threat — S-400 Triumf",
+          "url": "https://missilethreat.csis.org/defsys/s-400-triumf/",
+          "note": "range figures"
+        },
+        {
+          "issuer": "IISS",
+          "ref": "The Military Balance (Russia — Western Military District)",
+          "url": "https://www.iiss.org/publications/the-military-balance/",
+          "note": "basing"
+        }
+      ]
+    }
+  ],
+  "event_rules": {
+    "_about": "Missile / air-defence activity from this app's own events (GeoConfirmed `air` category and keyword classes, open alerts) becomes a decaying zone. Radii are deliberately conservative (larger than the weapon's reach at airliner altitudes) because an engagement area is wider than its geolocated point; precedents: MH17 (Buk, 17 Jul 2014, FL330), PS752 (Tor-M1, Tehran, 8 Jan 2020, during retaliatory missile strikes), AZAL 8243 (Russian air defence over Grozny during a drone attack, 25 Dec 2024).",
+    "classes": {
+      "air_defence": {
+        "radius_km": 120,
+        "weight": 0.9,
+        "cruise_factor": 1.0,
+        "label": "Air-defence activity",
+        "why": "Air defences were engaging here: airliners have been shot down in exactly this situation (PS752, AZAL 8243)."
+      },
+      "missile": {
+        "radius_km": 100,
+        "weight": 0.8,
+        "cruise_factor": 1.0,
+        "label": "Missile / long-range drone strikes",
+        "why": "Missile or long-range drone strikes draw air-defence fire across the whole area, at all altitudes."
+      },
+      "airstrike": {
+        "radius_km": 60,
+        "weight": 0.5,
+        "cruise_factor": 0.5,
+        "label": "Airstrikes",
+        "why": "Military aircraft releasing weapons here; the area is contested by air defences."
+      }
+    },
+    "half_life_hours": 48,
+    "max_age_days": 7,
+    "ucdp": {
+      "cell_deg": 1.0,
+      "min_events": 15,
+      "weight": 0.12,
+      "cruise_factor": 0.15,
+      "why": "Ground conflict baseline (UCDP): MANPADS and light anti-aircraft fire reach about FL150 — relevant to climb and descent, barely to cruise. UCDP lags about three months, so this is a baseline, never news."
+    }
+  },
+  "gps": {
+    "severe_weight": 0.35,
+    "degraded_weight": 0.2,
+    "cruise_factor": 1.0,
+    "why": "Aircraft here lost or degraded their satellite fix (ADS-B NIC/NACp) — jamming or spoofing: a navigation and terrain-warning hazard, not a shoot-down risk."
+  },
+  "openaip": {
+    "prohibited_weight": 0.3,
+    "restricted_weight": 0.0,
+    "min_ceiling_m": 5800,
+    "why": "Prohibited airspace from openAIP (only the viewports already cached on disk), counted when it reaches above FL190. Restricted (R) areas are left out: most are military training areas activated by NOTAM, which are not modelled here."
+  }
+}

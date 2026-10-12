@@ -3,8 +3,10 @@
  * "when" label, and the sheet a signal opens into (what it is, its
  * footage or the X posts it cites, show it on the map, share it to the desk).
  */
+import { ShowTrackButton } from "../../location/TrackPanel.jsx"
+import { openRoutePanel } from "../../routes/store.js"
 import SourceLink from "../../components/SourceLink.jsx"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
 import XPost, { xPostId } from "../../components/XPost.jsx"
@@ -35,14 +37,33 @@ export function Icon({ id, size = 20 }) {
  *  Rendered at the top of the phone app (the .m2 root), above the map and
  *  the tab bar — a sheet opened from the map used to sit inside the map's
  *  layer, under the tab bar, and could not be scrolled to its end. */
-export function Sheet({ onClose, children }) {
+export function Sheet({ onClose, children, half = false }) {
     const [closing, setClosing] = useState(false)
+    const [full, setFull] = useState(false)
+    const drag = useRef(null)
     const close = () => { if (closing) return; setClosing(true); setTimeout(() => onClose?.(), 210) }
     const host = (typeof document !== "undefined" && document.querySelector(".m2")) || (typeof document !== "undefined" ? document.body : null)
+    // HALF (a notification opened on the map): no shade, the map stays live
+    // above; the grip is dragged up to full height, down to half, then away
+    // (a tap toggles half / full).
+    const grip = half ? {
+        onPointerDown: (e) => { drag.current = e.clientY; try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* old browser */ } },
+        onPointerUp: (e) => {
+            if (drag.current == null) return
+            const dy = e.clientY - drag.current
+            drag.current = null
+            if (dy < -24) setFull(true)
+            else if (dy > 24) { if (full) setFull(false); else close() }
+            else setFull((f) => !f)
+        },
+        onPointerCancel: () => { drag.current = null },
+    } : { onClick: close }
     const sheet = <>
-        <div className={`m2-sheet-back${closing ? " closing" : ""}`} onClick={close} />
-        <div className={`m2-sheet${closing ? " closing" : ""}`} role="dialog">
-            <div className="m2-grip" onClick={close} />
+        {!half && <div className={`m2-sheet-back${closing ? " closing" : ""}`} onClick={close} />}
+        <div className={`m2-sheet${half ? " half" : ""}${half && full ? " full" : ""}${closing ? " closing" : ""}`} role="dialog" data-sheet={half ? (full ? "full" : "half") : "modal"}>
+            <div className="m2-grip" role="button" aria-label={half ? (full ? "Drag down to see the map" : "Drag up for the full details") : "Close"} {...grip} />
+            {half && <button className="m2-iconbtn" aria-label="Close" data-testid="sheet-close" onClick={close}
+                             style={{ position: "absolute", right: 8, top: 6, width: 32, height: 32, fontSize: 18, lineHeight: 1 }}>×</button>}
             {children}
         </div>
     </>
@@ -62,7 +83,7 @@ export function attachmentFor(s) {
 
 const URLS = /https?:\/\/[^\s,]+/g
 
-export function SignalSheet({ s, onClose, onShowOnMap }) {
+export function SignalSheet({ s, onClose, onShowOnMap, half = false }) {
     const [note, setNote] = useState("")
     const [shared, setShared] = useState(null)
     if (!s) return null
@@ -75,8 +96,8 @@ export function SignalSheet({ s, onClose, onShowOnMap }) {
         catch (e) { setShared(e.message || "Could not post") }
     }
     return (
-        <Sheet onClose={onClose}>
-            <div className="m2-eyebrow" style={{ color: sevColor(s.severity_tier || s.sev) }}>
+        <Sheet onClose={onClose} half={half}>
+            <div className="m2-eyebrow" style={{ color: sevColor(s.severity_tier || s.sev), paddingRight: half ? 36 : 0 }}>
                 {[s.severity_tier || s.sev, when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
             </div>
             <h2 style={{ margin: "6px 0 4px", fontSize: 19, lineHeight: 1.3 }}>{title}</h2>
@@ -93,9 +114,19 @@ export function SignalSheet({ s, onClose, onShowOnMap }) {
             {finding && <FindingPreview key={`${s.id}:${finding}`} alert={s} compact
                 onShowOnMap={(x) => { showFindings({ ...x, title, fit: true }); window.dispatchEvent(new CustomEvent("m2:go", { detail: "map" })); onClose() }} />}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                {!finding && Number.isFinite(+s.lat) && Number.isFinite(+s.lon) && <button className="m2-btn" onClick={() => { onShowOnMap?.(s); onClose() }}>Show on the map</button>}
+                {!finding && !half && Number.isFinite(+s.lat) && Number.isFinite(+s.lon) && <button className="m2-btn" onClick={() => { onShowOnMap?.(s); onClose() }}>Show on the map</button>}
                 {s.url && !xs.length && <SourceLink className="m2-btn ghost" url={s.url} style={{ display: "inline-flex", alignItems: "center", textDecoration: "none", color: "inherit" }}>Original</SourceLink>}
             </div>
+            {/* A PERSON OR AN ASSET: where they have been, and the safest way out from there */}
+            {(s.user_id || /^OA-/.test(String(s.id || ""))) && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                    <ShowTrackButton className="m2-btn ghost" onShown={() => { window.dispatchEvent(new CustomEvent("m2:go", { detail: "map" })); onClose() }}
+                        target={s.user_id && !/^OA-/.test(String(s.id || "")) ? { kind: "person", id: s.user_id, name: s.name || s.title }
+                                                                            : { kind: "asset", id: s.id, name: s.name || s.title, userId: s.identifiers?.user_id }} />
+                    {/^OA-/.test(String(s.id || "")) && <button className="m2-btn ghost" data-testid="sheet-safe-route"
+                        onClick={() => { openRoutePanel({ request: { from: { asset_id: s.id }, to: null, purpose: "exit" } }); onClose() }}>Safest route</button>}
+                </div>
+            )}
             <div className="m2-eyebrow" style={{ marginBottom: 6 }}>Share to the desk</div>
             <textarea className="m2-input" rows={2} placeholder="What should the team know?" value={note} onChange={(e) => setNote(e.target.value)} />
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>

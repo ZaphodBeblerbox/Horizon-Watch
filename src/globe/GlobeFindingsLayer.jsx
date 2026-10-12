@@ -8,18 +8,32 @@
  * polyline edge — the pattern GlobeOverwatchLayer proved renders reliably.
  */
 import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { useCesium } from "resium"
 import {
     Cartesian2, Cartesian3, Color, ColorMaterialProperty, PolygonHierarchy, LabelStyle,
     DistanceDisplayCondition, HorizontalOrigin, VerticalOrigin, ClassificationType, HeightReference, Math as CMath,
+    Rectangle, SingleTileImageryProvider,
 } from "cesium"
-import { altitudeFor, findingsBounds, getShownFindings, labelRanks, mapCaption, MAP_LABELS, subscribeFindings, TONE } from "../lib/findings.js"
+import { altitudeFor, findingsBounds, getShownFindings, labelRanks, mapCaption, MAP_LABELS, subscribeFindings, TONE, clearFindings } from "../lib/findings.js"
+import { cesiumRectDegrees, loadOverlayRadar, overlayUrl, retryOverlay, setOverlayOpacity, setOverlayView, subscribeOverlay, viewsFor } from "../lib/findingOverlay.js"
+import { subscribeSignalPin } from "../lib/signalPin.js"
+import { renderDuringFlight } from "./flightRender.js"
+
+const SEV_COL = { critical: "#e5484d", high: "#f5a623", significant: "#f5a623", elevated: "#f5a623", moderate: "#7aa7ff", medium: "#7aa7ff" }
+const ring = (col) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><circle cx="24" cy="24" r="21" fill="none" stroke="${col}" stroke-width="3" opacity=".9"/>`
+    + `<circle cx="24" cy="24" r="14" fill="none" stroke="${col}" stroke-width="2" opacity=".55"/><circle cx="24" cy="24" r="7" fill="${col}" stroke="#fff" stroke-width="2.5"/></svg>`)
 
 export default function GlobeFindingsLayer() {
     const { viewer } = useCesium()
     const [shown, setShown] = useState(() => getShownFindings())
     const added = useRef([])
     useEffect(() => subscribeFindings(setShown), [])
+    const [ov, setOv] = useState(null)
+    useEffect(() => subscribeOverlay(setOv), [])
+    useSceneImage(viewer, ov)
+    useSignalPin(viewer)
 
     useEffect(() => {
         if (!viewer || viewer.isDestroyed()) return undefined
@@ -78,10 +92,16 @@ export default function GlobeFindingsLayer() {
         if (shown.fit) {
             const bb = findingsBounds(shown.findings)
             if (bb) {
+                // The viewer renders on demand (GlobeView): a flight is tick-driven
+                // and never moves unless rendering runs for its duration — the
+                // same fix as GlobeView's akili:fly-to. (Without it the camera
+                // stayed where it was and the boxes and image were never seen.)
+                const restore = renderDuringFlight(viewer)
                 viewer.camera.flyTo({
                     destination: Cartesian3.fromDegrees((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2, altitudeFor(bb)),
                     orientation: { heading: 0, pitch: CMath.toRadians(-90), roll: 0 },
                     duration: 1.6,
+                    complete: restore, cancel: restore,
                 })
             }
         }
@@ -89,5 +109,109 @@ export default function GlobeFindingsLayer() {
         return clear
     }, [viewer, shown])
 
-    return null
+    if (!viewer || viewer.isDestroyed() || !shown?.findings?.length || !ov) return null
+    return createPortal(<SceneImageControls ov={ov} count={shown.findings.length} title={shown.title} />, viewer.container)
+}
+
+/**
+ * THE IMAGE THE FINDING WAS NOTICED IN, draped on the ground under its boxes
+ * (lib/findingOverlay.js): a SingleTileImageryProvider on the image's own
+ * bounds (an EPSG:4326 grid, which is what a geographic rectangle is), the
+ * view chosen (After / Before / Change) and its opacity. Gone with the findings.
+ */
+function useSceneImage(viewer, ov) {
+    const layer = useRef(null)
+    const url = ov?.status === "ready" ? overlayUrl(ov.view) : null
+    const rect = ov?.status === "ready" ? cesiumRectDegrees(ov.bounds) : null
+    const rectKey = rect ? `${rect.west},${rect.south},${rect.east},${rect.north}` : null
+    useEffect(() => {
+        if (!viewer || viewer.isDestroyed() || !url || !rect) return undefined
+        let cancelled = false
+        SingleTileImageryProvider.fromUrl(url, { rectangle: Rectangle.fromDegrees(rect.west, rect.south, rect.east, rect.north) })
+            .then((provider) => {
+                if (cancelled || viewer.isDestroyed()) return
+                const l = viewer.imageryLayers.addImageryProvider(provider)
+                l.alpha = ov?.opacity ?? 0.85
+                layer.current = l
+                if (typeof window !== "undefined") window.__plxGlobeSceneImage = { url, rect, alpha: l.alpha }
+                viewer.scene.requestRender?.()
+            })
+            .catch(() => { /* undecodable — the boxes alone */ })
+        return () => {
+            cancelled = true
+            if (layer.current && !viewer.isDestroyed()) { try { viewer.imageryLayers.remove(layer.current, true) } catch { /* gone */ } }
+            layer.current = null
+            if (typeof window !== "undefined") window.__plxGlobeSceneImage = null
+            if (!viewer.isDestroyed()) viewer.scene.requestRender?.()
+        }
+    }, [viewer, url, rectKey]) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (layer.current) { layer.current.alpha = ov?.opacity ?? 0.85; viewer?.scene?.requestRender?.() }
+    }, [ov?.opacity]) // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+/** The signal a notification opened (lib/signalPin.js): a ring on the ground, with its title. */
+function useSignalPin(viewer) {
+    useEffect(() => {
+        if (!viewer || viewer.isDestroyed()) return undefined
+        let ent = null
+        const off = subscribeSignalPin((p) => {
+            if (viewer.isDestroyed()) return
+            if (ent) { try { viewer.entities.remove(ent) } catch { /* gone */ } ent = null }
+            if (p) {
+                const col = SEV_COL[String(p.sev || "").toLowerCase()] || "#ff5a36"
+                ent = viewer.entities.add({
+                    id: `signal-pin-${Math.random().toString(36).slice(2, 8)}`,
+                    position: Cartesian3.fromDegrees(p.lon, p.lat),
+                    billboard: { image: ring(col), width: 48, height: 48, heightReference: HeightReference.CLAMP_TO_GROUND,
+                                 disableDepthTestDistance: Number.POSITIVE_INFINITY },
+                    label: p.title ? {
+                        text: String(p.title).slice(0, 80), font: "600 13px -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, sans-serif",
+                        fillColor: Color.WHITE, outlineColor: Color.BLACK.withAlpha(0.9), outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
+                        verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -28),
+                        heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    } : undefined,
+                    properties: { signalPin: p },
+                })
+            }
+            viewer.scene.requestRender?.()
+        })
+        return () => { off(); if (ent && !viewer.isDestroyed()) { try { viewer.entities.remove(ent) } catch { /* gone */ } } }
+    }, [viewer])
+}
+
+const BTN = { height: 26, padding: "0 10px", border: "1px solid var(--gline2, rgba(255,255,255,.25))", background: "transparent",
+              color: "inherit", font: "inherit", fontSize: 12, cursor: "pointer", borderRadius: 0, whiteSpace: "nowrap" }
+
+/** After / Before / Change, the opacity, and "Load the radar images" when they were not kept. */
+function SceneImageControls({ ov, count, title }) {
+    const views = viewsFor(ov)
+    return (
+        <div data-testid="finding-image-controls" data-status={ov.status} data-view={ov.view}
+             style={{ position: "absolute", left: "50%", top: 64, transform: "translateX(-50%)", zIndex: 20, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6,
+                      maxWidth: 520, padding: "8px 10px", background: "var(--panel, rgba(10,18,32,.92))", color: "var(--txt, #e8ecf2)",
+                      border: "1px solid var(--gline2, rgba(255,255,255,.18))", fontSize: 12,
+                      fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif", pointerEvents: "auto" }}>
+            <span style={{ fontWeight: 600, marginRight: 4, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {count} finding{count === 1 ? "" : "s"}{title ? ` · ${title}` : ""}
+            </span>
+            {ov.status === "ready" && <>
+                <span style={{ opacity: 0.7 }}>{ov.kind === "radar" ? "Radar image" : "Satellite image"}</span>
+                {views.map(([label, k]) => (
+                    <button key={k} data-testid={`finding-image-${k}`} onClick={() => setOverlayView(k)}
+                            style={{ ...BTN, background: ov.view === k ? "var(--accdim, rgba(255,255,255,.18))" : "transparent" }}>{label}</button>
+                ))}
+                <input type="range" min="0" max="100" value={Math.round(ov.opacity * 100)} aria-label="Image opacity"
+                       onChange={(e) => setOverlayOpacity(+e.target.value / 100)} style={{ width: 90 }} />
+            </>}
+            {ov.status === "loading" && <span style={{ opacity: 0.8 }}>Loading the image…</span>}
+            {ov.status === "running" && <span style={{ opacity: 0.8 }}>Fetching the radar images{ov.total ? ` (${ov.done || 0}/${ov.total})` : ""}…</span>}
+            {(ov.status === "missing" || ov.status === "error") && ov.kind === "radar" && ov.regenerable !== false
+                ? <button data-testid="finding-image-load" onClick={() => loadOverlayRadar()} style={BTN}>
+                    Load the radar images{ov.requests ? ` (${ov.requests} requests)` : ""}</button>
+                : !["ready", "loading", "running"].includes(ov.status) && <span style={{ opacity: 0.8 }}>{ov.why || "No image of this finding is held."}</span>}
+            {ov.status === "failed" && <button data-testid="finding-image-retry" onClick={() => retryOverlay()} style={BTN}>Try again</button>}
+            <button aria-label="Clear the findings from the map" onClick={() => clearFindings()} style={{ ...BTN, marginLeft: "auto" }}>Clear</button>
+        </div>
+    )
 }

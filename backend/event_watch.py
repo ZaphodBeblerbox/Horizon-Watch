@@ -366,7 +366,7 @@ def push_body(card: dict) -> str:
 
 # What pops up on screen (src/state/notificationStore.js interrupts()) is
 # what goes to a closed app: the same rule, so the two cannot disagree.
-INTERRUPT_KINDS = {"escalate", "assign", "rfi", "telegram", "surge", "fusion", "live", "livestream"}
+INTERRUPT_KINDS = {"escalate", "assign", "rfi", "telegram", "surge", "fusion", "live", "livestream", "exit", "warning"}
 
 
 def interrupts(card: dict) -> bool:
@@ -381,7 +381,7 @@ APP_NAME = "Parallax"
 
 def _own(card: dict) -> bool:
     """A card already made for this user: their events, their assets."""
-    return str(card.get("id") or "").startswith(("ann:", "soon:", "now:", "asset:")) or card.get("kind") == "asset"
+    return str(card.get("id") or "").startswith(("ann:", "soon:", "now:", "asset:", "exit:")) or card.get("kind") in ("asset", "exit")
 
 
 def worth_pushing(card: dict, c: dict) -> bool:
@@ -410,7 +410,7 @@ def notifies(card: dict, c: dict) -> bool:
 # the same names the app's own cards use (notificationStore.js KIND).
 KIND_LABEL = {"escalate": "Escalation", "assign": "Assigned to you", "rfi": "Request for information",
               "telegram": "Telegram report", "surge": "Surge", "fusion": "Fusion point", "live": "On the ground now",
-              "livestream": "Live on Telegram", "announcement": "Announced", "asset": "Near your asset",
+              "livestream": "Live on Telegram", "announcement": "Announced", "asset": "Near your asset", "exit": "Leave now", "warning": "WARNING",
               "confirm": "Confirmed", "detector": "Detector", "signal": "Signal"}
 
 
@@ -464,6 +464,7 @@ def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
     out = [(label_for(x), body_for(x), {"id": x["id"], "kind": x.get("kind"), "severity": x.get("sev"),
                                               "lat": x.get("lat"), "lon": x.get("lon"),
                                               "asset_id": x.get("asset_id"), "livestream_id": x.get("livestream_id"),
+                                              "route_plan_id": x.get("route_plan_id"),
                                               "alert_type": x.get("alert_type"), "mmsi": mmsi_of(x)})
            for x in cards[:PUSH_SINGLES]]
     rest = cards[PUSH_SINGLES:]

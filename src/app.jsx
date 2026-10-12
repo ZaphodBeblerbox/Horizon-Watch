@@ -38,6 +38,8 @@ import Settings from "./destinations/Settings.jsx"
 // Not referenced directly here; every real surface that calls
 // useInspectorExtensions() picks it up automatically once registered.
 import "./components/collab/CollabPanel.jsx"
+// The Flights route mode: registers the aircraft inspector's "Check this flight's route" offer.
+import "./routes/modes/air.js"
 import ToastHost from "./ui/ToastHost.jsx"
 import Home from "./destinations/Home.jsx"
 import Situation from "./destinations/Situation.jsx"
@@ -170,7 +172,8 @@ import Insight from "./destinations/Insight.jsx"
 import Analytics from "./destinations/Analytics.jsx"
 import LocationPrompt from "./components/LocationPrompt.jsx"
 import LivePlayerHost, { watchLive } from "./telegram/LivePlayer.jsx"
-import { openSignal, setSignalSurface } from "./notify/openSignal.js"
+import { openSignal, pinFor, setSignalSurface } from "./notify/openSignal.js"
+import { closeOpenedSignal, showSignalPin } from "./lib/signalPin.js"
 import { findingsForAlert, showFindings } from "./lib/findings.js"
 import { openVesselThreat } from "./state/vesselThreatStore.js"
 import { ALERT_TYPE as VESSEL_ALERT_TYPE } from "./globe/vesselThreat.js"
@@ -1698,11 +1701,13 @@ export default function App() {
             const thin = { id: n.id, title: n.title, message: n.sub, severity: n.sev, lat: at?.lat, lon: at?.lon, source: n.kind }
             const show = (data) => window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "alert", entityId: n.id, data } }))
             const aid = n.alertId || raw
-            if (!aid) { show(thin); return }
+            // at once with what the notification said, then in full when the alert arrives (a slow server must not leave the inspector empty)
+            show(thin)
+            if (!aid) return
             fetch(`${API_BASE}/api/alerts/${encodeURIComponent(aid)}`, { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : null))
-                .then((full) => show(full && (full.title || full.alert_id) ? { ...thin, ...full, id: n.id, title: full.title || thin.title } : thin))
-                .catch(() => show(thin))
+                .then((full) => { if (full && (full.title || full.alert_id)) show({ ...thin, ...full, id: n.id, title: full.title || thin.title }) })
+                .catch(() => {})
         }, at ? 1700 : 300)
     }, [openTab])
 
@@ -1714,6 +1719,8 @@ export default function App() {
        started — labelled a simulation, with a Stop. */
     const openVesselRoute = useCallback((r) => {
         openTab("situation")
+        // there at once (the alert's position); the live view reframes on the rings when it arrives
+        if (r.lat != null && r.lon != null) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: r.lat, lon: r.lon, altitude: 400000 } }))
         openVesselThreat(r.mmsi, { lat: r.lat, lon: r.lon, simulate: true, from: "notification" })
         const id = r.alertId || r.id || `RUL-${r.mmsi}`
         setTimeout(() => window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: {
@@ -1742,7 +1749,10 @@ export default function App() {
         }
         const { zoneId, findings } = await findingsForAlert(a)
         if (findings.length) showFindings({ zoneId, findings, title: a.title || r.title, fit: true, alertId: aid })
-        else if (r.lat != null && r.lon != null) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: r.lat, lon: r.lon, altitude: 30000 } }))
+        else if (r.lat != null && r.lon != null) {
+            showSignalPin(pinFor({ ...r, action: "signal" }))
+            window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: r.lat, lon: r.lon, altitude: 30000 } }))
+        }
         // Twice: opened cold from a notification, the map (and its inspector)
         // may still be mounting at the first dispatch; the second is the same
         // entity, so it changes nothing when the first arrived.
@@ -1756,8 +1766,15 @@ export default function App() {
     const openDesktopRoute = useCallback((r) => {
         if (!r) return
         if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
+        // what the last opened signal drew goes (its marker, its boxes and image)
+        if (r.action !== "asset") closeOpenedSignal()
         if (r.action === "vessel") { openVesselRoute(r); return }
         if (r.action === "finding") { openFindingRoute(r); return }
+        // THE SIGNAL DRAWN where it happened (owner, 2026-10-12): its own
+        // marker, highlighted, whether or not a map layer draws it too
+        // (lib/signalPin.js → GlobeFindingsLayer); cleared with the inspector
+        const pin = pinFor(r)
+        if (pin) showSignalPin(pin)
         // the tray's own item when there is one (it knows how it was drawn)
         const own = r._item || (r.id ? getNotifications().items.find((x) => x.id === r.id || x.alertId === r.id || (r.alertId && x.alertId === r.alertId)) : null)
         openSignalItem(own ? { ...own, inspect: r.inspect } : {

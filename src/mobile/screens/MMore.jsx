@@ -10,15 +10,21 @@
  */
 import { useEffect, useState } from "react"
 import API_BASE from "../../apiBase.js"
-import { getCurrentUser, logout } from "../../state/authStore.js"
+import { getCurrentUser, logout, subscribeAuth, updateCurrentUser } from "../../state/authStore.js"
+import { Positionable, toPictureDataUrl, toCoverDataUrl } from "../../destinations/Profile.jsx"
 import IssueReader from "../../reports/IssueReader.jsx"
 import { usePoll, arr, getJSON } from "../useMine.js"
 import { Icon, Row, Sheet, SignalSheet, sevColor, when } from "./common.jsx"
+import { openSignal } from "../../notify/openSignal.js"
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 import { setDnd } from "../../state/notificationStore.js"
 import LiveShareRow from "../../location/LiveShareRow.jsx"
 import TrackSketch from "../../location/TrackSketch.jsx"
+import { ShowTrackButton } from "../../location/TrackPanel.jsx"
+import { openRoutePanel } from "../../routes/store.js"
+import RouteContextCards from "../../routes/RouteContextCards.jsx"
 import LivePositionLine from "../../location/LivePositionLine.jsx"
+import AssetPeople from "../../warnings/AssetPeople.jsx"
 import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 import { locate } from "../../location/geo.js"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
@@ -70,7 +76,18 @@ function AssetDetail({ a, onClose, onShowOnMap }) {
                     <TrackSketch assetId={a.id} />
                 </div>
             </>}
-            {Number.isFinite(+(sit?.position?.lat ?? a.lat)) && <button className="m2-btn" onClick={() => { const p = sit?.position || a; onShowOnMap?.({ lat: p.lat, lon: p.lon }); onClose() }}>Show on the map</button>}
+            {/* LINK A PERSON (their phone moves it) · SEND THEM A WARNING (warnings/AssetPeople.jsx) */}
+            <AssetPeople asset={a} variant="phone" />
+            {/* WHEN A ROUTE PLAN IS RELEVANT HERE: exit (a danger within 1 km) or deliveries/access (a call near a site) */}
+            <div style={{ marginBottom: 10 }}><RouteContextCards assetId={a.id} /></div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {Number.isFinite(+(sit?.position?.lat ?? a.lat)) && <button className="m2-btn" onClick={() => { const p = sit?.position || a; onShowOnMap?.({ lat: p.lat, lon: p.lon }); onClose() }}>Show on the map</button>}
+                {/* THE TRACK over a range, on the map; and the safest way out from where it is */}
+                <ShowTrackButton className="m2-btn ghost" target={{ kind: "asset", id: a.id, name: a.name, userId: a.identifiers?.user_id }}
+                                 onShown={() => { window.dispatchEvent(new CustomEvent("m2:go", { detail: "map" })); onClose() }} />
+                {Number.isFinite(+(sit?.position?.lat ?? a.lat)) && <button className="m2-btn ghost" data-testid="asset-sheet-safe-route"
+                    onClick={() => openRoutePanel({ request: { from: { asset_id: a.id }, to: null, mode: a.group === "Vehicles" ? "car" : "foot", purpose: "exit" } })}>Safest route</button>}
+            </div>
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
         </Sheet>
     )
@@ -151,7 +168,9 @@ export function MAlerts({ onShowOnMap, onOpen }) {
             <div className="m2-card">
                 {items === null ? <div className="m2-empty">Loading…</div> : items.length === 0 ? <div className="m2-empty">Nothing has earned an interruption.</div>
                     : items.map((n) => <Row key={n.id} color={sevColor(n.sev)} title={n.title} sub={n.reason} when={when(n.created_at)}
-                        onClick={() => (n.kind === "asset" && n.asset_id ? onOpen("assets", { asset: n.asset_id }) : setOpen({ ...n, headline: n.title, severity_tier: n.sev }))} />)}
+                        onClick={() => (n.kind === "asset" && n.asset_id ? onOpen("assets", { asset: n.asset_id })
+                            // as its notification opens: the map at it, drawn, with its sheet (notify/openSignal.js)
+                            : openSignal({ ...n, headline: n.title, sev: n.sev }))} />)}
             </div>
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
         </div>
@@ -212,24 +231,88 @@ function PhoneToggle({ value, onChange }) {
 }
 
 export function MProfile() {
-    const u = getCurrentUser() || {}
+    /* YOUR PICTURE AND HEADER, EDITED ON THE PHONE (owner, 2026-10-12): the
+       same images and focal points as the desktop Profile (Profile.jsx), and
+       the same save — change, drag to reposition, remove. */
+    const [u, setU] = useState(() => getCurrentUser() || {})
+    useEffect(() => subscribeAuth((x) => setU(x || {})), [])
+    const [draft, setDraft] = useState(null)        // {avatar, avatar_pos, cover, cover_pos} while editing
+    const [posing, setPosing] = useState(null)      // "avatar" | "cover"
+    const [busy, setBusy] = useState(false)
+    const [msg, setMsg] = useState(null)
+    const v = draft || { avatar: u.avatar || null, avatar_pos: u.avatar_pos || "50% 50%", cover: u.cover || null, cover_pos: u.cover_pos || "50% 50%" }
+    const edit = (patch) => setDraft({ ...v, ...patch })
+    const pick = (which) => {
+        const inp = document.createElement("input")
+        inp.type = "file"; inp.accept = "image/*"
+        inp.onchange = async () => {
+            const f = inp.files?.[0]
+            if (!f) return
+            try {
+                if (which === "avatar") edit({ avatar: await toPictureDataUrl(f), avatar_pos: "50% 50%" })
+                else edit({ cover: await toCoverDataUrl(f), cover_pos: "50% 50%" })
+                setPosing(which); setMsg(null)
+            } catch (e) { setMsg({ ok: false, text: e.message }) }
+        }
+        inp.click()
+    }
+    const save = async () => {
+        if (!u.id || !draft) return
+        setBusy(true); setMsg(null)
+        try {
+            const r = await fetch(`${API_BASE}/api/users/${u.id}`, {
+                method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ avatar: v.avatar, avatar_pos: v.avatar_pos, cover: v.cover, cover_pos: v.cover_pos }),
+            })
+            const d = await r.json().catch(() => null)
+            if (!r.ok) throw new Error(d?.detail || `Could not save (${r.status})`)
+            updateCurrentUser(d); setDraft(null); setPosing(null)
+            setMsg({ ok: true, text: "Saved — your picture and header show everywhere." })
+        } catch (e) { setMsg({ ok: false, text: String(e.message || e) }) } finally { setBusy(false) }
+    }
+    const chip = { height: 30, padding: "0 12px", borderRadius: 15, border: "1px solid var(--gline2)", background: "rgba(10,14,22,.6)",
+                   color: "var(--txt)", font: "inherit", fontSize: 12.5, cursor: "pointer" }
     return (
         <div className="m2-scroll" data-screen-label="Phone profile">
-            <div className="m2-card" style={{ overflow: "hidden", marginBottom: 14 }}>
-                {u.cover && <img src={u.cover} alt="" style={{ display: "block", width: "100%", height: 110, objectFit: "cover" }} />}
+            <div className="m2-card" style={{ overflow: "hidden", marginBottom: 10 }} data-testid="m2-profile-edit">
+                <div style={{ position: "relative", height: 120, background: "linear-gradient(160deg,#1c2433,#0e131c)" }}>
+                    {v.cover && <Positionable src={v.cover} pos={v.cover_pos} editing={posing === "cover"}
+                                              onPos={(p) => edit({ cover_pos: p })} style={{ width: "100%", height: 120 }} />}
+                    <div style={{ position: "absolute", right: 8, bottom: 8, display: "flex", gap: 6 }}>
+                        {v.cover && <button style={chip} onClick={() => setPosing(posing === "cover" ? null : "cover")}>{posing === "cover" ? "Done" : "Reposition"}</button>}
+                        <button style={chip} onClick={() => pick("cover")}>{v.cover ? "Change header" : "Add a header"}</button>
+                        {v.cover && <button style={chip} onClick={() => { edit({ cover: null }); setPosing(null) }}>Remove</button>}
+                    </div>
+                    {posing === "cover" && <div className="m2-sub" style={{ position: "absolute", left: 10, top: 8, color: "#fff", textShadow: "0 1px 3px #000" }}>Drag to choose what shows</div>}
+                </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 14 }}>
-                    {u.avatar ? <img src={u.avatar} alt="" style={{ width: 54, height: 54, borderRadius: 27, objectFit: "cover" }} />
-                        : <span style={{ width: 54, height: 54, borderRadius: 27, display: "grid", placeItems: "center", background: u.color || "#334", fontWeight: 700 }}>{u.initials}</span>}
+                    <div style={{ width: 64, height: 64, borderRadius: 32, overflow: "hidden", flex: "none", background: u.color || "#334", display: "grid", placeItems: "center", fontWeight: 700 }}>
+                        {v.avatar ? <Positionable src={v.avatar} pos={v.avatar_pos} editing={posing === "avatar"} radius="50%"
+                                                  onPos={(p) => edit({ avatar_pos: p })} style={{ width: 64, height: 64 }} />
+                            : u.initials}
+                    </div>
                     <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 18, fontWeight: 650 }}>{u.name}</div>
                         <div className="m2-sub">{[u.title, u.company].filter(Boolean).join(" · ") || u.email}</div>
                     </div>
                 </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 14px 14px" }}>
+                    <button style={chip} onClick={() => pick("avatar")}>{v.avatar ? "Change picture" : "Add a picture"}</button>
+                    {v.avatar && <button style={chip} onClick={() => setPosing(posing === "avatar" ? null : "avatar")}>{posing === "avatar" ? "Done" : "Reposition"}</button>}
+                    {v.avatar && <button style={chip} onClick={() => { edit({ avatar: null }); setPosing(null) }}>Remove</button>}
+                </div>
+                {draft && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, padding: "0 14px 14px" }}>
+                        <button className="m2-btn" disabled={busy} onClick={save} data-testid="m2-profile-save">{busy ? "Saving…" : "Save"}</button>
+                        <button className="m2-btn ghost" disabled={busy} onClick={() => { setDraft(null); setPosing(null); setMsg(null) }}>Cancel</button>
+                    </div>
+                )}
+                {msg && <div className="m2-sub" style={{ padding: "0 14px 14px", color: msg.ok ? "var(--txt2)" : "var(--red, #e5484d)" }}>{msg.text}</div>}
             </div>
             <button className="m2-btn ghost" style={{ width: "100%", marginBottom: 14 }} onClick={() => window.dispatchEvent(new CustomEvent("m2:go", { detail: "settings" }))}>
                 Settings — notifications, location, time
             </button>
-            <div className="m2-sub" style={{ marginBottom: 14, lineHeight: 1.5 }}>Your picture, header, theaters and interests are set on the desktop under Profile and Settings; the phone follows them.</div>
+            <div className="m2-sub" style={{ marginBottom: 14, lineHeight: 1.5 }}>Your name, theaters and interests are set on the desktop under Profile and Settings; the phone follows them.</div>
             <button className="m2-btn ghost" onClick={() => logout().then(() => window.location.reload())}>Sign out</button>
             {/* which build this phone is running: a cached copy looks like a fix that did not ship */}
             <div className="m2-sub" data-testid="build-stamp" style={{ marginTop: 18, fontFamily: "inherit", fontVariantNumeric: "tabular-nums", fontSize: 11 }}>

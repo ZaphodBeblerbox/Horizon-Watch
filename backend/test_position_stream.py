@@ -50,9 +50,63 @@ def test_can_see_self_team_and_admins():
     assert ps.can_see(ANNA, "anna", "red")
     assert ps.can_see(BEN, "anna", "red")
     assert not ps.can_see(CARL, "anna", "red")            # another team
-    assert ps.can_see(DORA, "anna", "red")                # no team set: the whole team, as /people shows it
+    assert not ps.can_see(DORA, "anna", "red")            # no team, no company in common: a stranger (2026-10-12)
     assert ps.can_see(ADMIN, "anna", "red")
     assert ps.can_see({"id": "x", "role": "admin", "team_id": "blue"}, "anna", "red")
+
+
+def test_never_strangers_but_your_company_and_people_linked_to_your_assets():
+    """LIVE VISIBILITY (owner, 2026-10-12): only your team or company, or
+    people affiliated with you — a person outside the company linked to one
+    of your assets still shows."""
+    me = {"id": "me", "team_id": None, "company": "Trifecta Technologies"}
+    # the same company, typed differently
+    assert ps.can_see(me, "kim", None, "  trifecta   technologies ")
+    # a stranger: another company, or none at all
+    assert not ps.can_see(me, "zed", None, "Acme")
+    assert not ps.can_see(me, "zed", None, None)
+    assert not ps.can_see({"id": "nobody"}, "zed", None, None)
+    # an outsider linked to an asset I own
+    assert ps.can_see(me, "driver", None, "Taxi Co", [{"id": "me"}])
+    # ... or owned by a colleague of my company
+    assert ps.can_see(me, "driver", None, "Taxi Co", [{"id": "col", "company": "trifecta technologies"}])
+    # linked to a stranger's asset: still a stranger to me
+    assert not ps.can_see(me, "driver", None, "Taxi Co", [{"id": "zed", "company": "Acme"}])
+    # their own "(live)" asset (owned by themselves) makes nobody affiliated
+    assert not ps.can_see(me, "zed", None, "Acme", [{"id": "zed", "company": "Acme"}])
+    # two teams are two organisations, whatever the free-text company says
+    assert not ps.can_see({"id": "a", "team_id": "red", "company": "X"}, "b", "blue", "X")
+    assert ps.can_see({"id": "a", "team_id": "red", "company": "X"}, "b", None, "X")
+
+
+def test_visible_people_from_the_database(db, monkeypatch):
+    """/people and the snapshot: the org rule plus links read from owned_assets."""
+    users = {"me": {"name": "Me", "team_id": None, "company": "Trifecta"},
+             "kim": {"name": "Kim", "team_id": None, "company": "trifecta"},
+             "driver": {"name": "Driver", "team_id": None, "company": "Taxi Co"},
+             "zed": {"name": "Zed", "team_id": None, "company": "Acme"}}
+    monkeypatch.setattr(ps, "_users", lambda: users)
+    a = oa.create("me", {"name": "Van 1", "kind": "vehicle_car", "lat": 1, "lon": 1})
+    oa.link_user(a["id"], "driver")
+    rows = [{"user_id": u, "lat": 1, "lon": 1, "at": "t", "assets": []} for u in users]
+    seen = {p["user_id"]: p["name"] for p in ps.visible_people({"id": "me", "company": "Trifecta"}, rows)}
+    assert seen == {"me": "Me", "kim": "Kim", "driver": "Driver"}         # never Zed
+    assert ps.can_see_user({"id": "kim", "company": "trifecta"}, "driver")   # my colleague sees my driver too
+    assert not ps.can_see_user({"id": "zed", "company": "Acme"}, "driver")
+    oa.link_user(a["id"], None)                                           # unlinked: a stranger again
+    assert not ps.can_see_user({"id": "me", "company": "Trifecta"}, "driver")
+
+
+def test_the_stream_tells_only_the_person_warned():
+    async def run():
+        hub = ps.Hub()
+        subs = {v["id"]: hub.subscribe(v) for v in (ANNA, BEN, ADMIN)}
+        hub.publish({"type": "warning", "event": "warning", "to": ["ben"], "warning": {"id": "W-1"}})
+        await asyncio.sleep(0)
+        assert subs["anna"].queue.empty() and subs["root"].queue.empty()      # not even an admin
+        got = subs["ben"].queue.get_nowait()
+        assert got["warning"]["id"] == "W-1" and "to" not in got
+    asyncio.run(run())
 
 
 def test_an_asset_is_named_only_to_who_may_see_it():
@@ -70,8 +124,8 @@ def test_fan_out_reaches_allowed_viewers_only():
                      "at": "t", "assets": [{"id": "OA-1", "owner_id": "anna", "shared": False}]})
         await asyncio.sleep(0)
         got = {k: (s.queue.get_nowait() if not s.queue.empty() else None) for k, s in subs.items()}
-        assert got["carl"] is None
-        for k in ("anna", "ben", "dora", "root"):
+        assert got["carl"] is None and got["dora"] is None       # another team; no team at all
+        for k in ("anna", "ben", "root"):
             assert got[k]["lat"] == 1 and "team_id" not in got[k]
         assert got["anna"]["assets"] == [{"id": "OA-1"}] and got["root"]["assets"] == [{"id": "OA-1"}]
         assert got["ben"]["assets"] == []                 # not shared, not his

@@ -123,7 +123,7 @@ def test_live_needs_a_signed_in_user(client):
     assert client.get("/api/my-assets/people").status_code == 401
 
 
-def test_live_moves_the_linked_asset_and_keeps_history(client):
+def test_live_moves_the_linked_asset_and_keeps_history(client, monkeypatch):
     r = _post(client, "anna", lat=48.85, lon=2.35, accuracy=8)
     assert r.status_code == 200, r.text
     first = r.json()
@@ -139,8 +139,15 @@ def test_live_moves_the_linked_asset_and_keeps_history(client):
     assert [p["lat"] for p in t] == [48.85, 48.86]
     a = oa.get(aid, "anna")
     assert (a["lat"], a["lon"]) == (48.86, 2.36)
+    # ben, of anna's company, sees her; a stranger does not (position_stream.can_see)
+    import position_stream as ps
+    monkeypatch.setattr(ps, "_users", lambda: {"anna": {"name": "Anna", "company": "Red"}, "ben": {"name": "Ben", "company": "Red"},
+                                               "zed": {"name": "Zed", "company": "Acme"}})
+    monkeypatch.setattr(my_assets, "_me", lambda request: {"id": request.headers.get("x-test-user"),
+                                                           "company": {"ben": "Red", "zed": "Acme"}.get(request.headers.get("x-test-user"))})
     ppl = client.get("/api/my-assets/people", headers={"x-test-user": "ben"}).json()["people"]
-    assert ppl[0]["user_id"] == "anna" and ppl[0]["assets"] == [aid]
+    assert ppl[0]["user_id"] == "anna" and ppl[0]["assets"] == [aid] and ppl[0]["name"] == "Anna"
+    assert client.get("/api/my-assets/people", headers={"x-test-user": "zed"}).json()["people"] == []
 
 
 def test_first_positions_at_once_make_one_asset(client, monkeypatch):

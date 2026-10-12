@@ -239,6 +239,24 @@ def get(asset_id: str, user_id: str) -> dict | None:
     return _row(r) if r else None
 
 
+def get_any(asset_id: str) -> dict | None:
+    """The asset whoever owns it — for an admin (visible_to decides)."""
+    con = _con()
+    r = con.execute("SELECT * FROM owned_assets WHERE id=?", (asset_id,)).fetchone()
+    con.close()
+    return _row(r) if r else None
+
+
+def visible_to(asset_id: str, user: dict) -> dict | None:
+    """The asset if this user may see it: its owner, anyone when it is
+    shared, an admin always (the live stream's rule, position_stream)."""
+    uid = str(user.get("id") or user.get("email"))
+    a = get(asset_id, uid)
+    if a is None and (bool(user.get("is_super_admin")) or str(user.get("role") or "").lower() == "admin"):
+        a = get_any(asset_id)
+    return a
+
+
 def create(user_id: str, body: dict) -> dict:
     d = clean(body)
     aid = f"OA-{uuid.uuid4().hex[:8]}"
@@ -326,6 +344,43 @@ def linked_to(user_id: str) -> list[dict]:
                        (str(user_id),)).fetchall()
     con.close()
     return [_row(r) for r in rows]
+
+
+def link_user(asset_id: str, user_id: str | None, now: _dt.datetime | None = None) -> dict | None:
+    """LINK A PERSON TO AN ASSET (owner, 2026-10-12: "link a user to an
+    asset, and that automatically links the user's live location to that
+    asset"). identifiers.user_id is set (its other identifiers kept) and the
+    asset is put at once at the person's latest position — with that
+    position's own time, so "live · 5 s ago" is the phone's, not the click's
+    — and every later position moves it (record_position). user_id None
+    unlinks: the asset stays where it was last seen. Who may do it is the
+    router's call (the owner, an admin). Returns the asset, or None."""
+    con = _con(LIVE_DB_TIMEOUT_S)
+    try:
+        r = con.execute("SELECT identifiers FROM owned_assets WHERE id=?", (asset_id,)).fetchone()
+        if r is None:
+            return None
+        ids = json.loads(r[0] or "{}")
+        if user_id:
+            ids["user_id"] = str(user_id)
+        else:
+            ids.pop("user_id", None)
+        con.execute("UPDATE owned_assets SET identifiers=? WHERE id=?", (json.dumps(ids), asset_id))
+        if user_id:
+            last = _latest(con, str(user_id))
+            if last is not None:
+                at, lat, lon, acc, src = last
+                con.execute("UPDATE owned_assets SET lat=?, lon=?, updated_at=?, pos_accuracy_m=?, pos_source=? WHERE id=?",
+                            (lat, lon, at, acc, src, asset_id))
+                con.execute("INSERT INTO owned_asset_track (asset_id, at, lat, lon, accuracy_m, source) VALUES (?,?,?,?,?,?)",
+                            (asset_id, at, lat, lon, acc, src))
+        else:
+            con.execute("UPDATE owned_assets SET updated_at=? WHERE id=?", ((now or _dt.datetime.now(_dt.timezone.utc)).isoformat(), asset_id))
+        con.commit()
+        r = con.execute("SELECT * FROM owned_assets WHERE id=?", (asset_id,)).fetchone()
+    finally:
+        con.close()
+    return _row(r) if r else None
 
 
 def _check(lat: float, lon: float, accuracy_m: float | None):
@@ -532,6 +587,12 @@ def position(asset: dict, live_vessel=None, live_aircraft=None) -> dict | None:
     recorded point. live_vessel(mmsi)/live_aircraft(icao) return a dict with
     lat/lon (and a timestamp) or None."""
     ids = asset.get("identifiers") or {}
+    if ids.get("user_id") and (ids.get("mmsi") or ids.get("icao")) and asset.get("lat") is not None:
+        # LINKED TO A PERSON: their phone, while it is live, is where it is
+        # (owner, 2026-10-12) — ahead of AIS or ADS-B; otherwise those first
+        p = position({**asset, "identifiers": {"user_id": ids["user_id"]}})
+        if p and p.get("live"):
+            return p
     if live_vessel and ids.get("mmsi"):
         v = live_vessel(ids["mmsi"])
         if v and v.get("lat") is not None and (v.get("lon") if v.get("lon") is not None else v.get("lng")) is not None:

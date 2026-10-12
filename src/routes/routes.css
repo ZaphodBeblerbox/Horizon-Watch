@@ -1,0 +1,50 @@
+/* The route panel (RoutePanel.jsx), its map layers, and the track markers (mobile/trackLeaflet.js). */
+.plx-route-panel { color: #fff; background: #0f141d; font-family: var(--mz-font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+    font-size: 13.5px; line-height: 1.45; display: flex; flex-direction: column; }
+.plx-route-panel.desktop { position: absolute; right: 16px; top: 70px; bottom: 60px; width: 400px; z-index: 45; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.5); background: rgba(12,16,24,.95); overflow: hidden; }
+.plx-route-panel.phone { position: fixed; inset: 0; z-index: 4000; }
+.plx-route-map { flex: 1 1 46%; min-height: 220px; }
+.plx-route-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.1); }
+.plx-route-panel.phone .plx-route-head { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 10px); left: 10px; right: 10px; z-index: 1000;
+    background: rgba(12,16,24,.9); border-radius: 12px; border: 1px solid rgba(255,255,255,.1); }
+.plx-route-body { overflow-y: auto; padding: 12px 14px calc(env(safe-area-inset-bottom, 0px) + 14px); display: flex; flex-direction: column; gap: 12px;
+    -webkit-overflow-scrolling: touch; }
+.plx-route-panel.desktop .plx-route-body { flex: 1; }
+.plx-route-panel.phone .plx-route-body { flex: 0 1 54%; border-top: 1px solid rgba(255,255,255,.1); }
+.plx-route-close { width: 34px; height: 34px; border-radius: 17px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #fff;
+    font-size: 20px; line-height: 1; cursor: pointer; flex: none; }
+.plx-route-eyebrow { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #3ddc84; }
+.plx-route-title { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plx-route-inputs { display: flex; flex-direction: column; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.plx-route-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.plx-route-row > span:first-child { width: 44px; color: rgba(255,255,255,.55); font-size: 12px; flex: none; }
+.plx-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.plx-chip { height: 30px; padding: 0 11px; border-radius: 15px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #fff; font: inherit; font-size: 13px; cursor: pointer; }
+.plx-chip.small { height: 26px; font-size: 12px; padding: 0 9px; }
+.plx-chip[aria-pressed="true"] { background: rgba(61,220,132,.18); border-color: #3ddc84; }
+.plx-input { height: 30px; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.05); color: #fff; font: inherit; padding: 0 8px; color-scheme: dark; }
+.plx-link { border: 0; background: none; color: #8fb4e8; font: inherit; cursor: pointer; padding: 0; }
+.plx-btn { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: #fff;
+    font: inherit; font-size: 13px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+.plx-btn.small { height: 28px; font-size: 12px; }
+.plx-btn.go { border-color: #3ddc84; }
+.plx-dim { color: rgba(255,255,255,.6); }
+.plx-h { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.55); margin-bottom: 4px; }
+.plx-route-alert { background: rgba(245,165,36,.16); border: 1px solid #F5A524; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.plx-cands { display: flex; flex-direction: column; gap: 6px; }
+.plx-cand { display: grid; grid-template-columns: 26px 1fr; gap: 8px; align-items: start; text-align: left; border: 1px solid rgba(255,255,255,.1);
+    background: rgba(255,255,255,.03); color: #fff; font: inherit; border-radius: 8px; padding: 7px 9px; cursor: pointer; }
+.plx-cand[aria-pressed="true"] { border-color: #3ddc84; background: rgba(61,220,132,.08); }
+.plx-swatch { margin-top: 8px; height: 5px; border-radius: 3px; background: #8fb4e8; }
+.plx-swatch.safest { background: #3ddc84; }
+.plx-swatch.fastest { background: none; border-top: 4px dashed #9aa3ad; height: 0; }
+.plx-route-origin { width: 18px; height: 18px; border-radius: 9px; background: #3b8cff; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(59,140,255,.25); }
+.plx-route-dest { width: 26px; height: 26px; border-radius: 13px; background: #3ddc84; color: #0b1a10; font-weight: 700; text-align: center; line-height: 26px; border: 2px solid #fff; }
+.leaflet-tooltip.plx-hazard-label { background: rgba(229,72,77,.92); color: #fff; border: 0; border-radius: 6px; font-size: 11.5px; padding: 3px 7px; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+.leaflet-tooltip.plx-hazard-label::before { border-top-color: rgba(229,72,77,.92); }
+.m2-track-stop { width: 20px; height: 20px; border-radius: 10px; background: #f5a524; color: #1a1205; font: 700 11px/20px sans-serif; text-align: center; border: 2px solid #fff; }
+.m2-track-start { width: 20px; height: 20px; border-radius: 10px; background: #3ddc84; color: #0b1a10; font: 700 11px/20px sans-serif; text-align: center; border: 2px solid #fff; }
+.m2-track-end { width: 22px; height: 22px; border-radius: 11px; background: #3b8cff; border: 3px solid #fff; box-shadow: 0 0 0 5px rgba(59,140,255,.3); }
+.m2-track-now { width: 22px; height: 22px; border-radius: 11px; background: #fff; border: 4px solid #3b8cff; box-shadow: 0 0 0 5px rgba(59,140,255,.35); }
+.plx-getout { background: #b3261e !important; color: #fff !important; }

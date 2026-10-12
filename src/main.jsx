@@ -85,6 +85,9 @@ if (isDesktop()) {
     import('./desktop/nativeNotify.js').then((m) => m.installNativeNotify()).catch(() => {})
 }
 
+// A WARNING sent to this person takes the whole screen with its own alarm (warnings/).
+import('./warnings/mount.jsx').then((m) => m.mountWarnings()).catch((e) => console.warn('[warnings] unavailable:', e?.message || e))
+
 // Sounds: unlocked by the first click or key (soundSystem.installAudioUnlock).
 import('./soundSystem.js').then((m) => m.installAudioUnlock()).catch(() => {})
 
@@ -104,7 +107,7 @@ try {
                 window.dispatchEvent(new CustomEvent('plx:open-notification', { detail: {
                     id: d.eventId || null, lat: Number.isFinite(d.lat) ? d.lat : null, lon: Number.isFinite(d.lon) ? d.lon : null,
                     livestreamId: d.livestreamId || null, assetId: d.assetId || null, title: d.headline || '',
-                    mmsi: d.mmsi || null, alertType: d.alertType || null,
+                    mmsi: d.mmsi || null, alertType: d.alertType || null, routePlanId: d.routePlanId || null,
                 } }))
             })
         }).catch((e) => console.warn('[push] unavailable:', e?.message || e))

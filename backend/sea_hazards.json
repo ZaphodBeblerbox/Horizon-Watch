@@ -1,0 +1,129 @@
+{
+  "_about": "Configured maritime hazard areas for the sea-route planner (sea_route.py). Each zone: id, kind, name, weight (0-1, risk per hour inside), why, sources (label, url, date), reviewed (when this entry was last checked), ring as [lat, lon] pairs. Polygons are deliberately coarse planning areas, not legal boundaries: the authoritative text is the cited circular. Event-driven zones are modulated live from our own data (live: true) and say so. Kept in the code directory (not data/) so it ships with the build.",
+  "reviewed": "2026-10-12",
+  "zones": [
+    {
+      "id": "red-sea-strike",
+      "kind": "strike",
+      "name": "Red Sea strike zone",
+      "weight": 0.5,
+      "live": true,
+      "why": "Houthi range. Houthi anti-ship missile, drone and boat attacks on merchant shipping in the southern Red Sea, Bab-el-Mandeb and Gulf of Aden since 19 Nov 2023 (Galaxy Leader seized); ships sunk include Rubymar (Mar 2024), Tutor (Jun 2024), Magic Seas and Eternity C (Jul 2025). The configured weight is the standing threat; it is raised by conflict events and attacks on shipping we have recorded inside the zone in the last 30 days.",
+      "sources": [
+        {"label": "UKMTO advisories and incident reports", "url": "https://www.ukmto.org/", "date": "live"},
+        {"label": "JMIC (Joint Maritime Information Center) threat assessments", "url": "https://www.ukmto.org/partner-products/jmic-products", "date": "live"},
+        {"label": "LMA Joint War Committee Listed Areas (Red Sea, Gulf of Aden, Yemen)", "url": "https://www.lmalloyds.com/LMA/Underwriting/Marine/Joint_War/LMA/Underwriting/Marine/JWC/Joint_War.aspx", "date": "JWLA-031/-032 series; check the current circular"}
+      ],
+      "reviewed": "2026-10-12",
+      "ring": [[21.0, 37.3], [21.0, 40.2], [17.0, 42.9], [15.0, 43.2], [13.3, 43.6], [12.8, 45.0], [13.6, 48.5], [14.8, 51.0], [13.2, 53.6], [11.2, 51.6], [11.6, 49.0], [10.9, 45.0], [11.3, 43.4], [12.6, 43.0], [15.5, 40.0], [18.0, 38.4], [21.0, 37.3]]
+    },
+    {
+      "id": "somali-piracy",
+      "kind": "piracy",
+      "name": "Somali basin piracy area",
+      "weight": 0.3,
+      "live": false,
+      "why": "Somali piracy resurged from Nov 2023 (MV Ruen hijacked Dec 2023, MV Abdullah Mar 2024) after years of near-absence. The industry's Indian Ocean High Risk Area was withdrawn on 1 Jan 2023; the UKMTO Voluntary Reporting Area and BMP5 guidance remain. This is the waters off Somalia, the Gulf of Aden's eastern end and the western Arabian Sea.",
+      "sources": [
+        {"label": "EUNAVFOR Operation Atalanta", "url": "https://eunavfor.eu/", "date": "live"},
+        {"label": "IMB Piracy Reporting Centre", "url": "https://www.icc-ccs.org/piracy-reporting-centre", "date": "quarterly reports"},
+        {"label": "BMP5 / UKMTO Voluntary Reporting Area", "url": "https://www.maritimeglobalsecurity.org/", "date": "HRA withdrawn 2023-01-01"}
+      ],
+      "reviewed": "2026-10-12",
+      "ring": [[12.0, 51.5], [15.5, 56.0], [16.0, 62.0], [10.0, 65.0], [0.0, 62.0], [-5.0, 50.0], [-2.0, 42.0], [2.0, 46.0], [6.0, 49.5], [10.5, 51.2], [12.0, 51.5]]
+    },
+    {
+      "id": "gulf-of-guinea",
+      "kind": "piracy",
+      "name": "Gulf of Guinea piracy and kidnapping",
+      "weight": 0.3,
+      "live": false,
+      "why": "Armed robbery and kidnap-for-ransom of crews, mostly within about 200 nm of Nigeria, Togo, Benin, Cameroon and São Tomé; lower than its 2020 peak but still the world's most dangerous area for crew kidnapping (IMB). Covered by BMP West Africa.",
+      "sources": [
+        {"label": "IMB Piracy Reporting Centre", "url": "https://www.icc-ccs.org/piracy-reporting-centre", "date": "quarterly reports"},
+        {"label": "MDAT-GoG", "url": "https://www.mdat-gog.org/", "date": "live"},
+        {"label": "BMP West Africa", "url": "https://www.maritimeglobalsecurity.org/", "date": "2020"}
+      ],
+      "reviewed": "2026-10-12",
+      "ring": [[7.0, -3.0], [6.0, 3.0], [4.5, 9.8], [-1.0, 9.5], [-2.0, 5.0], [0.0, -3.0], [7.0, -3.0]]
+    },
+    {
+      "id": "hormuz-gulf",
+      "kind": "war-risk",
+      "name": "Persian Gulf, Hormuz and Gulf of Oman",
+      "weight": 0.35,
+      "live": true,
+      "why": "War-risk listed waters: state seizures of tankers (Advantage Sweet and Niovi 2023, MSC Aries Apr 2024), limpet-mine and drone attacks on ships (2019, 2021) and heavy GNSS interference during the June 2025 Israel–Iran war, when two tankers collided off Khor Fakkan. Raised by events we record here.",
+      "sources": [
+        {"label": "LMA Joint War Committee Listed Areas (Persian Gulf, Gulf of Oman)", "url": "https://www.lmalloyds.com/LMA/Underwriting/Marine/Joint_War/LMA/Underwriting/Marine/JWC/Joint_War.aspx", "date": "check the current circular"},
+        {"label": "UKMTO advisories", "url": "https://www.ukmto.org/", "date": "live"}
+      ],
+      "reviewed": "2026-10-12",
+      "ring": [[30.2, 47.8], [29.0, 51.0], [27.0, 56.2], [25.8, 57.8], [25.0, 61.6], [22.4, 60.0], [22.4, 59.2], [24.0, 57.0], [25.6, 56.3], [24.0, 54.0], [24.0, 51.5], [26.5, 50.0], [28.5, 48.4], [30.2, 47.8]]
+    },
+    {
+      "id": "black-sea-war",
+      "kind": "war-risk",
+      "name": "Black Sea and Sea of Azov (Russia–Ukraine war)",
+      "weight": 0.55,
+      "live": true,
+      "why": "Active war at sea: missile and drone strikes on Ukrainian and Russian ports, sea-drone attacks on warships and shadow-fleet tankers, drifting mines in the western Black Sea, and GNSS interference. Whole sea is war-risk listed.",
+      "sources": [
+        {"label": "LMA Joint War Committee Listed Areas (Ukraine, Russia — Black Sea, Sea of Azov)", "url": "https://www.lmalloyds.com/LMA/Underwriting/Marine/Joint_War/LMA/Underwriting/Marine/JWC/Joint_War.aspx", "date": "check the current circular"},
+        {"label": "UKMTO / NATO Shipping Centre Black Sea advisories", "url": "https://shipping.nato.int/", "date": "live"}
+      ],
+      "reviewed": "2026-10-12",
+      "ring": [[46.6, 30.6], [47.2, 35.0], [47.3, 39.2], [45.2, 38.0], [44.6, 37.3], [43.5, 39.9], [41.6, 41.6], [41.0, 39.0], [41.4, 33.0], [41.2, 29.2], [42.0, 28.0], [43.5, 28.6], [45.2, 29.7], [46.6, 30.6]]
+    },
+    {
+      "id": "east-med-levant",
+      "kind": "war-risk",
+      "name": "Eastern Mediterranean off Israel, Lebanon and Syria",
+      "weight": 0.2,
+      "live": true,
+      "why": "War-risk listed coastal waters; strikes on and near ports, and persistent GNSS spoofing that has put ships' displayed positions inland.",
+      "sources": [
+        {"label": "LMA Joint War Committee Listed Areas (Israel, Lebanon, Syria)", "url": "https://www.lmalloyds.com/LMA/Underwriting/Marine/Joint_War/LMA/Underwriting/Marine/JWC/Joint_War.aspx", "date": "check the current circular"}
+      ],
+      "reviewed": "2026-10-12",
+      "ring": [[36.8, 35.6], [35.5, 34.6], [33.0, 33.6], [31.2, 33.4], [31.3, 34.2], [33.1, 35.0], [34.6, 35.8], [36.2, 35.9], [36.8, 35.6]]
+    },
+    {
+      "id": "sulu-celebes",
+      "kind": "piracy",
+      "name": "Sulu and Celebes Seas",
+      "weight": 0.15,
+      "live": false,
+      "why": "Abu Sayyaf-linked kidnap-for-ransom of crews from slow ships and tugs; quiet in recent years but ReCAAP keeps its advisory in force.",
+      "sources": [
+        {"label": "ReCAAP ISC advisories", "url": "https://www.recaap.org/", "date": "live"}
+      ],
+      "reviewed": "2026-10-12",
+      "ring": [[7.5, 118.0], [6.5, 122.5], [3.5, 125.5], [1.5, 120.0], [4.0, 118.0], [5.8, 116.8], [7.5, 118.0]]
+    },
+    {
+      "id": "singapore-strait",
+      "kind": "piracy",
+      "name": "Singapore Strait sea robbery",
+      "weight": 0.08,
+      "live": false,
+      "why": "Frequent but mostly petty boarding and theft from large ships underway at night (ReCAAP); rarely violent. Unavoidable for traffic through Singapore, so it barely separates routes.",
+      "sources": [
+        {"label": "ReCAAP ISC incident reports", "url": "https://www.recaap.org/", "date": "live"}
+      ],
+      "reviewed": "2026-10-12",
+      "ring": [[1.45, 103.4], [1.45, 104.5], [1.1, 104.5], [1.1, 103.4], [1.45, 103.4]]
+    }
+  ],
+  "chokepoints": [
+    {"id": "suez", "name": "Suez Canal", "lat": 30.5, "lon": 32.4},
+    {"id": "babalmandab", "name": "Bab-el-Mandeb", "lat": 12.6, "lon": 43.4},
+    {"id": "ormuz", "name": "Strait of Hormuz", "lat": 26.5, "lon": 56.4},
+    {"id": "malacca", "name": "Strait of Malacca", "lat": 2.5, "lon": 101.3},
+    {"id": "gibraltar", "name": "Strait of Gibraltar", "lat": 35.95, "lon": -5.6},
+    {"id": "bosporus", "name": "Bosporus", "lat": 41.1, "lon": 29.05},
+    {"id": "panama", "name": "Panama Canal", "lat": 9.1, "lon": -79.7},
+    {"id": "sunda", "name": "Sunda Strait", "lat": -6.0, "lon": 105.8},
+    {"id": "south_africa", "name": "Cape of Good Hope", "lat": -34.6, "lon": 18.5}
+  ]
+}

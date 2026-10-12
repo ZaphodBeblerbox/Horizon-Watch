@@ -18,6 +18,10 @@ import { getSettings, subscribeSettings, updateSetting } from "./settingsStore.j
  */
 
 export const KIND = {
+    // A WARNING sent by hand to this person (backend/asset_warnings.py): the
+    // top kind. Its card is the full-screen takeover (warnings/), which
+    // ignores Do Not Disturb; the tray keeps the record.
+    warning:  { icon: "i-alert",   name: "WARNING" },
     signal:   { icon: "i-bell",    name: "Signal" },
     escalate: { icon: "i-up",      name: "Escalation" },
     assign:   { icon: "i-work",    name: "Assigned to you" },

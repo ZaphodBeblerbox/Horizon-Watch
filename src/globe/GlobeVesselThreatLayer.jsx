@@ -16,6 +16,7 @@ import {
   SIM_LABEL, buildFlightPath, fmtMinutes, flightMinutes, modelHeadingRad, pathLengthKm, positionAlong,
   ringPoints, shahedModelUri,
 } from "./vesselThreat.js"
+import { renderDuringFlight } from "./flightRender.js"
 
 const FONT = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
 const FONT_SM = "12px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
@@ -117,8 +118,10 @@ export default function GlobeVesselThreatLayer() {
       })
       if (fly) {
         const km = Math.min(...(data.rings_km || [300]).filter((k) => k >= 250), 400)
+        // the globe renders on demand: a flight only moves while rendering runs (as GlobeView's akili:fly-to)
+        const restore = renderDuringFlight(viewer)
         viewer.camera.flyToBoundingSphere(new BoundingSphere(deg2(c), km * 1000), {
-          duration: 1.6, offset: new HeadingPitchRange(0, CMath.toRadians(-90), km * 1000 * 4.6),
+          duration: 1.6, offset: new HeadingPitchRange(0, CMath.toRadians(-90), km * 1000 * 4.6), complete: restore, cancel: restore,
         })
       }
       render()
@@ -136,8 +139,10 @@ export default function GlobeVesselThreatLayer() {
       simKey.current = sim.id
       // Frame the flight so the drone itself is legible.
       const mid = positionAlong(path, total / 2)
+      const restoreRm = renderDuringFlight(viewer)
       viewer.camera.flyToBoundingSphere(new BoundingSphere(deg2(mid), Math.max(15, total * 0.6) * 1000), {
         duration: 1.2, offset: new HeadingPitchRange(0, CMath.toRadians(-60), Math.max(15, total * 0.6) * 1000 * 2.4),
+        complete: restoreRm, cancel: restoreRm,
       })
       const t0 = performance.now()
       const kmNow = () => Math.min(total, ((performance.now() - t0) / 1000 / SIM_SECONDS) * total)

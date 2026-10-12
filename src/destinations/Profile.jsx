@@ -96,7 +96,7 @@ function NotWired({ title, what }) {
  * time. Short-side scaling means a square crop at any focal point is still
  * a full `short`×`short` of pixels.
  */
-function toPictureDataUrl(file, short = 320) {
+export function toPictureDataUrl(file, short = 320) {
     return new Promise((resolve, reject) => {
         const img = new Image()
         const url = URL.createObjectURL(file)
@@ -121,7 +121,7 @@ function toPictureDataUrl(file, short = 320) {
  * a strip, not a square, and reusing a square crop on a wide photograph
  * throws away the two thirds of it that made someone choose that picture.
  */
-function toCoverDataUrl(file, width = 1500) {
+export function toCoverDataUrl(file, width = 1500) {
     return new Promise((resolve, reject) => {
         const img = new Image()
         const url = URL.createObjectURL(file)
@@ -150,7 +150,7 @@ function toCoverDataUrl(file, width = 1500) {
  * gets stored — so what you see while dragging is what every other screen
  * will render, with no second code path that could disagree with it.
  */
-function Positionable({ src, pos, onPos, editing, alt = "", style = null, radius = 0 }) {
+export function Positionable({ src, pos, onPos, editing, alt = "", style = null, radius = 0 }) {
     const ref = useRef(null)
     const drag = useRef(null)
 
@@ -190,7 +190,7 @@ function Positionable({ src, pos, onPos, editing, alt = "", style = null, radius
             onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
             style={{
                 position: "relative", overflow: "hidden", borderRadius: radius,
-                cursor: editing ? "grab" : "default", touchAction: "none", ...style,
+                cursor: editing ? "grab" : "default", touchAction: editing ? "none" : "auto", ...style,
             }}
         >
             {src
@@ -240,6 +240,7 @@ export default function Profile({ onClose = null, section = null }) {
             tz: u.timezone || "UTC", avatar: u.avatar || null,
             company: u.company || "", location: u.location || "",
             bio: u.bio || "", cover: u.cover || null,
+            avatar_pos: u.avatar_pos || "50% 50%", cover_pos: u.cover_pos || "50% 50%",
         }
         setBase(v); setPf(v)
     }, [])
@@ -268,6 +269,9 @@ export default function Profile({ onClose = null, section = null }) {
             const body = {
                 name: [pf.first, pf.last].filter(Boolean).join(" "),
                 title: pf.title, initials: pf.initials, timezone: pf.tz, avatar: pf.avatar,
+                // the chosen focal points (2026-10-12: they were never sent, so a
+                // Reposition was lost on Save)
+                avatar_pos: pf.avatar_pos || null, cover_pos: pf.cover_pos || null,
                 company: pf.company, location: pf.location,
                 bio: pf.bio, cover: pf.cover,
             }

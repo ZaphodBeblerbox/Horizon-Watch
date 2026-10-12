@@ -32,6 +32,14 @@ import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
 import GlobeAssetsLayer          from "../globe/GlobeAssetsLayer.jsx"
 import GlobeMeLayer              from "../globe/GlobeMeLayer.jsx"
 import GlobeTeamLayer            from "../globe/GlobeTeamLayer.jsx"
+import GlobeAssetTrackLayer      from "../globe/GlobeAssetTrackLayer.jsx"
+import GlobeRouteLayer           from "../routes/routeLayer.cesium.jsx"
+import TrackPanel                from "../location/TrackPanel.jsx"
+import RoutePanel                from "../routes/RoutePanel.jsx"
+import GlobeAirRouteLayer        from "../routes/modes/airLayer.cesium.jsx"
+import { AirRoutePanel }         from "../routes/modes/AirRoute.jsx"
+import GlobeSeaRouteLayer        from "../globe/GlobeSeaRouteLayer.jsx"
+import { SeaRouteSidebar }       from "../routes/modes/MaritimeRoute.jsx"
 import GlobeVesselThreatLayer    from "../globe/GlobeVesselThreatLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
@@ -152,6 +160,7 @@ export default function GlobeView({
     // Places public calls name for blockades (endangered_places.py).
     endangeredEnabled = false,
     assetsEnabled = true,
+    teamEnabled = true,
     gdeltTypes = null,
     frontlinesEnabled = false,
     warmapTheatres = [],
@@ -1231,7 +1240,12 @@ export default function GlobeView({
                 <GlobeAoisLayer enabled={aoisEnabled} />
                 <GlobeAssetsLayer enabled={assetsEnabled} />
                 {/* the team, pushed live and gliding (location/positionStream.js) */}
-                <GlobeTeamLayer enabled={assetsEnabled} />
+                <GlobeTeamLayer enabled={teamEnabled} />
+                {/* an asset's or a person's track over a range, and a route plan (location/track.js, routes/) */}
+                <GlobeAssetTrackLayer />
+                <GlobeRouteLayer />
+                <GlobeAirRouteLayer />
+                <GlobeSeaRouteLayer />
                 <GlobeMeLayer />
                 <GlobeVesselThreatLayer />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
@@ -1320,6 +1334,11 @@ export default function GlobeView({
                     once={true}
                 />
             </Viewer>
+
+            {isVisible && <TrackPanel variant="desktop" />}
+            {isVisible && <RoutePanel variant="desktop" />}
+            {isVisible && <AirRoutePanel variant="desktop" />}
+            {isVisible && <SeaRouteSidebar variant="desktop" />}
 
             {/* Custom popup overlay — replaces Cesium's built-in infoBox */}
             <GlobePopup viewerRef={viewerRef} infraEnabled={false} isVisible={isVisible} onInspectorOpenChange={onInspectorOpenChange}

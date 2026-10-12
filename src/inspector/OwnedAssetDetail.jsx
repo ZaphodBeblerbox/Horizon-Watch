@@ -9,6 +9,9 @@ import API_BASE from "../apiBase.js"
 import AssetModel from "../assets/AssetModel.jsx"
 import SectionLabel from "./SectionLabel.jsx"
 import { agoLabel } from "../utils/formatTime.js"
+import { ShowTrackButton } from "../location/TrackPanel.jsx"
+import { openRoutePanel } from "../routes/store.js"
+import RouteContextCards from "../routes/RouteContextCards.jsx"
 
 const EXPO = { high: "#E5484D", elevated: "#F5A524", low: "#8FB4E8", quiet: "#4CAF7A", unknown: "#9AA9BC" }
 const EXPO_TEXT = { high: "Exposed — serious events close by", elevated: "Something is happening nearby", low: "Minor activity nearby", quiet: "Quiet around it", unknown: "No position to judge from" }
@@ -61,6 +64,14 @@ export default function OwnedAssetDetail({ asset }) {
                 </span>
                 <button style={{ ...BTN, flex: "none", whiteSpace: "nowrap" }} onClick={() => openAssetPage(a.id)}>Full page →</button>
             </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <ShowTrackButton target={{ kind: "asset", id: a.id, name: a.name, userId: a.identifiers?.user_id }}
+                                 style={{ ...BTN, background: "transparent", border: "1px solid var(--gline2)" }} />
+                {pos && <button style={{ ...BTN, background: "transparent", border: "1px solid var(--gline2)" }} data-testid="inspector-safe-route"
+                                onClick={() => openRoutePanel({ request: { from: { asset_id: a.id }, to: null, purpose: "exit" } })}>Safest route</button>}
+            </div>
+            {/* EXIT ROUTE / DELIVERIES — ACCESS ROUTE when a route plan is relevant here (routes/contexts.js) */}
+            <RouteContextCards assetId={a.id} />
             <div>
                 <SectionLabel>Essentials</SectionLabel>
                 <div style={ROW}>

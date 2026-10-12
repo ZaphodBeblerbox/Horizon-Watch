@@ -133,3 +133,4 @@ telethon==1.45.0
 PyMuPDF==1.28.2
 matplotlib==3.10.8
 imageio-ffmpeg==0.5.1
+searoute==1.6.0   # sea routes (MIT; marine network graph, offline) — sea_route.py; pulls networkx, geojson

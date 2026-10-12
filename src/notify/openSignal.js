@@ -55,17 +55,22 @@ export function normalizeOpen(d) {
         entityType: d.entityType || d.entity_type || null,
         zoneId: d.zoneId || d.zone_id || findingZoneOf(d) || null,
         assetId: d.assetId || d.asset_id || null,
+        routePlanId: d.routePlanId || d.route_plan_id || null,
         livestreamId: d.livestreamId || d.livestream_id || null,
         inspect: d.inspect !== false,
         _item: d.ref !== undefined || d.read !== undefined ? d : null,      // a tray item: the desktop opens it as itself
     }
 }
 
+export const EXIT_ALERT_TYPE = "Leave now"
+
 /** What to open. Pure. */
 export function routeFor(input) {
     const n = input?._n ? input : normalizeOpen(input)
     if (!n) return null
     if (n.livestreamId) return { ...n, action: "livestream" }
+    // LEAVE NOW (backend/exit_watch.py): unrest near someone — the safest-route view
+    if (n.alertType === EXIT_ALERT_TYPE || n.kind === "exit") return { ...n, action: "exit" }
     if (n.assetId) return { ...n, action: "asset" }
     const probe = { alert_type: n.alertType, mmsi: n.mmsi, entity_id: n.entityId, alert_id: n.alertId, id: n.id }
     if (n.mmsi || isVesselThreatAlert(probe, n.alertId)) {
@@ -76,6 +81,40 @@ export function routeFor(input) {
     // change, an imagery signal — opened on what was found, drawn as boxes.
     if (isFindingAlert(n)) return { ...n, action: "finding", zoneId: n.zoneId || findingZoneOf(n) || null }
     return { ...n, action: "signal" }
+}
+
+/**
+ * HOW a route is shown (owner, 2026-10-12: "I should be sent to the specific
+ * signal AND the specific location on the map, with the actual signal
+ * displayed on the map"). Pure; both surfaces follow it.
+ *   map     the map is opened, at `focus` when the signal has a place
+ *   draw    what is drawn there: "vessel" (live vessel, rings, top targets),
+ *           "findings" (the boxes, over the scene's image), "pin" (the
+ *           signal's own marker, highlighted), or null
+ *   panel   the details: "sheet" on the phone, "inspector" on the desktop
+ *   sheet   "half" (the map visible above, draggable to full) when the map
+ *           shows the signal, "full" when there is nothing to show on a map
+ */
+export function presentationFor(r, surface = "phone") {
+    if (!r) return null
+    const focus = r.lat != null && r.lon != null ? { lat: +r.lat, lon: +r.lon } : null
+    const panel = surface === "phone" ? "sheet" : "inspector"
+    if (r.action === "livestream") return { map: false, focus: null, draw: null, panel: "player", sheet: null }
+    if (r.action === "asset") return { map: false, focus: null, draw: null, panel: "asset", sheet: null }
+    if (r.action === "exit") return { map: true, focus, draw: "route", panel: "route", sheet: null }
+    if (r.action === "vessel") return { map: true, focus, draw: "vessel", panel, sheet: "half" }
+    // a finding is placed by its boxes (the zone's list), even without a point
+    if (r.action === "finding") return { map: true, focus, draw: "findings", overlay: true, panel, sheet: "half" }
+    if (focus) return { map: true, focus, draw: "pin", panel, sheet: "half" }
+    return { map: false, focus: null, draw: null, panel, sheet: "full" }
+}
+
+/** The marker a plain signal is drawn with (a Telegram or GeoConfirmed post,
+ *  a place, any alert with a point), or null. Pure. */
+export function pinFor(r) {
+    if (!r || r.action !== "signal" || r.lat == null || r.lon == null) return null
+    return { id: r.id || r.alertId || null, alertId: r.alertId || null, lat: +r.lat, lon: +r.lon,
+             title: r.title || "", sev: r.sev || null, kind: r.kind || null, alertType: r.alertType || null }
 }
 
 /** The query a notification opens the app with when it was closed
@@ -89,7 +128,7 @@ export function parseOpenParams(search) {
     return {
         id: q.get("signal") || null,
         lat: Number.isFinite(lat) ? lat : null, lon: Number.isFinite(lon) ? lon : null,
-        livestreamId: q.get("live") || null, assetId: q.get("asset") || null,
+        livestreamId: q.get("live") || null, assetId: q.get("asset") || null, routePlanId: q.get("plan") || null,
         mmsi: vessel, alertType: q.get("type") || (vessel ? ALERT_TYPE : null),
         title: q.get("h") || "",
     }
@@ -175,6 +214,13 @@ export async function openSignal(input, { timeoutMs = 1500 } = {}) {
     if (r.action === "signal" && !r.alertType) r = routeFor(await resolve(r, timeoutMs)) || r
     // A finding whose zone the notification did not carry: the alert says.
     else if (r.action === "finding" && !r.zoneId) r = routeFor(await resolve(r, timeoutMs)) || r
+    if (r.action === "exit") {
+        // the same view on every surface: the phone's full screen, the desktop's panel over the globe
+        const { openFromNotification } = await import("../routes/contexts.js")
+        try { window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "situation" } })) } catch { /* no window */ }
+        openFromNotification(r)
+        return r
+    }
     const fn = surfaces[surfaces.length - 1]
     if (fn) fn(r)
     else queued = r

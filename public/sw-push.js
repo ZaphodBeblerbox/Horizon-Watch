@@ -16,8 +16,14 @@ self.addEventListener('push', (event) => {
         try { data = event.data.json() } catch { data.body = event.data.text() }
     }
     const critical = data.severity === 'critical' || data.kind === 'live'
+    // A WARNING sent by hand (backend/asset_warnings.py): above everything —
+    // an open page takes the whole screen with its alarm (src/warnings/), and
+    // the system notification stays until touched, buzzes long and strong
+    // where the device can, and has a tag of its own so a reminder shows again.
+    const warning = data.kind === 'warning'
     event.waitUntil((async () => {
         const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true })
+        if (warning) wins.forEach((w) => w.postMessage({ type: 'WARNING', id: data.warning_id || data.id }))
         // On iPhone a push that shows nothing counts against the site and
         // Safari cancels the subscription after a few: there it always shows.
         const ios = /iPhone|iPad|iPod/.test(self.navigator?.userAgent || '')
@@ -33,13 +39,14 @@ self.addEventListener('push', (event) => {
             body: data.body || '',
             icon: '/icon-192.png',
             badge: '/icon-192.png',
-            tag: data.id || 'parallax',
+            tag: warning ? `warning-${data.warning_id || data.id}` : (data.id || 'parallax'),
             renotify: true,
             silent: false,                  // the system's notification sound
-            requireInteraction: critical,
-            vibrate: critical ? [300, 100, 300, 100, 300] : [200, 100, 200],
+            requireInteraction: critical || warning,
+            vibrate: warning ? [1000, 250, 1000, 250, 1000, 250, 1000] : critical ? [300, 100, 300, 100, 300] : [200, 100, 200],
             data: { url: data.url || '/', eventId: data.id, lat: data.lat, lon: data.lon,
                     livestreamId: data.livestream_id || null, assetId: data.asset_id || null, headline: data.body || '',
+                    routePlanId: data.route_plan_id || null,
                     // a vessel of concern opens on the vessel itself (src/notify/openSignal.js)
                     mmsi: data.mmsi || null, alertType: data.alert_type || null },
         })
@@ -52,7 +59,7 @@ self.addEventListener('notificationclick', (event) => {
     event.waitUntil((async () => {
         const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true })
         const msg = { type: 'NOTIFICATION_CLICK', eventId: d.eventId, lat: d.lat, lon: d.lon,
-                      livestreamId: d.livestreamId, assetId: d.assetId, headline: d.headline,
+                      livestreamId: d.livestreamId, assetId: d.assetId, headline: d.headline, routePlanId: d.routePlanId || null,
                       mmsi: d.mmsi || null, alertType: d.alertType || null }
         for (const w of wins) {
             if (w.url.startsWith(self.location.origin) && 'focus' in w) {
@@ -67,6 +74,7 @@ self.addEventListener('notificationclick', (event) => {
         if (Number.isFinite(d.lat) && Number.isFinite(d.lon)) p.set('focus', `${d.lat},${d.lon}`)
         if (d.livestreamId) p.set('live', d.livestreamId)
         if (d.assetId) p.set('asset', d.assetId)
+        if (d.routePlanId) p.set('plan', d.routePlanId)
         if (d.mmsi) p.set('vessel', d.mmsi)
         if (d.alertType) p.set('type', d.alertType)
         if (d.headline) p.set('h', d.headline.slice(0, 160))

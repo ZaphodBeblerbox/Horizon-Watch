@@ -8,12 +8,24 @@ The phone sends a position every few seconds while it moves (POST
 /api/my-assets/live); each one is pushed here, at once, to every open
 stream allowed to see it — no viewer polls for it.
 
-WHO SEES WHAT (can_see / visible_assets), the rules the rest of the app
-already has: a person's position goes to themselves, to admins, and to the
-team — everyone signed in, as GET /api/my-assets/people shows it, except
-that two people in DIFFERENT teams (users.team_id, both set) do not see
-each other. An asset moved with them is named only to its owner, admins,
-or everyone when it is shared.
+WHO SEES WHOM (can_see; owner, 2026-10-12: "only people that are part of
+your team or company, or affiliated with you — a person outside the
+company linked to one of your assets still shows"). A person's position
+goes to:
+  · themselves, and admins;
+  · their own organisation: the same team (users.team_id, both set — a
+    different team is a different organisation, whatever the free-text
+    company says), or, when either has no team, the same company
+    (users.company, compared trimmed and case-blind, both set);
+  · whoever is affiliated through an asset: the person is linked to an
+    asset (identifiers.user_id) owned by the viewer, or by someone of the
+    viewer's own organisation.
+Never strangers: no team and no company in common, and no asset between
+you, means nothing — the old rule (no team set: everyone) is gone. The same
+rule decides the live stream, its snapshot, GET /api/my-assets/people, a
+person's track, the "online now" faces (GET /api/presence) and who may be
+sent a warning (asset_warnings.py). An asset moved with them is named only
+to its owner, admins, or everyone when it is shared.
 
 AUTH ACROSS SITES. The page is on Vercel and the API on Railway, so the
 session is a bearer token the page holds (src/lib/desktopAuth.js) — and
@@ -68,11 +80,116 @@ def is_admin(user: dict) -> bool:
     return bool(user.get("is_super_admin")) or str(user.get("role") or "").lower() == "admin"
 
 
-def can_see(viewer: dict, subject_id: str, subject_team: str | None) -> bool:
-    if str(viewer.get("id")) == str(subject_id) or is_admin(viewer):
+def company_key(s) -> str | None:
+    """One firm typed two ways is still one firm (routers/desk.company_key)."""
+    k = " ".join(str(s or "").split()).lower()
+    return k or None
+
+
+def same_org(a: dict, b: dict) -> bool:
+    """The same team when both have one; else the same company, both set."""
+    ta, tb = a.get("team_id"), b.get("team_id")
+    if ta and tb:
+        return str(ta) == str(tb)
+    ca, cb = company_key(a.get("company")), company_key(b.get("company"))
+    return bool(ca and cb and ca == cb)
+
+
+def can_see(viewer: dict, subject_id: str, subject_team: str | None = None, subject_company: str | None = None,
+            linked_owners: list[dict] | None = None) -> bool:
+    """May `viewer` see this person's position? (the rule in the module note)
+    linked_owners: the owners of the assets linked to the subject, each
+    {id, team_id, company}."""
+    vid = str(viewer.get("id"))
+    if vid == str(subject_id) or is_admin(viewer):
         return True
-    vt = viewer.get("team_id")
-    return not (vt and subject_team and str(vt) != str(subject_team))
+    if same_org(viewer, {"team_id": subject_team, "company": subject_company}):
+        return True
+    for o in linked_owners or ():
+        if str(o.get("id")) == vid or same_org(viewer, o):
+            return True
+    return False
+
+
+# who is who: name, team, company — read at most every USERS_TTL_S
+USERS_TTL_S = 30.0
+_users_cache: dict = {"at": 0.0, "fn": None, "data": {}}
+_users_lock = threading.Lock()
+
+
+def user_index() -> dict:
+    import owned_assets as oa
+    key = (_users, oa._db_path())
+    with _users_lock:
+        c = _users_cache
+        if c["fn"] == key and time.monotonic() - c["at"] < USERS_TTL_S:
+            return c["data"]
+    data = _users()
+    with _users_lock:
+        _users_cache.update(at=time.monotonic(), fn=key, data=data)
+    return data
+
+
+def forget_users() -> None:
+    """A link, an unlink or a new account counts at once."""
+    with _users_lock:
+        _users_cache["at"] = 0.0
+
+
+def _owner_ids_by_subject(subject_ids=None) -> dict:
+    """{user_id: [owner ids of the assets linked to them]} from owned_assets."""
+    import owned_assets as oa
+    out: dict = {}
+    try:
+        con = oa._con(oa.LIVE_DB_TIMEOUT_S)
+        try:
+            rows = con.execute("SELECT json_extract(identifiers, '$.user_id'), owner_id FROM owned_assets "
+                               "WHERE json_extract(identifiers, '$.user_id') IS NOT NULL").fetchall()
+        finally:
+            con.close()
+    except Exception:                                        # noqa: BLE001 — no links known: the org rule alone
+        return out
+    want = {str(x) for x in subject_ids} if subject_ids is not None else None
+    for uid, owner in rows:
+        if want is None or str(uid) in want:
+            out.setdefault(str(uid), []).append(str(owner))
+    return out
+
+
+def linked_owners_of(owner_ids, users: dict | None = None) -> list[dict]:
+    users = user_index() if users is None else users
+    return [{"id": o, "team_id": users.get(o, {}).get("team_id"), "company": users.get(o, {}).get("company")}
+            for o in dict.fromkeys(str(x) for x in owner_ids or ())]
+
+
+def subject_of(user_id: str, users: dict | None = None, owners: dict | None = None) -> dict:
+    """{id, name, team_id, company, linked_owners} — what can_see needs about a person."""
+    users = user_index() if users is None else users
+    owners = _owner_ids_by_subject([user_id]) if owners is None else owners
+    u = users.get(str(user_id), {})
+    return {"id": str(user_id), "name": u.get("name"), "team_id": u.get("team_id"), "company": u.get("company"),
+            "linked_owners": linked_owners_of(owners.get(str(user_id), []), users)}
+
+
+def can_see_subject(viewer: dict, subj: dict) -> bool:
+    return can_see(viewer, subj["id"], subj.get("team_id"), subj.get("company"), subj.get("linked_owners"))
+
+
+def can_see_user(viewer: dict, user_id: str) -> bool:
+    """The rule, read from the database (a person's track, a warning)."""
+    return can_see_subject(viewer, subject_of(str(user_id)))
+
+
+def visible_people(viewer: dict, people: list[dict]) -> list[dict]:
+    """oa.people() rows this viewer may see, each with its name."""
+    users = user_index()
+    owners = _owner_ids_by_subject([p["user_id"] for p in people])
+    out = []
+    for p in people:
+        subj = subject_of(str(p["user_id"]), users, owners)
+        if can_see_subject(viewer, subj):
+            out.append({**p, "name": subj.get("name") or "Someone"})
+    return out
 
 
 def visible_assets(viewer: dict, assets: list[dict]) -> list[dict]:
@@ -159,19 +276,32 @@ HUB = Hub()
 
 def for_viewer(viewer: dict, ev: dict) -> dict | None:
     """The event as this viewer may see it, or None."""
-    if not can_see(viewer, ev["user_id"], ev.get("team_id")):
+    if ev.get("type") == "warning":
+        # a warning goes to the person warned; its acknowledgement to who sent it
+        return {k: v for k, v in ev.items() if k != "to"} if str(viewer.get("id")) in {str(x) for x in ev.get("to") or ()} else None
+    if not can_see(viewer, ev["user_id"], ev.get("team_id"), ev.get("company"), ev.get("linked_owners")):
         return None
-    out = {k: v for k, v in ev.items() if k not in ("team_id", "assets")}
+    out = {k: v for k, v in ev.items() if k not in ("team_id", "company", "linked_owners", "assets")}
     out["assets"] = visible_assets(viewer, ev.get("assets") or [])
     return out
 
 
 def publish_position(user: dict, lat: float, lon: float, accuracy_m, source: str, at: str, moved: list[dict]) -> None:
-    """One accepted position, to every stream allowed to see it (POST /live)."""
+    """One accepted position, to every stream allowed to see it (POST /live).
+    In the threadpool: who is affiliated with them is read here, never on
+    the event loop."""
+    if not HUB.count():
+        return
+    uid = str(user.get("id") or user.get("email"))
+    try:
+        subj = subject_of(uid)
+    except Exception:                                        # noqa: BLE001
+        subj = {"linked_owners": []}
     HUB.publish({
-        "type": "position", "user_id": str(user.get("id") or user.get("email")),
+        "type": "position", "user_id": uid,
         "name": (user.get("name") or (user.get("email") or "").split("@")[0] or "Someone"),
-        "team_id": user.get("team_id"),
+        "team_id": user.get("team_id"), "company": user.get("company"),
+        "linked_owners": subj.get("linked_owners") or [],
         "lat": lat, "lon": lon, "accuracy_m": accuracy_m, "source": source, "at": at,
         "assets": [{"id": m["id"], "owner_id": m.get("owner_id"), "shared": m.get("shared")} for m in moved or []],
     })
@@ -221,17 +351,19 @@ def _users() -> dict:
     import owned_assets as oa
     try:
         con = sqlite3.connect(oa._db_path(), timeout=5)
-        rows = con.execute("SELECT id, name, email, team_id FROM users").fetchall()
+        try:
+            rows = con.execute("SELECT id, name, email, team_id, company FROM users").fetchall()
+        except sqlite3.OperationalError:                     # an older table: no company column
+            rows = [(*r, None) for r in con.execute("SELECT id, name, email, team_id FROM users").fetchall()]
         con.close()
     except sqlite3.Error:
         return {}
-    return {str(r[0]): {"name": r[1] or (r[2] or "").split("@")[0] or "Someone", "team_id": r[3]} for r in rows}
+    return {str(r[0]): {"name": r[1] or (r[2] or "").split("@")[0] or "Someone", "team_id": r[3], "company": r[4]} for r in rows}
 
 
 def snapshot(viewer: dict, hours: int = 24) -> list[dict]:
     """Everyone this viewer may see, at their latest position."""
     import owned_assets as oa
-    users = _users()
     owners = {}
     try:
         con = oa._con(oa.LIVE_DB_TIMEOUT_S)
@@ -240,12 +372,9 @@ def snapshot(viewer: dict, hours: int = 24) -> list[dict]:
     except Exception:                                        # noqa: BLE001
         pass
     out = []
-    for p in oa.people(hours):
-        u = users.get(str(p["user_id"]), {})
-        if not can_see(viewer, p["user_id"], u.get("team_id")):
-            continue
+    for p in visible_people(viewer, oa.people(hours)):
         assets = [{"id": a, **owners.get(a, {})} for a in p.get("assets") or []]
-        out.append({"type": "position", "user_id": str(p["user_id"]), "name": u.get("name", "Someone"),
+        out.append({"type": "position", "user_id": str(p["user_id"]), "name": p.get("name") or "Someone",
                     "lat": p["lat"], "lon": p["lon"], "accuracy_m": p.get("accuracy_m"), "source": p.get("source") or "gps",
                     "at": p["at"], "assets": visible_assets(viewer, assets)})
     return out
@@ -313,7 +442,7 @@ async def stream(request: Request, t: str | None = None, max_s: int | None = Non
                         yield ": keepalive\n\nevent: ping\ndata: {}\n\n"
                     continue
                 last = time.monotonic()
-                yield _sse(ev, "position")
+                yield _sse(ev, ev.get("event") or "position") if ev.get("type") == "warning" else _sse(ev, "position")
         finally:
             HUB.unsubscribe(sub)
 

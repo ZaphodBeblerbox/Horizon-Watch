@@ -425,6 +425,19 @@ app.include_router(_tile_proxy_router.router)
 app.include_router(_my_assets_router.router)
 import position_stream as _position_stream                  # live positions pushed to viewers (SSE)
 app.include_router(_position_stream.router)
+import asset_warnings as _asset_warnings                    # a WARNING sent by hand to a person in the field (takes their screen)
+app.include_router(_asset_warnings.router)
+from routers import air_route as _air_route_router            # flights: the safest path through conflict airspace (air_route.py); before /api/routes/{id}
+app.include_router(_air_route_router.router)
+from routers import sea_route as _sea_route_router           # the safest sea route (sea_route.py): Suez vs Cape, hazards, context
+app.include_router(_sea_route_router.router)                 # before routes: its /api/routes/{plan_id} must not shadow /sea
+def _sea_vessel(mmsi: str):
+    with _AIS_LOCK:
+        v = _AIS_VESSELS.get(str(mmsi))
+        return dict(v) if v else None
+_sea_route_router.VESSEL_LOOKUP = _sea_vessel
+from routers import routes as _routes_router                # route planning: the safest way (safe_route.py, route_plans.py)
+app.include_router(_routes_router.router)
 try:
     # the briefing engine (briefing/): profile → evidence → research → Opus → PDF.
     # Optional at start: a missing dependency (matplotlib, PyMuPDF) turns
@@ -475,6 +488,9 @@ app.include_router(_voice_ai_router.router)
 # A watch zone's automatic findings as boxes on the ground — routers/zone_findings.py.
 from routers import zone_findings as _zone_findings_router
 app.include_router(_zone_findings_router.router)
+# "Assess with AI" on one finding, on request only — routers/finding_assess.py.
+from routers import finding_assess as _finding_assess_router
+app.include_router(_finding_assess_router.router)
 # Making a signal usable, and making mentions of one thing converge —
 # see routers/enrichment.py and enrich.py.
 from routers import enrichment as _enrichment_router
@@ -12431,6 +12447,37 @@ async def _event_watch_loop():
         await asyncio.sleep(60)
 
 
+async def _warning_resend_loop():
+    """Every 30 s: a warning nobody acknowledged is pushed again after
+    asset_warnings.RESEND_S, up to MAX_SENDS times. In the web process (not
+    WORKER_ONLY): it also tells the open streams, which live there."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            import asset_warnings as _aw
+            n = await asyncio.to_thread(_aw.resend_due)
+            if n:
+                print(f"[warnings] sent again: {n}", flush=True)
+        except Exception as e:                              # noqa: BLE001
+            print(f"[warnings] resend error: {type(e).__name__}: {e}", flush=True)
+
+
+async def _exit_watch_loop():
+    """Every minute: a hazard within 1 km of someone sharing their position
+    raises one "Unrest near you — leave via …" alert with the safest route
+    (exit_watch.py); the push goes out with the next event-watch sweep."""
+    await asyncio.sleep(75)
+    while True:
+        try:
+            import exit_watch as _xw
+            n = await _xw.check()
+            if n:
+                print(f"[exit-watch] raised {n}", flush=True)
+        except Exception as e:                              # noqa: BLE001
+            print(f"[exit-watch] error: {type(e).__name__}: {e}", flush=True)
+        await asyncio.sleep(60)
+
+
 @app.get("/api/telegram/upcoming")
 async def api_telegram_upcoming(days: int = Query(30, ge=1, le=120)):
     """Gatherings and collective actions announced on Telegram that have not
@@ -16603,6 +16650,8 @@ async def startup_event():
     # "[telegram] error (occurrence 1)" lines per start.
     _spawn(_telegram_loop)
     _spawn(_event_watch_loop)
+    _spawn(_exit_watch_loop)
+    _spawn(_warning_resend_loop)
     _spawn(_conflict_context_loop)
     _spawn(_strike_timing_loop)
     _spawn(_analytics_daily_loop)
@@ -29703,6 +29752,13 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] asset watch: {type(ex).__name__}: {ex}", flush=True)
 
+    # ── LEAVE NOW: unrest near someone sharing their position (exit_watch.py)
+    try:
+        import exit_watch as _xw
+        out = [{**c, "title": _nc.plain(c["title"])} for c in _xw.notifications_for(uid)] + out
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] exit watch: {type(ex).__name__}: {ex}", flush=True)
+
     # ── Telegram local reports (telegram_ingest.published) ─────────────
     # They took the screen on the desktop from a poll of their own and so
     # never reached a phone (owner, 2026-10-10). In the feed, they are
@@ -32094,11 +32150,21 @@ def api_presence_heartbeat(record_ref: str, request: Request):
     return {"ok": True}
 
 @app.get("/api/presence")
-def api_presence_get(record_ref: str):
+def api_presence_get(record_ref: str, request: Request):
     now = time.time()
     with _PRESENCE_LOCK:
         seen = dict(_PRESENCE.get(record_ref, {}))
     active_ids = [uid for uid, ts in seen.items() if now - ts <= _PRESENCE_TTL_SECONDS]
+    # WHO IS ONLINE (owner, 2026-10-12): the app-wide faces show only your
+    # organisation and people affiliated with you (position_stream.can_see),
+    # never strangers — and nobody to someone not signed in
+    if record_ref == "app:online" and active_ids:
+        viewer = _get_current_user(request)
+        if not viewer:
+            active_ids = []
+        else:
+            import position_stream as _ps
+            active_ids = [u for u in active_ids if _ps.can_see_user(viewer, str(u))]
     from database import User, get_db as _gdb_presence
     with _gdb_presence() as db:
         users = db.query(User).filter(User.id.in_(active_ids)).all() if active_ids else []

@@ -108,3 +108,6 @@ backend/data/infra_detail/
 
 # conflict_context.py state: where each war stands now, rebuilt every six hours
 backend/data/conflict_context.json
+
+# AI assessments of findings — a per-machine cache (finding_assess.py)
+backend/data/finding_assessments/

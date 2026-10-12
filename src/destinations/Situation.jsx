@@ -65,6 +65,7 @@ import { whenLabel } from "../utils/formatTime.js"
 import { hm } from "../utils/clock.js"
 import { defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
 import EndangeredCountryChips from "../components/EndangeredCountryChips.jsx"
+import { closeOpenedSignal } from "../lib/signalPin.js"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -425,6 +426,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const [imagerySignalsOn, setImagerySignalsOn] = useState(true)
     // Our assets on the map (GlobeAssetsLayer): on — they are the point.
     const [assetsOn, setAssetsOn] = useState(true)
+    // The team's live locations (GlobeTeamLayer, pushed as they move): on —
+    // their own switch, so a desk that hides the register still sees its people.
+    const [teamOn, setTeamOn] = useState(true)
     // Places public calls name for blockades and other actions
     // (GlobeEndangeredPlacesLayer): on by default while a call is within 7 days.
     const [endangeredOn, setEndangeredOn] = useState(() => endangeredDefaultOn())
@@ -1429,12 +1433,17 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     onSaveCurrent={(name) => { saveCurrentAsView(name).catch(() => toast("Could not save view", { icon: "i-alert" })) }}
                 />
 
-                <LayerGroup id="our-assets" title="Our assets" activeCount={assetsOn ? 1 : 0}>
+                <LayerGroup id="our-assets" title="Our assets" activeCount={(assetsOn ? 1 : 0) + (teamOn ? 1 : 0)}>
                     <SubLayerRow
                         label="Assets in the register"
                         hint="Your vessels, aircraft, sites and people, each ringed in how exposed it is now, with its watch radius close in. A click opens it."
                         on={assetsOn} parentOn={true}
                         onToggle={() => setAssetsOn((v) => !v)} />
+                    <SubLayerRow
+                        label="Team, live location"
+                        hint="Your team, and people linked to your assets, where their phones are now — pushed as they move, with how fresh each position is."
+                        on={teamOn} parentOn={true}
+                        onToggle={() => setTeamOn((v) => !v)} />
                 </LayerGroup>
 
 
@@ -2092,6 +2101,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         imagerySignalsEnabled={groupsOnV.imagery && imagerySignalsOn}
                         endangeredEnabled={endangeredOn}
                         assetsEnabled={!asCanvas && assetsOn}
+                        teamEnabled={!asCanvas && teamOn}
                         nauticalEnabled={infraOnV.nautical}
                         eezEnabled={groupsOnV.zones}
                         aoisEnabled={contextOnV.aois}
@@ -2247,6 +2257,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             inspectorPopup.onClose?.()
                             setInspectorPopup(null)
                             setSelected(null)
+                            // a signal opened from a notification: its marker, boxes and image go with it
+                            closeOpenedSignal([inspectorPopup.entityId, inspectorPopup.data?.alert_id, inspectorPopup.data?.id])
                         }}
                         onSelectRelated={inspectorPopup.onSelectRelated}
                         onJumpToLocation={inspectorPopup.onJumpToLocation}

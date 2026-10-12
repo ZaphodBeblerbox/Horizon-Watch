@@ -8,6 +8,10 @@
     DELETE /api/my-assets/{id}             remove one (owner only)
     GET    /api/my-assets/{id}/situation   where it is and every signal near it, ranked
     GET    /api/my-assets/{id}/track       where a moving asset has been (linked to a person: their phone)
+    GET    /api/my-assets/linkable-users   who can be linked to an asset (your organisation, then outside it)
+    GET    /api/my-assets/{id}/link        who it follows, and how fresh
+    PUT    /api/my-assets/{id}/link        link a person: it follows their phone from now on (owner, admin)
+    DELETE /api/my-assets/{id}/link        unlink
     POST   /api/my-assets/live             this user's device position (live sharing)
     GET    /api/my-assets/me/positions     this user's own position history
     GET    /api/my-assets/people           the team's latest shared positions (the location signal;
@@ -343,13 +347,110 @@ def people(request: Request, hours: int = 24):
     the asset page."""
     me = _me(request)
     import position_stream as ps
-    users = ps._users()
+    # the same rule as the live stream: your organisation, people linked to
+    # your organisation's assets, admins — never strangers
+    return {"people": ps.visible_people(me, oa.people(max(1, min(168, hours))))}
+
+
+# ── linking a person to an asset ───────────────────────────────────────────
+
+def _directory() -> list[dict]:
+    """Every approved account: {id, name, email, company, team_id}."""
+    try:
+        con = sqlite3.connect(oa._db_path(), timeout=5)
+        try:
+            rows = con.execute("SELECT id, name, email, company, team_id FROM users WHERE approved = 1").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return []
+    return [{"id": str(r[0]), "name": r[1] or (r[2] or "").split("@")[0], "email": r[2], "company": r[3], "team_id": r[4]} for r in rows]
+
+
+def _link_view(a: dict) -> dict:
+    """Who an asset follows and how fresh their position is."""
+    uid = (a.get("identifiers") or {}).get("user_id")
+    if not uid:
+        return {"asset_id": a["id"], "user": None}
+    u = next((x for x in _directory() if x["id"] == str(uid)), None) or {"id": str(uid), "name": None}
+    last = oa.latest(str(uid))
+    live = False
+    if last:
+        t = oa._ts(last.get("at"))
+        live = bool(t and (_dt.datetime.now(_dt.timezone.utc) - t).total_seconds() <= oa.LIVE_FRESH_S)
+    return {"asset_id": a["id"], "user": {"id": u["id"], "name": u.get("name") or "Someone", "company": u.get("company")},
+            "latest": last, "live": live}
+
+
+def _may_link(a: dict | None, me: dict) -> bool:
+    import position_stream as ps
+    return bool(a) and (str(a.get("owner_id")) == _uid(me) or ps.is_admin(me))
+
+
+@router.get("/linkable-users")
+def linkable_users(request: Request, q: str = ""):
+    """Who can be linked to an asset: anyone with an account — your own
+    organisation first, then people outside it (a driver, a contractor);
+    linking one makes their live position visible to you and your team
+    (position_stream.can_see)."""
+    import position_stream as ps
+    me = _me(request)
+    q = q.strip().lower()
     out = []
-    for p in oa.people(max(1, min(168, hours))):
-        u = users.get(str(p["user_id"]), {})
-        if ps.can_see(me, p["user_id"], u.get("team_id")):        # the same rule as the live stream
-            out.append({**p, "name": u.get("name", "Someone")})
-    return {"people": out}
+    for u in _directory():
+        if q and q not in f"{u['name'] or ''} {u['email'] or ''} {u['company'] or ''}".lower():
+            continue
+        org = u["id"] == _uid(me) or ps.same_org(me, u)
+        out.append({"id": u["id"], "name": u["name"] or "Someone", "email": u["email"], "company": u["company"],
+                    "affiliation": "you" if u["id"] == _uid(me) else "organisation" if org else "outside"})
+    rank = {"you": 0, "organisation": 1, "outside": 2}
+    out.sort(key=lambda x: (rank[x["affiliation"]], (x["name"] or "").lower()))
+    return {"users": out}
+
+
+@router.get("/{asset_id}/link")
+def asset_link(asset_id: str, request: Request):
+    a = oa.visible_to(asset_id, _me(request))
+    if not a:
+        raise HTTPException(404, "no such asset")
+    return _link_view(a)
+
+
+@router.put("/{asset_id}/link")
+def asset_link_set(asset_id: str, request: Request, body: dict = Body(...)):
+    """Link a person: from now on the asset is where their phone is."""
+    import position_stream as ps
+    me = _me(request)
+    a = oa.visible_to(asset_id, me)
+    if not _may_link(a, me):
+        raise HTTPException(404, "no such asset of yours")
+    uid = str((body or {}).get("user_id") or "").strip()
+    who = next((u for u in _directory() if u["id"] == uid), None)
+    if not uid or who is None:
+        raise HTTPException(400, "no such person")
+    a = oa.link_user(asset_id, uid)
+    ps.forget_users()
+    last = oa.latest(uid)
+    if last:
+        # the owner's open map shows the asset at the person at once
+        ps.publish_position({"id": uid, "name": who["name"], "team_id": who.get("team_id"), "company": who.get("company")},
+                            last["lat"], last["lon"], last.get("accuracy_m"), last.get("source") or "gps", last["at"],
+                            [{"id": a["id"], "owner_id": a["owner_id"], "shared": a["shared"]}])
+    import asset_watch
+    asset_watch.invalidate(str(a["owner_id"]))
+    return _link_view(a)
+
+
+@router.delete("/{asset_id}/link")
+def asset_link_clear(asset_id: str, request: Request):
+    import position_stream as ps
+    me = _me(request)
+    a = oa.visible_to(asset_id, me)
+    if not _may_link(a, me):
+        raise HTTPException(404, "no such asset of yours")
+    a = oa.link_user(asset_id, None)
+    ps.forget_users()
+    return _link_view(a)
 
 
 @router.get("/{asset_id}/track")
@@ -358,6 +459,48 @@ def asset_track(asset_id: str, request: Request, hours: int = 24):
     if not oa.get(asset_id, _uid(user)):
         raise HTTPException(404, "no such asset")
     return {"track": oa.track(asset_id, max(1, min(168, hours)))}
+
+
+def _track_points(asset: dict, hours: int) -> list[dict]:
+    """A person's asset follows their phone: its track is their position
+    history (30 days); any other mover, its own trail (7 days)."""
+    uid = (asset.get("identifiers") or {}).get("user_id")
+    return oa.positions(str(uid), hours) if uid else oa.track(asset["id"], hours)
+
+
+@router.get("/{asset_id}/track/range")
+def asset_track_range(asset_id: str, request: Request, range: str = "24h", max_points: int = 500):
+    """THE TRACK (owner, 2026-10-12): where an asset has been over 1h / 6h /
+    24h / 7d / 30d — thinned (Douglas-Peucker) to at most max_points, with
+    its stops (≥ 10 min) and start and end (track_view.py). Visible to the
+    asset's owner, everyone when it is shared, admins."""
+    import track_view as tv
+    user = _me(request)
+    a = oa.visible_to(asset_id, user)
+    if not a:
+        raise HTTPException(404, "no such asset")
+    if range not in tv.RANGES:
+        raise HTTPException(400, f"range is one of {', '.join(tv.RANGES)}")
+    return {"asset_id": asset_id, "name": a.get("name"), "user_id": (a.get("identifiers") or {}).get("user_id"),
+            **tv.view(_track_points(a, tv.hours_of(range)), range, max_points)}
+
+
+@router.get("/people/{user_id}/track")
+def person_track(user_id: str, request: Request, range: str = "24h", max_points: int = 500):
+    """A person's own track (their phone's history) — for themself, admins,
+    and their team (position_stream.can_see, the live stream's rule)."""
+    import position_stream as ps
+    import track_view as tv
+    me = _me(request)
+    u = ps.user_index().get(str(user_id))
+    if u is None and str(user_id) != _uid(me):
+        raise HTTPException(404, "no such person")
+    if not ps.can_see_user(me, str(user_id)):
+        raise HTTPException(404, "no such person")
+    if range not in tv.RANGES:
+        raise HTTPException(400, f"range is one of {', '.join(tv.RANGES)}")
+    return {"user_id": str(user_id), "name": (u or {}).get("name"),
+            **tv.view(oa.positions(str(user_id), tv.hours_of(range)), range, max_points)}
 
 
 @router.get("/reverse")
@@ -378,8 +521,14 @@ async def list_assets(request: Request):
     loop = asyncio.get_event_loop()
 
     def run():
+        import position_stream as ps
         out = []
         for a in oa.list_for(_uid(user)):
+            # a person's live asset is shared, but where a person is shows only
+            # to who may see them (position_stream.can_see): never strangers
+            linked = (a.get("identifiers") or {}).get("user_id")
+            if linked and a["owner_id"] != _uid(user) and not ps.can_see_user(user, str(linked)):
+                continue
             s = situation(a)
             out.append({**a, "position": s["position"], "exposure": s["exposure"], "signal_count": len(s["signals"]),
                         "top": s["signals"][0] if s["signals"] else None, "mine": a["owner_id"] == _uid(user)})

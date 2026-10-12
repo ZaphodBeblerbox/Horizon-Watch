@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import {
     normalizeOpen, routeFor, parseOpenParams, lookupId, openSignal, setSignalSurface, setAlertFetcher, __resetSignalSurfaces,
+    presentationFor, pinFor,
 } from "./openSignal.js"
 
 const VESSEL_ID = "RUL-667002574-1791715498"
@@ -124,5 +125,40 @@ describe("routeFor — an imagery finding opens on its boxes (2026-10-12)", () =
     })
     it("heat stays a plain signal", () => {
         expect(routeFor({ eventId: "HEAT-1", alertType: "Heat", lat: 1, lon: 2 }).action).toBe("signal")
+    })
+})
+
+describe("presentationFor — every notification opens the MAP on the signal, drawn, with its details (2026-10-12)", () => {
+    const P = (x, surface) => presentationFor(routeFor(x), surface)
+    it("a vessel of concern: the map at the vessel, the live vessel + rings + targets drawn, a half sheet / the inspector", () => {
+        const x = { eventId: VESSEL_ID, lat: 59.85, lon: 25.57, mmsi: "667002574", alertType: TYPE }
+        expect(P(x, "phone")).toMatchObject({ map: true, focus: { lat: 59.85, lon: 25.57 }, draw: "vessel", panel: "sheet", sheet: "half" })
+        expect(P(x, "desktop")).toMatchObject({ map: true, draw: "vessel", panel: "inspector" })
+    })
+    it("a sweep / radar finding: the map on its boxes with the scene's image under them, even without a point", () => {
+        expect(P({ id: "RCHG-ZONE-005-2026-10-11" }, "phone")).toMatchObject({ map: true, draw: "findings", overlay: true, panel: "sheet", sheet: "half", focus: null })
+        expect(P({ eventId: "ALRT-9", alertType: "Imagery signal", entity_type: "sweep_finding", entity_id: "ZONE-061", lat: 52, lon: 29.2 }, "desktop"))
+            .toMatchObject({ map: true, draw: "findings", overlay: true, panel: "inspector", focus: { lat: 52, lon: 29.2 } })
+    })
+    it("a GeoConfirmed / Telegram post, a place under threat, any alert with a point: its own pin on the map", () => {
+        const gc = { eventId: "GC-33c9", alertType: "geoconfirmed_event", lat: 46.47, lon: 30.71, headline: "Odesa" }
+        expect(P(gc, "phone")).toMatchObject({ map: true, focus: { lat: 46.47, lon: 30.71 }, draw: "pin", sheet: "half" })
+        expect(pinFor(routeFor(gc))).toMatchObject({ id: "GC-33c9", lat: 46.47, lon: 30.71, title: "Odesa" })
+        const tg = { id: "chan/123", kind: "telegram", lat: 48.5, lon: 35.0, title: "Strike reported" }
+        expect(P(tg, "phone").draw).toBe("pin")
+        const place = { id: "EPL-1", alert_type: "Endangered place: blockade called", lat: 43.02, lon: 3.05 }
+        expect(P(place, "desktop")).toMatchObject({ map: true, draw: "pin", panel: "inspector" })
+    })
+    it("no place: the sheet alone, full height; no pin", () => {
+        const x = { id: "ALT-AC73F9E2", alert_type: "imminence", title: "Colombia" }
+        expect(P(x, "phone")).toMatchObject({ map: false, draw: null, panel: "sheet", sheet: "full" })
+        expect(pinFor(routeFor(x))).toBeNull()
+    })
+    it("a vessel and a finding are drawn by their own layers, not a pin; a livestream and an asset keep their own views", () => {
+        expect(pinFor(routeFor({ id: VESSEL_ID, lat: 1, lon: 2 }))).toBeNull()
+        expect(pinFor(routeFor({ id: "RCHG-ZONE-005-x", lat: 1, lon: 2 }))).toBeNull()
+        expect(P({ id: "live:k", livestreamId: "k" })).toMatchObject({ map: false, panel: "player" })
+        expect(P({ id: "a", assetId: "OA-1", lat: 1, lon: 2 })).toMatchObject({ map: false, panel: "asset" })
+        expect(presentationFor(null)).toBeNull()
     })
 })

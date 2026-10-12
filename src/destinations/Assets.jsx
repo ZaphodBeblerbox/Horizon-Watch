@@ -21,9 +21,14 @@ import AssetModel from "../assets/AssetModel.jsx"
 import AssetThumb from "../assets/AssetThumb.jsx"
 import TrackSketch from "../location/TrackSketch.jsx"
 import LivePositionLine from "../location/LivePositionLine.jsx"
+import AssetPeople from "../warnings/AssetPeople.jsx"
+import { showTrack } from "../location/track.js"
+import { openRoutePanel } from "../routes/store.js"
+import { planRoute, sendPlan } from "../routes/api.js"
 import Dots from "../ui/Dots.jsx"
 import { shareToDesk } from "../desk/shareToDesk.js"
 import { agoLabel } from "../utils/formatTime.js"
+import { getCurrentUser } from "../state/authStore.js"
 
 const EYE = { fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }
 const BTN = {
@@ -49,6 +54,30 @@ const api = (path, opts = {}) => fetch(`${API_BASE}/api/my-assets${path}`, {
     credentials: "include", ...opts,
     headers: opts.body ? { "Content-Type": "application/json" } : undefined,
 }).then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d })
+
+// kinds that move: their track is worth drawing (a person's comes from their phone)
+const MOVERS = new Set(["Vessels", "Aircraft", "Vehicles", "People"])
+const isAdmin = () => { try { const u = getCurrentUser(); return !!u?.is_super_admin || String(u?.role || "").toLowerCase() === "admin" } catch { return false } }
+
+/** SEND SAFEST ROUTE: a notification on the linked person's phone that opens the route. */
+function SendRouteButton({ asset }) {
+    const [msg, setMsg] = useState(null)
+    const go = async () => {
+        setMsg("Sending…")
+        try {
+            const p = await planRoute({ from: { asset_id: asset.id }, to: null, mode: asset.group === "Vehicles" ? "car" : "foot", purpose: "exit" })
+            const r = await sendPlan(p.id, { asset_id: asset.id })
+            setMsg(`Sent${r.leave_via ? ` — leave via ${r.leave_via}` : ""}`)
+        }
+        catch (e) { setMsg(e.message || "Could not send") }
+    }
+    return (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <button style={BTN} onClick={go} data-testid="asset-send-route">Send safest route</button>
+            {msg && <span style={{ fontSize: 12, color: "var(--txt3)" }}>{msg}</span>}
+        </span>
+    )
+}
 
 const flyTo = (lat, lon, altitude = 60_000) => {
     window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "situation" } }))
@@ -274,7 +303,7 @@ function Fact({ k, v }) {
     )
 }
 
-function Detail({ asset, onEdit, onDeleted }) {
+function Detail({ asset, onEdit, onDeleted, onChanged }) {
     const [s, setS] = useState(null)
     useEffect(() => {
         let live = true
@@ -334,9 +363,24 @@ function Detail({ asset, onEdit, onDeleted }) {
                             <div style={{ marginTop: 8 }}><TrackSketch assetId={asset.id} /></div>
                         </div>
                     )}
+                    {/* LINK A PERSON (their phone moves it) · SEND THEM A WARNING (warnings/AssetPeople.jsx) */}
+                    <AssetPeople asset={asset} onChanged={onChanged} />
                     {asset.notes && <p style={{ margin: 0, fontSize: 13, color: "var(--txt2)", lineHeight: 1.55, borderTop: "1px solid var(--gline)", paddingTop: 12 }}>{asset.notes}</p>}
                     <div style={{ display: "flex", gap: 6, marginTop: "auto", flexWrap: "wrap" }}>
                         {pos && <button onClick={() => flyTo(pos.lat, pos.lon)} style={PRIMARY}>Show on the map</button>}
+                        {(asset.identifiers?.user_id || MOVERS.has(asset.group)) && (
+                            <button style={BTN} data-testid="asset-show-track" onClick={() => {
+                                window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "situation" } }))
+                                showTrack({ kind: "asset", id: asset.id, name: asset.name, userId: asset.identifiers?.user_id })
+                            }}>Show track</button>
+                        )}
+                        {pos && (
+                            <button style={BTN} data-testid="asset-safe-route" onClick={() => {
+                                window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "situation" } }))
+                                openRoutePanel({ request: { from: { asset_id: asset.id }, to: null, mode: asset.group === "Vehicles" ? "car" : "foot", purpose: "exit" } })
+                            }}>Safest route</button>
+                        )}
+                        {asset.identifiers?.user_id && (asset.mine || isAdmin()) && <SendRouteButton asset={asset} />}
                         <button onClick={() => shareToDesk({ kind: "asset", id: asset.id, name: asset.name, asset_kind: asset.kind, kind_label: asset.kind_label, group: asset.group, exposure: s?.exposure || null })} style={BTN}>Share to the desk</button>
                         {asset.mine && <button onClick={onEdit} style={BTN}>Edit</button>}
                         {asset.mine && <button onClick={remove} style={BTN}>Remove</button>}
@@ -475,7 +519,7 @@ export default function Assets() {
                 <div style={{ overflow: "auto", padding: "20px 24px 40px", minWidth: 0 }}>
                     {mode === "add" && <AssetForm kinds={kinds} onCancel={() => setMode("view")} onSaved={(a) => { setMode("view"); setSel(a.id); load() }} />}
                     {mode === "edit" && current && <AssetForm kinds={kinds} initial={current} onCancel={() => setMode("view")} onSaved={() => { setMode("view"); load() }} />}
-                    {mode === "view" && current && <Detail asset={current} onEdit={() => setMode("edit")} onDeleted={() => { setSel(null); load() }} />}
+                    {mode === "view" && current && <Detail asset={current} onEdit={() => setMode("edit")} onDeleted={() => { setSel(null); load() }} onChanged={load} />}
                     {mode === "view" && !current && assets?.length === 0 && (
                         <button onClick={() => setMode("add")} style={{ ...PRIMARY, height: 34 }}>Add your first asset</button>
                     )}

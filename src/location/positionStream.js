@@ -53,6 +53,7 @@ export function createPositionStream({
     const people = new Map()        // user_id -> {user_id, name, lat, lon, accuracy_m, source, at (ms, server clock), assets: [id], prevAt}
     const assets = new Map()        // asset id -> {lat, lon, at, user_id, source, accuracy_m}
     const subs = new Set()
+    const passive = new Set()       // told of every event, but never open the stream (warnings/WarningTakeover.jsx)
     let es = null
     let mode = "off"                // off · connecting · live · polling
     let failures = 0
@@ -63,7 +64,7 @@ export function createPositionStream({
     let generation = 0
     const stats = { opens: 0, errors: 0, events: 0, polls: 0 }
 
-    const emit = (ev) => { for (const f of subs) { try { f(ev) } catch { /* a listener */ } } }
+    const emit = (ev) => { for (const f of [...subs, ...passive]) { try { f(ev) } catch { /* a listener */ } } }
 
     function apply(p, via) {
         if (!p?.user_id || !Number.isFinite(+p.lat) || !Number.isFinite(+p.lon)) return false
@@ -165,6 +166,17 @@ export function createPositionStream({
             if (apply(p, "stream")) emit({ type: "position", user_id: String(p.user_id) })
         })
         src.addEventListener("ping", () => { if (gen === generation) seen() })
+        // A WARNING for this user, or an update on one they sent (backend/asset_warnings.py):
+        // passed on as it is; the takeover and the asset page decide what it means
+        for (const name of ["warning", "warning_update"]) {
+            src.addEventListener(name, (e) => {
+                if (gen !== generation) return
+                seen()
+                let d = null
+                try { d = JSON.parse(e.data) } catch { return }
+                if (d?.warning) emit({ type: name, warning: d.warning })
+            })
+        }
         src.addEventListener("bye", () => {
             if (gen !== generation) return
             // the server closes a stream after a while, or as it restarts: open a new one at once
@@ -203,6 +215,8 @@ export function createPositionStream({
                 if (!subs.size) stopAll()
             }
         },
+        /** fn(event) on every event while the stream happens to be open — never opens it. */
+        listen(fn) { passive.add(fn); return () => passive.delete(fn) },
         people() { return [...people.values()] },
         findPerson(uid) { return people.get(String(uid)) || null },
         asset(id) { return assets.get(String(id)) || null },

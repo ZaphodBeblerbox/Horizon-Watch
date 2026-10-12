@@ -21,6 +21,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../../apiBase.js"
+import { authHeaders } from "../../auth.js"
 import Loading from "../../ui/Loading.jsx"
 import { SceneComparison } from "./sceneComparison.jsx"
 import {
@@ -28,6 +29,7 @@ import {
     findingSource, isRadarFinding, sameSource, startRadarImages, strengthText, TONE,
 } from "../../lib/findings.js"
 import { RADAR_CAVEATS, RADAR_WHAT, radarMeaning } from "../../lib/radarExplain.js"
+import AssessWithAI from "../AssessWithAI.jsx"
 
 const ON = "var(--accdim)"
 const BTN = {
@@ -75,7 +77,7 @@ function useFindingImage(zone, f, fallback, onImagesReady) {
                 .catch((e) => { if (live) setSt({ status: "failed", error: e instanceof TypeError ? "the server did not answer (network or server error)" : e.message }) })
             read()
         } else {
-            fetch(`${API_BASE}/api/imagery/scenes/${encodeURIComponent(f.scan_id)}`, { credentials: "include" })
+            fetch(`${API_BASE}/api/imagery/scenes/${encodeURIComponent(f.scan_id)}`, { credentials: "include", headers: authHeaders() })
                 .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : `the server answered ${r.status}`); return d })
                 .then((d) => {
                     if (!live) return
@@ -267,6 +269,12 @@ export default function FindingViewer({ zone, findings, selectedId, onSelect, on
                         {explain ? "Less" : "What else changes radar brightness?"}
                     </button>
                     {explain && <div style={{ marginTop: 4, color: "var(--txt3)" }}>{RADAR_CAVEATS}</div>}
+                </div>
+            )}
+            {/* a vision model's second opinion on this finding, only when pressed */}
+            {f?.id && zone?.system_id && (
+                <div style={{ flex: "none", maxWidth: 900 }}>
+                    <AssessWithAI key={`${zone.system_id}:${f.id}`} zoneId={zone.system_id} findingId={f.id} />
                 </div>
             )}
         </div>

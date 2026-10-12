@@ -18,6 +18,11 @@
  * fetches after.
  */
 import API_BASE from "../apiBase.js"
+import { authHeaders } from "../auth.js"
+
+// The bearer as well as the cookie: on the web the page and the API are on
+// different sites, where the cookie is third-party and not sent.
+const auth = () => { try { return authHeaders() } catch { return {} } }
 
 export const TONE = { red: "#FF3B30", amber: "#FFB300" }
 export const FINDING_TYPES = new Set(["sweep_finding", "radar_change"])
@@ -244,7 +249,7 @@ export function subscribeFindings(fn) {
 
 // ── the API ────────────────────────────────────────────────────────────────
 async function getJson(path) {
-    const r = await fetch(`${API_BASE}${path}`, { credentials: "include" })
+    const r = await fetch(`${API_BASE}${path}`, { credentials: "include", headers: auth() })
     const d = await r.json().catch(() => ({}))
     if (!r.ok) throw new Error(typeof d?.detail === "string" ? d.detail : `HTTP ${r.status}`)
     return d
@@ -276,7 +281,7 @@ export function fetchRadarImages(zoneId, scanId) {
 /** Fetch an old comparison's frames again (costs Sentinel Hub requests). */
 export async function startRadarImages(zoneId, scanId) {
     const r = await fetch(`${API_BASE}/api/watch-zones/${encodeURIComponent(zoneId)}/radar-images/${encodeURIComponent(scanId)}`,
-        { method: "POST", credentials: "include" })
+        { method: "POST", credentials: "include", headers: auth() })
     const d = await r.json().catch(() => ({}))
     if (!r.ok) throw new Error(typeof d?.detail === "string" ? d.detail : `HTTP ${r.status}`)
     return d

@@ -17,6 +17,7 @@ import MaritimeAreaSection from "./MaritimeAreaSection.jsx"
 import ChokepointFlowSection from "./ChokepointFlowSection.jsx"
 import VesselHistorySection from "./VesselHistorySection.jsx"
 import VesselThreatSection from "./VesselThreatSection.jsx"
+import { SeaRouteOffer } from "../routes/modes/MaritimeRoute.jsx"
 import { isVesselThreatAlert, mmsiOf } from "../globe/vesselThreat.js"
 import TelegramMedia from "./TelegramMedia.jsx"
 import XPost, { xPostId } from "./XPost.jsx"
@@ -862,6 +863,7 @@ export default function InspectorPanel({
                 {isVesselThreatAlert(data, entityId) && mmsiOf(data, entityId) && (
                     <VesselThreatSection mmsi={mmsiOf(data, entityId)} lat={data?.lat ?? null} lon={data?.lon ?? null} />
                 )}
+                {entityType === "vessel" && data?.mmsi && <SeaRouteOffer mmsi={String(data.mmsi)} />}
                 {entityType === "vessel" && data?.mmsi && <VesselHistorySection mmsi={String(data.mmsi)} />}
 
                 {/* Key attributes */}

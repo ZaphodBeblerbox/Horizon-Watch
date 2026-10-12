@@ -35,39 +35,10 @@ import CountryFlag from "../../components/CountryFlag.jsx"
 import { trackCountry } from "../../lib/icaoCountry.js"
 
 
-// Esri's public base maps, credited as their terms ask (CARTO's now want a key).
-const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services"
-const BASES = {
-    dark: { url: `${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, labels: `${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
-            attribution: "Tiles &copy; Esri — Esri, HERE, Garmin, &copy; OpenStreetMap contributors", maxZoom: 16 },
-    satellite: { url: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, labels: `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
-            attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics", maxZoom: 18 },
-}
-// WHEN ESRI'S MAIN TILE SERVER CANNOT BE REACHED: the same maps from Esri's
-// second host, then OpenStreetMap — both without a key. (CARTO was tried on
-// 2026-10-12 and now answers every tile with "API key required".)
-const SVC = "https://services.arcgisonline.com/ArcGIS/rest/services"
-// THE SAME ESRI TILES THROUGH OUR OWN SERVER, first (2026-10-12): the owner's
-// iPhone cannot reach arcgisonline.com at all, but reaches our API.
-const PROXY = `${API_BASE}/api/tiles/esri`
-const FALLBACKS = [
-    {
-        dark: { url: `${PROXY}/dark/{z}/{y}/{x}`, labels: `${PROXY}/dark_ref/{z}/{y}/{x}`,
-                attribution: "Tiles &copy; Esri — Esri, HERE, Garmin, &copy; OpenStreetMap contributors", maxZoom: 16 },
-        satellite: { url: `${PROXY}/imagery/{z}/{y}/{x}`, labels: `${PROXY}/imagery_ref/{z}/{y}/{x}`,
-                     attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics", maxZoom: 18 },
-    },
-    {
-        dark: { url: `${SVC}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, labels: `${SVC}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
-                attribution: "Tiles &copy; Esri — Esri, HERE, Garmin, &copy; OpenStreetMap contributors", maxZoom: 16 },
-        satellite: { url: `${SVC}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, labels: `${SVC}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
-                     attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics", maxZoom: 18 },
-    },
-    {
-        dark: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", labels: null, attribution: "&copy; OpenStreetMap contributors", maxZoom: 18, dim: true },
-        satellite: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", labels: null, attribution: "&copy; OpenStreetMap contributors", maxZoom: 18, dim: true },
-    },
-]
+import { BASES, FALLBACKS } from "../tileSources.js"
+import TrackPanel, { useTrackState } from "../../location/TrackPanel.jsx"
+import { drawTrack } from "../trackLeaflet.js"
+import { openRoutePanel } from "../../routes/store.js"
 const WINDOWS = [24, 48, 72]
 const FLOORS = [["all", "All"], ["high", "High +"], ["critical", "Critical"]]
 const RANK = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
@@ -106,6 +77,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const base = useRef(null)
     const group = useRef(null)
     const meExtras = useRef(null)          // the accuracy ring and the way you came
+    const trackG = useRef(null)            // the shown track (location/track.js, ../trackLeaflet.js)
+    const trackFit = useRef(null)
     const liveMarks = useRef(null)         // you, the team and the assets they move: gliding (../liveMarkers.js)
     const [baseKey, setBaseKey] = useState(() => getSettings()?.phoneMapDefault?.base || "dark")
     const [hours, setHours] = useState(48)
@@ -154,6 +127,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         group.current = L.layerGroup().addTo(map.current)
         tracks.current = L.layerGroup().addTo(map.current)
         meExtras.current = L.layerGroup().addTo(map.current)
+        trackG.current = L.layerGroup().addTo(map.current)
         liveMarks.current = createLiveMarkers(L, L.layerGroup().addTo(map.current))
         el.current._m2live = liveMarks.current        // reachable for browser checks
         setBounds(map.current.getBounds())
@@ -241,6 +215,20 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         if (trail.length > 1) L.polyline(trail, { color: "#3b8cff", weight: 3, opacity: 0.7, interactive: false, className: "m2-me-trail" }).addTo(g)
         if (me.accuracy > 20 && me.accuracy < 3000) L.circle([me.lat, me.lon], { radius: me.accuracy, color: "#3b8cff", weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false }).addTo(g)
     }, [me])
+
+    // THE TRACK on show (an asset's or a person's): coloured by age, its
+    // stops, start and end; the replay draws it up to the scrubber
+    const tr = useTrackState()
+    useEffect(() => {
+        if (!trackG.current || !map.current) return
+        if (!tr.target) { trackG.current.clearLayers(); trackFit.current = null; return }
+        const b = drawTrack(L, trackG.current, tr.data, tr.scrubT)
+        const key = `${tr.target.kind}:${tr.target.id}:${tr.range}`
+        if (b && b.isValid() && trackFit.current !== key) {
+            trackFit.current = key
+            map.current.fitBounds(b, { padding: [40, 40], maxZoom: 16 })
+        }
+    }, [tr.target, tr.data, tr.scrubT, tr.range])
 
     // THE TEAM AND THE ASSETS THEY MOVE, PUSHED (location/positionStream.js):
     // each position arrives as it is sent, and the marker glides to it
@@ -391,13 +379,20 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             const b = drawVesselThreat(L, threat.current, focus.vesselThreat)
             setThreatOn(true)
             // a pan still running (centred early, MobileApp) would swallow the fit
-            if (b) { map.current.stop(); map.current.fitBounds(b, { animate: true }) }
+            // under a half sheet (opened from a notification): framed in the map left above it
+            if (b) { map.current.stop(); map.current.fitBounds(b, { animate: true, ...(focus._noSheet ? { paddingTopLeft: [20, 70], paddingBottomRight: [20, Math.round(window.innerHeight * 0.46) + 10] } : {}) }) }
             // opened from its notification: the vessel's sheet with it
-            if (focus.headline || focus.title) setOpen(focus)
+            // (_noSheet: the phone shell has opened the signal's sheet itself)
+            if ((focus.headline || focus.title) && !focus._noSheet) setOpen(focus)
             return
         }
-        map.current.setView([+focus.lat, +focus.lon], Math.max(map.current.getZoom(), 9), { animate: true })
-        if (focus.headline || focus.title) setOpen(focus)
+        if (focus._noSheet) {
+            // the signal in the middle of the map left above the half sheet
+            const z = Math.max(map.current.getZoom(), 11)
+            const c = map.current.unproject(map.current.project([+focus.lat, +focus.lon], z).add([0, Math.round(window.innerHeight * 0.21)]), z)
+            map.current.setView(c, z, { animate: true })
+        } else map.current.setView([+focus.lat, +focus.lon], Math.max(map.current.getZoom(), 9), { animate: true })
+        if ((focus.headline || focus.title) && !focus._noSheet) setOpen(focus)
     }, [focus])
     const clearThreat = () => { threat.current?.clearLayers(); setThreatOn(false) }
 
@@ -541,10 +536,13 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     </div>
                 )}
                 {/* the widgets, round and labelled, along the bottom */}
-                <div className="m2-widgets">
+                <div className="m2-widgets" style={tr.target ? { display: "none" } : undefined}>{/* the track panel takes their place */}
                     <button className="m2-widget" onClick={() => setSheet("filters")} data-testid="w-filters"><span><Icon id="g-tune" size={22} /></span>Filters</button>
                     <button className="m2-widget" onClick={() => setSheet("time")}><span><Icon id="g-event" size={22} /></span>{timeLabel}</button>
                     <button className="m2-widget" onClick={nearMe}><span><Icon id="g-pin" size={22} /></span>Near me</button>
+                    {/* GET ME OUT: the safest way out from where this phone is (routes/RoutePanel.jsx) */}
+                    <button className="m2-widget" onClick={() => openRoutePanel({ request: { from: { me: true }, to: null, mode: "foot", purpose: "exit" }, title: "Get me out" })} data-testid="get-me-out">
+                        <span className="plx-getout"><Icon id="g-route" size={22} /></span>Get me out</button>
                     <button className="m2-widget" onClick={() => setSheet("live")}><span><Icon id="g-play" size={22} />{arr(streams).length > 0 && <span className="m2-badge">{arr(streams).length}</span>}</span>Live</button>
                 </div>
             </div>}
@@ -635,6 +633,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 map.current?.setView([+s.lat, +s.lon], 11, { animate: true })
             }} />}
             {track && <TrackSheet t={track} onClose={() => setTrack(null)} />}
+            {active && tr.target && <TrackPanel variant="phone" />}
         </div>
     )
 }

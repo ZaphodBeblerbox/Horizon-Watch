@@ -32,7 +32,12 @@ import LocationPrompt from "../components/LocationPrompt.jsx"
 import LivePlayerHost, { watchLive } from "../telegram/LivePlayer.jsx"
 import SourceViewer from "../components/SourceViewer.jsx"
 import MNotifCards from "./screens/MNotifCards.jsx"
-import { openSignal, routeFor, setSignalSurface } from "../notify/openSignal.js"
+import { openSignal, pinFor, presentationFor, routeFor, setSignalSurface } from "../notify/openSignal.js"
+import { closeOpenedSignal, showSignalPin } from "../lib/signalPin.js"
+import RoutePanel from "../routes/RoutePanel.jsx"
+import { AirRoutePanel } from "../routes/modes/AirRoute.jsx"
+import "../routes/modes/air.js"           // the Flights mode: the route panel's chip
+import { SeaRouteSidebar } from "../routes/modes/MaritimeRoute.jsx"
 import { fetchVesselThreat } from "../state/vesselThreatStore.js"
 import { findingsForAlert, showFindings } from "../lib/findings.js"
 
@@ -60,10 +65,13 @@ export default function MobileApp() {
     // "Show on the map": a vessel of concern opens its live view (rings, trail, targets); anything else is centred
     const showOnMap = (s) => (s && !s.vesselThreat && routeFor(s)?.action === "vessel" ? sigMap.current?.(routeFor(s)) : plainShowOnMap(s))
 
-    /* THE SIGNAL FIRST, THE MAP ON REQUEST (owner, 2026-10-11): a tapped
-       notification opens the signal itself — its sheet, over whatever is on
-       screen, filled from the alert — with "Show on the map" (and, for a
-       vessel of concern, its live view with the drone rings) as a button. */
+    /* THE MAP AT THE SIGNAL, THE SIGNAL DRAWN, ITS DETAILS BELOW (owner,
+       2026-10-12): a tapped notification (push, banner, Alerts) opens the map
+       where it happened with the signal itself on it — the live vessel with
+       its rings and targets, the finding's boxes over the image they were
+       seen in, or the signal's own marker — and its sheet at half height
+       (the map visible above, dragged up to full). No place: the sheet alone.
+       How each kind is shown: presentationFor() in notify/openSignal.js. */
     const [sig, setSig] = useState(null)
     const sigMap = useRef(null)
     useEffect(() => {
@@ -72,10 +80,13 @@ export default function MobileApp() {
             setMenu(false)
             if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
             if (r.action === "asset") { go("assets", { asset: r.assetId }); return }
+            const p = presentationFor(r, "phone")
             const base = { id: r.alertId || r.id, alert_id: r.alertId || r.id, headline: r.title || "Signal", title: r.title, summary: r.sub,
                            severity_tier: r.sev, lat: r.lat, lon: r.lon, mmsi: r.mmsi, entity_id: r.mmsi || r.entityId || undefined, alert_type: r.alertType,
-                           entity_type: r.entityType || undefined, zone_id: r.zoneId || undefined, _route: r }
+                           entity_type: r.entityType || undefined, zone_id: r.zoneId || undefined, _route: r, _half: p?.sheet === "half" }
+            closeOpenedSignal()            // what the last one drew
             setSig(base)
+            if (p?.map) sigMap.current?.(r, { sheet: false })
             if (r.alertId || r.id) {
                 fetch(`${API_BASE}/api/alerts/${encodeURIComponent(r.alertId || r.id)}`, { credentials: "include" })
                     .then((x) => (x.ok ? x.json() : null))
@@ -83,8 +94,11 @@ export default function MobileApp() {
                     .catch(() => {})
             }
         }
-        sigMap.current = async (r) => {
+        // `sheet: false`: the signal's own sheet is already open (MobileApp's),
+        // so the map must not open a second one for the same thing
+        sigMap.current = async (r, { sheet = true } = {}) => {
             if (!r) return
+            const quiet = sheet ? {} : { _noSheet: true }
             if (r.action === "vessel") {
                 setTab("map")
                 const base = { id: r.alertId || r.id, alert_id: r.alertId || r.id, alert_type: r.alertType, mmsi: r.mmsi, entity_id: r.mmsi,
@@ -95,22 +109,25 @@ export default function MobileApp() {
                 try {
                     const d = await fetchVesselThreat(r.mmsi, { lat: r.lat, lon: r.lon }).finally(() => clearTimeout(early))
                     if (d?.available !== false && d?.vessel) {
-                        setFocus({ ...base, lat: d.vessel.lat, lon: d.vessel.lon, vesselThreat: d, _t: Date.now() })
+                        setFocus({ ...base, ...quiet, lat: d.vessel.lat, lon: d.vessel.lon, vesselThreat: d, _t: Date.now() })
                         return
                     }
                 } catch { /* the sheet says why */ }
-                if (r.lat != null && r.lon != null) setFocus({ ...base, lat: r.lat, lon: r.lon, _t: Date.now() })
-                else go("alerts")
+                if (r.lat != null && r.lon != null) setFocus({ ...base, ...quiet, lat: r.lat, lon: r.lon, _t: Date.now() })
+                else if (sheet) go("alerts")
                 return
             }
             // an imagery finding: its boxes on the map (lib/findings.js, mobile/findingsLeaflet.js)
             if (r.action === "finding") {
                 const { zoneId, findings } = await findingsForAlert(r.alert || { alert_id: r.alertId || r.id, alert_type: r.alertType,
                     entity_type: r.entityType, entity_id: r.entityId, raw_json: { zone_id: r.zoneId } })
-                if (findings.length) { showFindings({ zoneId, findings, title: r.title, fit: true }); setTab("map"); return }
+                if (findings.length) { setTab("map"); showFindings({ zoneId, findings, title: r.title, fit: true, alertId: r.alertId || r.id }); return }
             }
-            if (r.lat != null && r.lon != null) plainShowOnMap({ lat: r.lat, lon: r.lon, headline: r.title, id: r.alertId || r.id, severity_tier: r.sev })
-            else go("alerts")
+            // the signal's own marker, highlighted (lib/signalPin.js → findingsLeaflet.js)
+            const pin = pinFor(r.action === "finding" ? { ...r, action: "signal" } : r)
+            if (pin) showSignalPin(pin)
+            if (r.lat != null && r.lon != null) plainShowOnMap({ lat: r.lat, lon: r.lon, headline: r.title, id: r.alertId || r.id, severity_tier: r.sev, ...quiet })
+            else if (sheet) go("alerts")
         }
         const off = setSignalSurface(open)
         // opened cold from a notification (main.jsx): no globe to wait for
@@ -129,6 +146,10 @@ export default function MobileApp() {
         <div className="m2" data-screen-label="Phone">
             <PlxIcons />
             <LocationPrompt afterTour={false} live />
+            {/* the route planner, full height (a "Leave now" notification, Get me out, an asset's Safest route, a context card) */}
+            <RoutePanel variant="phone" />
+            <AirRoutePanel variant="phone" />
+            <SeaRouteSidebar variant="phone" />
             {/* THE MAP IS THE GROUND OF THE APP (owner, 2026-10-10), as the globe is
                 on the desktop: always there, every other screen glass over it. */}
             <div className="m2-bg" data-under={tab !== "map"}>
@@ -136,7 +157,7 @@ export default function MobileApp() {
             </div>
             <LivePlayerHost />
             <MNotifCards onOpen={(n) => openSignal(n)} />
-            {sig && <SignalSheet s={sig} onClose={() => setSig(null)}
+            {sig && <SignalSheet s={sig} half={!!sig._half} onClose={() => { closeOpenedSignal(sig.id); setSig(null) }}
                                  onShowOnMap={(x) => { const r = sig._route || {}; setSig(null)
                                      sigMap.current?.(r.action === "vessel" ? r : { ...r, action: "signal", lat: x?.lat ?? r.lat, lon: x?.lon ?? r.lon }) }} />}
             <SourceViewer />

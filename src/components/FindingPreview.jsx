@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { fetchCrop, findingCaption, findingsForAlert, alertRaw, isRadarFinding, TONE } from "../lib/findings.js"
 import { RADAR_CAVEATS, radarMeaning } from "../lib/radarExplain.js"
+import AssessWithAI from "./AssessWithAI.jsx"
 
 const BOX = { border: "1px solid var(--gline2, rgba(255,255,255,.16))", background: "var(--glass2, rgba(255,255,255,.04))" }
 const BTN = { height: 30, padding: "0 12px", border: "1px solid var(--gline2, rgba(255,255,255,.2))", background: "transparent",
@@ -114,6 +115,8 @@ export default function FindingPreview({ alert, onShowOnMap, onOpenImagery, comp
             {crop.data?.radar_images === "missing" && (
                 <span style={{ fontSize: 11.5, opacity: 0.7 }}>The radar images of this comparison are not held yet — they can be loaded in Imagery.</span>
             )}
+            {/* a vision model's second opinion, only when pressed (backend/finding_assess.py) */}
+            {f?.id && state.zoneId && <AssessWithAI key={`${state.zoneId}:${f.id}`} zoneId={state.zoneId} findingId={f.id} compact={compact} />}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {onOpenImagery && state.zoneId && <button data-open-imagery onClick={() => onOpenImagery({ systemId: state.zoneId, scanId: null, findingId: f?.id || null })}
                     style={{ ...BTN, border: 0, background: "var(--acc, #2f6fb3)", color: "var(--mz-cream, #fff)", fontWeight: 600 }}>Open on the image in Imagery</button>}

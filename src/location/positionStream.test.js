@@ -69,6 +69,20 @@ describe("the live position stream", () => {
         expect(s.serverNow() - Date.parse("2026-10-12T09:00:03+00:00")).toBe(0)    // the server's clock, not this one
     })
 
+    it("a passive listener never opens the stream, but hears warnings while it is open", async () => {
+        const { s, sources, calls } = setup()
+        const heard = []
+        const off = s.listen((ev) => heard.push(ev))
+        await flush()
+        expect(calls).toEqual([])                                        // listening opens nothing
+        s.subscribe(() => {})
+        await flush()
+        sources[0].emit("warning", { type: "warning", warning: { id: "W-1", message: "Turn back" } })
+        sources[0].emit("warning_update", { type: "warning", warning: { id: "W-2", status: "acknowledged" } })
+        expect(heard.filter((e) => e.type.startsWith("warning")).map((e) => [e.type, e.warning.id])).toEqual([["warning", "W-1"], ["warning_update", "W-2"]])
+        off()
+    })
+
     it("applies each pushed position; an older one never replaces a newer", async () => {
         const { s, sources } = setup()
         const seen = vi.fn()
