@@ -38,13 +38,22 @@ const BASES = {
     satellite: { url: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, labels: `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
             attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics", maxZoom: 18 },
 }
-// the second source when Esri's tiles cannot be had (CARTO, free with attribution)
-const FALLBACK = {
-    dark: { url: "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", labels: "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png",
-            attribution: "&copy; OpenStreetMap contributors &copy; CARTO", maxZoom: 18 },
-    satellite: { url: "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", labels: "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png",
-            attribution: "&copy; OpenStreetMap contributors &copy; CARTO", maxZoom: 18 },
-}
+// WHEN ESRI'S MAIN TILE SERVER CANNOT BE REACHED: the same maps from Esri's
+// second host, then OpenStreetMap — both without a key. (CARTO was tried on
+// 2026-10-12 and now answers every tile with "API key required".)
+const SVC = "https://services.arcgisonline.com/ArcGIS/rest/services"
+const FALLBACKS = [
+    {
+        dark: { url: `${SVC}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, labels: `${SVC}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+                attribution: "Tiles &copy; Esri — Esri, HERE, Garmin, &copy; OpenStreetMap contributors", maxZoom: 16 },
+        satellite: { url: `${SVC}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, labels: `${SVC}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
+                     attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics", maxZoom: 18 },
+    },
+    {
+        dark: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", labels: null, attribution: "&copy; OpenStreetMap contributors", maxZoom: 18, dim: true },
+        satellite: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", labels: null, attribution: "&copy; OpenStreetMap contributors", maxZoom: 18, dim: true },
+    },
+]
 const WINDOWS = [24, 48, 72]
 const FLOORS = [["all", "All"], ["high", "High +"], ["critical", "Critical"]]
 const RANK = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
@@ -135,28 +144,34 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         return () => ro.disconnect()
     }, [])
     const [tilesFailed, setTilesFailed] = useState(false)
-    const [tileSource, setTileSource] = useState("esri")
+    const [tileSource, setTileSource] = useState(0)        // 0 Esri, 1 Esri second host, 2 OpenStreetMap
     useEffect(() => {
         if (!map.current) return
         if (base.current) base.current.remove()
-        const b = tileSource === "carto" ? (FALLBACK[baseKey] || FALLBACK.dark) : (BASES[baseKey] || BASES.dark)
-        // A SECOND TILE SOURCE when the first fails (2026-10-12): Esri can refuse
-        // a phone's network (iCloud Private Relay, some carriers). Many errors and
-        // no tile loaded → CARTO; both failing → say so, with a retry.
-        let loaded = 0, failed = 0
-        const ground = L.tileLayer(b.url, { attribution: b.attribution, maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, detectRetina: true, subdomains: "abcd" })
+        const set = tileSource === 0 ? BASES : FALLBACKS[tileSource - 1]
+        const b = set[baseKey] || set.dark
+        // ANOTHER TILE SOURCE only when this one plainly fails (2026-10-12): Esri
+        // can refuse a phone's network (iCloud Private Relay, some carriers). Many
+        // errors AND not one tile within 8 s → the next source; the last failing
+        // too → say so, with a retry. A slow connection does not trip it.
+        let loaded = 0, failed = 0, settled = false
+        const ground = L.tileLayer(b.url, { attribution: b.attribution, maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, detectRetina: true,
+                                             className: b.dim ? "m2-tiles-dim" : "" })
+        const next = () => {
+            if (settled || loaded > 0 || failed < 8) return
+            settled = true
+            if (tileSource < FALLBACKS.length) setTileSource(tileSource + 1)
+            else setTilesFailed(true)
+        }
         ground.on("tileload", () => { loaded += 1; setTilesFailed(false) })
-        ground.on("tileerror", () => {
-            failed += 1
-            if (loaded === 0 && failed >= 6) {
-                if (tileSource === "esri") setTileSource("carto")
-                else setTilesFailed(true)
-            }
-        })
+        let timeUp = false
+        ground.on("tileerror", () => { failed += 1; if (timeUp) next() })
+        const watchdog = setTimeout(() => { timeUp = true; next() }, 8000)
+        ground.on("remove", () => clearTimeout(watchdog))
         base.current = L.layerGroup([
             // HIGH RESOLUTION: on a Retina screen, the next zoom's tiles at half size
             ground,
-            ...(b.labels ? [L.tileLayer(b.labels, { maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, pane: "labels", opacity: 0.9, detectRetina: true, subdomains: "abcd" })] : []),
+            ...(b.labels ? [L.tileLayer(b.labels, { maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, pane: "labels", opacity: 0.9, detectRetina: true })] : []),
         ]).addTo(map.current)
         map.current.invalidateSize()
     }, [baseKey, tileSource])
