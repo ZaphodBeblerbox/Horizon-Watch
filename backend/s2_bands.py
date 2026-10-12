@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -85,7 +86,6 @@ def fetch(west, south, east, north, date: str, width: int, height: int, upsampli
     # Sentinel Hub answers 429 when the account's rate is spent: wait and
     # retry a few times rather than fail the whole smoke pass.
     import time
-    import urllib.error
     for attempt in range(4):
         try:
             raw = urllib.request.urlopen(req, timeout=120).read()
