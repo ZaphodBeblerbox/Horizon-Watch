@@ -101,7 +101,8 @@ describe("asking the device", () => {
         const e = await p.catch((x) => x)
         expect(e.kind).toBe(DENIED)
         expect(e.message).toMatch(/Settings › Privacy & Security › Location Services/)
-        expect(e.message).toMatch(/Safari Websites \(or the Parallax app\) › While Using/)
+        expect(e.message).toMatch(/Safari Websites is set to While Using the App/)
+        expect(e.message).toMatch(/Settings › Apps › Safari › Location/)
         expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1)          // no second prompt
     })
     it("a timeout or no fix is retried once at low accuracy", async () => {

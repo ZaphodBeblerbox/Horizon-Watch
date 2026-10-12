@@ -40,10 +40,17 @@ export function kindOf(code) {
 export function messageFor(kind, plat = platformOf()) {
     if (kind === DENIED) {
         if (plat.ios) {
-            return "Location is off for Parallax. On iPhone: Settings › Privacy & Security › Location Services — "
-                + "make sure it is on, then Safari Websites (or the Parallax app) › While Using"
-                + (plat.standalone ? "." : ", and in Safari: aA › Website Settings › Location › Allow.")
-                + " Then come back and tap Try again."
+            // THE IPHONE SAID NO, and "Safari Websites › While Using" alone is not
+            // always enough (owner, 2026-10-12): Safari has its own per-site
+            // Location setting, and a Home Screen app remembers an earlier
+            // "Don't Allow" until its website data is removed.
+            return "The iPhone is refusing location to Parallax. Check, in order: "
+                + "1) Settings › Privacy & Security › Location Services is on, and Safari Websites is set to While Using the App with Precise Location on; "
+                + "2) Settings › Apps › Safari › Location (under Settings for Websites) is Ask or Allow, not Deny; "
+                + (plat.standalone
+                    ? "3) if it still refuses, this Home Screen app remembers an earlier “Don’t Allow”: Settings › Apps › Safari › Advanced › Website Data › remove horizon-watch.vercel.app, delete the Parallax icon, open the site in Safari, Share › Add to Home Screen, and allow location when asked."
+                    : "3) in Safari: aA › Website Settings › Location › Allow.")
+                + " Then tap Try again."
         }
         if (plat.android) return "Location is blocked for this site. Tap the lock beside the address › Permissions › Location › Allow, check that Location is on in quick settings, then try again."
         return "Location is blocked for this site — allow it in the browser's site settings (the icon left of the address), then try again."
