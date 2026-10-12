@@ -120,13 +120,18 @@
     </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- PWA -->
-    <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#171b20" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Parallax" />
     <!-- solid 180 px square: iPhone rounds the corners itself and fills transparent ones with black -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- THE PARALLAX X ON THE HOME SCREEN (2026-10-12: re-adding the app gave a
+         blank icon). One manifest only (vite-plugin-pwa's), and versioned icon
+         addresses so the iPhone fetches them fresh instead of a cached miss. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon.png?v=3" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon.png?v=3" />
     <!-- Leaflet's stylesheet used to be pulled from unpkg here. Nothing in
          this app uses Leaflet — the map is Cesium — so it was a network
          request on every start that could only ever fail offline and buy
