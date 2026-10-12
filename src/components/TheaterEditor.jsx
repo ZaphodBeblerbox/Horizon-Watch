@@ -293,7 +293,7 @@ export default function TheaterEditor({ theater = null, readView = null, readLay
                                 <Pill key={t.key} on={layers.context.includes(t.key)}
                                       onClick={() => toggle("context", t.key)}>{t.label}</Pill>
                             ))}
-                            {SUB_LAYERS.filter((l) => !l.parent).map((l) => (
+                            {SUB_LAYERS.filter((l) => !l.parent && l.key !== "endangered").map((l) => (
                                 <Pill key={l.key} on={layers.subs.includes(l.key)}
                                       onClick={() => toggle("subs", l.key)}>{l.label}</Pill>
                             ))}
@@ -305,6 +305,8 @@ export default function TheaterEditor({ theater = null, readView = null, readLay
                                 <Pill key={k} on={layers.infra.includes(k)}
                                       onClick={() => toggle("infra", k)}>{l}</Pill>
                             ))}
+                            {/* ENDANGERED PLACES, with infrastructure as on the map (owner, 2026-10-12) */}
+                            <Pill on={layers.subs.includes("endangered")} onClick={() => toggle("subs", "endangered")}>Endangered places</Pill>
                         </div>
 
                         <div style={{ ...EYE, fontSize: 9.5, margin: "12px 0 4px" }}>Live tracks</div>
