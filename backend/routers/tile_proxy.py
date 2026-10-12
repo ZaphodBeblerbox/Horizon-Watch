@@ -191,3 +191,53 @@ async def proxy_overpass(data: str):
         media_type="application/json",
         headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300"},
     )
+
+
+# ── Esri base maps through this server (2026-10-12) ────────────────────────
+# The owner's iPhone cannot reach arcgisonline.com at all (Private Relay, a
+# content blocker or the carrier): the phone map fell back to OpenStreetMap
+# and satellite had no imagery. The phone reaches this API, so the same Esri
+# tiles are served from here — the same dark map, the same imagery. Public
+# base maps, no sign-in (an <img> cannot carry the bearer); a small memory
+# cache keeps repeat views off Esri.
+from collections import OrderedDict as _OD
+
+_ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services"
+_ESRI_ALT = "https://services.arcgisonline.com/ArcGIS/rest/services"
+_ESRI_LAYERS = {
+    "dark":        "Canvas/World_Dark_Gray_Base/MapServer/tile",
+    "dark_ref":    "Canvas/World_Dark_Gray_Reference/MapServer/tile",
+    "imagery":     "World_Imagery/MapServer/tile",
+    "imagery_ref": "Reference/World_Boundaries_and_Places/MapServer/tile",
+}
+_ESRI_CACHE: "_OD[str, tuple[bytes, str]]" = _OD()
+_ESRI_CACHE_MAX = 4000            # ~20 KB a tile → ~80 MB at most
+
+
+@router.get("/tiles/esri/{layer}/{z}/{y}/{x}")
+async def esri_tile(layer: str, z: int = Path(..., ge=0, le=19), y: int = Path(..., ge=0), x: int = Path(..., ge=0)):
+    path = _ESRI_LAYERS.get(layer)
+    if not path or y >= 2 ** z or x >= 2 ** z:
+        raise HTTPException(404, "no such tile")
+    key = f"{layer}/{z}/{y}/{x}"
+    hit = _ESRI_CACHE.get(key)
+    if hit is None:
+        body, ctype = None, "image/jpeg"
+        for base in (_ESRI, _ESRI_ALT):
+            try:
+                r = await _get_client().get(f"{base}/{path}/{z}/{y}/{x}", headers=_HEADERS)
+                if r.status_code == 200 and r.content:
+                    body, ctype = r.content, r.headers.get("content-type", "image/jpeg")
+                    break
+            except httpx.HTTPError as e:
+                logger.info("[tiles] esri %s via %s: %s", key, base, e)
+        if body is None:
+            raise HTTPException(502, "tile unavailable")
+        hit = (body, ctype)
+        _ESRI_CACHE[key] = hit
+        if len(_ESRI_CACHE) > _ESRI_CACHE_MAX:
+            _ESRI_CACHE.popitem(last=False)
+    else:
+        _ESRI_CACHE.move_to_end(key)
+    return Response(content=hit[0], media_type=hit[1],
+                    headers={"Cache-Control": "public, max-age=604800", "Access-Control-Allow-Origin": "*"})

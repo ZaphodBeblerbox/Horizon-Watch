@@ -43,7 +43,16 @@ const BASES = {
 // second host, then OpenStreetMap — both without a key. (CARTO was tried on
 // 2026-10-12 and now answers every tile with "API key required".)
 const SVC = "https://services.arcgisonline.com/ArcGIS/rest/services"
+// THE SAME ESRI TILES THROUGH OUR OWN SERVER, first (2026-10-12): the owner's
+// iPhone cannot reach arcgisonline.com at all, but reaches our API.
+const PROXY = `${API_BASE}/api/tiles/esri`
 const FALLBACKS = [
+    {
+        dark: { url: `${PROXY}/dark/{z}/{y}/{x}`, labels: `${PROXY}/dark_ref/{z}/{y}/{x}`,
+                attribution: "Tiles &copy; Esri — Esri, HERE, Garmin, &copy; OpenStreetMap contributors", maxZoom: 16 },
+        satellite: { url: `${PROXY}/imagery/{z}/{y}/{x}`, labels: `${PROXY}/imagery_ref/{z}/{y}/{x}`,
+                     attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics", maxZoom: 18 },
+    },
     {
         dark: { url: `${SVC}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, labels: `${SVC}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
                 attribution: "Tiles &copy; Esri — Esri, HERE, Garmin, &copy; OpenStreetMap contributors", maxZoom: 16 },
@@ -146,7 +155,9 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         return () => ro.disconnect()
     }, [])
     const [tilesFailed, setTilesFailed] = useState(false)
-    const [tileSource, setTileSource] = useState(0)        // 0 Esri, 1 Esri second host, 2 OpenStreetMap
+    // 0 Esri, 1 Esri via our server, 2 Esri second host, 3 OpenStreetMap — and the
+    // phone starts from the one that last worked here, not 8 s of failures first
+    const [tileSource, setTileSource] = useState(() => { try { const v = +localStorage.getItem("m2-tile-source"); return v > 0 && v < FALLBACKS.length ? v : 0 } catch { return 0 } })
     useEffect(() => {
         if (!map.current) return
         if (base.current) base.current.remove()
@@ -165,7 +176,10 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             if (tileSource < FALLBACKS.length) setTileSource(tileSource + 1)
             else setTilesFailed(true)
         }
-        ground.on("tileload", () => { loaded += 1; setTilesFailed(false) })
+        ground.on("tileload", () => {
+            if (loaded === 0 && tileSource < FALLBACKS.length) { try { localStorage.setItem("m2-tile-source", String(tileSource)) } catch { /* private mode */ } }
+            loaded += 1; setTilesFailed(false)
+        })
         let timeUp = false
         ground.on("tileerror", () => { failed += 1; if (timeUp) next() })
         const watchdog = setTimeout(() => { timeUp = true; next() }, 8000)
@@ -399,7 +413,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             {tilesFailed && chrome && (
                 <div className="m2-pill" role="alert" style={{ bottom: "auto", top: "calc(env(safe-area-inset-top, 0px) + 66px)" }}>
                     Map tiles could not load ·{" "}
-                    <button onClick={() => { setTilesFailed(false); setTileSource(0) }}
+                    <button onClick={() => { try { localStorage.removeItem("m2-tile-source") } catch { /* */ } setTilesFailed(false); setTileSource(0) }}
                             style={{ border: 0, background: "none", color: "var(--acchi, #8fb4e8)", font: "inherit", cursor: "pointer", padding: 0 }}>Retry</button>
                 </div>
             )}
