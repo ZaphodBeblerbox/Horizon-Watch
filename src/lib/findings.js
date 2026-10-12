@@ -46,6 +46,41 @@ export function boxToFrame(box, bounds) {
     return [(b[0] - f[0]) / dx, (f[3] - b[3]) / dy, (b[2] - b[0]) / dx, (b[3] - b[1]) / dy]
 }
 
+/** A box in degrees → [x, y, w, h] in PIXELS of a W×H image laid over `bounds`
+ *  (an EPSG:4326 grid: x east from the west edge, y down from the north edge). */
+export function boxToPixels(box, bounds, width, height) {
+    const fr = boxToFrame(box, bounds)
+    if (!fr || !(width > 0) || !(height > 0)) return null
+    return [fr[0] * width, fr[1] * height, fr[2] * width, fr[3] * height]
+}
+
+/** Radar findings are shown on the radar comparison they came from. */
+export const isRadarFinding = (f) => f?.kind === "sweep_find" || f?.kind === "radar_change"
+
+/** The image a finding is shown on: its radar comparison, or its optical pass. Pure. */
+export function findingSource(f) {
+    if (!f?.scan_id) return null
+    return isRadarFinding(f) ? `radar:${f.scan_id}` : `scene:${f.scan_id}`
+}
+
+/** The findings drawn on the same image as `f` (same comparison / pass), `f` first. Pure. */
+export function sameSource(findings, f) {
+    const k = findingSource(f)
+    if (!k) return f ? [f] : []
+    const rest = (findings || []).filter((x) => x.id !== f.id && findingSource(x) === k)
+    return [f, ...rest]
+}
+
+/** How strong / sure: radar "|t| 16.8" (how far past chance, not a probability),
+ *  a detector's "87%". Pure. */
+export function strengthText(f) {
+    const t = Number(f?.t_peak)
+    if (Number.isFinite(t) && t !== 0) return `strength ${Math.abs(t).toFixed(1)}`
+    const c = Number(f?.confidence)
+    if (Number.isFinite(c) && c > 0) return `${Math.round(c * 100)}% confidence`
+    return null
+}
+
 /** A square of the given area around a point — the fallback when no extent was kept. */
 export function areaBox(lat, lon, m2, minSide = 60) {
     const side = Math.max(minSide, Math.sqrt(Math.max(0, +m2 || 0)))
@@ -222,10 +257,29 @@ export function fetchFindings(zoneId, { scanId = null, days = 30 } = {}) {
     return getJson(`/api/watch-zones/${encodeURIComponent(zoneId)}/findings?${q}`)
 }
 
-/** A cut-out of the newest image around a box → {image_b64, box, date, instrument} or {image_b64: null, why}. */
-export function fetchCrop(zoneId, box) {
+/** A cut-out around a box → {image_b64, box, date, instrument} or {image_b64: null, why}.
+ *  With the radar comparison's scanId, and its images held: {after_b64,
+ *  before_b64, change_b64, source: "radar_images", …} cut on one window. */
+export function fetchCrop(zoneId, box, { scanId = null } = {}) {
     const b = asBounds(box)
-    return getJson(`/api/watch-zones/${encodeURIComponent(zoneId)}/findings/crop?box=${b.map((v) => v.toFixed(6)).join(",")}`)
+    const q = new URLSearchParams({ box: b.map((v) => v.toFixed(6)).join(",") })
+    if (scanId) q.set("scan_id", scanId)
+    return getJson(`/api/watch-zones/${encodeURIComponent(zoneId)}/findings/crop?${q}`)
+}
+
+/** The Before / After / Change images of a radar comparison, with `bounds`
+ *  [w, s, e, n] — or {status: "missing" | "running" | "error", why, requests}. */
+export function fetchRadarImages(zoneId, scanId) {
+    return getJson(`/api/watch-zones/${encodeURIComponent(zoneId)}/radar-images/${encodeURIComponent(scanId)}`)
+}
+
+/** Fetch an old comparison's frames again (costs Sentinel Hub requests). */
+export async function startRadarImages(zoneId, scanId) {
+    const r = await fetch(`${API_BASE}/api/watch-zones/${encodeURIComponent(zoneId)}/radar-images/${encodeURIComponent(scanId)}`,
+        { method: "POST", credentials: "include" })
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(typeof d?.detail === "string" ? d.detail : `HTTP ${r.status}`)
+    return d
 }
 
 /**
@@ -245,4 +299,13 @@ export async function findingsForAlert(a) {
     } catch {
         return { zoneId, findings: own, zone: null }
     }
+}
+
+/** "7–10 Oct · 3 passes" for the dates a radar stack was made of (any order). Pure. */
+export function datesText(dates) {
+    const ds = [...new Set((dates || []).map((d) => String(d).slice(0, 10)).filter(Boolean))].sort()
+    if (!ds.length) return null
+    const a = dayText(ds[0]), b = dayText(ds[ds.length - 1])
+    const span = a === b ? a : a.split(" ")[1] === b.split(" ")[1] ? `${a.split(" ")[0]}–${b}` : `${a} – ${b}`
+    return `${span} · ${ds.length} pass${ds.length === 1 ? "" : "es"}`
 }

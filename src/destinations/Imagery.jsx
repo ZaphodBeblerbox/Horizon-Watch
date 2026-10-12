@@ -30,7 +30,10 @@ import {
     AOI_CLASSES, fmtDate, SceneComparison,
 } from "../components/imagery/sceneComparison.jsx"
 import { acquisitions, changeHeadline, countSeries, DET_COLORS, fmtDay, groupDetections, noun, pickInitialPass } from "./imageryModel.js"
-import { fetchFindings, findingCaption, findingOutlines as findingOutlinesFor, showFindings } from "../lib/findings.js"
+import { fetchFindings, findingOutlines as findingOutlinesFor, isRadarFinding, shortLabel, showFindings, strengthText } from "../lib/findings.js"
+import { RADAR_BRIGHTER, RADAR_CAVEATS, RADAR_DARKER, RADAR_WHAT } from "../lib/radarExplain.js"
+import FindingViewer from "../components/imagery/FindingViewer.jsx"
+import FindingThumb from "../components/imagery/FindingThumb.jsx"
 import { buildZoneTree, hasFindings, isBackground, isProposal, zoneFinding } from "./overwatchTree.js"
 import { hm } from "../utils/clock.js"
 
@@ -133,10 +136,14 @@ export default function Imagery() {
         window.addEventListener("akili:imagery-open-scene", h)
         return () => window.removeEventListener("akili:imagery-open-scene", h)
     }, [])
+    // A finding to open on its image once the area's findings are read
+    // (a notification's "Open in Imagery").
+    const pendingFinding = useRef(null)
     useEffect(() => {
         if (!target) return
         window.__plxImageryTarget = null
-        const go = (systemId, sid) => { if (systemId) setZoneId(systemId); if (sid) setScanId(sid) }
+        if (target.findingId) pendingFinding.current = { zoneId: target.systemId, id: target.findingId }
+        const go = (systemId, sid) => { if (systemId) { setZoneId(systemId); setManage(false) } if (sid) setScanId(sid) }
         if (target.detectionId && !target.scanId) {
             fetch(`${API_BASE}/api/imagery/detections/${target.detectionId}/locate`, { credentials: "include" })
                 .then((r) => (r.ok ? r.json() : null)).then((d) => d && go(d.system_id, d.scan_id)).catch(() => {})
@@ -436,6 +443,36 @@ export default function Imagery() {
     const findingOutlines = useMemo(
         () => (zone?.bbox ? findingOutlinesFor(findings.list, zone.bbox) : []),
         [findings, zone])
+    /* A FINDING IS OPENED ON ITS IMAGE, HERE (owner, 2026-10-12: "why does
+       it redirect us to the map to see new detections? And it does so
+       without loading the image."). Clicking a finding used to only
+       highlight a box a few pixels wide on a 20 km optical scene, and the
+       one way to "see" it was the map button — which leaves Imagery and
+       draws the boxes on the globe without any image. Now a click opens
+       FindingViewer: the radar comparison's own Before / After / Change
+       images (or the optical pass), boxes on them, zoomed to the one
+       chosen. The map stays one button away, never automatic. */
+    const [inspectId, setInspectId] = useState(null)
+    const [radarHelp, setRadarHelp] = useState(false)
+    const [thumbV, setThumbV] = useState(0)        // radar images just fetched: cut the thumbnails again
+    const autoOpened = useRef(null)
+    useEffect(() => { setInspectId(null) }, [zoneId])
+    useEffect(() => {
+        const list = findings.list
+        if (!list.length || !zoneId) return
+        const p = pendingFinding.current
+        if (p && (!p.zoneId || p.zoneId === zoneId)) {
+            pendingFinding.current = null
+            setInspectId((list.find((f) => f.id === p.id) || list[0]).id)
+            return
+        }
+        // An area that exists because the sweep found something opens on
+        // what it found — that is the reason to look at it.
+        if (autoOpened.current !== zoneId && zone?.metadata?.subgroup === "Found by sweep") {
+            autoOpened.current = zoneId
+            setInspectId(list[0].id)
+        }
+    }, [findings, zoneId, zone])
     const showFindingsOnMap = useCallback((focusId = null) => {
         if (!findings.list.length) return
         showFindings({ zoneId, findings: findings.list, title: zone?.name, focusId, fit: true })
@@ -622,7 +659,29 @@ export default function Imagery() {
                 </div>
             ) : (
                 <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-                    {/* ── THE IMAGE, and what is needed to read it ── */}
+                    {/* ── A FINDING, on the image it was found in ── */}
+                    {inspectId && findings.list.some((f) => f.id === inspectId) ? (
+                        <FindingViewer zone={zone} findings={findings.list} selectedId={inspectId}
+                            onSelect={setInspectId} onClose={() => setInspectId(null)}
+                            onImagesReady={() => setThumbV((v) => v + 1)}
+                            onShowOnMap={(id, img) => {
+                                // The image goes with the boxes: the map used to get the
+                                // boxes alone, drawn over the basemap without any image.
+                                if (img?.after && img.bounds) {
+                                    const [w, so, e, n] = img.bounds
+                                    window.__plxMapScene = {
+                                        name: zone.name, systemId: zone.system_id, bounds: { north: n, south: so, east: e, west: w },
+                                        instrument: img.kind === "radar" ? "SAR" : "OPTICAL",
+                                        after: { b64: img.after, date: img.dateAfter }, before: img.before ? { b64: img.before, date: img.dateBefore } : null,
+                                        changes: [], headline: findings.list.find((x) => x.id === id)?.label || zone.name,
+                                    }
+                                    window.dispatchEvent(new CustomEvent("akili:map-show-scene", { detail: window.__plxMapScene }))
+                                }
+                                showFindingsOnMap(id)
+                            }}
+                            fallback={scene?.image_b64 && (scene.scan?.instrument || "OPTICAL") !== "SAR" ? { image_b64: scene.image_b64, date: scene.scan?.image_timestamp_utc } : null} />
+                    ) : (
+                    /* ── THE IMAGE, and what is needed to read it ── */
                     <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", padding: "10px 14px 10px 18px", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flex: "none" }}>
                             <div style={{ minWidth: 0, flex: 1 }}>
@@ -645,12 +704,15 @@ export default function Imagery() {
                                         <div data-zone-finding style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 4, fontSize: 12.5, color: f.fresh ? "var(--red)" : "var(--txt3)" }}>
                                             <FreshDot on={f.fresh} size={7} />
                                             <span>{f.fresh ? `New finding: ${f.text}` : ""}{f.fresh && f.radar && f.kind !== "radar_change" ? " · " : ""}{f.radar && !(f.fresh && f.kind === "radar_change") ? `Radar change ${fmtDay(f.radar.at)}: ${f.radar.headline}` : ""}</span>
+                                            {findings.list.length > 0 && (
+                                                <button data-open-finding onClick={() => setInspectId(findings.list[0].id)} style={{ ...BTN, height: 22, fontSize: 11, padding: "0 8px", color: "var(--txt)" }}>See it on the image</button>
+                                            )}
                                         </div>
                                     )
                                 })()}
                             </div>
                             <div style={{ display: "flex", gap: 6, flex: "none" }}>
-                                <button onClick={showOnMap} style={PRIMARY} disabled={!scene?.image_b64}>Show on the map</button>
+                                <button onClick={showOnMap} style={BTN} disabled={!scene?.image_b64} title="Put this image on the map (leaves Imagery)">Show on the map</button>
                                 <button onClick={() => drawOnMap(zone)} title="Draw a new boundary for this area on the map" style={BTN}>Redraw area</button>
                                 <button onClick={exportPixels} style={BTN}>Export</button>
                                 <button onClick={fileScene} style={BTN}>Save for briefing</button>
@@ -739,7 +801,7 @@ export default function Imagery() {
                                         fadeOn={mode === "fade"} fadeOpacity={fadeOpacity}
                                         swipeHandle={mode === "swipe"} refLabel={compareLabel} stretch stamped
                                         clipRef={clipRef} fadeRef={fadeRef} viewerRef={viewerRef}
-                                        onSelectDet={setSelectedDet} selectedDet={selectedDet}
+                                        onSelectDet={(d) => (d?.finding ? setInspectId(d.finding.id) : setSelectedDet(d))} selectedDet={selectedDet}
                                     />
                                 </div>
                             )}
@@ -763,8 +825,12 @@ export default function Imagery() {
                                         <div style={{ fontWeight: 600 }}>No image of this area is held yet</div>
                                         <div style={{ color: "var(--txt3)", fontSize: 12.5, textWrap: "pretty" }}>
                                             {findings.list.length} finding{findings.list.length === 1 ? "" : "s"} of the automatic watch {findings.list.length === 1 ? "is" : "are"} listed on the right; the first optical pass is on its way.
+                                            {findings.list.some(isRadarFinding) ? " The radar findings can be seen on the radar images they were found in." : ""}
                                         </div>
-                                        <button onClick={() => showFindingsOnMap()} style={PRIMARY}>Show the findings on the map</button>
+                                        <div style={{ display: "flex", gap: 8 }}>
+                                            <button data-open-finding onClick={() => setInspectId(findings.list[0].id)} style={PRIMARY}>See the findings on their image</button>
+                                            <button onClick={() => showFindingsOnMap()} style={BTN}>Show on the map</button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -805,9 +871,63 @@ export default function Imagery() {
                             <PassSlider passes={passes} scanId={scanId} onPick={setScanId} />
                         )}
                     </div>
+                    )}
 
                     {/* ── READING IT ── */}
                     <aside style={{ width: 360, flex: "none", borderLeft: "1px solid var(--gline)", overflow: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                        {/* What the automatic watch found comes first: it is the answer. */}
+                        {(findings.list.length > 0 || findings.error) && (
+                            <div data-findings-card={findings.list.length} style={{ ...CARD, borderColor: findings.list.some((f) => f.tone === "red") ? "var(--red)" : "var(--gline)" }}>
+                                <div style={{ padding: "10px 12px 6px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                                    <span style={EYE}>Found by the automatic watch</span>
+                                    {findings.list.length > 0 && <button onClick={() => showFindingsOnMap()} style={{ ...BTN, height: 24, fontSize: 11 }}>Show on the map</button>}
+                                </div>
+                                {findings.error && (
+                                    <div style={{ padding: "4px 12px 10px", fontSize: 12, color: "var(--amber)" }}>
+                                        Could not read them — {findings.error} <button onClick={() => setFindTry((n) => n + 1)} style={{ ...BTN, height: 22, fontSize: 11, padding: "0 8px" }}>Try again</button>
+                                    </div>
+                                )}
+                                {findings.list.some(isRadarFinding) && (
+                                    <div style={{ padding: "0 12px 8px", fontSize: 11.5, color: "var(--txt3)", lineHeight: 1.45 }}>
+                                        <button onClick={() => setRadarHelp((v) => !v)} aria-expanded={radarHelp} data-radar-help
+                                            style={{ border: 0, background: "transparent", color: "var(--acchi)", font: "inherit", fontSize: 11.5, cursor: "pointer", padding: 0, textAlign: "left" }}>
+                                            {radarHelp ? "Hide" : "What do “new bright returns” and “darker” mean?"}
+                                        </button>
+                                        {radarHelp && (
+                                            <div data-radar-help-text style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 5, color: "var(--txt2)" }}>
+                                                <span>{RADAR_WHAT}</span>
+                                                <span><b style={{ color: "#FF3B30", fontWeight: 600 }}>Brighter</b> — {RADAR_BRIGHTER.replace(/^Brighter \(new bright returns\): /, "")}</span>
+                                                <span><b style={{ color: "#4096FF", fontWeight: 600 }}>Darker</b> — {RADAR_DARKER.replace(/^Darker \(returns gone\): /, "")}</span>
+                                                <span style={{ color: "var(--txt3)" }}>{RADAR_CAVEATS}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                {findingOutlines.map((o, i) => (
+                                    <button key={o.id} data-finding-row={o.finding.id} onClick={() => setInspectId(o.finding.id)}
+                                        title="Open it on its image" style={{
+                                        display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: "2px 10px", alignItems: "center", width: "100%",
+                                        padding: "8px 12px", border: 0, borderTop: "1px solid var(--gline)", textAlign: "left", cursor: "pointer",
+                                        background: inspectId === o.finding.id ? ON : "transparent", color: "var(--txt)", font: "inherit",
+                                    }}>
+                                        <span style={{ gridRow: "1 / 4" }}>
+                                            {i < 12 ? <FindingThumb key={`${o.finding.id}:${thumbV}`} zoneId={zoneId} finding={o.finding} size={46} />
+                                                : <i style={{ display: "block", width: 10, height: 10, border: `2px ${o.estimate ? "dashed" : "solid"} ${o.color}` }} />}
+                                        </span>
+                                        <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                            <i style={{ width: 9, height: 9, flex: "none", border: `2px ${o.estimate ? "dashed" : "solid"} ${o.color}` }} />
+                                            <span title={o.finding.label} style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shortLabel(o.finding)}</span>
+                                        </span>
+                                        <span style={{ fontSize: 11.5, color: "var(--txt2)" }}>
+                                            {[o.finding.size, fmtDay(o.finding.date), strengthText(o.finding)].filter(Boolean).join(" · ")}
+                                        </span>
+                                        <span style={{ fontSize: 11, color: "var(--txt3)" }}>
+                                            {o.finding.sensor || "satellite"}{o.finding.landcover ? ` · on ${o.finding.landcover}` : ""}{o.estimate ? " · size estimated from its area" : o.finding.box_source === "regions" ? " · extent rebuilt from its radar regions" : ""}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                         <div style={{ ...CARD, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
                             <span style={EYE}>Imagery note</span>
                             {note?.summary
@@ -830,32 +950,6 @@ export default function Imagery() {
                                 {series.slice(0, 4).map((s) => (
                                     <CountChart key={s.label} s={s} selectedKey={pass?.key}
                                         onPick={(k) => { const p = passes.find((x) => x.key === k); if (p) setScanId(p.scanId) }} />
-                                ))}
-                            </div>
-                        )}
-                        {(findings.list.length > 0 || findings.error) && (
-                            <div data-findings-card={findings.list.length} style={{ ...CARD, borderColor: findings.list.some((f) => f.tone === "red") ? "var(--red)" : "var(--gline)" }}>
-                                <div style={{ padding: "10px 12px 6px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                                    <span style={EYE}>Found by the automatic watch</span>
-                                    {findings.list.length > 0 && <button onClick={() => showFindingsOnMap()} style={{ ...BTN, height: 24, fontSize: 11 }}>Show on the map</button>}
-                                </div>
-                                {findings.error && (
-                                    <div style={{ padding: "4px 12px 10px", fontSize: 12, color: "var(--amber)" }}>
-                                        Could not read them — {findings.error} <button onClick={() => setFindTry((n) => n + 1)} style={{ ...BTN, height: 22, fontSize: 11, padding: "0 8px" }}>Try again</button>
-                                    </div>
-                                )}
-                                {findingOutlines.map((o) => (
-                                    <button key={o.id} onClick={() => { setShowBoxes(true); setSelectedDet(o) }} style={{
-                                        display: "grid", gridTemplateColumns: "12px minmax(0,1fr)", gap: "2px 8px", alignItems: "center", width: "100%",
-                                        padding: "7px 12px", border: 0, borderTop: "1px solid var(--gline)", textAlign: "left", cursor: "pointer",
-                                        background: selectedDet?.id === o.id ? ON : "transparent", color: "var(--txt)", font: "inherit",
-                                    }}>
-                                        <i style={{ width: 10, height: 10, border: `2px ${o.estimate ? "dashed" : "solid"} ${o.color}` }} />
-                                        <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{findingCaption(o.finding)}</span>
-                                        <span style={{ gridColumn: 2, fontSize: 11, color: "var(--txt3)" }}>
-                                            {o.finding.sensor || "satellite"}{o.estimate ? " · size estimated from its area" : o.finding.box_source === "regions" ? " · extent rebuilt from its radar regions" : ""}
-                                        </span>
-                                    </button>
                                 ))}
                             </div>
                         )}

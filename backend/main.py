@@ -19538,6 +19538,17 @@ async def _run_pwtt_job(job_id: str, bounds: dict, pre_end: str, post_end: str,
             except Exception as _pe:                        # noqa: BLE001
                 out["persist_error"] = f"{type(_pe).__name__}: {_pe}"
                 print(f"[pwtt] {job_id}: regions computed but NOT saved: {_pe}")
+            # THE IMAGES THE COMPARISON WAS MADE FROM (radar_images.py):
+            # before / after / change as display PNGs over these bounds,
+            # linked to the scan, so a finding can be shown on its image.
+            if out.get("scan_id"):
+                try:
+                    import radar_images as _rimg
+                    await asyncio.to_thread(
+                        _rimg.save_from_stacks, out["scan_id"], before, after, bounds,
+                        {"dates_before": pre_used, "dates_after": post_used, "px": px, "source": "pass"})
+                except Exception as _rie:                   # noqa: BLE001
+                    print(f"[radar-images] error: {job_id}: images not kept: {type(_rie).__name__}: {_rie}", flush=True)
 
         _PWTT_RESULTS[job_id] = out
     except _pwtt.NotEnoughData as e:
@@ -25238,7 +25249,9 @@ def _overwatch_finish_tile(job: dict, verdict: dict, scan_id: str | None) -> dic
             kept = z.system_id
         elif z is not None:
             scans = db.query(SentinelScan).filter(SentinelScan.zone_id == z.id).all()
+            import radar_images as _rimg
             for sc in scans:
+                _rimg.delete(sc.scan_id)          # the tile's radar images go with it
                 db.query(SentinelDetection).filter(SentinelDetection.scan_id == sc.scan_id).delete()
             db.query(SentinelScan).filter(SentinelScan.zone_id == z.id).delete()
             db.delete(z)

@@ -77,3 +77,51 @@ describe("map captions stay readable", () => {
         expect(mapCaption({ label: "Radar change — returns gone (darker)", area_m2: 5300, date: "2026-10-11" })).toBe("Radar: returns gone · 5,300 m² · 11 Oct")
     })
 })
+
+import { boxToPixels, datesText, findingSource, isRadarFinding, sameSource, strengthText } from "./findings.js"
+import { radarMeaning, RADAR_BRIGHTER, RADAR_DARKER } from "./radarExplain.js"
+describe("a finding on the image it was found in", () => {
+    // a 20 km sweep tile rendered at 1024 × 1024 on an EPSG:4326 grid
+    const TILE = [37.167361, 50.592885, 37.457731, 50.77686]
+    it("maps a box in degrees to the image's pixels (x east, y down from the north edge)", () => {
+        const dx = TILE[2] - TILE[0], dy = TILE[3] - TILE[1]
+        // the box covering pixels x 100–150, y 200–260
+        const box = [TILE[0] + (100 / 1024) * dx, TILE[3] - (260 / 1024) * dy, TILE[0] + (150 / 1024) * dx, TILE[3] - (200 / 1024) * dy]
+        const px = boxToPixels(box, TILE, 1024, 1024)
+        expect(px[0]).toBeCloseTo(100, 6); expect(px[1]).toBeCloseTo(200, 6)
+        expect(px[2]).toBeCloseTo(50, 6); expect(px[3]).toBeCloseTo(60, 6)
+        // the same box on a non-square render keeps its place
+        const half = boxToPixels(box, TILE, 512, 1024)
+        expect(half[0]).toBeCloseTo(50, 6); expect(half[1]).toBeCloseTo(200, 6)
+        expect(boxToPixels(box, null, 1024, 1024)).toBeNull()
+        expect(boxToPixels(box, TILE, 0, 1024)).toBeNull()
+    })
+    it("radar findings go on their comparison, objects on their pass; the image's other boxes come along", () => {
+        const a = { id: "sweep:Z:0", kind: "sweep_find", scan_id: "S1" }
+        const b = { id: "sweep:Z:1", kind: "sweep_find", scan_id: "S1" }
+        const c = { id: "chg:x", kind: "radar_change", scan_id: "C2" }
+        const d = { id: "det:1", kind: "object", scan_id: "S1" }
+        expect(isRadarFinding(a) && isRadarFinding(c) && !isRadarFinding(d)).toBe(true)
+        expect(findingSource(a)).toBe("radar:S1")
+        expect(findingSource(d)).toBe("scene:S1")
+        expect(sameSource([a, b, c, d], b).map((x) => x.id)).toEqual(["sweep:Z:1", "sweep:Z:0"])
+        expect(sameSource([a, b, c, d], { id: "n" })).toEqual([{ id: "n" }])
+    })
+    it("says how strong it is: radar |t|, a detector's confidence", () => {
+        expect(strengthText({ t_peak: -16.79 })).toBe("strength 16.8")
+        expect(strengthText({ confidence: 0.87 })).toBe("87% confidence")
+        expect(strengthText({})).toBeNull()
+    })
+    it("names the dates a radar stack was made of", () => {
+        expect(datesText(["2026-10-10", "2026-10-09", "2026-10-07"])).toBe("7–10 Oct · 3 passes")
+        expect(datesText(["2026-08-28", "2026-09-02"])).toBe("28 Aug – 2 Sep · 2 passes")
+        expect(datesText([])).toBeNull()
+    })
+    it("explains brighter and darker in plain words", () => {
+        expect(radarMeaning({ kind: "sweep_find", label: "Possible tent or vehicle group" })).toBe(RADAR_BRIGHTER)
+        expect(radarMeaning({ kind: "sweep_find", label: "Cleared or disturbed ground" })).toBe(RADAR_DARKER)
+        expect(radarMeaning({ kind: "radar_change", direction: "removed" })).toBe(RADAR_DARKER)
+        expect(radarMeaning({ kind: "object" })).toBeNull()
+        expect(RADAR_BRIGHTER).toMatch(/vehicles, containers, metal-framed tents/)
+    })
+})

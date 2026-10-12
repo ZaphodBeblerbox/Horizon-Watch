@@ -160,6 +160,15 @@ def zone_findings(db, zone, *, scan_id: str | None = None, days: int = 30) -> di
     found = (sweep_findings(db, zone, scan_id)
              + radar_findings(db, zone, scan_id, since)
              + object_findings(db, zone, scan_id, since))[:MAX_FINDINGS]
+    # Whether the radar images of the comparison behind each radar finding
+    # are held (radar_images.py) — derived from the files, never stored.
+    import radar_images as ri
+    held: dict = {}
+    for f in found:
+        if f["kind"] in ("sweep_find", "radar_change") and f.get("scan_id"):
+            if f["scan_id"] not in held:
+                held[f["scan_id"]] = ri.has(f["scan_id"])
+            f["radar_images"] = held[f["scan_id"]]
     meta = _j(zone.zone_metadata, {})
     b = zone_bounds(zone)
     return {
@@ -170,6 +179,19 @@ def zone_findings(db, zone, *, scan_id: str | None = None, days: int = 30) -> di
         "findings": found,
         "counts": {k: sum(1 for f in found if f["kind"] == k) for k in ("sweep_find", "radar_change", "object")},
     }
+
+
+def radar_source(db, zone, scan_id: str) -> dict | None:
+    """How the radar comparison `scan_id` of this zone was made (its box,
+    dates, pixel size) — what regenerating its images needs — or None when
+    the scan is not this zone's change scan or did not record its dates."""
+    from database import SentinelScan
+    import radar_images as ri
+    row = (db.query(SentinelScan.result_summary, SentinelScan.triggered_by)
+           .filter(SentinelScan.scan_id == scan_id, SentinelScan.zone_id == zone.id).first())
+    if row is None or row[1] != "change-detect":
+        return None
+    return ri.source_of(_j(row[0], {}), zone_bounds(zone))
 
 
 def crop_for(db, zone, box, *, prefer: str | None = None, max_px: int = 480) -> dict | None:

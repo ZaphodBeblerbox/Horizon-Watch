@@ -1,15 +1,18 @@
 /**
  * FindingPreview.jsx — the finding itself, in the signal view (the desktop
- * inspector and the phone's signal sheet): a cut-out of the newest image of
- * the place with the box drawn on it, and every finding of the notification
- * listed with its size and date. "Show on the map" puts the boxes on the
- * map and flies there.
+ * inspector and the phone's signal sheet): a cut-out with the box drawn on
+ * it — for a radar finding, of the radar comparison's own images (Before,
+ * After, Change; radar_images.py), else of the newest image of the place —
+ * and every finding of the notification listed with its size and date.
+ * "Open in Imagery" shows it on the full image there; "Show on the map"
+ * puts the boxes on the map (owner, 2026-10-12: the map is an option).
  *
  * Every image has a visible state — loading, failed (with the reason and a
  * retry), or none held yet — because a blank square reads as "nothing there".
  */
 import { useCallback, useEffect, useState } from "react"
-import { fetchCrop, findingCaption, findingsForAlert, alertRaw, TONE } from "../lib/findings.js"
+import { fetchCrop, findingCaption, findingsForAlert, alertRaw, isRadarFinding, TONE } from "../lib/findings.js"
+import { RADAR_CAVEATS, radarMeaning } from "../lib/radarExplain.js"
 
 const BOX = { border: "1px solid var(--gline2, rgba(255,255,255,.16))", background: "var(--glass2, rgba(255,255,255,.04))" }
 const BTN = { height: 30, padding: "0 12px", border: "1px solid var(--gline2, rgba(255,255,255,.2))", background: "transparent",
@@ -20,6 +23,7 @@ export default function FindingPreview({ alert, onShowOnMap, onOpenImagery, comp
     const [pick, setPick] = useState(0)
     const [crop, setCrop] = useState({ loading: false })
     const [tryN, setTryN] = useState(0)
+    const [layer, setLayer] = useState("after")
     const id = alert?.alert_id || alert?.id
 
     useEffect(() => {
@@ -35,7 +39,7 @@ export default function FindingPreview({ alert, onShowOnMap, onOpenImagery, comp
         if (!f || !state.zoneId) { setCrop({ loading: false }); return undefined }
         let live = true
         setCrop({ loading: true })
-        fetchCrop(state.zoneId, f.box)
+        fetchCrop(state.zoneId, f.box, { scanId: isRadarFinding(f) ? f.scan_id : null })
             .then((d) => { if (live) setCrop(d?.image_b64 ? { data: d } : { none: d?.why || "No image of this place is held yet." }) })
             .catch((e) => { if (live) setCrop({ error: e instanceof TypeError ? "The server did not answer (network or server error)." : e.message }) })
         return () => { live = false }
@@ -44,8 +48,10 @@ export default function FindingPreview({ alert, onShowOnMap, onOpenImagery, comp
     const showOnMap = useCallback(() => onShowOnMap?.({ zoneId: state.zoneId, findings: state.findings, focusId: f?.id }),
         [onShowOnMap, state, f])
 
-    const caveat = alertRaw(alert).caveat
-        || (f?.kind === "sweep_find" ? "At 10–20 m a field hospital, a tent camp and a vehicle park look alike — identify on high-resolution imagery." : null)
+    const caveat = isRadarFinding(f) ? RADAR_CAVEATS : alertRaw(alert).caveat
+    const meaning = radarMeaning(f)
+    const radarCut = crop.data?.source === "radar_images"
+    const cutB64 = radarCut ? (crop.data[`${layer}_b64`] || crop.data.after_b64) : crop.data?.image_b64
 
     if (state.loading) return <div data-finding-preview="loading" style={{ fontSize: 12.5, opacity: 0.7, margin: "6px 0 12px" }}>Reading what was found…</div>
     if (!state.findings.length) return null
@@ -54,7 +60,7 @@ export default function FindingPreview({ alert, onShowOnMap, onOpenImagery, comp
             <div style={{ ...BOX, position: "relative", width: "100%", aspectRatio: "1 / 1", maxHeight: compact ? 260 : 300, overflow: "hidden", display: "grid", placeItems: "center" }}>
                 {crop.data ? (
                     <>
-                        <img data-finding-crop src={`data:image/jpeg;base64,${crop.data.image_b64}`} alt={f?.label || "finding"}
+                        <img data-finding-crop={radarCut ? layer : "image"} src={`data:image/png;base64,${cutB64}`} alt={f?.label || "finding"}
                             onError={() => setCrop({ error: "The image arrived but could not be decoded." })}
                             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "fill", imageRendering: "pixelated" }} />
                         <i style={{
@@ -64,8 +70,20 @@ export default function FindingPreview({ alert, onShowOnMap, onOpenImagery, comp
                             boxShadow: "0 0 0 1px rgba(0,0,0,.7)",
                         }} />
                         <span style={{ position: "absolute", left: 6, bottom: 6, fontSize: 11, padding: "1px 6px", background: "rgba(0,0,0,.65)", color: "#fff" }}>
-                            {crop.data.instrument === "SAR" ? "Radar" : "Optical"} · {String(crop.data.date || "").slice(0, 10)} · box drawn on the newest image held
+                            {radarCut
+                                ? `Radar ${layer === "before" ? `before · ${String(crop.data.date_before || "").slice(0, 10)}` : layer === "change" ? "change · red brighter, blue darker" : `after · ${String(crop.data.date || "").slice(0, 10)}`}`
+                                : `${crop.data.instrument === "SAR" ? "Radar" : "Optical"} · ${String(crop.data.date || "").slice(0, 10)} · box drawn on the newest image held`}
                         </span>
+                        {radarCut && (
+                            <span style={{ position: "absolute", right: 6, top: 6, display: "flex", background: "rgba(0,0,0,.65)" }}>
+                                {[["Before", "before"], ["After", "after"], ["Change", "change"]].map(([k, v]) => (
+                                    <button key={v} data-crop-layer={v} onClick={() => setLayer(v)} style={{
+                                        border: 0, padding: "3px 8px", font: "inherit", fontSize: 11, cursor: "pointer",
+                                        background: layer === v ? "rgba(255,255,255,.22)" : "transparent", color: "#fff",
+                                    }}>{k}</button>
+                                ))}
+                            </span>
+                        )}
                     </>
                 ) : crop.loading ? (
                     <span data-image-state="loading" style={{ fontSize: 12, opacity: 0.75 }}>Loading the image of the place…</span>
@@ -91,10 +109,15 @@ export default function FindingPreview({ alert, onShowOnMap, onOpenImagery, comp
                 ))}
                 {state.findings.length > 8 && <span style={{ fontSize: 11.5, opacity: 0.6, padding: "2px 6px" }}>and {state.findings.length - 8} more on the map</span>}
             </div>
+            {meaning && <span data-radar-meaning style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.45 }}>{meaning}</span>}
             {caveat && <span style={{ fontSize: 11.5, opacity: 0.7, lineHeight: 1.4 }}>{caveat}</span>}
+            {crop.data?.radar_images === "missing" && (
+                <span style={{ fontSize: 11.5, opacity: 0.7 }}>The radar images of this comparison are not held yet — they can be loaded in Imagery.</span>
+            )}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {onShowOnMap && <button data-show-findings onClick={showOnMap} style={{ ...BTN, border: 0, background: "var(--acc, #2f6fb3)", color: "var(--mz-cream, #fff)", fontWeight: 600 }}>Show on the map with the boxes</button>}
-                {onOpenImagery && state.zoneId && <button onClick={() => onOpenImagery({ systemId: state.zoneId, scanId: null })} style={BTN}>Open in Imagery</button>}
+                {onOpenImagery && state.zoneId && <button data-open-imagery onClick={() => onOpenImagery({ systemId: state.zoneId, scanId: null, findingId: f?.id || null })}
+                    style={{ ...BTN, border: 0, background: "var(--acc, #2f6fb3)", color: "var(--mz-cream, #fff)", fontWeight: 600 }}>Open on the image in Imagery</button>}
+                {onShowOnMap && <button data-show-findings onClick={showOnMap} style={BTN}>Show on the map with the boxes</button>}
             </div>
         </div>
     )

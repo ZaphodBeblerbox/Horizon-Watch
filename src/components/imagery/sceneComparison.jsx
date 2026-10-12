@@ -165,7 +165,9 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
                 const w = Math.max(r.w, 3), h = Math.max(r.h, 3)
                 const name = c.caption || `${String(c.label || "").replace(/_/g, " ")} · ${Math.round(c.conf * 100)}%`
                 const shape = {
-                    fill: isSel ? "rgba(0,229,255,0.18)" : "transparent",
+                    // A finding's box is left clear: what is inside it is the
+                    // thing to look at (a tint hid the radar returns themselves).
+                    fill: isSel && c.type !== "finding" ? "rgba(0,229,255,0.18)" : "transparent",
                     stroke: c.doubtful ? "#B8BCC6" : strokeFor(c), strokeWidth: isSel ? 2.6 : 2,
                     // Dashed: gone since the last pass, doubted by the imagery
                     // note, or found by only one of the two models.
