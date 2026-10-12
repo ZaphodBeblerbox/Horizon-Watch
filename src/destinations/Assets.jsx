@@ -20,6 +20,7 @@ import PinMap from "../ui/PinMap.jsx"
 import AssetModel from "../assets/AssetModel.jsx"
 import AssetThumb from "../assets/AssetThumb.jsx"
 import TrackSketch from "../location/TrackSketch.jsx"
+import LivePositionLine from "../location/LivePositionLine.jsx"
 import Dots from "../ui/Dots.jsx"
 import { shareToDesk } from "../desk/shareToDesk.js"
 import { agoLabel } from "../utils/formatTime.js"
@@ -314,7 +315,9 @@ function Detail({ asset, onEdit, onDeleted }) {
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "max-content minmax(0,1fr)", gap: "7px 14px", alignItems: "baseline" }}>
                         <Fact k="Where" v={asset.address || (pos ? `${pos.lat.toFixed(4)}, ${pos.lon.toFixed(4)}` : null)} />
-                        <Fact k="Position" v={pos ? `${pos.source}${pos.as_of ? ` · ${agoLabel(pos.as_of)}` : ""}` : s?.why} />
+                        <Fact k="Position" v={asset.identifiers?.user_id
+                            ? <LivePositionLine assetId={asset.id} fallback={pos} />          /* pushed live as their phone moves */
+                            : pos ? `${pos.source}${pos.as_of ? ` · ${agoLabel(pos.as_of)}` : ""}` : s?.why} />
                         <Fact k="Country" v={asset.country} />
                         {Object.entries(asset.identifiers || {}).map(([k, v]) => <Fact key={k} k={ID_LABEL[k] || k} v={k === "user_id" ? <UserName id={v} /> : v} />)}
                         {ais && <Fact k="Speed, heading" v={`${ais.speed ?? "—"} kn · ${ais.heading != null && ais.heading !== 511 ? `${Math.round(ais.heading)}°` : "heading not sent"}`} />}

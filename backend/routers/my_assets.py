@@ -10,7 +10,8 @@
     GET    /api/my-assets/{id}/track       where a moving asset has been (linked to a person: their phone)
     POST   /api/my-assets/live             this user's device position (live sharing)
     GET    /api/my-assets/me/positions     this user's own position history
-    GET    /api/my-assets/people           the team's latest shared positions (the location signal)
+    GET    /api/my-assets/people           the team's latest shared positions (the location signal;
+                                           pushed live by GET /api/positions/stream, position_stream.py)
     POST   /api/my-assets/{id}/brief       how it affects us, what could come next, measures
 """
 from __future__ import annotations
@@ -264,16 +265,6 @@ def situation(asset: dict) -> dict:
 _CREATE_LOCK = threading.Lock()
 
 
-def _user_names() -> dict:
-    try:
-        con = sqlite3.connect(oa._db_path(), timeout=5)
-        rows = con.execute("SELECT id, name, email FROM users").fetchall()
-        con.close()
-        return {str(r[0]): (r[1] or (r[2] or "").split("@")[0] or "Someone") for r in rows}
-    except sqlite3.Error:
-        return {}
-
-
 @router.post("/live")
 def live(request: Request, body: dict = Body(...)):
     """This user's device, sharing where it is (with their consent): kept in
@@ -290,7 +281,15 @@ def live(request: Request, body: dict = Body(...)):
     try:
         lat, lon = float(body["lat"]), float(body["lon"])
         acc = float(body["accuracy"]) if body.get("accuracy") is not None else None
-        source = str(body.get("source") or "gps")
+        source = str(body.get("source") or "")
+        if not source:
+            # An older client (the desktop app up to 1.1.18) sends its connection's
+            # city-level fix unmarked: that coarse, it is "ip", never a GPS fix
+            # that could override the phone's.
+            try:
+                source = "ip" if body.get("accuracy") is not None and float(body.get("accuracy")) >= 3000 else "gps"
+            except (TypeError, ValueError):
+                source = "gps"
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(400, f"a position is lat and lon: {e}")
     uid = _uid(user)
@@ -314,11 +313,19 @@ def live(request: Request, body: dict = Body(...)):
         raise HTTPException(400, str(e))
     except sqlite3.OperationalError as e:
         raise HTTPException(503, f"busy, send the next position: {e}", headers={"Retry-After": "15"})
-    import asset_watch
-    for owner in {m["owner_id"] for m in r["moved"]} | {uid}:
-        asset_watch.invalidate(owner)
+    if r["stored"]:
+        # REAL TIME: pushed at once to every viewer allowed to see it
+        # (position_stream.py) — from this thread, never waiting on the loop
+        import position_stream
+        position_stream.publish_position(user, lat, lon, acc, "ip" if source.lower() == "ip" else "gps", r.get("at"), r["moved"])
+    if r.get("history", True):
+        # what is near them is reassessed when they have really moved (or a
+        # minute on), not at every fix of a walk
+        import asset_watch
+        for owner in {m["owner_id"] for m in r["moved"]} | {uid}:
+            asset_watch.invalidate(owner)
     return {"linked": len(r["moved"]), "assets": [m["id"] for m in r["moved"]], "stored": r["stored"],
-            "held": r["held"], "coarse": r["coarse"]}
+            "history": r.get("history", False), "held": r["held"], "coarse": r["coarse"]}
 
 
 @router.get("/me/positions")
@@ -334,9 +341,15 @@ def people(request: Request, hours: int = 24):
     """THE LOCATION SIGNAL: everyone on the team sharing where they are, at
     their latest position, with the assets linked to them — for the map and
     the asset page."""
-    _me(request)
-    names = _user_names()
-    return {"people": [{**p, "name": names.get(p["user_id"], "Someone")} for p in oa.people(max(1, min(168, hours)))]}
+    me = _me(request)
+    import position_stream as ps
+    users = ps._users()
+    out = []
+    for p in oa.people(max(1, min(168, hours))):
+        u = users.get(str(p["user_id"]), {})
+        if ps.can_see(me, p["user_id"], u.get("team_id")):        # the same rule as the live stream
+            out.append({**p, "name": u.get("name", "Someone")})
+    return {"people": out}
 
 
 @router.get("/{asset_id}/track")

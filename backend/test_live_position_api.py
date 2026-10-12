@@ -66,9 +66,9 @@ def test_positions_are_kept_per_user_as_a_history(db):
 def test_rate_limited_per_user(db):
     oa.record_position("anna", 48.85, 2.35, 10, now=T0)
     with pytest.raises(oa.TooSoon) as e:
-        oa.record_position("anna", 48.86, 2.35, 10, now=T0 + dt.timedelta(seconds=2))
+        oa.record_position("anna", 48.86, 2.35, 10, now=T0 + dt.timedelta(seconds=1))
     assert e.value.retry_after >= 1
-    oa.record_position("ben", 1, 1, 10, now=T0 + dt.timedelta(seconds=2))      # someone else is not limited
+    oa.record_position("ben", 1, 1, 10, now=T0 + dt.timedelta(seconds=1))      # someone else is not limited
     oa.record_position("anna", 48.86, 2.35, 10, now=T0 + dt.timedelta(seconds=oa.MIN_INTERVAL_S))
 
 
@@ -225,3 +225,23 @@ def test_cross_site_bearer_reaches_live(real_user, db):
     r = fresh.post("/api/my-assets/live", json=body, headers={**origin, "Authorization": f"Bearer {token}"})
     assert r.status_code == 200, r.text
     assert oa.positions(u["id"])[0]["lat"] == 48.85
+
+
+def test_an_unmarked_coarse_fix_is_ip_and_never_overrides_the_phone(client, db):
+    """The desktop app up to 1.1.18 sends its 5 km connection fix with no
+    source: it was stored as gps and could override the phone's fix."""
+    import time
+    assert _post(client, "anna", lat=48.8566, lon=2.3522, accuracy=8, source="gps").status_code == 200
+    time.sleep(oa.MIN_INTERVAL_S)
+    r = _post(client, "anna", lat=47.3667, lon=8.5541, accuracy=5000)          # no source
+    assert r.status_code == 200 and r.json()["held"] and r.json()["coarse"]
+    assert oa.latest("anna")["source"] == "gps" and oa.latest("anna")["lat"] == 48.8566
+    # alone (no fresh phone fix), it is kept — as ip, not gps
+    assert _post(client, "ben", lat=47.3667, lon=8.5541, accuracy=5000).status_code == 200
+    assert oa.latest("ben")["source"] == "ip"
+    # the store infers it too
+    r = oa.record_position("carl", 47.3667, 8.5541, 5000, None)
+    assert oa.latest("carl")["source"] == "ip"
+    # a precise unmarked fix is still gps
+    oa.record_position("dora", 48.85, 2.35, 12, None)
+    assert oa.latest("dora")["source"] == "gps"

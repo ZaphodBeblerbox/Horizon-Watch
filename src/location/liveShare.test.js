@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { shouldSend, createLiveShare, MIN_MOVE_M, MAX_GAP_MS, MIN_GAP_MS, KEY } from "./liveShare.js"
+import { shouldSend, reasonToSend, createLiveShare, MIN_MOVE_M, MAX_GAP_MS, MIN_GAP_MS, HEARTBEAT_MS, KEY, WATCH } from "./liveShare.js"
 import { locate, getFix, messageFor, platformOf, DENIED, TIMEOUT, UNAVAILABLE } from "./geo.js"
 
 // ── a fake device ─────────────────────────────────────────────────────────
@@ -24,32 +24,65 @@ function fakeDoc() {
 }
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
+/** A clock and timers the test drives: tick(ms) runs what falls due. */
+function fakeClock(start = 1_000_000) {
+    let t = start, next = 1
+    const due = new Map()          // id -> {at, f, every}
+    const timers = {
+        setTimeout: vi.fn((f, ms) => { const id = next++; due.set(id, { at: t + (ms || 0), f }); return id }),
+        clearTimeout: vi.fn((id) => { due.delete(id) }),
+        setInterval: vi.fn((f, ms) => { const id = next++; due.set(id, { at: t + ms, f, every: ms }); return id }),
+        clearInterval: vi.fn((id) => { due.delete(id) }),
+    }
+    function tick(ms) {
+        const end = t + ms
+        for (;;) {
+            const [id, d] = [...due.entries()].filter(([, x]) => x.at <= end).sort((a, b) => a[1].at - b[1].at)[0] || []
+            if (!d) break
+            t = Math.max(t, d.at)
+            if (d.every) d.at += d.every
+            else due.delete(id)
+            d.f()
+        }
+        t = end
+    }
+    return { timers, tick, now: () => t }
+}
+
 function machine(over = {}) {
-    let t = 1_000_000
+    const clock = fakeClock()
     const geo = fakeGeo(), doc = fakeDoc(), storage = memStorage()
     const sent = []
     let reply = { ok: true, status: 200 }
     const doFetch = vi.fn(async (url, init) => {
-        if (init?.method === "POST") { sent.push(JSON.parse(init.body)); return { ...reply, headers: { get: (h) => reply.headers?.[h] } } }
+        if (init?.method === "POST") { sent.push({ ...JSON.parse(init.body), t: clock.now() }); return { ...reply, headers: { get: (h) => reply.headers?.[h] } } }
         return { ok: true, json: async () => ({ positions: [] }) }
     })
-    const timers = { setInterval: vi.fn(() => 1), clearInterval: vi.fn(), setTimeout: vi.fn(), clearTimeout: vi.fn() }
-    const ls = createLiveShare({ geo, doFetch, storage, doc, win: undefined, now: () => t, desktop: () => false,
-                                 plat: () => ({ ios: true, standalone: true }), apiBase: "https://api.test", timers, ...over })
-    return { ls, geo, doc, storage, sent, doFetch, timers, tick: (ms) => { t += ms }, now: () => t, reply: (r) => { reply = r } }
+    const ls = createLiveShare({ geo, doFetch, storage, doc, win: undefined, now: clock.now, desktop: () => false,
+                                 plat: () => ({ ios: true, standalone: true }), apiBase: "https://api.test", timers: clock.timers, ...over })
+    return { ls, geo, doc, storage, sent, doFetch, timers: clock.timers, tick: clock.tick, now: clock.now, reply: (r) => { reply = r } }
 }
 
 // ── the send rule ─────────────────────────────────────────────────────────
-describe("when a position goes to the server", () => {
-    it("the first fix, a move of 50 m, or two minutes standing still — never more than once in ten seconds", () => {
-        const t = 1_000_000
+describe("when a position goes to the server (real time)", () => {
+    const t = 1_000_000
+    const prev = { lat: 48.85, lon: 2.35, accuracy: 10, at: t }
+    it("the first fix; a move of 10 m; never more than once in 3 s", () => {
         expect(shouldSend(null, { lat: 48.85, lon: 2.35 }, t)).toBe(true)
-        const prev = { lat: 48.85, lon: 2.35, at: t }
-        expect(shouldSend(prev, { lat: 48.8502, lon: 2.35 }, t + 20_000)).toBe(false)     // ~22 m
-        expect(shouldSend(prev, { lat: 48.8506, lon: 2.35 }, t + 20_000)).toBe(true)      // ~67 m
-        expect(shouldSend(prev, { lat: 48.86, lon: 2.35 }, t + 3_000)).toBe(false)        // 1 km, but 3 s after the last
-        expect(shouldSend(prev, { lat: 48.85, lon: 2.35 }, t + MAX_GAP_MS)).toBe(true)
-        expect(MIN_MOVE_M).toBe(50); expect(MIN_GAP_MS).toBe(10_000)
+        expect(shouldSend(prev, { lat: 48.85005, lon: 2.35, accuracy: 10 }, t + 5_000)).toBe(false)    // ~6 m: jitter
+        expect(shouldSend(prev, { lat: 48.85012, lon: 2.35, accuracy: 10 }, t + 5_000)).toBe(true)     // ~13 m
+        expect(shouldSend(prev, { lat: 48.86, lon: 2.35 }, t + 2_000)).toBe(false)                     // 1 km, but 2 s after the last
+        expect(shouldSend(prev, { lat: 48.86, lon: 2.35 }, t + MIN_GAP_MS)).toBe(true)
+        expect(MIN_MOVE_M).toBe(10); expect(MIN_GAP_MS).toBe(3_000)
+    })
+    it("a heartbeat every 30 s standing still", () => {
+        expect(shouldSend(prev, { ...prev }, t + HEARTBEAT_MS - 1)).toBe(false)
+        expect(reasonToSend(prev, { ...prev }, t + HEARTBEAT_MS)).toBe("heartbeat")
+        expect(MAX_GAP_MS).toBe(30_000)
+    })
+    it("an accuracy much better than the last one sent", () => {
+        expect(reasonToSend({ ...prev, accuracy: 65 }, { lat: 48.85, lon: 2.35, accuracy: 12 }, t + 4_000)).toBe("sharper")
+        expect(reasonToSend({ ...prev, accuracy: 20 }, { lat: 48.85, lon: 2.35, accuracy: 12 }, t + 4_000)).toBe(null)   // a little better: no
     })
 })
 
@@ -108,23 +141,67 @@ describe("sharing live", () => {
     it("starts from the tap with watchPosition, and the switch is remembered on this device", () => {
         m.ls.start()
         expect(m.geo.watchPosition).toHaveBeenCalledTimes(1)
-        expect(m.geo.watch.opts.enableHighAccuracy).toBe(true)
+        expect(m.geo.watch.opts).toMatchObject({ enableHighAccuracy: true, maximumAge: WATCH.maximumAge })
+        expect(WATCH.maximumAge).toBeLessThanOrEqual(2_000)
         expect(m.storage.getItem(KEY)).toBe("on")
         expect(m.ls.status().state).toBe("starting")
     })
 
-    it("sends the first fix, then only a 50 m move or every two minutes", async () => {
+    it("sends the first fix, then every 10 m moved, and a heartbeat standing still", async () => {
         m.ls.start()
         m.geo.fix(48.85, 2.35); await flush()
         expect(m.sent).toHaveLength(1)
         expect(m.sent[0]).toMatchObject({ lat: 48.85, lon: 2.35, accuracy: 10, source: "gps" })
         expect(m.ls.status().state).toBe("sharing")
-        m.tick(15_000); m.geo.fix(48.8501, 2.35); await flush()     // 11 m: jitter
+        m.tick(4_000); m.geo.fix(48.85003, 2.35); await flush()     // 3 m: jitter
         expect(m.sent).toHaveLength(1)
-        m.tick(15_000); m.geo.fix(48.851, 2.35); await flush()      // 111 m
+        m.tick(4_000); m.geo.fix(48.8502, 2.35); await flush()      // 22 m
         expect(m.sent).toHaveLength(2)
-        m.tick(MAX_GAP_MS); m.geo.fix(48.851, 2.35); await flush()  // standing still, two minutes on
+        m.tick(HEARTBEAT_MS + 5_000); await flush()                  // standing still: the watch is quiet, the heartbeat is not
         expect(m.sent).toHaveLength(3)
+        expect(m.sent[2]).toMatchObject({ lat: 48.8502 })
+    })
+
+    it("walking: at most one every 3 s, and the last move of a burst is sent when the 3 s are up", async () => {
+        m.ls.start()
+        m.geo.fix(48.85, 2.35); await flush()
+        for (let i = 1; i <= 5; i++) { m.tick(1_000); m.geo.fix(48.85 + i * 0.0002, 2.35); await flush() }   // 22 m a second
+        // 5 s of walking: the first fix, one at 3 s, and the latest queued
+        const at = m.sent.map((x) => x.t - m.sent[0].t)
+        for (let i = 1; i < at.length; i++) expect(at[i] - at[i - 1]).toBeGreaterThanOrEqual(MIN_GAP_MS)
+        m.tick(3_000); await flush()
+        expect(m.sent.at(-1).lat).toBeCloseTo(48.851, 6)             // the latest, not a stale one in between
+        expect(m.sent.length).toBeLessThanOrEqual(3)
+    })
+
+    it("coalesces: one request in flight, and only the latest waiting fix goes after it", async () => {
+        let release
+        const doFetch = vi.fn((url, init) => init?.method === "POST"
+            ? new Promise((r) => { release = () => r({ ok: true, status: 200, headers: { get: () => null } }) })
+            : Promise.resolve({ ok: true, json: async () => ({ positions: [] }) }))
+        const slow = machine({ doFetch })
+        slow.ls.start()
+        slow.geo.fix(48.85, 2.35)
+        const bodies = () => doFetch.mock.calls.filter(([, i]) => i?.method === "POST").map(([, i]) => JSON.parse(i.body))
+        for (let i = 1; i <= 4; i++) { slow.tick(3_500); slow.geo.fix(48.85 + i * 0.001, 2.35) }
+        expect(bodies()).toHaveLength(1)
+        expect(slow.ls.status().queued).toBe(true)
+        release(); await flush(); await flush()
+        expect(bodies()).toHaveLength(2)
+        expect(bodies()[1].lat).toBeCloseTo(48.854, 6)              // latest wins; the three in between never go
+    })
+
+    it("back in front, the next fix goes at once", async () => {
+        m.ls.start()
+        m.geo.fix(48.85, 2.35); await flush()
+        m.doc.hidden = true; m.doc.fire("visibilitychange")
+        m.tick(1_000)
+        m.doc.hidden = false; m.doc.fire("visibilitychange")
+        expect(m.geo.getCurrentPosition).toHaveBeenCalled()          // asked at once, not at the first move
+        m.tick(500)
+        m.geo.calls.at(-1).ok(pos(48.85, 2.35))                       // the same place, 1.5 s after the last send
+        await flush()
+        expect(m.sent).toHaveLength(2)
     })
 
     it("the fix the tap obtained goes at once, and a fix is asked for as sharing starts", async () => {
@@ -166,7 +243,7 @@ describe("sharing live", () => {
         expect(m.ls.status().message).toMatch(/cannot share location in the background/)
         m.doc.hidden = false; m.doc.fire("visibilitychange")
         expect(m.geo.watches.size).toBe(1)
-        m.tick(MAX_GAP_MS); m.geo.fix(48.86, 2.35); await flush()
+        m.tick(MIN_GAP_MS); m.geo.fix(48.86, 2.35); await flush()
         expect(m.sent).toHaveLength(2)
         expect(m.ls.status().state).toBe("sharing")
     })
@@ -179,7 +256,7 @@ describe("sharing live", () => {
         expect(m.geo.watchPosition).toHaveBeenCalledTimes(1)
     })
 
-    it("says when the server refuses, and backs off after 429", async () => {
+    it("says when the server refuses, and backs off after 429 — the position goes when allowed", async () => {
         m.ls.start()
         m.reply({ ok: false, status: 401 })
         m.geo.fix(48.85, 2.35); await flush()
@@ -188,11 +265,23 @@ describe("sharing live", () => {
         m.reply({ ok: false, status: 429, headers: { "retry-after": "30" } })
         m.tick(MIN_GAP_MS); m.geo.fix(48.851, 2.35); await flush()
         expect(m.sent).toHaveLength(2)
-        m.tick(MIN_GAP_MS); m.geo.fix(48.852, 2.35); await flush()   // inside Retry-After: not sent
-        expect(m.sent).toHaveLength(2)
         m.reply({ ok: true, status: 200 })
-        m.tick(30_000); m.geo.fix(48.853, 2.35); await flush()
+        m.tick(MIN_GAP_MS); m.geo.fix(48.852, 2.35); await flush()   // inside Retry-After: waits
+        expect(m.sent).toHaveLength(2)
+        m.tick(30_000); await flush()                                 // allowed again: the latest goes by itself
         expect(m.sent).toHaveLength(3)
+        expect(m.sent[2].lat).toBe(48.852)
+        expect(m.ls.status().state).toBe("sharing")
+    })
+
+    it("no connection: kept, and sent again a few seconds later", async () => {
+        m.ls.start()
+        const failing = vi.fn(async () => { throw new TypeError("offline") })
+        m.doFetch.mockImplementationOnce(failing)
+        m.geo.fix(48.85, 2.35); await flush()
+        expect(m.ls.status().state).toBe("error")
+        m.tick(5_000); await flush()
+        expect(m.sent.at(-1)).toMatchObject({ lat: 48.85 })
         expect(m.ls.status().state).toBe("sharing")
     })
 
@@ -208,8 +297,26 @@ describe("sharing live", () => {
         const posts = () => doFetch.mock.calls.filter(([, i]) => i?.method === "POST").length
         expect(posts()).toBe(1)
         release(); await flush()
-        slow.tick(MIN_GAP_MS); slow.geo.fix(48.87, 2.35); await flush()
-        expect(posts()).toBe(2)
+        expect(posts()).toBe(2)                                       // the waiting one, after the first answer
+    })
+
+    it("refused precise location: approximate only when chosen, labelled, marked ip, and a GPS fix replaces it", async () => {
+        const a = machine({ connection: async () => ({ lat: 47.37, lon: 8.55, label: "Zurich, Switzerland" }) })
+        a.ls.start()
+        a.geo.fail(1)
+        expect(a.ls.status()).toMatchObject({ state: "denied", canApproximate: true })
+        expect(a.sent).toHaveLength(0)                                // nothing sent by itself
+        await a.ls.approximate(); await flush()
+        expect(a.sent[0]).toMatchObject({ lat: 47.37, lon: 8.55, accuracy: 5000, source: "ip" })
+        expect(a.ls.status()).toMatchObject({ state: "approximate", approximate: true })
+        expect(a.ls.status().message).toMatch(/Approximate location — from your connection, city level \(Zurich, Switzerland\)/)
+        expect(a.geo.watches.size).toBe(0)                            // precise is not asked again by itself
+        a.ls.retry()                                                  // a tap: ask for precise again
+        expect(a.geo.watches.size).toBe(1)
+        a.tick(MIN_GAP_MS); a.geo.fix(48.85, 2.35, 8); await flush()
+        expect(a.sent.at(-1)).toMatchObject({ lat: 48.85, source: "gps" })
+        expect(a.ls.approx()).toBe(null)
+        expect(a.ls.status().state).toBe("sharing")
     })
 
     it("stop clears the watch and the switch", () => {

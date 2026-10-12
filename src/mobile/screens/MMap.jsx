@@ -19,7 +19,11 @@ import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
 import { drawVesselThreat } from "./MVesselThreat.jsx"
 import { myPosition, myTrail, subscribeMyPosition } from "../../location/liveShare.js"
-import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
+import { devicePosition, saveHere, connectionPosition } from "../../components/LocationPrompt.jsx"
+import { useStream } from "../../location/useLivePositions.js"
+import { freshness } from "../../location/glide.js"
+import { createLiveMarkers } from "../liveMarkers.js"
+import { getCurrentUser } from "../../state/authStore.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { PHONE_LAYERS, layerGroups, forgetAssets } from "../mapLayers.js"
 import EndangeredCountryChips, { useEndangeredCountries, useEndangeredActive } from "../../components/EndangeredCountryChips.jsx"
@@ -87,12 +91,22 @@ const planeIcon = (deg, mil) => L.divIcon({ className: "", iconSize: [18, 18], i
 const headingOf = (v) => (Number.isFinite(+v.heading) && +v.heading !== 511 ? +v.heading : Number.isFinite(+v.cog) ? +v.cog : Number.isFinite(+v.track) ? +v.track : 0)
 const zoomFor = (height) => Math.max(2, Math.min(12, Math.round(Math.log2(40_000_000 / Math.max(50_000, height || 2_000_000)) + 1)))
 const tsOf = (x) => Date.parse(x.published_at || x.posted_at || x.created_at || x.updated_at || "") || null
+// THE TEAM, LIVE (location/positionStream.js): a blue dot with the name and
+// how fresh it is; pale and dashed for a city-level fix (a connection's)
+const escHtml = (t) => String(t ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]))
+const teamIcon = (name, live, coarse) => L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11],
+    html: `<div class="m2-team${live ? " live" : ""}${coarse ? " coarse" : ""}" data-testid="team-dot"><i></i><span class="m2-team-label"><b>${escHtml(name)}</b><small data-fresh></small></span></div>` })
+const meIcon = (live) => L.divIcon({ className: "", iconSize: [18, 18],
+    html: `<div class="m2-me${live ? " live" : ""}" title="You" data-testid="me-dot" data-live="${live ? 1 : 0}"></div>` })
+const coarseFix = (p) => p?.source === "ip" || (p?.accuracy_m ?? 0) >= 1000
 
 export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true }) {
     const el = useRef(null)
     const map = useRef(null)
     const base = useRef(null)
     const group = useRef(null)
+    const meExtras = useRef(null)          // the accuracy ring and the way you came
+    const liveMarks = useRef(null)         // you, the team and the assets they move: gliding (../liveMarkers.js)
     const [baseKey, setBaseKey] = useState(() => getSettings()?.phoneMapDefault?.base || "dark")
     const [hours, setHours] = useState(48)
     const [floor, setFloor] = useState(() => getSettings()?.phoneMapDefault?.floor || "all")
@@ -139,6 +153,9 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         el.current._m2map = map.current            // reachable for browser checks
         group.current = L.layerGroup().addTo(map.current)
         tracks.current = L.layerGroup().addTo(map.current)
+        meExtras.current = L.layerGroup().addTo(map.current)
+        liveMarks.current = createLiveMarkers(L, L.layerGroup().addTo(map.current))
+        el.current._m2live = liveMarks.current        // reachable for browser checks
         setBounds(map.current.getBounds())
     }, [])
     // what the automatic watch found, as boxes (a finding's notification puts them on show)
@@ -200,6 +217,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const b = { south: bounds.getSouth(), north: bounds.getNorth(), west: bounds.getWest(), east: bounds.getEast() }
         const run = () => {
             for (const l of PHONE_LAYERS) {
+                if (l.key === "people") continue          // pushed live (the stream below), never polled here
                 if (!on[l.key] || zoom < (l.minZoom || 0)) { setFeats((f) => (f[l.key]?.length ? { ...f, [l.key]: [] } : f)); continue }
                 l.load({ bounds: b, zoom, hours }).then((x) => { if (live) setFeats((f) => ({ ...f, [l.key]: Array.isArray(x) ? x : [] })) }).catch(() => {})
             }
@@ -210,42 +228,79 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     }, [bounds, zoom, hours, on, active, epCountries, epActive])
 
     // THE BLUE DOT: where you are (location/liveShare.js), above everything —
-    // with the way you came while sharing, and the accuracy as a soft ring
+    // with the way you came while sharing, and the accuracy as a soft ring.
+    // The dot itself glides with the others (liveMarks, below).
     const [me, setMe] = useState(() => myPosition())
     useEffect(() => subscribeMyPosition(setMe), [])
-    const meMarker = useRef(null)
     useEffect(() => {
-        if (!map.current) return
-        meMarker.current?.remove()
-        meMarker.current = null
-        if (!me) return
-        const parts = []
-        if (me.live) {
-            const trail = myTrail().filter((p) => Date.now() - p.at < 6 * 3600_000).map((p) => [p.lat, p.lon])
-            if (trail.length > 1) parts.push(L.polyline(trail, { color: "#3b8cff", weight: 3, opacity: 0.7, interactive: false, className: "m2-me-trail" }))
-            if (me.accuracy > 20 && me.accuracy < 3000) parts.push(L.circle([me.lat, me.lon], { radius: me.accuracy, color: "#3b8cff", weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false }))
-        }
-        parts.push(L.marker([me.lat, me.lon], {
-            icon: L.divIcon({ className: "", html: `<div class="m2-me${me.live ? " live" : ""}" title="You" data-testid="me-dot" data-live="${me.live ? 1 : 0}"></div>`, iconSize: [18, 18] }),
-            keyboard: false, zIndexOffset: 1000, interactive: false,
-        }))
-        meMarker.current = L.layerGroup(parts).addTo(map.current)
+        const g = meExtras.current
+        if (!g) return
+        g.clearLayers()
+        if (!me?.live) return
+        const trail = myTrail().filter((p) => Date.now() - p.at < 6 * 3600_000).map((p) => [p.lat, p.lon])
+        if (trail.length > 1) L.polyline(trail, { color: "#3b8cff", weight: 3, opacity: 0.7, interactive: false, className: "m2-me-trail" }).addTo(g)
+        if (me.accuracy > 20 && me.accuracy < 3000) L.circle([me.lat, me.lon], { radius: me.accuracy, color: "#3b8cff", weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false }).addTo(g)
     }, [me])
-    // AN ASSET LINKED TO YOU MOVES WITH YOU: its pin is redrawn at each new
-    // position (mapLayers.loadAssets puts it at this device's live fix)
+
+    // THE TEAM AND THE ASSETS THEY MOVE, PUSHED (location/positionStream.js):
+    // each position arrives as it is sent, and the marker glides to it
+    const stream = useStream(!!active && (on.people || on.assets))
+    const uid = getCurrentUser()?.id
+    const team = on.people ? stream.people().filter((p) => String(p.user_id) !== String(uid)) : []
+    // an asset a phone moves: at that phone's latest position (yours: this
+    // device's own fix, fresher than any round trip)
+    const liveAssets = new Map()
+    if (on.assets) {
+        for (const f of feats.assets || []) {
+            const a = f.raw || {}
+            const linked = a.identifiers?.user_id
+            if (linked && me?.live && String(linked) === String(uid)) { liveAssets.set(a.id, { lat: me.lat, lon: me.lon, at: me.at, f }); continue }
+            const sp = stream.asset(a.id)
+            if (sp && sp.at >= (Date.parse(a.position?.as_of || "") || 0)) liveAssets.set(a.id, { lat: sp.lat, lon: sp.lon, at: sp.at, gapMs: sp.prevAt ? sp.at - sp.prevAt : undefined, f })
+        }
+    }
+    const liveKey = [...liveAssets.keys()].sort().join("|")
+    useEffect(() => {
+        const lm = liveMarks.current
+        if (!lm) return
+        const items = []
+        if (me) items.push({ key: "me", lat: me.lat, lon: me.lon, icon: meIcon(!!me.live), iconSig: `me|${!!me.live}`, z: 1000, at: me.live ? me.at : null })
+        const now = stream.serverNow()
+        for (const p of team) {
+            const live = freshness(p.at, now).live
+            items.push({ key: `person-${p.user_id}`, lat: p.lat, lon: p.lon, at: p.at, gapMs: p.prevAt ? p.at - p.prevAt : undefined,
+                         icon: teamIcon(p.name, live, coarseFix(p)), iconSig: `${p.name}|${live}|${coarseFix(p)}`, z: 900,
+                         onClick: () => setOpen({ ...p, headline: `${p.name} — ${live ? "live location" : "last shared location"}`, title: p.name,
+                                                  location: coarseFix(p) ? "city level, from their connection" : p.accuracy_m != null ? `within ${Math.round(p.accuracy_m)} m` : null,
+                                                  published_at: new Date(p.at).toISOString(), lat: p.lat, lon: p.lon }) })
+        }
+        for (const [id, x] of liveAssets) {
+            const f = x.f
+            const w = f.iconWidth || f.size || 16, h = f.iconHeight || f.size || 16
+            items.push({ key: `asset-${id}`, lat: x.lat, lon: x.lon, at: x.at, gapMs: x.gapMs, z: 800,
+                         icon: L.icon({ iconUrl: f.iconUri, iconSize: [w, h], iconAnchor: f.iconAnchor || [w / 2, h / 2] }), iconSig: f.iconUri,
+                         onClick: () => setOpen({ ...(f.raw || {}), headline: f.title, title: f.title, location: f.sub, lat: x.lat, lon: x.lon }) })
+        }
+        lm.sync(items)
+    }) // every render: the stream, your fix and the asset list all change it; sync() only moves what moved
+    // "live · 3 s ago", counted up between positions
+    useEffect(() => {
+        const id = setInterval(() => liveMarks.current?.refresh((e) => (e.at ? freshness(e.at, stream.serverNow()).label : null)), 1000)
+        return () => clearInterval(id)
+    }, [stream])
+    // AN ASSET LINKED TO YOU appears at once: the first live position creates
+    // it on the server, and the cached list does not have it yet
     useEffect(() => {
         if (!me?.live || !on.assets || !bounds) return
+        const mineListed = (feats.assets || []).some((f) => String(f.raw?.identifiers?.user_id || "") === String(uid))
+        if (mineListed) return
         const l = PHONE_LAYERS.find((x) => x.key === "assets")
         const b = { south: bounds.getSouth(), north: bounds.getNorth(), west: bounds.getWest(), east: bounds.getEast() }
         let live = true
-        l?.load({ bounds: b, zoom, hours }).then((x) => {
-            if (!live) return
-            const rows = Array.isArray(x) ? x : []
-            if (!rows.some((f) => f.raw?.position?.source === "your phone, live")) forgetAssets()   // not in the list yet: ask again next time
-            setFeats((f) => ({ ...f, assets: rows }))
-        }).catch(() => {})
+        forgetAssets()
+        l?.load({ bounds: b, zoom, hours }).then((x) => { if (live) setFeats((f) => ({ ...f, assets: Array.isArray(x) ? x : [] })) }).catch(() => {})
         return () => { live = false }
-    }, [me?.lat, me?.lon, me?.live]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [me?.live, Math.round((me?.at || 0) / 30_000)]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // DRAW: areas under lines under points, each with the desktop's own image
     useEffect(() => {
@@ -257,8 +312,9 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                                                severity_tier: f.severity || f.raw?.severity_tier, lat: f.lat ?? f.raw?.lat, lon: f.lon ?? f.raw?.lon })
         const order = { areas: 0, lines: 1, points: 2 }
         for (const l of [...PHONE_LAYERS].sort((a, c) => order[a.kind] - order[c.kind])) {
-            if (!on[l.key]) continue
+            if (!on[l.key] || l.key === "people") continue                // the team: live markers
             for (const f of feats[l.key] || []) {
+                if (l.key === "assets" && liveAssets.has(f.raw?.id)) continue    // moved by a phone: a live marker
                 if (l.kind === "areas") {
                     if (!f.rings) continue
                     const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, interactive: !!f.title, className: f.className })
@@ -290,7 +346,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 }
             }
         }
-    }, [feats, on, floor])
+    }, [feats, on, floor, liveKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // live tracks in view: after a pan (debounced) and every 15 s
     useEffect(() => {
@@ -369,8 +425,22 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             saveHere(p.lat, p.lon, p.label || null)
         } catch (e) {
             setNearMsg(e.message)
+            setNearApprox(e.kind === "denied")
             if (at) map.current?.setView([at.lat, at.lon], 9, { animate: true })
         }
+    }
+    // REFUSED: where the connection is, city level — only if chosen, and said
+    const [nearApprox, setNearApprox] = useState(false)
+    const goApprox = async (ev) => {
+        ev?.stopPropagation?.()
+        setNearApprox(false)
+        setNearMsg("Finding your connection's city…")
+        try {
+            const p = await connectionPosition()
+            map.current?.setView([p.lat, p.lon], 9, { animate: true })
+            saveHere(p.lat, p.lon, p.label ? `${p.label} (approximate)` : null, true)
+            setNearMsg(`Approximate location — from your connection, city level${p.label ? ` (${p.label})` : ""}. Not where this phone precisely is.`)
+        } catch (e) { setNearMsg(e.message) }
     }
     // SEARCH, like a tracker app's: places, ports, ships, signals (/api/search)
     const [q, setQ] = useState("")
@@ -401,7 +471,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     }
     const streams = usePoll(active ? "/api/telegram/live" : null, 60_000, (d) => arr(d?.streams))
     const [sheet, setSheet] = useState(null)        // "filters" | "time" | "live"
-    const countOf = (k) => k === "ships" ? ships.length : k === "aircraft" ? planes.length : (feats[k] || []).length
+    const countOf = (k) => k === "ships" ? ships.length : k === "aircraft" ? planes.length : k === "people" ? team.length : (feats[k] || []).length
     const tooFar = (l) => zoom < (l.minZoom || 0)
     const timeLabel = `${hours} h`
 
@@ -466,6 +536,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     <div role="alert" data-testid="near-me-msg" className="m2-card" onClick={() => setNearMsg(null)}
                          style={{ position: "absolute", left: 12, right: 12, bottom: "calc(env(safe-area-inset-bottom, 0px) + 150px)", zIndex: 600, padding: "10px 12px", fontSize: 13, lineHeight: 1.5 }}>
                         {nearMsg}
+                        {nearApprox && <button className="m2-chip" data-testid="near-me-approx" onClick={goApprox}
+                                               style={{ display: "block", marginTop: 8 }}>Use approximate location (your connection, city level)</button>}
                     </div>
                 )}
                 {/* the widgets, round and labelled, along the bottom */}

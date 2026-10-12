@@ -18,6 +18,7 @@ import { getSettings, subscribeSettings, updateSetting } from "../../state/setti
 import { setDnd } from "../../state/notificationStore.js"
 import LiveShareRow from "../../location/LiveShareRow.jsx"
 import TrackSketch from "../../location/TrackSketch.jsx"
+import LivePositionLine from "../../location/LivePositionLine.jsx"
 import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 import { locate } from "../../location/geo.js"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
@@ -63,9 +64,9 @@ function AssetDetail({ a, onClose, onShowOnMap }) {
                 {/* LINKED TO A PERSON: their phone moves it — where it is now and where it has been */}
                 <div className="m2-eyebrow" style={{ marginBottom: 6 }}>Where they have been</div>
                 <div className="m2-card" style={{ padding: 10, marginBottom: 12 }}>
-                    {(sit?.position || a.position) && <div className="m2-sub" data-testid="asset-live-source" style={{ marginBottom: 8 }}>
-                        Now: {(sit?.position || a.position).source}{(sit?.position || a.position).as_of ? ` · ${when((sit?.position || a.position).as_of)}` : ""}
-                    </div>}
+                    <div className="m2-sub" data-testid="asset-live-source" style={{ marginBottom: 8 }}>
+                        Now: <LivePositionLine assetId={a.id} fallback={sit?.position || a.position} />
+                    </div>
                     <TrackSketch assetId={a.id} />
                 </div>
             </>}

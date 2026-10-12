@@ -423,6 +423,8 @@ import routers.graph as _graph_router
 app.include_router(_graph_router.router)
 app.include_router(_tile_proxy_router.router)
 app.include_router(_my_assets_router.router)
+import position_stream as _position_stream                  # live positions pushed to viewers (SSE)
+app.include_router(_position_stream.router)
 try:
     # the briefing engine (briefing/): profile → evidence → research → Opus → PDF.
     # Optional at start: a missing dependency (matplotlib, PyMuPDF) turns

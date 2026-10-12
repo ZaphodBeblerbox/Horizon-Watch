@@ -31,6 +31,7 @@ import GlobeEndangeredPlacesLayer from "../globe/GlobeEndangeredPlacesLayer.jsx"
 import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
 import GlobeAssetsLayer          from "../globe/GlobeAssetsLayer.jsx"
 import GlobeMeLayer              from "../globe/GlobeMeLayer.jsx"
+import GlobeTeamLayer            from "../globe/GlobeTeamLayer.jsx"
 import GlobeVesselThreatLayer    from "../globe/GlobeVesselThreatLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
@@ -1229,6 +1230,8 @@ export default function GlobeView({
                 {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}
                 <GlobeAoisLayer enabled={aoisEnabled} />
                 <GlobeAssetsLayer enabled={assetsEnabled} />
+                {/* the team, pushed live and gliding (location/positionStream.js) */}
+                <GlobeTeamLayer enabled={assetsEnabled} />
                 <GlobeMeLayer />
                 <GlobeVesselThreatLayer />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />

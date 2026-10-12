@@ -5,13 +5,17 @@
  * symbol on the register's gold, ringed in the colour of how exposed it is
  * right now (high, elevated, low, quiet). Close in, its name shows and its
  * watch radius is drawn on the ground. A click opens it in the register.
- * Vessels and aircraft are where the live feeds last saw them.
+ * Vessels and aircraft are where the live feeds last saw them; an asset a
+ * phone moves (a person, the car they are in) is pushed with each position
+ * (location/positionStream.js) and glides there.
  */
 import { useEffect, useState } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, DistanceDisplayCondition, HeightReference, LabelStyle, VerticalOrigin, Cartesian2, NearFarScalar } from "cesium"
 import API_BASE from "../apiBase.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { useStream } from "../location/useLivePositions.js"
+import { useGlidingPosition } from "./useGlidingPosition.js"
 
 const GLYPH = {
     Vessels: "M3 15h18l-2.5 4.5H5.5zM6 15V9h7l3 6M9 9V5.5h2.5V9",
@@ -57,26 +61,43 @@ export default function GlobeAssetsLayer({ enabled = true }) {
         assets.forEach((a) => setEntity(`asset-${a.id}`, "owned_asset", a))
         return () => assets.forEach((a) => deleteEntity(`asset-${a.id}`))
     }, [assets])
+    // the stream is read only when an asset here is moved by a phone
+    const stream = useStream(enabled && assets.some((a) => a.identifiers?.user_id))
     if (!enabled || !assets.length) return null
     return (
         <>
             {assets.map((a) => {
-                const p = Cartesian3.fromDegrees(a.position.lon, a.position.lat, 0)
-                const ring = Color.fromCssColorString(RING[a.exposure] || RING.unknown)
-                return [
-                    <Entity key={a.id} id={`asset-${a.id}`} position={p}
-                        billboard={{ image: icon(a.group, a.exposure), width: 34, height: 40, verticalOrigin: VerticalOrigin.BOTTOM,
-                                     heightReference: HeightReference.CLAMP_TO_GROUND, eyeOffset: new Cartesian3(0, 0, -120),
-                                     scaleByDistance: new NearFarScalar(2e4, 1.15, 8e6, 0.7) }}
-                        label={{ text: a.name, font: "600 13px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
-                                 style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 6),
-                                 heightReference: HeightReference.CLAMP_TO_GROUND, distanceDisplayCondition: new DistanceDisplayCondition(0, 600_000) }} />,
-                    <Entity key={`${a.id}-r`} position={p}
-                        ellipse={{ semiMajorAxis: a.radius_km * 1000, semiMinorAxis: a.radius_km * 1000, fill: true,
-                                   material: ring.withAlpha(0.06), outline: true, outlineColor: ring.withAlpha(0.55), height: 0,
-                                   distanceDisplayCondition: new DistanceDisplayCondition(0, a.radius_km * 1000 * 14) }} />,
-                ]
+                const sp = a.identifiers?.user_id ? stream.asset(a.id) : null
+                const fresher = sp && sp.at >= (Date.parse(a.position?.as_of || "") || 0)
+                // ONE component whatever the source: swapping component types when the
+                // first live position arrived re-added the entity id before the old one was
+                // gone ("An entity with id asset-… already exists", Cesium DeveloperError)
+                return <LivePin key={a.id} a={a} lat={fresher ? sp.lat : a.position.lat} lon={fresher ? sp.lon : a.position.lon}
+                                gapMs={fresher && sp.prevAt ? sp.at - sp.prevAt : undefined} />
             })}
+        </>
+    )
+}
+
+function LivePin({ a, lat, lon, gapMs }) {
+    return <Pin a={a} position={useGlidingPosition(lat, lon, gapMs)} />
+}
+
+function Pin({ a, position: p }) {
+    const ring = Color.fromCssColorString(RING[a.exposure] || RING.unknown)
+    return (
+        <>
+            <Entity id={`asset-${a.id}`} position={p}
+                billboard={{ image: icon(a.group, a.exposure), width: 34, height: 40, verticalOrigin: VerticalOrigin.BOTTOM,
+                             heightReference: HeightReference.CLAMP_TO_GROUND, eyeOffset: new Cartesian3(0, 0, -120),
+                             scaleByDistance: new NearFarScalar(2e4, 1.15, 8e6, 0.7) }}
+                label={{ text: a.name, font: "600 13px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
+                         style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 6),
+                         heightReference: HeightReference.CLAMP_TO_GROUND, distanceDisplayCondition: new DistanceDisplayCondition(0, 600_000) }} />
+            <Entity position={p}
+                ellipse={{ semiMajorAxis: a.radius_km * 1000, semiMinorAxis: a.radius_km * 1000, fill: true,
+                           material: ring.withAlpha(0.06), outline: true, outlineColor: ring.withAlpha(0.55), height: 0,
+                           distanceDisplayCondition: new DistanceDisplayCondition(0, a.radius_km * 1000 * 14) }} />
         </>
     )
 }

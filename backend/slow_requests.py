@@ -9,11 +9,14 @@ class SlowRequestLog:
     a stall inside FastAPI's response encoding has none of our frames on the
     stack — this names the endpoint. Pure ASGI, so it costs a clock read.
     """
+    # a stream is open for minutes by design: not a slow request
+    STREAMS = frozenset({"/api/positions/stream"})
+
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") != "http":
+        if scope.get("type") != "http" or scope.get("path") in self.STREAMS:
             return await self.app(scope, receive, send)
         import time as _t
         t0 = _t.monotonic()
