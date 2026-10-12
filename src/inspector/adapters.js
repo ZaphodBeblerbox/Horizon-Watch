@@ -29,7 +29,8 @@ import { resolveSanctionsStatus } from "../globe/entityIcons.js"
 import { vesselShipType, acClassify } from "../globe/iconUtils.js"
 import { extentOf } from "../utils/extent.js"
 import { fmtWhen, whenLabel } from "../utils/formatTime.js"
-import { callLines, listedNote, KIND_LABEL as ENDANGERED_KIND } from "../globe/endangeredPlaces.js"
+import { callLines, listedNote, nearbyLine, KIND_LABEL as ENDANGERED_KIND } from "../globe/endangeredPlaces.js"
+import { modelLabelOf } from "../globe/placeModels.js"
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -1267,7 +1268,10 @@ export function adaptEndangeredPlace(data = {}) {
     const attributes = compact([
         attr("Status", data.status || null),
         ...lines.map((l, i) => attr(lines.length > 1 ? `Call ${i + 1}` : "Call", l)),
+        // no call here, but one within reach ("Active only", backend nearby_calls)
+        data.active === "nearby" ? attr("Nearby call", nearbyLine(data)) : null,
         !calls.length ? attr("Why it is listed", listedNote(data)) : null,
+        attr("What stands there", modelLabelOf(data)),
         attr("Operator", data.operator || null),
         attr("Place", [data.kind_label || ENDANGERED_KIND[data.kind], where].filter(Boolean).join(" · ") || null),
         attr("Address", data.address || null),
@@ -1283,7 +1287,7 @@ export function adaptEndangeredPlace(data = {}) {
     const french = !data.country || data.country === "FR"
     const levelWord = data.alarm === "red" ? (french ? "Roadblock, convoy or picket within 48 h" : "Blockade or supply strike within 48 h")
         : data.alarm === "amber" ? (calls.some((c) => c.basis === "announced") ? "Notified or proclaimed" : "Call to act")
-            : "Listed, no call"
+            : data.active === "nearby" ? "Call nearby" : "Listed, no call"
     return {
         identity: {
             title: data.name || "Endangered place",

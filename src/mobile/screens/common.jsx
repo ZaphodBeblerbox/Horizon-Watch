@@ -14,6 +14,7 @@ import { VesselThreatBlock } from "./MVesselThreat.jsx"
 import { isVesselThreatAlert } from "../../globe/vesselThreat.js"
 import FindingPreview from "../../components/FindingPreview.jsx"
 import { findingZoneOf, isFindingAlert, showFindings } from "../../lib/findings.js"
+import PlaceModel from "../../assets/PlaceModel.jsx"
 
 export const SEV = { critical: "var(--red, #e5484d)", significant: "var(--amber, #f5a623)", high: "var(--amber, #f5a623)",
     elevated: "var(--amber, #f5a623)", moderate: "#7aa7ff", medium: "#7aa7ff", low: "var(--txt4, #6b7280)" }
@@ -80,6 +81,8 @@ export function SignalSheet({ s, onClose, onShowOnMap }) {
             </div>
             <h2 style={{ margin: "6px 0 4px", fontSize: 19, lineHeight: 1.3 }}>{title}</h2>
             {where && <div className="m2-sub" style={{ marginBottom: 10 }}>{where}</div>}
+            {/* AN ENDANGERED PLACE: its model turning slowly (never on the map; three.js loads only here) */}
+            {s.kind === "endangered_place" && <div style={{ marginBottom: 12 }}><PlaceModel key={s.id} place={s} height={210} /></div>}
             {(s.media === "video" || s.thumb_url) && s.channel && <div style={{ margin: "0 -14px 10px" }}><TelegramMedia post={s} maxHeight="46vh" radius="0" /></div>}
             {xs.map((u) => <XPost key={u} url={u} />)}
             {(s.summary_en || s.context || s.summary || s.why || s.detail) && (

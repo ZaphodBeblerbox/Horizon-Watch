@@ -111,6 +111,11 @@ CREATE TABLE IF NOT EXISTS owned_asset_track (
     asset_id TEXT NOT NULL, at TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, accuracy_m REAL
 );
 CREATE INDEX IF NOT EXISTS ix_owned_asset_track ON owned_asset_track (asset_id, at);
+CREATE TABLE IF NOT EXISTS user_positions (
+    user_id TEXT NOT NULL, at TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL,
+    accuracy_m REAL, source TEXT       -- 'gps' (the device) or 'ip' (the connection, city level)
+);
+CREATE INDEX IF NOT EXISTS ix_user_positions ON user_positions (user_id, at);
 CREATE TABLE IF NOT EXISTS owned_asset_briefs (
     asset_id    TEXT NOT NULL,
     signals_key TEXT NOT NULL,
@@ -129,11 +134,15 @@ def _db_path() -> str:
         return os.path.join(HERE, "data", "akili.db")
 
 
-def _con():
-    con = sqlite3.connect(_db_path(), timeout=60)
+def _con(timeout: float = 60):
+    con = sqlite3.connect(_db_path(), timeout=timeout)
     con.executescript(DDL)
-    if "address" not in {r[1] for r in con.execute("PRAGMA table_info(owned_assets)")}:
-        con.execute("ALTER TABLE owned_assets ADD COLUMN address TEXT")
+    cols = {r[1] for r in con.execute("PRAGMA table_info(owned_assets)")}
+    for col, typ in (("address", "TEXT"), ("pos_accuracy_m", "REAL"), ("pos_source", "TEXT")):
+        if col not in cols:
+            con.execute(f"ALTER TABLE owned_assets ADD COLUMN {col} {typ}")
+    if "source" not in {r[1] for r in con.execute("PRAGMA table_info(owned_asset_track)")}:
+        con.execute("ALTER TABLE owned_asset_track ADD COLUMN source TEXT")
     con.row_factory = sqlite3.Row
     return con
 
@@ -262,14 +271,47 @@ def delete(asset_id: str, user_id: str) -> bool:
 
 
 # ── people who share where they are ──────────────────────────────────────
-# A team member who turns on "Share my live location" on their phone sends
-# its position while the app is open (src/location/liveShare.js). Every
-# person asset linked to them (identifiers.user_id) moves there; each move
-# is kept for seven days as a trail; the assessment of what is near them is
-# redone at once (asset_watch.invalidate). Nothing is sent without that
-# switch, and turning it off stops it.
+# A team member who turns on "Share my live location" sends their position
+# while the app is open (src/location/liveShare.js). Every position is kept
+# per user with its time (user_positions — the history, not only the
+# latest), every asset linked to them (identifiers.user_id, any kind) moves
+# there and keeps a trail, and the assessment of what is near them is redone
+# at once (asset_watch.invalidate). Nothing is sent without that switch.
+#
+# TWO KINDS OF FIX (2026-10-12). The phone sends its device position (GPS,
+# metres); the desktop app cannot read one (its web view answers no location
+# request) and sends where its connection is — city level, 5 km, and through
+# a VPN somewhere else entirely. In production every one of the owner's 129
+# trail points was such a 5 km connection fix, sent every ten minutes, so a
+# phone's GPS fix would have been overwritten within ten minutes by the
+# laptop's. A coarse fix now never moves anyone while a precise one is
+# fresh, and the same coarse place is not written to the trail again.
 TRACK_KEEP_DAYS = 7
+POSITIONS_KEEP_DAYS = 30
 LIVE_FRESH_S = 15 * 60
+COARSE_M = 1000                 # worse than this is a connection fix, not a device's
+PRECISE_HOLD_S = 30 * 60        # a precise fix this fresh outranks any coarse one
+MIN_INTERVAL_S = 5              # one accepted position per user per this many seconds
+LIVE_DB_TIMEOUT_S = 5           # a locked database answers "busy", never holds a request for a minute
+
+
+class TooSoon(Exception):
+    """A position arrived less than MIN_INTERVAL_S after the last one."""
+    def __init__(self, retry_after: float):
+        super().__init__(f"one position every {MIN_INTERVAL_S} s")
+        self.retry_after = max(1, int(math.ceil(retry_after)))
+
+
+def is_coarse(accuracy_m: float | None, source: str | None) -> bool:
+    return (source or "").lower() == "ip" or (accuracy_m is not None and accuracy_m >= COARSE_M)
+
+
+def _ts(v) -> _dt.datetime | None:
+    try:
+        t = _dt.datetime.fromisoformat(str(v))
+        return t if t.tzinfo else t.replace(tzinfo=_dt.timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
 def linked_to(user_id: str) -> list[dict]:
@@ -280,29 +322,140 @@ def linked_to(user_id: str) -> list[dict]:
     return [_row(r) for r in rows]
 
 
-def live_position(user_id: str, lat: float, lon: float, accuracy_m: float | None = None) -> list[dict]:
-    """Move every asset linked to this user — a person, or the vehicle or
-    vessel they are with (identifiers.user_id, any kind); returns them."""
-    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+def _check(lat: float, lon: float, accuracy_m: float | None):
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180) or not (math.isfinite(lat) and math.isfinite(lon)):
         raise ValueError("position out of range")
-    now = _now()
-    con = _con()
+    if accuracy_m is not None and (not math.isfinite(accuracy_m) or accuracy_m < 0):
+        raise ValueError("accuracy must be a positive number of metres")
+
+
+def _move_linked(con, user_id: str, lat: float, lon: float, accuracy_m, source, now: _dt.datetime) -> list[dict]:
+    """Move every asset linked to this user (see the note above on coarse
+    fixes); returns the ones that moved."""
+    coarse = is_coarse(accuracy_m, source)
+    iso = now.isoformat()
+    hold = (now - _dt.timedelta(seconds=PRECISE_HOLD_S)).isoformat()
+    moved = []
     rows = con.execute("SELECT id, owner_id FROM owned_assets WHERE json_extract(identifiers, '$.user_id') = ?",
                        (str(user_id),)).fetchall()
     for r in rows:
-        con.execute("UPDATE owned_assets SET lat=?, lon=?, updated_at=? WHERE id=?", (lat, lon, now, r["id"]))
-        con.execute("INSERT INTO owned_asset_track (asset_id, at, lat, lon, accuracy_m) VALUES (?,?,?,?,?)",
-                    (r["id"], now, lat, lon, accuracy_m))
-    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=TRACK_KEEP_DAYS)).isoformat()
-    con.execute("DELETE FROM owned_asset_track WHERE at < ?", (cutoff,))
-    con.commit(); con.close()
-    return [{"id": r["id"], "owner_id": r["owner_id"]} for r in rows]
+        if coarse:
+            if con.execute("SELECT 1 FROM owned_asset_track WHERE asset_id=? AND at >= ? AND accuracy_m IS NOT NULL "
+                           "AND accuracy_m < ? AND COALESCE(source,'gps') != 'ip' LIMIT 1", (r[0], hold, COARSE_M)).fetchone():
+                continue                       # the phone's fix is fresher and better
+        last = con.execute("SELECT at, lat, lon, accuracy_m FROM owned_asset_track WHERE asset_id=? ORDER BY at DESC LIMIT 1",
+                           (r[0],)).fetchone()
+        same_coarse = (coarse and last is not None and last[3] is not None and last[3] >= COARSE_M
+                       and km(last[1], last[2], lat, lon) < 1.0)
+        con.execute("UPDATE owned_assets SET lat=?, lon=?, updated_at=?, pos_accuracy_m=?, pos_source=? WHERE id=?",
+                    (lat, lon, iso, accuracy_m, source, r[0]))
+        if not same_coarse:                    # the same city-level place is not a new point on the trail
+            con.execute("INSERT INTO owned_asset_track (asset_id, at, lat, lon, accuracy_m, source) VALUES (?,?,?,?,?,?)",
+                        (r[0], iso, lat, lon, accuracy_m, source))
+        moved.append({"id": r[0], "owner_id": r[1]})
+    return moved
+
+
+_last_prune = 0.0
+
+
+def _prune(con, now: _dt.datetime) -> None:
+    global _last_prune
+    import time as _time
+    if _time.time() - _last_prune < 3600:
+        return
+    _last_prune = _time.time()
+    con.execute("DELETE FROM owned_asset_track WHERE at < ?", ((now - _dt.timedelta(days=TRACK_KEEP_DAYS)).isoformat(),))
+    con.execute("DELETE FROM user_positions WHERE at < ?", ((now - _dt.timedelta(days=POSITIONS_KEEP_DAYS)).isoformat(),))
+
+
+def live_position(user_id: str, lat: float, lon: float, accuracy_m: float | None = None,
+                  source: str | None = None, now: _dt.datetime | None = None) -> list[dict]:
+    """Move every asset linked to this user — a person, or the vehicle or
+    vessel they are with (identifiers.user_id, any kind); returns them."""
+    _check(lat, lon, accuracy_m)
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    con = _con(LIVE_DB_TIMEOUT_S)
+    try:
+        moved = _move_linked(con, user_id, lat, lon, accuracy_m, source, now)
+        _prune(con, now)
+        con.commit()
+    finally:
+        con.close()
+    return moved
+
+
+def record_position(user_id: str, lat: float, lon: float, accuracy_m: float | None = None,
+                    source: str | None = "gps", now: _dt.datetime | None = None) -> dict:
+    """One position from this user's device: kept in their history, and
+    the assets linked to them moved. Raises TooSoon inside MIN_INTERVAL_S of
+    the last one, ValueError on a bad position.
+    -> {stored, coarse, held, moved: [{id, owner_id}]}"""
+    _check(lat, lon, accuracy_m)
+    source = "ip" if (source or "").lower() == "ip" else "gps"
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    coarse = is_coarse(accuracy_m, source)
+    con = _con(LIVE_DB_TIMEOUT_S)
+    try:
+        last = con.execute("SELECT at FROM user_positions WHERE user_id=? ORDER BY at DESC LIMIT 1", (str(user_id),)).fetchone()
+        lt = _ts(last[0]) if last else None
+        if lt and (now - lt).total_seconds() < MIN_INTERVAL_S:
+            raise TooSoon(MIN_INTERVAL_S - (now - lt).total_seconds())
+        held = False
+        if coarse:
+            hold = (now - _dt.timedelta(seconds=PRECISE_HOLD_S)).isoformat()
+            held = con.execute("SELECT 1 FROM user_positions WHERE user_id=? AND at >= ? AND source != 'ip' "
+                               "AND (accuracy_m IS NULL OR accuracy_m < ?) LIMIT 1", (str(user_id), hold, COARSE_M)).fetchone() is not None
+        moved = []
+        if not held:
+            con.execute("INSERT INTO user_positions (user_id, at, lat, lon, accuracy_m, source) VALUES (?,?,?,?,?,?)",
+                        (str(user_id), now.isoformat(), lat, lon, accuracy_m, source))
+            moved = _move_linked(con, user_id, lat, lon, accuracy_m, source, now)
+        _prune(con, now)
+        con.commit()
+    finally:
+        con.close()
+    return {"stored": not held, "coarse": coarse, "held": held, "moved": moved}
+
+
+def positions(user_id: str, hours: int = 24) -> list[dict]:
+    """This user's own history, oldest first."""
+    since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
+    con = _con()
+    rows = con.execute("SELECT at, lat, lon, accuracy_m, source FROM user_positions WHERE user_id=? AND at >= ? ORDER BY at",
+                       (str(user_id), since)).fetchall()
+    con.close()
+    return [dict(r) for r in rows]
+
+
+def people(hours: int = 24, now: _dt.datetime | None = None) -> list[dict]:
+    """THE LOCATION SIGNAL: each person who shared a position in the last
+    `hours`, at their latest — {user_id, lat, lon, at, accuracy_m, source,
+    live, assets: [asset ids linked to them]}. Shared with the team, as the
+    switch says."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    since = (now - _dt.timedelta(hours=hours)).isoformat()
+    con = _con()
+    rows = con.execute(
+        "SELECT p.user_id, p.at, p.lat, p.lon, p.accuracy_m, p.source FROM user_positions p "
+        "JOIN (SELECT user_id, MAX(at) AS at FROM user_positions WHERE at >= ? GROUP BY user_id) m "
+        "ON m.user_id = p.user_id AND m.at = p.at", (since,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        t = _ts(d["at"])
+        d["live"] = bool(t and (now - t).total_seconds() <= LIVE_FRESH_S)
+        d["assets"] = [a[0] for a in con.execute(
+            "SELECT id FROM owned_assets WHERE json_extract(identifiers, '$.user_id') = ?", (d["user_id"],))]
+        out.append(d)
+    con.close()
+    return sorted(out, key=lambda d: d["at"], reverse=True)
 
 
 def track(asset_id: str, hours: int = 24) -> list[dict]:
     since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
     con = _con()
-    rows = con.execute("SELECT at, lat, lon, accuracy_m FROM owned_asset_track WHERE asset_id=? AND at >= ? ORDER BY at",
+    rows = con.execute("SELECT at, lat, lon, accuracy_m, source FROM owned_asset_track WHERE asset_id=? AND at >= ? ORDER BY at",
                        (asset_id, since)).fetchall()
     con.close()
     return [dict(r) for r in rows]
@@ -340,8 +493,13 @@ def position(asset: dict, live_vessel=None, live_aircraft=None) -> dict | None:
             age = (_dt.datetime.now(_dt.timezone.utc) - _dt.datetime.fromisoformat(str(asset.get("updated_at")))).total_seconds()
         except (TypeError, ValueError):
             age = 1e9
-        return {"lat": asset["lat"], "lon": asset["lon"], "as_of": asset.get("updated_at"),
-                "source": "their phone, live" if age <= LIVE_FRESH_S else "their phone, last shared"}
+        acc = asset.get("pos_accuracy_m")
+        if is_coarse(acc, asset.get("pos_source")):
+            src = "their connection, city level" + ("" if age <= LIVE_FRESH_S else ", last shared")
+        else:
+            src = "their phone, live" if age <= LIVE_FRESH_S else "their phone, last shared"
+        return {"lat": asset["lat"], "lon": asset["lon"], "as_of": asset.get("updated_at"), "source": src,
+                "accuracy_m": acc, "live": age <= LIVE_FRESH_S}
     if asset.get("lat") is not None and asset.get("lon") is not None:
         moves = KINDS.get(asset["kind"], {}).get("moves")
         return {"lat": asset["lat"], "lon": asset["lon"], "as_of": asset.get("updated_at"),

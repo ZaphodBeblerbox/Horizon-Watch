@@ -60,6 +60,8 @@ import threading
 import urllib.error
 import urllib.request
 
+import place_types
+
 # ── sources ──────────────────────────────────────────────────────────────
 
 GJ_SITE = "https://17octobregiletjaune.net"
@@ -720,7 +722,9 @@ def annotate(p: dict, now: _dt.datetime | None = None) -> dict:
             break
         alarm = "amber"
     nxt = min((call_start(c) for c in live if call_start(c)), default=None)
+    mt = place_types.model_type(p)
     q = {**{k: v for k, v in p.items() if k != "near_km"}, "status": status, "alarm": alarm,
+         "model_type": mt, "model_label": place_types.model_label(mt),
          "next_at": nxt.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if nxt else None,
          "calls": [{**{k: v for k, v in c.items() if k not in ("key", "first_seen")
                        and not (k == "source_url" and v == p.get("source_url"))},
@@ -748,12 +752,91 @@ def load_places() -> dict:
     return _places_cache["data"]
 
 
+# ── "active only": called here, or a call close by ─────────────────────
+# The owner (2026-10-12): "show only the places that are actively endangered
+# — places we know were called up and also places where protests were called
+# for in proximity." A place is ACTIVE when it has a call today or to come
+# ("called"), or when a place with such a call — a gathering, an assembly, a
+# strike picket, any called action — stands within NEARBY_KM of it
+# ("nearby"). Positions that are only a city or region centre (`approx`,
+# or a place that is just a town's name) neither count as a call point nor
+# get a nearby call: 2 km from a province's centroid means nothing.
+NEARBY_KM = float(os.getenv("ENDANGERED_NEARBY_KM", "2.0") or 2.0)
+NEARBY_MAX_KM = 25.0
+LIVE_STATUSES = ("call active today", "upcoming")
+
+
+def _hav_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    import math
+    r = math.pi / 180
+    dp, dl = (lat2 - lat1) * r, (lon2 - lon1) * r
+    h = math.sin(dp / 2) ** 2 + math.cos(lat1 * r) * math.cos(lat2 * r) * math.sin(dl / 2) ** 2
+    return 12742.0 * math.asin(min(1.0, math.sqrt(h)))
+
+
+def _precise(p: dict) -> bool:
+    """A real point: not a city or region centre, not a whole town named
+    as the place ("Paris", "Central London" — model_type city)."""
+    return (not p.get("approx") and p.get("kind") != "strike" and p.get("model_type") != "city"
+            and isinstance(p.get("lat"), (int, float)) and isinstance(p.get("lon"), (int, float)))
+
+
+def nearby_calls(places: list[dict], radius_km: float = NEARBY_KM, now: _dt.datetime | None = None) -> dict:
+    """{place id: [{id, name, distance_km, ...}, nearest first]} — for every
+    place, the OTHER places within radius_km holding a live call. `places`
+    are annotated (status known). A grid of cells about radius_km wide, so
+    each place looks at nine cells, not at every call point."""
+    import math
+    radius_km = max(0.05, min(float(radius_km), NEARBY_MAX_KM))
+    cell = radius_km / 111.0                            # degrees of latitude per cell
+    grid: dict[tuple, list] = {}
+    for c in places:
+        if c.get("status") in LIVE_STATUSES and _precise(c):
+            grid.setdefault((math.floor(c["lat"] / cell), math.floor(c["lon"] / cell)), []).append(c)
+    out: dict = {}
+    if not grid:
+        return out
+    for p in places:
+        if not _precise(p):
+            continue
+        i = math.floor(p["lat"] / cell)
+        # a degree of longitude shrinks with latitude: widen the search in cells
+        span = max(1, math.ceil(1 / max(0.05, math.cos(math.radians(p["lat"])))))
+        j0 = math.floor(p["lon"] / cell)
+        hits = []
+        for di in (-1, 0, 1):
+            for dj in range(-span, span + 1):
+                for c in grid.get((i + di, j0 + dj), ()):
+                    if c["id"] == p["id"]:
+                        continue
+                    d = _hav_km(p["lat"], p["lon"], c["lat"], c["lon"])
+                    if d <= radius_km:
+                        hits.append((d, c))
+        if hits:
+            hits.sort(key=lambda x: x[0])
+            out[p["id"]] = [_nearby_row(c, d, now) for d, c in hits]
+    return out
+
+
+def _nearby_row(c: dict, d: float, now: _dt.datetime | None = None) -> dict:
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    live = sorted((x for x in c.get("calls") or [] if (call_end(x) or now) >= now),
+                  key=lambda x: call_start(x) or now)
+    first = live[0] if live else {}
+    return {"id": c["id"], "name": c.get("name"), "kind_label": c.get("kind_label"), "city": c.get("city"),
+            "status": c.get("status"), "distance_km": round(d, 2), "next_at": c.get("next_at"),
+            "call": first.get("label_en"), "line": first.get("line"), "lat": c["lat"], "lon": c["lon"]}
+
+
 def query(bbox: str | None = None, status: str | None = None, kind: str | None = None,
-          now: _dt.datetime | None = None, data: dict | None = None, country: str | None = None) -> dict:
+          now: _dt.datetime | None = None, data: dict | None = None, country: str | None = None,
+          active: bool = False, radius_km: float | None = None) -> dict:
     """GET /api/endangered-places: annotated places, optionally in a bbox
     (south,west,north,east), of some statuses / kinds / countries (ISO2)
     (comma lists). `countries` counts every country, whatever the filter —
-    the layer's country chips."""
+    the layer's country chips. active: only places with a call today or to
+    come, or within radius_km (default NEARBY_KM) of one — those carry
+    `active` ("called" / "nearby") and `nearby_calls`."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     d = data if data is not None else load_places()
     box = None
@@ -778,11 +861,21 @@ def query(bbox: str | None = None, status: str | None = None, kind: str | None =
             merged[pid]["calls"] += [c for c in p.get("calls") or [] if (c.get("kind"), c.get("date"), c.get("time")) not in seen]
         else:
             merged[pid] = {**p, "calls": list(p.get("calls") or [])}
-    for p in merged.values():
+    # Every place's calls near it, from every place (a call across a
+    # border or outside the bbox still counts; the country chips count the
+    # active places even for kind=none). ~80 ms for 1,600 places.
+    radius = NEARBY_KM if radius_km is None else max(0.05, min(float(radius_km), NEARBY_MAX_KM))
+    annotated = {pid: annotate(p, now) for pid, p in merged.items()}
+    near = nearby_calls(list(annotated.values()), radius, now)
+    for pid, p in merged.items():
         cc = p.get("country") or "FR"
-        row = by_cc.setdefault(cc, {"code": cc, "name": p.get("country_name") or cc, "places": 0, "with_calls": 0})
+        row = by_cc.setdefault(cc, {"code": cc, "name": p.get("country_name") or cc, "places": 0, "with_calls": 0,
+                                    "active": 0})
         row["places"] += 1
         row["with_calls"] += bool(p["calls"])
+        a = annotated[pid]
+        is_active = a["status"] in LIVE_STATUSES or pid in near
+        row["active"] += is_active
         if want_cc and cc not in want_cc:
             continue
         if box and not (box[0] <= p["lat"] <= box[2] and (box[1] <= p["lon"] <= box[3] if box[1] <= box[3]
@@ -790,20 +883,29 @@ def query(bbox: str | None = None, status: str | None = None, kind: str | None =
             continue
         if want_kind and p["kind"] not in want_kind:
             continue
-        q = annotate(p, now)
+        if active and not is_active:
+            continue
+        q = a
         if want_status and q["status"] not in want_status:
             continue
+        if pid in near:
+            q = {**q, "nearby_calls": near[pid][:5], "nearby_count": len(near[pid])}
+        if is_active:
+            q = {**q, "active": "called" if q["status"] in LIVE_STATUSES else "nearby"}
         out.append({k: v for k, v in q.items() if v is not None and v != []} | {"calls": q["calls"]})
     rank = {"red": 0, "amber": 1, "grey": 2}
     out.sort(key=lambda p: (rank[p["alarm"]], p.get("next_at") or "9999", p["name"]))
     counts = {"places": len(out), "red": sum(1 for p in out if p["alarm"] == "red"),
               "amber": sum(1 for p in out if p["alarm"] == "amber"),
               "grey": sum(1 for p in out if p["alarm"] == "grey"),
-              "calls": sum(len(p["calls"]) for p in out)}
+              "calls": sum(len(p["calls"]) for p in out),
+              "active": sum(1 for p in out if p.get("active")),
+              "nearby": sum(1 for p in out if p.get("active") == "nearby")}
     return {"built_at": d.get("built_at"), "action_date": d.get("action_date"), "sources": d.get("sources") or [],
             "counts": counts, "stats": d.get("stats") or {}, "places": out,
             "countries": sorted(by_cc.values(), key=lambda r: (-r["places"], r["name"])),
-            "calls_within_7_days": calls_within(d, now, 7)}
+            "calls_within_7_days": calls_within(d, now, 7),
+            "active_only": bool(active), "nearby_km": radius}
 
 
 def calls_within(d: dict, now: _dt.datetime, days: int) -> bool:

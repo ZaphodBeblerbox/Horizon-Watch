@@ -18,10 +18,11 @@ import { useMine, usePoll, arr } from "../useMine.js"
 import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
 import { drawVesselThreat } from "./MVesselThreat.jsx"
-import { myPosition, subscribeMyPosition } from "../../location/liveShare.js"
+import { myPosition, myTrail, subscribeMyPosition } from "../../location/liveShare.js"
+import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
-import { PHONE_LAYERS, layerGroups } from "../mapLayers.js"
-import EndangeredCountryChips, { useEndangeredCountries } from "../../components/EndangeredCountryChips.jsx"
+import { PHONE_LAYERS, layerGroups, forgetAssets } from "../mapLayers.js"
+import EndangeredCountryChips, { useEndangeredCountries, useEndangeredActive } from "../../components/EndangeredCountryChips.jsx"
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
@@ -114,6 +115,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const [threatOn, setThreatOn] = useState(false)
     const mine = useMine()
     const epCountries = useEndangeredCountries()          // endangered places: the countries chosen
+    const epActive = useEndangeredActive()                // and "Active only" (called, or a call within 2 km)
 
     // the map itself, once
     useEffect(() => {
@@ -191,9 +193,10 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const first = setTimeout(run, 250)
         const t = setInterval(run, active ? 2 * 60_000 : 10 * 60_000)
         return () => { live = false; clearTimeout(first); clearInterval(t) }
-    }, [bounds, zoom, hours, on, active, epCountries])
+    }, [bounds, zoom, hours, on, active, epCountries, epActive])
 
-    // THE BLUE DOT: where you are (location/liveShare.js), above everything
+    // THE BLUE DOT: where you are (location/liveShare.js), above everything —
+    // with the way you came while sharing, and the accuracy as a soft ring
     const [me, setMe] = useState(() => myPosition())
     useEffect(() => subscribeMyPosition(setMe), [])
     const meMarker = useRef(null)
@@ -202,11 +205,33 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         meMarker.current?.remove()
         meMarker.current = null
         if (!me) return
-        meMarker.current = L.marker([me.lat, me.lon], {
-            icon: L.divIcon({ className: "", html: `<div class="m2-me${me.live ? " live" : ""}" title="You"></div>`, iconSize: [18, 18] }),
+        const parts = []
+        if (me.live) {
+            const trail = myTrail().filter((p) => Date.now() - p.at < 6 * 3600_000).map((p) => [p.lat, p.lon])
+            if (trail.length > 1) parts.push(L.polyline(trail, { color: "#3b8cff", weight: 3, opacity: 0.7, interactive: false, className: "m2-me-trail" }))
+            if (me.accuracy > 20 && me.accuracy < 3000) parts.push(L.circle([me.lat, me.lon], { radius: me.accuracy, color: "#3b8cff", weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false }))
+        }
+        parts.push(L.marker([me.lat, me.lon], {
+            icon: L.divIcon({ className: "", html: `<div class="m2-me${me.live ? " live" : ""}" title="You" data-testid="me-dot" data-live="${me.live ? 1 : 0}"></div>`, iconSize: [18, 18] }),
             keyboard: false, zIndexOffset: 1000, interactive: false,
-        }).addTo(map.current)
+        }))
+        meMarker.current = L.layerGroup(parts).addTo(map.current)
     }, [me])
+    // AN ASSET LINKED TO YOU MOVES WITH YOU: its pin is redrawn at each new
+    // position (mapLayers.loadAssets puts it at this device's live fix)
+    useEffect(() => {
+        if (!me?.live || !on.assets || !bounds) return
+        const l = PHONE_LAYERS.find((x) => x.key === "assets")
+        const b = { south: bounds.getSouth(), north: bounds.getNorth(), west: bounds.getWest(), east: bounds.getEast() }
+        let live = true
+        l?.load({ bounds: b, zoom, hours }).then((x) => {
+            if (!live) return
+            const rows = Array.isArray(x) ? x : []
+            if (!rows.some((f) => f.raw?.position?.source === "your phone, live")) forgetAssets()   // not in the list yet: ask again next time
+            setFeats((f) => ({ ...f, assets: rows }))
+        }).catch(() => {})
+        return () => { live = false }
+    }, [me?.lat, me?.lon, me?.live]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // DRAW: areas under lines under points, each with the desktop's own image
     useEffect(() => {
@@ -314,13 +339,24 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         if (t?.view) map.current.setView([t.view.lat, t.view.lon], zoomFor(t.view.height), { animate: true })
     }
 
-    // NEAR ME: where you are (location/liveShare.js), else ask the device
+    // NEAR ME: this device's live position; else ask the device, inside the
+    // tap (the place saved in the account may be another device's — the
+    // desktop's — and is only the last resort)
+    const [nearMsg, setNearMsg] = useState(null)
     const nearMe = async () => {
-        let at = myPosition()
-        if (!at) {
-            try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); at = p; saveHere(p.lat, p.lon) } catch { return }
+        const at = myPosition()
+        if (at?.live) { map.current?.setView([at.lat, at.lon], 14, { animate: true }); return }
+        const asked = devicePosition()
+        setNearMsg("Finding you…")
+        try {
+            const p = await asked
+            setNearMsg(null)
+            map.current?.setView([p.lat, p.lon], p.approximate ? 9 : 14, { animate: true })
+            saveHere(p.lat, p.lon, p.label || null)
+        } catch (e) {
+            setNearMsg(e.message)
+            if (at) map.current?.setView([at.lat, at.lon], 9, { animate: true })
         }
-        map.current?.setView([at.lat, at.lon], 9, { animate: true })
     }
     // SEARCH, like a tracker app's: places, ports, ships, signals (/api/search)
     const [q, setQ] = useState("")
@@ -363,7 +399,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             {tilesFailed && chrome && (
                 <div className="m2-pill" role="alert" style={{ bottom: "auto", top: "calc(env(safe-area-inset-top, 0px) + 66px)" }}>
                     Map tiles could not load ·{" "}
-                    <button onClick={() => { setTilesFailed(false); setTileSource("esri") }}
+                    <button onClick={() => { setTilesFailed(false); setTileSource(0) }}
                             style={{ border: 0, background: "none", color: "var(--acchi, #8fb4e8)", font: "inherit", cursor: "pointer", padding: 0 }}>Retry</button>
                 </div>
             )}
@@ -412,6 +448,12 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         Close vessel view
                     </button>
                 )}
+                {nearMsg && (
+                    <div role="alert" data-testid="near-me-msg" className="m2-card" onClick={() => setNearMsg(null)}
+                         style={{ position: "absolute", left: 12, right: 12, bottom: "calc(env(safe-area-inset-bottom, 0px) + 150px)", zIndex: 600, padding: "10px 12px", fontSize: 13, lineHeight: 1.5 }}>
+                        {nearMsg}
+                    </div>
+                )}
                 {/* the widgets, round and labelled, along the bottom */}
                 <div className="m2-widgets">
                     <button className="m2-widget" onClick={() => setSheet("filters")} data-testid="w-filters"><span><Icon id="g-tune" size={22} /></span>Filters</button>
@@ -436,7 +478,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                                         </button>
                                     ))}
                                 </div>
-                                {gname === "Endangered places" && <EndangeredCountryChips enabled={!!on.endangered} variant="phone" />}
+                                {/* under whichever group holds the layer (it moved to Infrastructure) */}
+                                {layers.some((l) => l.key === "endangered") && <EndangeredCountryChips enabled={!!on.endangered} variant="phone" />}
                             </div>
                         ))}
                         <div className="m2-h">How serious</div>

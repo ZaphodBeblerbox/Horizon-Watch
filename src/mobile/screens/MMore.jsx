@@ -17,6 +17,9 @@ import { Icon, Row, Sheet, SignalSheet, sevColor, when } from "./common.jsx"
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 import { setDnd } from "../../state/notificationStore.js"
 import LiveShareRow from "../../location/LiveShareRow.jsx"
+import TrackSketch from "../../location/TrackSketch.jsx"
+import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
+import { locate } from "../../location/geo.js"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
 import PushDevices from "../../notify/PushDevices.jsx"
 
@@ -56,7 +59,17 @@ function AssetDetail({ a, onClose, onShowOnMap }) {
                     : sit.signals.slice(0, 8).map((s) => <Row key={s.id} s={s} title={s.title} sub={[s.km != null && `${Math.round(s.km)} km`, s.category, s.source].filter(Boolean).join(" · ")}
                         when={when(s.when)} onClick={() => setOpen({ ...s, headline: s.title })} />)}
             </div>
-            {Number.isFinite(+a.lat) && <button className="m2-btn" onClick={() => { onShowOnMap?.({ lat: a.lat, lon: a.lon }); onClose() }}>Show on the map</button>}
+            {a.identifiers?.user_id && <>
+                {/* LINKED TO A PERSON: their phone moves it — where it is now and where it has been */}
+                <div className="m2-eyebrow" style={{ marginBottom: 6 }}>Where they have been</div>
+                <div className="m2-card" style={{ padding: 10, marginBottom: 12 }}>
+                    {(sit?.position || a.position) && <div className="m2-sub" data-testid="asset-live-source" style={{ marginBottom: 8 }}>
+                        Now: {(sit?.position || a.position).source}{(sit?.position || a.position).as_of ? ` · ${when((sit?.position || a.position).as_of)}` : ""}
+                    </div>}
+                    <TrackSketch assetId={a.id} />
+                </div>
+            </>}
+            {Number.isFinite(+(sit?.position?.lat ?? a.lat)) && <button className="m2-btn" onClick={() => { const p = sit?.position || a; onShowOnMap?.({ lat: p.lat, lon: p.lon }); onClose() }}>Show on the map</button>}
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
         </Sheet>
     )
@@ -69,7 +82,13 @@ function AddAsset({ onClose, onAdded }) {
     const [address, setAddress] = useState("")
     const [at, setAt] = useState(null)
     const [msg, setMsg] = useState(null)
-    const here = () => navigator.geolocation?.getCurrentPosition((p) => { setAt({ lat: p.coords.latitude, lon: p.coords.longitude }); setMsg("Using where you are.") }, () => setMsg("Location was not allowed."))
+    // asked inside the tap; a refusal says how to allow it (location/geo.js)
+    const here = () => {
+        setMsg("Finding you…")
+        locate({ onRetry: () => setMsg("Weak signal — trying with lower accuracy…") })
+            .then((p) => { setAt({ lat: p.lat, lon: p.lon }); setMsg("Using where you are.") })
+            .catch((e) => setMsg(e.message))
+    }
     const save = async () => {
         if (!name.trim()) { setMsg("Give it a name."); return }
         try { await post("/api/my-assets", { name, kind, address: address || undefined, ...(at || {}) }); onAdded(); onClose() }
@@ -227,7 +246,8 @@ function HereRowPhone() {
     const [err, setErr] = useState(null)
     const use = async () => {
         setBusy(true); setErr(null)
-        try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); await saveHere(p.lat, p.lon, p.label || null) }
+        const asked = devicePosition()          // inside the tap, before any await
+        try { const p = await asked; await saveHere(p.lat, p.lon, p.label || null) }
         catch (e) { setErr(e.message) } finally { setBusy(false) }
     }
     return (

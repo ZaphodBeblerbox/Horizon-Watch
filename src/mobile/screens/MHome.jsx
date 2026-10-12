@@ -30,6 +30,7 @@ function useHere() {
     return h
 }
 import API_BASE from "../../apiBase.js"
+import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 
 const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
 const HARD = { strike: 0, attack: 0, explosion: 0, clash: 1, interception: 1, unrest: 2 }
@@ -105,7 +106,8 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const iosBrowser = (() => { try { const { platform } = window.__plxClosedNotify || {}; return platform === "ios-browser" } catch { return false } })()
         || (typeof navigator !== "undefined" && /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !window.matchMedia?.("(display-mode: standalone)").matches)
     const askHere = async () => {
-        try { const { devicePosition, saveHere } = await import("../../components/LocationPrompt.jsx"); const p = await devicePosition(); await saveHere(p.lat, p.lon, p.label || null) } catch (e) { window.alert(e.message) }
+        const asked = devicePosition()          // inside the tap, before any await (location/geo.js)
+        try { const p = await asked; await saveHere(p.lat, p.lon, p.label || null) } catch (e) { window.alert(e.message) }
     }
     const first = String(user?.name || user?.display_name || "").split(" ")[0]
     const greet = greetingFor(first, { seed })

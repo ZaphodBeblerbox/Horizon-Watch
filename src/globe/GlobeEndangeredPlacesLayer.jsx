@@ -9,58 +9,37 @@
  * The listed ones only show closer in, so the calls stay readable over
  * France.
  *
- * NEAR (camera below placeModels.MODEL_MAX_HEIGHT_M): the places in view
- * stand on the map as small 3D models of their kind — a refinery, a tank
- * farm, a forecourt, a rally, a roundabout, a works — on a plinth in the
- * status colour (tools/make_place_models.py), at most MODEL_BUDGET of them,
- * red calls first, then amber, then listed, nearest the view centre first.
- * The rest keep their marker. Each kind/status is one file, so every model
- * of it shares the same loaded glTF.
+ * MARKERS ONLY, at every height (owner, 2026-10-12: "we never want the 3D
+ * model displayed on the map, all we want is the 3D model slowly rotating
+ * in the sidebar"): the place's model turns in the inspector card
+ * (inspector/EndangeredPlaceDetail.jsx), never on the globe.
  *
- * A click on either opens the place in the inspector (adapters.js
+ * "ACTIVE ONLY" (the layer card's first chip, EndangeredCountryChips): only
+ * the places with a call today or to come, and those within 2 km of one —
+ * the server filters (active=1).
+ *
+ * A click on a marker opens the place in the inspector (adapters.js
  * adaptEndangeredPlace): the same entity id, the same card.
  */
-import { memo, useEffect, useMemo, useRef, useState } from "react"
-import { Entity, useCesium } from "resium"
-import {
-    Cartesian2, Cartesian3, DistanceDisplayCondition, HeadingPitchRoll, HeightReference, Math as CMath,
-    NearFarScalar, Transforms,
-} from "cesium"
+import { memo, useEffect, useMemo, useState } from "react"
+import { Entity } from "resium"
+import { Cartesian3, DistanceDisplayCondition, HeightReference, NearFarScalar } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { placeIconUri, rememberWithin7, filterByCountry } from "./endangeredPlaces.js"
-import { useEndangeredCountries } from "../components/EndangeredCountryChips.jsx"
-import { MAX_SCALE, MIN_PX, modelUrl, placeHeadingRad, selectModelPlaces } from "./placeModels.js"
+import { placeIconUri, rememberWithin7, filterByCountry, placesUrl } from "./endangeredPlaces.js"
+import { useEndangeredCountries, useEndangeredActive } from "../components/EndangeredCountryChips.jsx"
 
 const REFRESH_MS = 5 * 60_000
-const VIEW_POLL_MS = 400
-
-/** Camera height, the point the view is centred on, and the view rectangle. */
-function readView(viewer) {
-    const cam = viewer.camera
-    const height = cam.positionCartographic?.height
-    const canvas = viewer.scene.canvas
-    let center = null
-    const hit = cam.pickEllipsoid(new Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2))
-    const carto = hit ? viewer.scene.globe.ellipsoid.cartesianToCartographic(hit) : cam.positionCartographic
-    if (carto) center = { lat: CMath.toDegrees(carto.latitude), lon: CMath.toDegrees(carto.longitude) }
-    const r = cam.computeViewRectangle()
-    const bounds = r ? { west: CMath.toDegrees(r.west), south: CMath.toDegrees(r.south),
-        east: CMath.toDegrees(r.east), north: CMath.toDegrees(r.north) } : null
-    return { height, center, bounds: bounds && bounds.east > bounds.west ? bounds : null }
-}
 
 export default function GlobeEndangeredPlacesLayer({ enabled = false }) {
-    const { viewer } = useCesium()
     const [places, setPlaces] = useState([])
     const countries = useEndangeredCountries()
-    const [modelIds, setModelIds] = useState(() => new Set())
-    const modelKey = useRef("")
+    const activeOnly = useEndangeredActive()
     useEffect(() => {
         if (!enabled) { setPlaces([]); return undefined }
         let live = true
-        const load = () => fetch(`${API_BASE}/api/endangered-places`, { credentials: "include" })
+        const load = () => fetch(placesUrl(API_BASE, activeOnly), { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
                 if (!live || !d) return
@@ -72,74 +51,34 @@ export default function GlobeEndangeredPlacesLayer({ enabled = false }) {
         load()
         const iv = setInterval(load, REFRESH_MS)
         return () => { live = false; clearInterval(iv) }
-    }, [enabled, countries])
+    }, [enabled, countries, activeOnly])
     useEffect(() => {
         places.forEach((p) => setEntity(`endangered-${p.id}`, "endangered_place", p))
         return () => places.forEach((p) => deleteEntity(`endangered-${p.id}`))
     }, [places])
-    // Which places stand as models. The viewer renders on demand, so the
-    // camera is polled (as GlobeInfraLayer does) and React only hears of
-    // it when the chosen set itself changes.
-    useEffect(() => {
-        if (!enabled || !viewer || !places.length) { modelKey.current = ""; setModelIds(new Set()); return undefined }
-        const tick = () => {
-            if (viewer.isDestroyed()) return
-            const ids = selectModelPlaces(places, readView(viewer))
-            const key = [...ids].sort().join("|")
-            if (key !== modelKey.current) { modelKey.current = key; setModelIds(ids) }
-        }
-        tick()
-        const iv = setInterval(tick, VIEW_POLL_MS)
-        return () => clearInterval(iv)
-    }, [enabled, viewer, places])
-    useEffect(() => { if (viewer && !viewer.isDestroyed()) viewer.scene.requestRender() }, [viewer, modelIds])
-    // Positions and orientations once per place, not per render.
-    const geo = useMemo(() => {
-        const m = new Map()
-        for (const p of places) {
-            const pos = Cartesian3.fromDegrees(p.lon, p.lat, 0)
-            m.set(p.id, { pos, orient: Transforms.headingPitchRollQuaternion(pos, new HeadingPitchRoll(placeHeadingRad(p.id), 0, 0)) })
-        }
-        return m
-    }, [places])
     if (!enabled || !places.length) return null
-    return (
-        <>
-            {places.map((p) => {
-                const g = geo.get(p.id)
-                return g ? <PlaceEntity key={p.id} p={p} g={g} is3d={modelIds.has(p.id)} /> : null
-            })}
-        </>
-    )
+    return <>{places.map((p) => <PlaceEntity key={p.id} p={p} far={activeOnly} />)}</>
 }
 
 /**
- * One place. ONE ENTITY, BOTH LOOKS: swapping the entity for a 3D one (a
- * different key) made resium add the new before removing the old, and
- * Cesium refuses a second entity with the same id — so the model and the
- * marker live on the same entity and only `show` flips. A model that is
- * not shown is never loaded (Cesium's ModelVisualizer skips it). Memoised,
- * so crossing the LOD line only touches the places whose look changed.
+ * One place: its marker, in the place's own status colour (a place that is
+ * active only because a call is near keeps its grey disc; its card says
+ * which call and how far). Memoised, its position computed once.
  */
-const PlaceEntity = memo(function PlaceEntity({ p, g, is3d }) {
-    const uri = modelUrl(p.kind, p.alarm)
+const PlaceEntity = memo(function PlaceEntity({ p, far = false }) {
     const hasCall = Array.isArray(p.calls) && p.calls.length > 0 && p.alarm !== "grey"
     const size = hasCall ? (p.alarm === "red" ? 24 : 21) : 14
+    const pos = useMemo(() => Cartesian3.fromDegrees(p.lon, p.lat, 0), [p.lon, p.lat])
     return (
         <Entity id={`endangered-${p.id}`} name={p.name}
-            position={g.pos} orientation={g.orient}
-            model={uri ? {
-                uri, show: is3d,
-                minimumPixelSize: MIN_PX, maximumScale: MAX_SCALE,
-                heightReference: HeightReference.CLAMP_TO_GROUND,
-            } : undefined}
+            position={pos}
             billboard={{
-                show: !(is3d && uri),
                 image: placeIconUri({ kind: p.kind, alarm: p.alarm, hasCall, size }),
                 width: size, height: size,
                 heightReference: HeightReference.CLAMP_TO_GROUND,
-                // calls from continent scale; listed-only places from region scale
-                distanceDisplayCondition: new DistanceDisplayCondition(0, hasCall ? 9_000_000 : 1_800_000),
+                // calls (and, with "Active only", places near one) from
+                // continent scale; listed-only places from region scale
+                distanceDisplayCondition: new DistanceDisplayCondition(0, hasCall || (far && p.active) ? 9_000_000 : 1_800_000),
                 scaleByDistance: new NearFarScalar(200_000, 1.0, 6_000_000, 0.7),
                 eyeOffset: new Cartesian3(0, 0, hasCall ? -60 : -20),
             }} />

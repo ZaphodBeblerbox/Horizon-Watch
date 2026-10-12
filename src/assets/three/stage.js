@@ -25,7 +25,15 @@ function fadeTexture(inner, outer) {
     return t
 }
 
-export function createStage(el, { interactive = true, autoRotate = true, preserve = false, pixelRatio } = {}) {
+/**
+ * turnSeconds: one revolution in this many seconds whatever the frame rate
+ * (the turn is driven by the frame's time, not counted per frame — a 120 Hz
+ * phone would otherwise turn twice as fast). Without it, the old per-frame
+ * turn (~110 s at 60 fps). pauseMs: after a drag, the turn resumes this
+ * long after the finger lifts.
+ */
+export function createStage(el, { interactive = true, autoRotate = true, preserve = false, pixelRatio, turnSeconds = null,
+                                  pauseMs = 2500 } = {}) {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: preserve })
     renderer.setPixelRatio(pixelRatio || Math.min(2, window.devicePixelRatio || 1))
     renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -59,9 +67,17 @@ export function createStage(el, { interactive = true, autoRotate = true, preserv
         controls.dampingFactor = 0.08
         controls.enablePan = false
         controls.autoRotate = autoRotate
-        controls.autoRotateSpeed = 0.55        // a slow turn: one revolution in ~110 s
+        controls.autoRotateSpeed = turnSeconds ? 60 / turnSeconds : 0.55   // a slow turn: one revolution in ~110 s
         controls.minPolarAngle = 0.15
         controls.maxPolarAngle = Math.PI / 2 - 0.04
+        // PAUSE ON TOUCH: the turn stops while the model is held, and comes
+        // back a moment after it is let go
+        let resume = 0
+        controls.addEventListener("start", () => { clearTimeout(resume); controls.autoRotate = false })
+        controls.addEventListener("end", () => {
+            clearTimeout(resume)
+            if (autoRotate) resume = setTimeout(() => { controls.autoRotate = true }, pauseMs)
+        })
     }
 
     let model = null, ground = null, raf = 0, size = { w: 1, h: 1 }, ticks = []
@@ -157,10 +173,14 @@ export function createStage(el, { interactive = true, autoRotate = true, preserv
         if (controls) { controls.target.copy(target); controls.minDistance = dist * 0.35; controls.maxDistance = dist * 1.8; controls.update() }
     }
 
+    let last = null
     function render() {
         const t = clock.getElapsedTime()
         for (const f of ticks) f(t)
-        controls?.update()
+        // a timed turn; a long gap (a hidden tab) does not jump the model round
+        const dt = last === null ? 0 : Math.min(0.25, t - last)
+        last = t
+        controls?.update(turnSeconds ? dt : null)
         renderer.render(scene, camera)
     }
     function start() { const loop = () => { render(); raf = requestAnimationFrame(loop) }; loop() }

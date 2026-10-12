@@ -19,6 +19,7 @@ import PlacePicker from "../search/PlacePicker.jsx"
 import PinMap from "../ui/PinMap.jsx"
 import AssetModel from "../assets/AssetModel.jsx"
 import AssetThumb from "../assets/AssetThumb.jsx"
+import TrackSketch from "../location/TrackSketch.jsx"
 import Dots from "../ui/Dots.jsx"
 import { shareToDesk } from "../desk/shareToDesk.js"
 import { agoLabel } from "../utils/formatTime.js"
@@ -323,6 +324,13 @@ function Detail({ asset, onEdit, onDeleted }) {
                         {vf?.owner && <Fact k="Registered owner" v={[vf.owner.name, vf.owner.country].filter(Boolean).join(", ")} />}
                         <Fact k="Watch radius" v={`${asset.radius_km} km`} />
                     </div>
+                    {asset.identifiers?.user_id && (
+                        /* LINKED TO A PERSON: their phone moves it — the last day's track */
+                        <div style={{ borderTop: "1px solid var(--gline)", paddingTop: 12 }}>
+                            <span style={{ ...EYE, fontFamily: "var(--mz-font-body)" }}>Where they have been · 24 h</span>
+                            <div style={{ marginTop: 8 }}><TrackSketch assetId={asset.id} /></div>
+                        </div>
+                    )}
                     {asset.notes && <p style={{ margin: 0, fontSize: 13, color: "var(--txt2)", lineHeight: 1.55, borderTop: "1px solid var(--gline)", paddingTop: 12 }}>{asset.notes}</p>}
                     <div style={{ display: "flex", gap: 6, marginTop: "auto", flexWrap: "wrap" }}>
                         {pos && <button onClick={() => flyTo(pos.lat, pos.lon)} style={PRIMARY}>Show on the map</button>}

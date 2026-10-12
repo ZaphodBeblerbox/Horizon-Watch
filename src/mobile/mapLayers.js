@@ -19,6 +19,8 @@
  * capped, and any failure is an empty list.
  */
 import API_BASE from "../apiBase.js"
+import { myPosition } from "../location/liveShare.js"
+import { getCurrentUser } from "../state/authStore.js"
 import {
     getShapeMarkerDataUri, getGeoConfirmedMarkerDataUri, getFacilityMarkerDataUri,
     getEntityMarkerDataUri, GEOCONFIRMED_MARKER_SIZE, MARK_SIZE,
@@ -27,7 +29,7 @@ import { infraGlyphUri } from "../globe/infraGlyphs.js"
 import { styleFor as gfwStyleFor, summaryOf as gfwSummaryOf, ageLabel as gfwAgeLabel, KINDS as GFW_KINDS } from "../globe/gfwEvents.js"
 import { riskAlpha, buildA2ToA3, indexByIso3 } from "../globe/riskChoropleth.js"
 import { CAT } from "../components/timeStripMath.js"
-import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, defaultOnNow as endangeredDefaultOn, filterByCountry } from "../globe/endangeredPlaces.js"
+import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, defaultOnNow as endangeredDefaultOn, filterByCountry, placesUrl } from "../globe/endangeredPlaces.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -636,9 +638,24 @@ function gfwLoader(kind) {
     }
 }
 
+/** An asset linked to this user, at this device's live fix — the server has
+ *  it too, but the list is fetched every few minutes and the pin should
+ *  move with the blue dot (location/liveShare.js). */
+export function atMyLivePosition(a, me = myPosition(), uid = getCurrentUser()?.id) {
+    if (!me?.live || !uid || String(a?.identifiers?.user_id || "") !== String(uid)) return a.position
+    return { ...(a.position || {}), lat: me.lat, lon: me.lon, source: "your phone, live", live: true }
+}
+
+/** Drop the cached asset list: the first live position creates the
+ *  user's own person asset, and the pin should appear at once. */
+export function forgetAssets() {
+    for (const k of [..._cache.keys()]) if (k.startsWith(`${API_BASE}/api/my-assets`) && !k.includes("/people")) _cache.delete(k)
+}
+
 async function loadAssets({ bounds }) {
     const d = await getJson(`${API_BASE}/api/my-assets`)
-    const rows = arr(d?.assets).filter((a) => a.position)
+    const me = myPosition(), uid = getCurrentUser()?.id
+    const rows = arr(d?.assets).map((a) => ({ ...a, position: atMyLivePosition(a, me, uid) })).filter((a) => a.position)
     return cullPoints(rows.map((a) => ({
         id: `asset-${a.id}`,
         lat: num(a.position.lat), lon: num(a.position.lon),
@@ -651,6 +668,36 @@ async function loadAssets({ bounds }) {
         severity: a.exposure || null,
         raw: a,
     })), normBounds(bounds))
+}
+
+// ── The team, where each is (the location signal) ─────────────────────────
+// Everyone sharing their live location (GET /api/my-assets/people), but
+// not you — you are the blue dot. A city-level fix (a desktop's connection)
+// is drawn pale and says so.
+const _personIcons = {}
+function personIcon(live, coarse) {
+    const k = `${live}|${coarse}`
+    if (_personIcons[k]) return _personIcons[k]
+    const fill = coarse ? "#8FB4E8" : "#3b8cff"
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="10" fill="${fill}" fill-opacity="${live ? 0.28 : 0.14}"/><circle cx="11" cy="11" r="5.5" fill="${fill}" stroke="#fff" stroke-width="2" ${live ? "" : 'stroke-dasharray="2 2"'}/></svg>`
+    return (_personIcons[k] = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`)
+}
+
+async function loadPeople({ bounds }) {
+    const d = await getJson(`${API_BASE}/api/my-assets/people?hours=24`, { ttlMs: 30_000 })
+    const uid = getCurrentUser()?.id
+    return cullPoints(arr(d?.people).filter((p) => String(p.user_id) !== String(uid)).map((p) => {
+        const coarse = p.source === "ip" || (p.accuracy_m ?? 0) >= 1000
+        return {
+            id: `person-${p.user_id}`,
+            lat: num(p.lat), lon: num(p.lon),
+            iconUri: personIcon(!!p.live, coarse), size: 22,
+            title: p.name || "Team member",
+            sub: [p.live ? "live" : "last shared", coarse ? "city level, from their connection" : p.accuracy_m != null ? `within ${Math.round(p.accuracy_m)} m` : null].filter(Boolean).join(" · "),
+            severity: null,
+            raw: { ...p, headline: `${p.name || "Team member"} — ${p.live ? "live location" : "last shared location"}`, published_at: p.at },
+        }
+    }), normBounds(bounds))
 }
 
 async function loadChokepoints({ bounds }) {
@@ -1038,7 +1085,9 @@ export function clusterPlaces(places, zoom, cellPx = 56) {
 }
 
 async function loadEndangered({ bounds, zoom }) {
-    const d = await getJson(`${API_BASE}/api/endangered-places`, { ttlMs: 120_000 })
+    // "Active only" (the Filters sheet): the server keeps only the places
+    // with a call, or within 2 km of one — the phone does no geometry
+    const d = await getJson(placesUrl(API_BASE), { ttlMs: 120_000 })
     if (!d) return []
     rememberWithin7(d.calls_within_7_days)
     const b = normBounds(bounds)
@@ -1074,6 +1123,10 @@ export const PHONE_LAYERS = [
     {
         key: "assets", label: "Our assets", group: G.assets, defaultOn: true, kind: "points", minZoom: 0,
         legendIcon: assetIcon("Sites", "quiet"), load: loadAssets,
+    },
+    {
+        key: "people", label: "Team, live location", group: G.assets, defaultOn: true, kind: "points", minZoom: 0,
+        legendIcon: personIcon(true, false), load: loadPeople,
     },
 
     // Maritime (LAYER_GROUPS.maritime; live vessels are the phone's own).

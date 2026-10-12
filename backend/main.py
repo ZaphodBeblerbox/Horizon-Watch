@@ -13771,15 +13771,18 @@ async def _endangered_places_loop():
 
 @app.get("/api/endangered-places")
 async def api_endangered_places(bbox: str | None = None, status: str | None = None, kind: str | None = None,
-                                country: str | None = None):
+                                country: str | None = None, active: int = 0, radius_km: float | None = None):
     """Places public calls name for blockades and other actions
     (endangered_places.py): each with its calls in plain English, its
     status (call active today / upcoming / listed (no call) / past) and
     colour (red: a roadblock, convoy or picket within 48 h; amber: other
-    calls to come; grey: listed or over). bbox = south,west,north,east."""
+    calls to come; grey: listed or over). bbox = south,west,north,east.
+    active=1: only places with a call today or to come, or within
+    radius_km (default 2 km) of one — each nearby one says which call."""
     import endangered_places as _ep
     return await asyncio.get_running_loop().run_in_executor(
-        _executor, lambda: _ep.query(bbox=bbox, status=status, kind=kind, country=country))
+        _executor, lambda: _ep.query(bbox=bbox, status=status, kind=kind, country=country,
+                                     active=bool(active), radius_km=radius_km))
 
 
 async def _global_adsb_cache_loop():

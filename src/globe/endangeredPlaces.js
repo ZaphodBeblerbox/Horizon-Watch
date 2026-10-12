@@ -125,6 +125,8 @@ export function placeDetail(p) {
     const parts = []
     if (lines.length) parts.push(lines.join(". ") + ".")
     else parts.push(listedNote(p) + ".")
+    const near = nearbyLine(p)
+    if (near && p.active === "nearby") parts.unshift(`Nearby call: ${near}.`)
     if (p.operator) parts.push(`Operator: ${p.operator}.`)
     if (p.kind === "arms_company" || p.kind === "lobby_office" || p.kind === "listed_site") {
         const what = [p.sector, p.domain].filter(Boolean).join(" — ")
@@ -182,6 +184,50 @@ export const inCountries = (p, sel = _countries) => !sel || !sel.length || sel.i
 
 export const filterByCountry = (places, sel = _countries) =>
     (Array.isArray(places) ? places : []).filter((p) => inCountries(p, sel))
+
+// ── "Active only" (desktop layer card, phone Filters sheet) ──────────────
+// Only the places with a dated call today or to come, plus the places within
+// a couple of kilometres of one (backend endangered_places.query active=1,
+// which computes the proximity — the phone stays light). Remembered per device.
+
+const ACTIVE_KEY = "endangered:activeOnly"
+let _active = (() => {
+    try { return localStorage.getItem(ACTIVE_KEY) === "1" } catch { return false }
+})()
+const _activeSubs = new Set()
+
+export const getActiveOnly = () => _active
+
+export function setActiveOnly(v) {
+    _active = !!v
+    try { localStorage.setItem(ACTIVE_KEY, _active ? "1" : "0") } catch { /* private window */ }
+    _activeSubs.forEach((fn) => { try { fn(_active) } catch { /* a listener's own problem */ } })
+}
+
+export function subscribeActiveOnly(fn) {
+    _activeSubs.add(fn)
+    return () => _activeSubs.delete(fn)
+}
+
+/** The layer's request: every place, or only the active ones. */
+export const placesUrl = (base, active = _active) => `${base}/api/endangered-places${active ? "?active=1" : ""}`
+
+/** "1.2 km" / "350 m" */
+export function distanceLabel(km) {
+    const d = Number(km)
+    if (!Number.isFinite(d)) return ""
+    return d < 1 ? `${Math.max(10, Math.round(d * 100) * 10)} m` : `${d.toFixed(1)} km`
+}
+
+/** The nearest call close to a place that has none of its own:
+ *  "Nearby call, 800 m away at Place Bellecour (Lyon): March / demonstration called for Sat 17 Oct, 14:00 — source: …" */
+export function nearbyLine(p) {
+    const n = Array.isArray(p?.nearby_calls) ? p.nearby_calls[0] : null
+    if (!n) return null
+    const where = `${n.name || "a called place"}${n.city && !String(n.name || "").includes(n.city) ? ` (${n.city})` : ""}`
+    const more = (p.nearby_count || 0) > 1 ? ` — and ${p.nearby_count - 1} more call${p.nearby_count > 2 ? "s" : ""} within reach` : ""
+    return `${distanceLabel(n.distance_km)} away at ${where}: ${n.line || n.call || "a call to act"}${more}`
+}
 
 // ── default on while calls are within 7 days ─────────────────────────────
 

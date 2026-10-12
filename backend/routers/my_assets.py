@@ -7,6 +7,10 @@
     PUT    /api/my-assets/{id}             change one (owner only)
     DELETE /api/my-assets/{id}             remove one (owner only)
     GET    /api/my-assets/{id}/situation   where it is and every signal near it, ranked
+    GET    /api/my-assets/{id}/track       where a moving asset has been (linked to a person: their phone)
+    POST   /api/my-assets/live             this user's device position (live sharing)
+    GET    /api/my-assets/me/positions     this user's own position history
+    GET    /api/my-assets/people           the team's latest shared positions (the location signal)
     POST   /api/my-assets/{id}/brief       how it affects us, what could come next, measures
 """
 from __future__ import annotations
@@ -15,8 +19,9 @@ import asyncio
 import json
 import datetime as _dt
 import sqlite3
+import threading
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 
 import owned_assets as oa
 
@@ -256,32 +261,82 @@ def situation(asset: dict) -> dict:
     return {"asset": asset, "position": at, "signals": ranked, "exposure": oa.exposure(ranked), "analogues": elsewhere}
 
 
-@router.post("/live")
-async def live(request: Request):
-    """This user's phone, sharing where it is (with their consent): moves the
-    person assets linked to them and has what is near them reassessed."""
-    user = _me(request)
-    b = await request.json()
+_CREATE_LOCK = threading.Lock()
+
+
+def _user_names() -> dict:
     try:
-        lat, lon = float(b["lat"]), float(b["lon"])
-        acc = float(b["accuracy"]) if b.get("accuracy") is not None else None
-        moved = oa.live_position(_uid(user), lat, lon, acc)
-        if not moved:
-            # THE LOCATION BECOMES AN ASSET (owner, 2026-10-10): the first
-            # live position of someone with no linked person asset creates
-            # theirs — shared with the team, moved by every later position,
-            # and assessed like every other asset.
-            name = (user.get("name") or user.get("email") or "Me").split("@")[0]
-            oa.create(_uid(user), {"name": f"{name} (live)", "kind": "person", "lat": lat, "lon": lon, "shared": True,
-                                   "identifiers": {"user_id": _uid(user)}, "importance": "high",
-                                   "notes": "Created from this person's shared live location."})
-            moved = oa.live_position(_uid(user), lat, lon, acc)
+        con = sqlite3.connect(oa._db_path(), timeout=5)
+        rows = con.execute("SELECT id, name, email FROM users").fetchall()
+        con.close()
+        return {str(r[0]): (r[1] or (r[2] or "").split("@")[0] or "Someone") for r in rows}
+    except sqlite3.Error:
+        return {}
+
+
+@router.post("/live")
+def live(request: Request, body: dict = Body(...)):
+    """This user's device, sharing where it is (with their consent): kept in
+    their position history, moves the assets linked to them and has what is
+    near them reassessed.
+
+    A plain def, so it runs in the threadpool: it was `async def` doing
+    SQLite with a 60 s busy timeout ON THE EVENT LOOP — in production a
+    locked database held POST /live for 60.1 s and the whole API with it
+    (2026-10-12 06:12, "[slow-request] POST /api/my-assets/live in 60.1s",
+    500). A locked database now answers 503 within five seconds and the
+    phone sends again on its next fix."""
+    user = _me(request)
+    try:
+        lat, lon = float(body["lat"]), float(body["lon"])
+        acc = float(body["accuracy"]) if body.get("accuracy") is not None else None
+        source = str(body.get("source") or "gps")
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(400, f"a position is lat and lon: {e}")
+    uid = _uid(user)
+    try:
+        r = oa.record_position(uid, lat, lon, acc, source)
+        # THE LOCATION BECOMES AN ASSET (owner, 2026-10-10): the first live
+        # position of someone with no linked asset creates theirs — shared
+        # with the team, moved by every later position, and assessed like
+        # every other asset. Under a lock: two positions in flight at once
+        # made two assets (seen in the 2026-10-12 browser run).
+        with _CREATE_LOCK:
+            if r["stored"] and not r["moved"] and not oa.linked_to(uid):
+                name = (user.get("name") or user.get("email") or "Me").split("@")[0]
+                oa.create(uid, {"name": f"{name} (live)", "kind": "person", "lat": lat, "lon": lon, "shared": True,
+                                "identifiers": {"user_id": uid}, "importance": "high",
+                                "notes": "Created from this person's shared live location."})
+                r["moved"] = oa.live_position(uid, lat, lon, acc, "ip" if source.lower() == "ip" else "gps")
+    except oa.TooSoon as e:
+        raise HTTPException(429, f"too many positions: {e}", headers={"Retry-After": str(e.retry_after)})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except sqlite3.OperationalError as e:
+        raise HTTPException(503, f"busy, send the next position: {e}", headers={"Retry-After": "15"})
     import asset_watch
-    for owner in {m["owner_id"] for m in moved} | {_uid(user)}:
+    for owner in {m["owner_id"] for m in r["moved"]} | {uid}:
         asset_watch.invalidate(owner)
-    return {"linked": len(moved)}
+    return {"linked": len(r["moved"]), "assets": [m["id"] for m in r["moved"]], "stored": r["stored"],
+            "held": r["held"], "coarse": r["coarse"]}
+
+
+@router.get("/me/positions")
+def my_positions(request: Request, hours: int = 24):
+    """Where I have been: my own position history, oldest first."""
+    user = _me(request)
+    pts = oa.positions(_uid(user), max(1, min(24 * 30, hours)))
+    return {"positions": pts, "latest": pts[-1] if pts else None}
+
+
+@router.get("/people")
+def people(request: Request, hours: int = 24):
+    """THE LOCATION SIGNAL: everyone on the team sharing where they are, at
+    their latest position, with the assets linked to them — for the map and
+    the asset page."""
+    _me(request)
+    names = _user_names()
+    return {"people": [{**p, "name": names.get(p["user_id"], "Someone")} for p in oa.people(max(1, min(168, hours)))]}
 
 
 @router.get("/{asset_id}/track")

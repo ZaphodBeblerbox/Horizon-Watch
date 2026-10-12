@@ -7,15 +7,27 @@
  *
  * variant "desktop": small chips under the layer card's row (Situation).
  * variant "phone":   the phone's m2-chip row (the map's Filters sheet).
+ *
+ * "ACTIVE ONLY" (owner, 2026-10-12) leads the row: only the places with a
+ * dated call today or to come, and those within 2 km of one (the server
+ * computes it: /api/endangered-places?active=1). Remembered on this device.
  */
 import { useEffect, useState, useSyncExternalStore } from "react"
 import API_BASE from "../apiBase.js"
-import { getCountryFilter, setCountryFilter, subscribeCountryFilter, toggleCountry } from "../globe/endangeredPlaces.js"
+import { getCountryFilter, setCountryFilter, subscribeCountryFilter, toggleCountry,
+         getActiveOnly, setActiveOnly, subscribeActiveOnly } from "../globe/endangeredPlaces.js"
 
 /** The chosen ISO2 codes ([] = all), re-rendering when they change. */
 export function useEndangeredCountries() {
     return useSyncExternalStore(subscribeCountryFilter, getCountryFilter, getCountryFilter)
 }
+
+/** Is "Active only" on, re-rendering when it changes. */
+export function useEndangeredActive() {
+    return useSyncExternalStore(subscribeActiveOnly, getActiveOnly, getActiveOnly)
+}
+
+const ACTIVE_TIP = "Only places with a dated call today or to come, and places within 2 km of one"
 
 function useCountryCounts(enabled) {
     const [rows, setRows] = useState([])
@@ -42,16 +54,24 @@ const deskChip = (on) => ({
 export default function EndangeredCountryChips({ enabled = true, variant = "desktop" }) {
     const rows = useCountryCounts(enabled)
     const sel = useEndangeredCountries()
-    if (!enabled || rows.length < 2) return null
+    const active = useEndangeredActive()
+    if (!enabled) return null
     const all = !sel.length
+    const countries = rows.length >= 2
+    // with "Active only" on, each country chip counts its active places
+    const n = (r) => (active && Number.isFinite(r.active) ? r.active : r.places)
     if (variant === "phone") {
         return (
             <div className="m2-chips" data-testid="endangered-countries" style={{ margin: "4px 0 10px" }}>
-                <button className="m2-chip" aria-pressed={all} onClick={() => setCountryFilter([])}>All countries</button>
-                {rows.map((r) => (
+                <button className="m2-chip" aria-pressed={active} data-testid="endangered-active"
+                        onClick={() => setActiveOnly(!active)} title={ACTIVE_TIP}>
+                    Active only
+                </button>
+                {countries && <button className="m2-chip" aria-pressed={all} onClick={() => setCountryFilter([])}>All countries</button>}
+                {countries && rows.map((r) => (
                     <button key={r.code} className="m2-chip" aria-pressed={sel.includes(r.code)} data-country={r.code}
                             onClick={() => toggleCountry(r.code)}>
-                        {r.name} {r.places}
+                        {r.name} {n(r)}
                     </button>
                 ))}
             </div>
@@ -60,13 +80,17 @@ export default function EndangeredCountryChips({ enabled = true, variant = "desk
     return (
         <div data-testid="endangered-countries" role="group" aria-label="Countries shown"
              style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "2px 12px 6px 27px" }}>
-            <button style={deskChip(all)} aria-pressed={all} onClick={() => setCountryFilter([])}
-                    title="Show every country">All</button>
-            {rows.map((r) => (
+            <button style={{ ...deskChip(active), ...(active ? { borderColor: "#F5A524", background: "rgba(245,165,36,.14)" } : null) }}
+                    aria-pressed={active} data-testid="endangered-active"
+                    onClick={() => setActiveOnly(!active)} title={ACTIVE_TIP}>Active only</button>
+            {countries && <span aria-hidden="true" style={{ width: 1, alignSelf: "stretch", margin: "2px 2px", background: "var(--line-soft)" }} />}
+            {countries && <button style={deskChip(all)} aria-pressed={all} onClick={() => setCountryFilter([])}
+                    title="Show every country">All</button>}
+            {countries && rows.map((r) => (
                 <button key={r.code} style={deskChip(sel.includes(r.code))} aria-pressed={sel.includes(r.code)}
                         data-country={r.code} onClick={() => toggleCountry(r.code)}
-                        title={`${r.name}: ${r.places} places, ${r.with_calls} with a dated call or notice`}>
-                    {r.name} <span style={{ color: "var(--txt-4)" }}>{r.places}</span>
+                        title={`${r.name}: ${r.places} places, ${r.with_calls} with a dated call or notice${Number.isFinite(r.active) ? `, ${r.active} active (called, or a call within 2 km)` : ""}`}>
+                    {r.name} <span style={{ color: "var(--txt-4)" }}>{n(r)}</span>
                 </button>
             ))}
         </div>

@@ -279,3 +279,97 @@ def test_action_date_from_page():
 @pytest.mark.parametrize("bad", [None, {}, {"lieux": []}])
 def test_implausible_sites_rejected(bad):
     assert not ep._plausible("sites", bad)
+
+
+# ── "Active only": called here, or a call within reach ───────────────────
+
+def _pl(pid, lat, lon, kind="arms_company", calls=None, **kw):
+    return {"id": pid, "source": "x", "kind": kind, "kind_label": kind, "name": pid, "lat": lat, "lon": lon,
+            "calls": calls or [], **kw}
+
+
+def _call(date="2026-10-17", time="14:00", kind="manifestation", level="medium"):
+    return {"kind": kind, "label_en": "March / demonstration", "level": level, "date": date, "time": time,
+            "source_url": "u", "key": f"{kind}|{date}|{time}"}
+
+
+LYON = (45.7578, 4.8320)                                    # Place Bellecour
+
+
+def _off(km_north=0.0, km_east=0.0, at=LYON):
+    import math
+    return (at[0] + km_north / 111.0, at[1] + km_east / (111.0 * math.cos(math.radians(at[0]))))
+
+
+def test_nearby_calls_within_the_radius_only():
+    rally = _pl("rally", *LYON, kind="gathering", calls=[_call()], name="Place Bellecour", city="Lyon")
+    near = _pl("near", *_off(1.2))                           # 1.2 km north
+    edge = _pl("edge", *_off(0, 1.95))                       # 1.95 km east
+    far = _pl("far", *_off(2.6))                             # 2.6 km
+    places = [ep.annotate(p, BEFORE) for p in (rally, near, edge, far)]
+    out = ep.nearby_calls(places, 2.0, BEFORE)
+    assert set(out) == {"near", "edge"}                       # the rally itself is not "near" itself
+    n = out["near"][0]
+    assert n["id"] == "rally" and abs(n["distance_km"] - 1.2) < 0.02
+    assert n["line"].startswith("March / demonstration called for Sat 17 Oct, 14:00")
+    assert set(ep.nearby_calls(places, 3.0, BEFORE)) == {"near", "edge", "far"}   # configurable
+
+
+def test_nearby_ignores_past_calls_listed_places_and_approximate_points():
+    past = _pl("past", *LYON, kind="gathering", calls=[_call(date="2026-10-01")])
+    listed = _pl("listed", *_off(0.3))                       # no call: not a call point
+    strike = _pl("strike", *_off(0.5), kind="strike", calls=[_call()])            # a province centroid
+    approx = _pl("approx", *_off(0.6), kind="action", calls=[_call()], approx="approximate (centre of the city)")
+    town = _pl("town", *_off(0.7), kind="gathering", calls=[_call()], name="Lyon", city="Lyon")   # just a town's name
+    target = _pl("target", *_off(0.1))
+    places = [ep.annotate(p, BEFORE) for p in (past, listed, strike, approx, town, target)]
+    assert ep.nearby_calls(places, 2.0, BEFORE) == {}
+
+
+def test_nearby_at_high_latitude():
+    north = (69.65, 18.96)                                   # Tromsø: a degree of longitude is ~39 km
+    a = _pl("a", *north, kind="gathering", calls=[_call()], name="Place Stortorget")
+    b = _pl("b", *_off(0, 1.8, at=north))
+    c = _pl("c", *_off(0, 2.3, at=north))
+    out = ep.nearby_calls([ep.annotate(p, BEFORE) for p in (a, b, c)], 2.0, BEFORE)
+    assert set(out) == {"b"}
+
+
+def test_query_active_only():
+    rally = _pl("rally", *LYON, kind="gathering", calls=[_call()], name="Place Bellecour")
+    near = _pl("near", *_off(0.8))
+    far = _pl("far", *_off(5))
+    called = _pl("called", 48.85, 2.35, kind="fuel_depot", calls=[_call(kind="barrage_filtrant", level="high")])
+    done = _pl("done", 43.3, 5.37, kind="gathering", calls=[_call(date="2026-10-01")])
+    data = {"built_at": "x", "action_date": DATE, "sources": [], "stats": {}, "places": [rally, near, far, called, done]}
+    q = ep.query(data=data, now=BEFORE, active=True)
+    got = {p["id"]: p for p in q["places"]}
+    assert set(got) == {"rally", "near", "called"}
+    assert got["rally"]["active"] == "called" and got["called"]["active"] == "called"
+    assert got["near"]["active"] == "nearby"
+    assert got["near"]["nearby_calls"][0]["name"] == "Place Bellecour" and got["near"]["nearby_count"] == 1
+    assert q["counts"]["active"] == 3 and q["counts"]["nearby"] == 1 and q["active_only"] is True
+    assert q["nearby_km"] == ep.NEARBY_KM == 2.0
+    # without the filter every place comes back; the near one still says why it is active
+    allq = ep.query(data=data, now=BEFORE)
+    assert len(allq["places"]) == 5
+    assert next(p for p in allq["places"] if p["id"] == "near")["active"] == "nearby"
+    assert "active" not in next(p for p in allq["places"] if p["id"] == "far")
+    # a wider radius, clamped
+    assert {p["id"] for p in ep.query(data=data, now=BEFORE, active=True, radius_km=10)["places"]} == \
+        {"rally", "near", "far", "called"}
+    assert ep.query(data=data, now=BEFORE, active=True, radius_km=10_000)["nearby_km"] == ep.NEARBY_MAX_KM
+    # the country chips count the active places, even for kind=none
+    cc = ep.query(data=data, now=BEFORE, kind="none")["countries"]
+    assert cc[0]["active"] == 3 and cc[0]["places"] == 5
+
+
+def test_every_place_gets_a_model_type():
+    pl, _ = ep.build(RAW, {}, DATE, BEFORE)
+    data = {"built_at": "x", "action_date": DATE, "sources": [], "stats": {}, "places": pl}
+    q = ep.query(data=data, now=BEFORE)
+    by_name = {p["name"]: p for p in q["places"]}
+    assert by_name["Raffinerie de Feyzin"]["model_type"] == "refinery"
+    assert by_name["Place de la Bourse"]["model_type"] == "town_square"
+    assert by_name["Place de la Bourse"]["model_label"] == "Town or market square"
+    assert all(p["model_type"] for p in q["places"])
