@@ -38,6 +38,13 @@ const BASES = {
     satellite: { url: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, labels: `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
             attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics", maxZoom: 18 },
 }
+// the second source when Esri's tiles cannot be had (CARTO, free with attribution)
+const FALLBACK = {
+    dark: { url: "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", labels: "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png",
+            attribution: "&copy; OpenStreetMap contributors &copy; CARTO", maxZoom: 18 },
+    satellite: { url: "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", labels: "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png",
+            attribution: "&copy; OpenStreetMap contributors &copy; CARTO", maxZoom: 18 },
+}
 const WINDOWS = [24, 48, 72]
 const FLOORS = [["all", "All"], ["high", "High +"], ["critical", "Critical"]]
 const RANK = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
@@ -118,16 +125,41 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     useEffect(() => attachFindings(L, map.current), [])
     // visible again after another tab: Leaflet must re-measure
     useEffect(() => { if (active && map.current) setTimeout(() => map.current.invalidateSize(), 60) }, [active])
+    // MEASURED WHENEVER ITS BOX CHANGES (2026-10-12: "markers but no map" on the
+    // iPhone): created behind another tab, the map can measure 0×0 and then
+    // asks for no tiles while its markers still draw. Re-measure on any size change.
+    useEffect(() => {
+        if (!el.current || typeof ResizeObserver === "undefined") return undefined
+        const ro = new ResizeObserver(() => map.current?.invalidateSize())
+        ro.observe(el.current)
+        return () => ro.disconnect()
+    }, [])
+    const [tilesFailed, setTilesFailed] = useState(false)
+    const [tileSource, setTileSource] = useState("esri")
     useEffect(() => {
         if (!map.current) return
         if (base.current) base.current.remove()
-        const b = BASES[baseKey]
+        const b = tileSource === "carto" ? (FALLBACK[baseKey] || FALLBACK.dark) : (BASES[baseKey] || BASES.dark)
+        // A SECOND TILE SOURCE when the first fails (2026-10-12): Esri can refuse
+        // a phone's network (iCloud Private Relay, some carriers). Many errors and
+        // no tile loaded → CARTO; both failing → say so, with a retry.
+        let loaded = 0, failed = 0
+        const ground = L.tileLayer(b.url, { attribution: b.attribution, maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, detectRetina: true, subdomains: "abcd" })
+        ground.on("tileload", () => { loaded += 1; setTilesFailed(false) })
+        ground.on("tileerror", () => {
+            failed += 1
+            if (loaded === 0 && failed >= 6) {
+                if (tileSource === "esri") setTileSource("carto")
+                else setTilesFailed(true)
+            }
+        })
         base.current = L.layerGroup([
             // HIGH RESOLUTION: on a Retina screen, the next zoom's tiles at half size
-            L.tileLayer(b.url, { attribution: b.attribution, maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, detectRetina: true }),
-            L.tileLayer(b.labels, { maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, pane: "labels", opacity: 0.9, detectRetina: true }),
+            ground,
+            ...(b.labels ? [L.tileLayer(b.labels, { maxZoom: b.maxZoom + 2, maxNativeZoom: b.maxZoom, pane: "labels", opacity: 0.9, detectRetina: true, subdomains: "abcd" })] : []),
         ]).addTo(map.current)
-    }, [baseKey])
+        map.current.invalidateSize()
+    }, [baseKey, tileSource])
 
     // LOAD what is on, for the view: after a pan, and again every few minutes
     // (more slowly while the map is only the background)
@@ -313,6 +345,13 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             {/* its own stacking layer: Leaflet's panes run up to z-index 700 and
                 would otherwise cover the sheets that open over the map */}
             <div ref={el} style={{ position: "absolute", inset: 0, zIndex: 0, isolation: "isolate" }} />
+            {tilesFailed && chrome && (
+                <div className="m2-pill" role="alert" style={{ bottom: "auto", top: "calc(env(safe-area-inset-top, 0px) + 66px)" }}>
+                    Map tiles could not load ·{" "}
+                    <button onClick={() => { setTilesFailed(false); setTileSource("esri") }}
+                            style={{ border: 0, background: "none", color: "var(--acchi, #8fb4e8)", font: "inherit", cursor: "pointer", padding: 0 }}>Retry</button>
+                </div>
+            )}
             {chrome && <div className="m2-mapui">
                 {/* search, as a tracker app has it: one round bar on top */}
                 <label className="m2-search">
