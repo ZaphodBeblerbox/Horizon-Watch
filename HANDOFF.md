@@ -1,3 +1,228 @@
+# Handoff — 2026-10-13
+
+Written for the next session (an engineer or a Claude agent) so it can carry on
+without re-reading the long chat. Checked against the repo and production on
+2026-10-13. The older handoffs below still hold wherever this section doesn't
+override them.
+
+## Where things stand
+
+- `main` = `origin/main` = **`69c57fd`**. Railway service **Horizon-Watch**
+  (project "magnificent-charm") deploys on every push:
+  https://horizon-watch-production.up.railway.app. The web app is on Vercel
+  (https://horizon-watch.vercel.app); the owner uses it on iPhone as a Home Screen
+  app.
+- Desktop app (Tauri DMG): **v1.1.20** is the latest release. The next one must
+  be **≥ 1.1.21**:
+  `gh workflow run desktop-dmg.yml -f version=1.1.21`.
+  The DMG bundles the web build at build time, so desktop changes need a new DMG.
+- Local: backend on :8000 (`cd backend && python -m uvicorn main:app --port 8000`),
+  vite on :5173 (`npm run dev`). Test login: `localshot@test.local` /
+  `localshot-pw`.
+- Tests:
+  - vitest: about 1,925 passing. `src/lib/ref.test.js` hits the live :8000 backend
+    and times out when it's busy; it's flaky, not a regression.
+  - pytest: the targeted suites pass. `test_ucdp_history.py` needs network.
+- **Never commit**: `backend/data/risk_band_state.json`,
+  `backend/data/cable_details.json`, `backend/test_sanctions_loader.py`,
+  `backend/data/overwatch_osm_ukraine.json`.
+
+## Standing rules (also in the auto-memory, MEMORY.md)
+
+- **Pushes and DMGs:** push (= deploy) or build a DMG only when the owner asks. In
+  this session the owner repeatedly said "push" and "push everything incl. DMG",
+  but each occasion is separate: ask again if unsure.
+- **Production is read-only to us:** `railway logs -s Horizon-Watch -n 3000`, and
+  `railway ssh -s Horizon-Watch -- 'cd /app && python - <<"EOF" … EOF'` with
+  sqlite `file:$DATA_DIR/akili.db?mode=ro`. Never write to the prod DB without
+  the owner's OK.
+- **Notifications:** the phone gets exactly what the desktop gets. One server
+  rule, `event_watch.notifies` / `INTERRUPT_KINDS`, mirrored in
+  `src/state/notificationStore.js interrupts()`. Any new kind goes in both;
+  `test_telegram_events.py` checks they match.
+- **GDELT is only for the country risk index.** It isn't on the map, in the
+  feeds, in the inbox, in notifications or in fusion (`GDELT_IN_FUSION=1`
+  re-enables fusion).
+- **Fonts:** no typewriter or monospace fonts anywhere; `--mono` is the system
+  sans.
+- **Confirmations:** use our own dialog, `src/ui/confirm.js confirmAction()`.
+  `window.confirm` shows nothing in the Tauri desktop app.
+- **Model use:** OpenAI only through `backend/openai_gate.py`, with purposes
+  enabled in `HW_OPENAI_PURPOSES` (the prod list includes `enrich`). Claude is
+  for briefings only.
+- **Outgoing requests:** never put the owner's email in User-Agents or other
+  outbound requests; use
+  `HorizonWatch/… (+https://github.com/ZaphodBeblerbox/Horizon-Watch)`.
+- **No media on the laptop** beyond short-lived caches; the server keeps media.
+- **Phone map tiles:** Esri (server.) → Esri through our server
+  (`/api/tiles/esri/*`, needed because the owner's iPhone can't reach
+  arcgisonline) → Esri services. → OSM. CARTO needs a key. Check what a tile
+  shows, not just that it loaded.
+- **Agents:** work is usually split across background agents. They hit usage
+  limits often. Resume them, check `git status`, and commit only when the whole
+  tree builds and the tests pass.
+
+## Done in this session (2026-10-10 → 13), all pushed
+
+- **Phone map:** every desktop layer with the same icons; Filters; Save as
+  default; the tile fallback chain; live-person labels ("live" or "last seen"
+  only).
+- **Notifications:**
+  - One rule for phone and desktop, so they get the same notifications.
+  - Titles say the kind of notification; the headline is in the body.
+  - No push to a device that has the app open; in-app banners instead.
+  - A list of devices receiving notifications, each switchable.
+  - A tap opens the map at the signal with the signal drawn on it, plus a half
+    sheet (desktop: the inspector).
+- **Live location:**
+  - The phone sends every 10 m (at most every 3 s), with a 30 s heartbeat.
+  - The server pushes positions to viewers in real time (SSE, stream tokens,
+    polling fallback).
+  - Gliding markers, tracks with replay, 30 days of history.
+  - Approximate city-level fallback; the desktop's IP fix never overrides the
+    phone's GPS.
+  - Only your team or company, or people linked to your assets, show as live.
+  - Limit: an iPhone web app can't send location in the background.
+- **Assets:**
+  - Link a person to an asset, so the asset follows their phone.
+  - Send warning: a red takeover with an alarm until acknowledged; the sender
+    sees the acknowledgement; resent every 2 min.
+  - Remove an asset (owner or admin).
+  - Safe houses: their own kind, or any building declared one; 3D model, map
+    layer and filter.
+  - Advise evacuation: the alarm plus the safest route to the best safe house,
+    with multi-leg itineraries abroad (drive / fly / border).
+- **Routes:** `backend/safe_route.py` and `src/routes/RoutePanel.jsx` with mode
+  and provider registries.
+  - Safest vs fastest on foot, by car and by truck.
+  - Shipping (`sea_route.py`, `searoute`, `sea_hazards.json`).
+  - Flights (`air_route.py`, `air_hazards.json` with EASA CZIBs).
+- **Endangered places:**
+  - France (the gilets jaunes 17 Oct site, the Framacarte arms map) and DE, IT,
+    UK, BE, ES sources.
+  - Country chips and an "Active only" filter (a call, or one within 2 km).
+  - Generic 3D models (33 types) turning in the sidebar, never on the map.
+  - Listed under Infrastructure; available in the theater editor.
+- **Imagery:**
+  - Radar works in prod (libexpat and OpenCV via Railpack, plus a tifffile
+    fallback).
+  - Overwatch zones by voice or button, grouped and confirmed before scanning;
+    the border sweep; radar change every 6 days.
+  - Finding boxes everywhere; the image under the boxes on the map.
+  - Imagery opens a finding on its image (After / Before / swipe / Change).
+  - "Assess with AI" (gpt-4o-mini through openai_gate "enrich", on click only).
+  - "Generate a watch area around <place>" by voice.
+  - Delete zones and areas.
+- **Other:**
+  - Vessel of concern: Russia link + loitering + targets in Shahed range, based on
+    the research in `docs/research/russia_hybrid_targeting.md`; live view,
+    rings, simulated drone flight.
+  - Telegram mood alert; GeoConfirmed with native X media in the General desk;
+    event clustering ("+N reports").
+  - Aircraft and ship photos with flags.
+  - Theater ✕ deletes after a confirmation.
+  - Phone profile picture and header editor.
+  - The X logo stripes; the Home Screen icon fix.
+
+## In progress — partial code is committed (`0efad19`); finish these first
+
+The agents stopped on usage limits. Their code builds and passes the tests, but
+the features are incomplete.
+
+1. **Strikes & control layer** (air campaign)
+   - Files: `backend/strike_events.py` (`events(since, bbox, acts)` with act,
+     actor, actor_side, target, precision, unit_type, origin_hint),
+     `backend/routers/strikes.py`, `src/globe/GlobeStrikesLayer.jsx`,
+     `src/globe/strikes.js`, `src/inspector/StrikeEventDetail.jsx`.
+   - It stopped while wiring `Situation.jsx`.
+   - Remaining:
+     - **action icons**, one per act, in the same style as the asset icons: bomb
+       (airstrike), missile, drone, artillery shell, ship, assault, flag (control
+       change), shield (interception). The owner insists on this;
+     - colour per actor; fading with age (14 days for strikes, 30 for control
+       changes);
+     - campaigns and timeline replay;
+     - layer toggles (desktop, phone, theater editor);
+     - tests and screenshots.
+2. **Frontline claims, NATO symbols and trajectories**
+   - Files: `backend/frontline_claims.py`, `backend/routers/frontline_claims.py`,
+     `backend/test_frontline_claims.py`.
+   - It stopped right after reading the strike_events contract.
+   - Remaining:
+     - a claimed-capture overlay ("CLAIMED, unverified"), confirmed against
+       DeepState or expired after 7 days;
+     - troop-movement arrows with NATO APP-6 symbols (the `milsymbol` npm
+       package);
+     - drone and missile trajectories from an assumed origin (Russian-held front;
+       northern Yemen for the Houthis → Riyadh), with the animated Shahed/Geran.
+       Reuse `src/globe/vesselThreat.js` and `GlobeVesselThreatLayer.jsx`.
+       Ballistic missiles get a high arc, cruise missiles a low arc;
+     - layers "Frontline claims", "Movements" and "Trajectories";
+     - routing a notification tap to this view.
+3. **Smoke plume false positives** (urgent for the owner)
+   - Files: `backend/smoke_classify.py`, `src/components/imagery/DetectionFeedback.jsx`,
+     `src/components/imagery/DetectionLegend.jsx`, edits in `backend/s2_bands.py`.
+   - Remaining:
+     - build a labelled set from prod's smoke detections (fields, runways and
+       cloud shadows flagged as smoke);
+     - classify on:
+       - spectra: smoke raises blue/aerosol and is semi-transparent; dark fields
+         are darker in every band;
+       - the Sentinel-2 SCL cloud / shadow / dark-area classes;
+       - **temporal persistence:** anything present in two or more earlier clear
+         passes is not smoke;
+       - plume shape and its hot source (B11/B12 SWIR, FIRMS);
+       - OSM and WorldCover context;
+     - distinct classes: smoke plume, burn scar / impact point, runway, port
+       infrastructure, tanks, aircraft, ships;
+     - feedback buttons and `tools/train_detection_classifier.py`;
+     - a dry-run re-evaluation of existing detections. Don't apply it to prod
+       without the owner.
+
+## Open issues to fix next (the owner flagged these as important)
+
+- **Phone: satellite images don't load on the map** when a finding is opened from
+  a notification; the desktop works. Look at `src/lib/findingOverlay.js`,
+  `src/mobile/findingsLeaflet.js`, the cross-site auth on the image fetch, and the
+  Leaflet imageOverlay pane/z-order. The owner wants a notification tap to lead
+  straight to the image, the precise signal and the detections.
+- **"Missing ship" at the Ukrainian naval base:** the image and detection weren't
+  on the map. Show where the ship was (the before image with its detection box)
+  and that it's gone now (after). That needs a vessel-detection diff between
+  passes, drawn on the map and in Imagery.
+- **Production accounts JC and Lison Marchand** have no team or company, so under
+  the new rule they see nobody live. The owner hasn't answered whether to set
+  company = "Trifecta Technologies" (that's a prod DB write).
+- **`air_route.py`:** `geo/countries.geojson` lacks ISO codes for France, Norway
+  and Kosovo. It's fixed in `evacuation.py` only.
+- **Cross-border evacuation planning** takes 30–50 s, over the client's 30 s
+  limit. Add a server time budget.
+- **Check** that deleting active watch zones works in DMG 1.1.20. It needed our own
+  confirm dialog, and no DELETE requests had ever reached prod.
+- **Hazard files need manual upkeep:** `air_hazards.json` (EASA CZIBs; Jordan
+  expires 2026-10-16) and `sea_hazards.json` (verify the incident examples).
+- **Public routing services** (FOSSGIS Valhalla/OSRM) are light-use only. If use
+  grows, self-host.
+
+## Requested but not started
+
+- **More route modes, on the existing route core:**
+  - trip planning for staff (pre-trip route and time, alert on deviation);
+  - evacuation plans per site, refreshed daily;
+  - convoy routing; medevac to the nearest reachable hospital;
+  - trucks around blockades (truck mode exists; needs a dedicated flow);
+  - likely approach paths to sites (defence).
+- **Endangered places for all countries:** GDELT protest events as "calls
+  nearby", plus a worldwide Mobilizon/Gancio/Demosphere calendar search. Offered
+  to the owner; not yet confirmed.
+- **A native iOS app** (Capacitor) for background location and Critical Alerts.
+  It needs an Apple Developer account and Team ID from the owner; planned for
+  later. Estimate: about a week of work, TestFlight within days, the App Store in
+  2–4 weeks.
+- **AI image enhancement:** parked (see memory).
+
+---
+
 # Handoff — 2026-10-09
 
 Written for the next session, whether an engineer or an agent. Everything
