@@ -499,6 +499,9 @@ app.include_router(_finding_assess_router.router)
 # see routers/enrichment.py and enrich.py.
 from routers import enrichment as _enrichment_router
 app.include_router(_enrichment_router.router)
+# An analyst's "Correct" / "Not this — it's: …" on a detection — routers/detection_feedback.py.
+from routers import detection_feedback as _detection_feedback_router
+app.include_router(_detection_feedback_router.router)
 # Claimed control changes, troop movements, drone/missile trajectories — routers/frontline_claims.py.
 from routers import frontline_claims as _frontline_claims_router
 app.include_router(_frontline_claims_router.router)

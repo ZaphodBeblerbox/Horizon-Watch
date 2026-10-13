@@ -133,6 +133,56 @@ def _decode_and_encode(image_bytes: bytes):
     return img, base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _firms_points(west, south, east, north, day: str) -> list:
+    """(lat, lon) of FIRMS fire detections around the area, the day before to the day after."""
+    from database import FireDetection, get_db
+    d = datetime.datetime.fromisoformat(day)
+    with get_db() as db:
+        return [(a, o) for a, o in db.query(FireDetection.lat, FireDetection.lon).filter(
+            FireDetection.lat.between(south - 0.02, north + 0.02), FireDetection.lon.between(west - 0.03, east + 0.03),
+            FireDetection.acquired_at >= d - datetime.timedelta(days=1),
+            FireDetection.acquired_at < d + datetime.timedelta(days=2)).all()]
+
+
+def _smoke_context(now, hist, bounds: dict) -> dict:
+    """Scene-grid context for smoke_classify: WorldCover, OSM, the fire mask."""
+    import numpy as np
+    import land_water
+    import smoke
+    import smoke_classify
+    h, w = now.shape[1:]
+    ctx = {}
+    try:
+        wc = land_water.worldcover_classes(bounds["west"], bounds["south"], bounds["east"], bounds["north"], w, h)
+        if wc is not None:
+            ctx["worldcover"] = wc
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[sentinel-scanner] smoke context: worldcover unreadable: {type(e).__name__}: {e}")
+    ctx.update(smoke_classify.osm_context(bounds, (h, w)))
+    ctx["fire"] = smoke.masks(now, np.median(np.stack(hist), axis=0))[2]
+    return ctx
+
+
+async def _classify_plumes(found, now, hist, bounds: dict, day: str) -> list:
+    """smoke.py's candidates, classified; returns only those to publish."""
+    import smoke_classify
+    try:
+        pts = await asyncio.to_thread(_firms_points, bounds["west"], bounds["south"], bounds["east"], bounds["north"], day)
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[sentinel-scanner] smoke classify: FIRMS unreadable, deciding without it: {type(e).__name__}: {e}")
+        pts = []
+    ctx = await asyncio.to_thread(_smoke_context, now, hist, bounds)
+    judged = await _off_loop(smoke_classify.assess_plumes, now, hist, found, bounds, ctx, pts)
+    keep = [p for p in judged if smoke_classify.is_finding(p.get("class"))]
+    dropped = [p for p in judged if p not in keep]
+    if dropped:
+        import collections
+        c = collections.Counter(p.get("class") for p in dropped)
+        print(f"[sentinel-scanner] smoke classify: {len(found)} candidate(s), {len(keep)} published; not smoke: "
+              + ", ".join(f"{n} {k}" for k, n in c.most_common()))
+    return keep
+
+
 async def _smoke_pass(zone_dict, scene_dt, west, south, east, north) -> list:
     """Smoke plumes and active fires on this pass, as detections."""
     import numpy as np
@@ -153,15 +203,26 @@ async def _smoke_pass(zone_dict, scene_dt, west, south, east, north) -> list:
     base = np.median(np.stack(hist), axis=0)
     bounds = {"west": west, "south": south, "east": east, "north": north}
     found, fires = await _off_loop(smoke.plumes, now, base, bounds)
+    # A change is not smoke (owner, 2026-10-13: fields, runways and cloud
+    # shadows were published as plumes). smoke_classify decides what each
+    # candidate is; only smoke plumes and burn scars are published.
+    found = await _classify_plumes(found, now, hist, bounds, day) if found else []
     out = []
     for p in found:
+        cls = p.get("class")
+        feats = p.get("features") or {}
         out.append({
-            "instrument": "OPTICAL", "object_type": "smoke_plume", "confidence": 0.9,
+            "instrument": "OPTICAL", "object_type": cls, "confidence": 0.9,
             "centroid_lat": p["source_lat"], "centroid_lon": p["source_lon"],
             "geo_geometry": json.dumps(p["geometry"]), "area_m2": p["area_km2"] * 1e6,
             "severity": "high", "alert_tier": "silent",
-            "attributes": json.dumps({"tier": "confirmed", "models": ["smoke.py (S2 reflectance change)"],
-                                      "description": smoke.describe(p), **{k: v for k, v in p.items() if k != "geometry"},
+            "attributes": json.dumps({"tier": "confirmed", "models": ["smoke.py (S2 reflectance change)", "smoke_classify"],
+                                      "description": smoke.describe(p) if cls == "smoke_plume" else
+                                      f"Burn scar / impact point, {p['area_km2']} km², newly dark and burnt",
+                                      **{k: v for k, v in p.items() if k not in ("geometry", "features", "class", "confidence")},
+                                      "class_confidence": p.get("confidence"),
+                                      "features": {k: v for k, v in feats.items() if k != "ratios"},
+                                      "band_ratios": feats.get("ratios"),
                                       "baseline_passes": past}),
         })
     for f in fires:
@@ -245,20 +306,20 @@ def _imagery_signals(zone_dict: dict, scan_id: str, result: dict, change: dict |
 
     # Smoke and fire on this pass that the previous pass did not have near
     # the same place — a site that keeps burning is not new each time.
-    plumes_now = [d for d in (result.get("detections") or []) if d.get("object_type") == "smoke_plume"]
+    plumes_now = [d for d in (result.get("detections") or []) if d.get("object_type") in ("smoke_plume", "burn_scar")]
     fires_now = [d for d in (result.get("detections") or []) if d.get("object_type") == "active_fire"]
     prev_smoke, prev_fire = [], []
     with get_db() as db:
         from database import SentinelDetection
         if prev_scan_id is not None:
             for d in db.query(SentinelDetection).filter(SentinelDetection.scan_id == prev_scan_id,
-                                                        SentinelDetection.object_type.in_(("smoke_plume", "active_fire"))).all():
-                (prev_smoke if d.object_type == "smoke_plume" else prev_fire).append((d.centroid_lat, d.centroid_lon))
+                                                        SentinelDetection.object_type.in_(("smoke_plume", "burn_scar", "active_fire"))).all():
+                (prev_smoke if d.object_type in ("smoke_plume", "burn_scar") else prev_fire).append((d.centroid_lat, d.centroid_lon))
 
     def near(pt, pts, km):
         return any(abs(pt[0] - a) * 111 < km and abs(pt[1] - o) * 111 < km for a, o in pts)
 
-    new_plumes = [json.loads(d["attributes"]) for d in plumes_now
+    new_plumes = [{**json.loads(d["attributes"]), "class": d["object_type"]} for d in plumes_now
                   if not near((d["centroid_lat"], d["centroid_lon"]), prev_smoke, 3)]
     new_heat += sum(1 for d in fires_now if not near((d["centroid_lat"], d["centroid_lon"]), prev_fire, 1))
 

@@ -18,8 +18,17 @@ module decides, per candidate region, which of these it is:
     cloud_shadow  dark in every band equally, or scene class shadow
     persistent    present in >= 2 earlier clear passes — the ground, not smoke
 
-Only smoke_plume, burn_scar and runway are findings; the rest explain why a
-change was not reported.
+    runway        on an OSM runway/taxiway, or a persistent long straight strip
+    aircraft      a transient change on an OSM apron (parked aircraft come and go)
+    port_infrastructure  on OSM port / harbour / quay / pier ground
+    storage_tank  on an OSM storage tank or tank farm
+    vessel        a small bright compact change on open water (WorldCover 80)
+
+Only smoke_plume and burn_scar are published (as findings, and as signals);
+the rest explain why a change was not reported and are logged, never stored
+as detections — publishing "vessel" or "port_infrastructure" here would mix
+into the ship/tank detector's counts and its "gone since the last pass"
+damage signals.
 
 THE PHYSICS, per band, as the change ratio inside the region relative to the
 same ratio in a ring around it (so haze and sun angle cancel):
@@ -49,6 +58,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 
 import numpy as np
 
@@ -58,20 +68,26 @@ CLOUD_SCL = (8, 9, 10)
 SHADOW_SCL = (3,)
 BAD_SCL = (0, 1, 3, 8, 9, 10, 11)
 
-FINDING_CLASSES = ("smoke_plume", "burn_scar", "runway")
-CLASSES = ("smoke_plume", "burn_scar", "field_change", "runway", "cloud", "cloud_shadow", "persistent")
+FINDING_CLASSES = ("smoke_plume", "burn_scar")
+CLASSES = ("smoke_plume", "burn_scar", "runway", "aircraft", "port_infrastructure", "storage_tank", "vessel",
+           "field_change", "cloud", "cloud_shadow", "persistent")
+DARK_SCL = (2,)          # Sentinel-2 "dark area pixels": dark ground, burn scars, topographic shadow
 
-# Fitted on the labelled prod sample (see tools/train_detection_classifier.py
-# --rules-report); the smoke evidence score a candidate must reach.
+# The smoke evidence score a candidate must reach. Set by hand, not fitted;
+# checked against data/smoke_labelled_set.json (105 decided cases, 4 of them
+# smoke) by test_smoke_classify.py and tools/train_detection_classifier.py
+# --rules-report.
 SMOKE_THRESHOLD = 2.0
 
 FEATURES = ("vis", "nir", "swir", "blue_red", "aer_blue", "mono", "nir_excess", "swir_vs_vis",
             "flatness", "dnbr", "ndvi_base", "cloud_frac", "shadow_frac", "bright_b02", "persist",
             "area_km2", "elong", "rect", "solidity", "edge_step", "tex_corr", "cropland", "builtup",
-            "aeroway", "fire", "firms", "nir_frac", "swir_frac", "edge_align", "cloud_px", "cloud_near")
+            "aeroway", "fire", "firms", "nir_frac", "swir_frac", "edge_align", "cloud_px", "cloud_near",
+            "apron", "port", "tanks", "water", "dark_frac")
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "detection_classifier.json")
 _MODEL = {"mtime": None, "model": None}
+MODEL_MIN_LABELS = 40     # a model fitted on fewer answers does not overrule the physics
 
 
 def _clear(a):
@@ -263,8 +279,12 @@ def features(now, hist, comp, px_m: float = 20.0, ctx: dict | None = None, base=
         v = wc[comp]
         cropland = float((v == 40).mean())
         builtup = float((v == 50).mean())
-    aero = ctx.get("aeroway")
-    aeroway = float(aero[comp].mean()) if aero is not None and aero.shape == comp.shape else 0.0
+    def cover(key):
+        m = ctx.get(key)
+        return float(m[comp].mean()) if m is not None and getattr(m, "shape", None) == comp.shape else 0.0
+    aeroway, apron, port, tanks = cover("aeroway"), cover("apron"), cover("port"), cover("tanks")
+    water = float((wc[comp] == 80).mean()) if wc is not None and wc.shape == comp.shape else 0.0
+    dark_frac = float(np.isin(scl, DARK_SCL).mean()) if scl.size else 0.0
     fire_m = ctx.get("fire")
     fire = 0
     if fire_m is not None:
@@ -280,6 +300,7 @@ def features(now, hist, comp, px_m: float = 20.0, ctx: dict | None = None, base=
          "bright_b02": bright_b02, "persist": persist, "area_km2": sh["area_km2"], "elong": sh["elong"],
          "rect": sh["rect"], "solidity": sh["solidity"], "edge_step": edge_step, "tex_corr": tex_corr,
          "cropland": cropland, "builtup": builtup, "aeroway": aeroway, "fire": fire,
+         "apron": apron, "port": port, "tanks": tanks, "water": water, "dark_frac": dark_frac,
          "firms": int(ctx.get("firms") or 0), "length_m": sh["length_m"], "width_m": sh["width_m"],
          "ratios": {k: round(v, 3) for k, v in r.items()}}
     return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in f.items()}
@@ -352,26 +373,50 @@ def smoke_evidence(f: dict) -> tuple[float, list]:
 def _rule_class(f: dict) -> tuple[str, float, list]:
     s, why = smoke_evidence(f)
     bright = f["vis"] > 0
+    heat = bool(f.get("fire", 0) >= 3 or f.get("firms", 0))
+    g = lambda k: f.get(k, 0.0) or 0.0
+
+    def first(kind, sign, text):
+        why.insert(0, {"kind": kind, "sign": sign, "text": text})
+
     # Cloud / shadow first: they explain everything else away.
     if (f["cloud_frac"] > 0.3 or f["cloud_px"] > 0.2 or (bright and f["nir_frac"] > 0.8 and f["cloud_near"] > 0.02)
             or (f["cloud_px"] > 0.03 and f["cloud_near"] > 0.05)):
-        why.insert(0, {"kind": "spectral", "sign": "-", "text": "bright in visible and near-infrared alike, cloud pixels in/around it — cloud"})
+        first("spectral", "-", "bright in visible and near-infrared alike, cloud pixels in/around it — cloud")
         return "cloud", 0.85, why
     flat = abs(f["nir"] - f["vis"]) < 0.25 * abs(f["vis"]) and abs(f["swir"] - f["vis"]) < 0.45 * abs(f["vis"])
     if f["shadow_frac"] > 0.3 or (not bright and flat and f["vis"] < -0.15 and f["cloud_near"] > 0.02):
-        why.insert(0, {"kind": "spectral", "sign": "-", "text": "darker by the same factor in every band with cloud next to it — a cloud shadow"})
+        first("spectral", "-", "darker by the same factor in every band with cloud next to it — a cloud shadow"
+              + (f" (scene class shadow on {round(f['shadow_frac'] * 100)}%)" if f["shadow_frac"] > 0.3 else ""))
         return "cloud_shadow", 0.8, why
+    # Smoke with a fire under it beats the place it is in: a strike on a
+    # port or an airfield smokes too.
+    if heat and s >= SMOKE_THRESHOLD and f["persist"] < 2:
+        return "smoke_plume", round(min(0.97, 0.65 + (s - SMOKE_THRESHOLD) * 0.08), 2), why
+    # Where it is (OpenStreetMap): the ground's own furniture changes too.
+    if g("tanks") > 0.2:
+        first("context", "+", f"{round(g('tanks') * 100)}% on storage tanks (OpenStreetMap) — tank roofs and fill levels change between passes")
+        return "storage_tank", 0.7, why
+    if g("port") > 0.3:
+        first("context", "+", f"{round(g('port') * 100)}% on port / quay ground (OpenStreetMap) — berthed ships and cargo come and go")
+        return "port_infrastructure", 0.7, why
     linear = f["elong"] >= 8 and f["rect"] > 0.6 and 600 <= f["length_m"] <= 5000 and f["width_m"] <= 120
-    if f["aeroway"] > 0.2 or (f["persist"] >= 2 and linear):
-        why.insert(0, {"kind": "shape", "sign": "+", "text": f"long straight uniform strip {round(f['length_m'])} m × {round(f['width_m'])} m"
-                       + (" on an OSM runway" if f["aeroway"] > 0.2 else ", present on earlier passes")})
-        return "runway", 0.8 if f["aeroway"] > 0.2 else 0.55, why
+    if g("aeroway") > 0.2 or (f["persist"] >= 2 and linear):
+        first("shape", "+", f"long straight strip {round(f['length_m'])} m × {round(f['width_m'])} m"
+              + (" on an OSM runway/taxiway" if g("aeroway") > 0.2 else ", present on earlier passes"))
+        return "runway", 0.8 if g("aeroway") > 0.2 else 0.55, why
+    if g("apron") > 0.3 and f["persist"] < 2:
+        first("context", "+", f"{round(g('apron') * 100)}% on an airfield apron (OpenStreetMap) — parked aircraft come and go")
+        return "aircraft", 0.6, why
+    if g("water") > 0.6 and bright and f["area_km2"] < 0.5 and f["solidity"] > 0.7:
+        first("context", "+", "small, compact and bright on open water (ESA WorldCover) — a ship")
+        return "vessel", 0.6, why
     if f["persist"] >= 2:
         return "persistent", 0.75, why
     # Burn scar / impact point: newly dark, burnt (NBR drop), compact, hot.
     if (not bright and f["dnbr"] > 0.1 and f["nir"] < -0.08 and f["area_km2"] < 3
             and (f["fire"] or f["firms"]) and f["edge_align"] < 0.45):
-        why.insert(0, {"kind": "spectral", "sign": "+", "text": f"burn ratio dropped by {f['dnbr']:.2f} with heat on it — burnt ground"})
+        first("spectral", "+", f"burn ratio dropped by {f['dnbr']:.2f} with heat on it — burnt ground")
         return "burn_scar", 0.8, why
     if s >= SMOKE_THRESHOLD:
         return "smoke_plume", round(min(0.97, 0.6 + (s - SMOKE_THRESHOLD) * 0.08), 2), why
@@ -419,7 +464,7 @@ def classify(f: dict) -> dict:
     model = _load_model()
     # The model only re-decides between ground-truth classes it was trained
     # on; cloud and shadow stay with the physics.
-    if model and cls not in ("cloud", "cloud_shadow"):
+    if model and (model.get("n") or 0) >= MODEL_MIN_LABELS and cls not in ("cloud", "cloud_shadow"):
         try:
             mcls, mconf = _model_predict(model, f)
             if mcls != cls:
@@ -432,3 +477,171 @@ def classify(f: dict) -> dict:
 
 def is_finding(cls: str) -> bool:
     return cls in FINDING_CLASSES
+
+
+# ── Scene level: from smoke.py's candidate plumes to classes ──────────────
+
+UA = "HorizonWatch/2.0 (+https://github.com/ZaphodBeblerbox/Horizon-Watch)"
+OVERPASS_URLS = ("https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+                 "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter")
+OSM_TTL_S = 7 * 86400     # airfields and ports do not move between passes
+_OSM_CACHE: dict = {}
+_OSM_DOWN = {"until": 0.0}
+OSM_BACKOFF_S = 900
+WINDOW_M = 2000           # context kept around a region: the ring (400 m) and cloud_near (1.5 km)
+
+
+def _to_px(bounds: dict, shape) -> callable:
+    h, w = shape
+    W, S, E, N = bounds["west"], bounds["south"], bounds["east"], bounds["north"]
+    return lambda lon, lat: ((lon - W) / (E - W) * w - 0.5, (N - lat) / (N - S) * h - 0.5)
+
+
+def pixel_m(bounds: dict, shape) -> float:
+    h, w = shape
+    lat = (bounds["south"] + bounds["north"]) / 2
+    m_x = (bounds["east"] - bounds["west"]) * 111_320 * math.cos(math.radians(lat)) / w
+    m_y = (bounds["north"] - bounds["south"]) * 110_574 / h
+    return float(math.sqrt(m_x * m_y))
+
+
+def polygon_mask(geometry: dict, bounds: dict, shape) -> np.ndarray:
+    """A GeoJSON polygon (lon/lat) rasterised on the scene grid."""
+    import cv2
+    px = _to_px(bounds, shape)
+    m = np.zeros(shape, dtype=np.uint8)
+    rings = geometry.get("coordinates") or []
+    if geometry.get("type") == "MultiPolygon":
+        rings = [r for poly in rings for r in poly[:1]]
+    else:
+        rings = rings[:1]
+    for ring in rings:
+        pts = np.array([px(lon, lat) for lon, lat in ring], dtype=np.float64)
+        cv2.fillPoly(m, [np.round(pts).astype(np.int32)], 1)
+    return m.astype(bool)
+
+
+def overpass_query(bounds: dict) -> str:
+    b = f'{bounds["south"]},{bounds["west"]},{bounds["north"]},{bounds["east"]}'
+    tags = ("aeroway=runway", "aeroway=taxiway", "aeroway=apron", "landuse=port", "landuse=harbour", "harbour=yes",
+            "industrial=port", "man_made=pier", "man_made=quay", "man_made=storage_tank", "industrial=oil")
+    return "[out:json][timeout:25];(" + "".join(f"way[{t}]({b});" for t in tags) + ");out geom;"
+
+
+def osm_context(bounds: dict, shape, elements: list | None = None) -> dict:
+    """Masks on the scene grid from OpenStreetMap: aeroway (runway +
+    taxiway), apron, port, tanks. Empty dict when Overpass cannot be read —
+    the classifier then decides on spectra, time and shape alone."""
+    import cv2
+    key = tuple(round(bounds[k], 4) for k in ("west", "south", "east", "north"))
+    if elements is None and key in _OSM_CACHE and time.time() - _OSM_CACHE[key][0] < OSM_TTL_S:
+        elements = _OSM_CACHE[key][1]
+    if elements is None and time.time() < _OSM_DOWN["until"]:
+        return {}
+    if elements is None:
+        import urllib.parse
+        import urllib.request
+        for url in OVERPASS_URLS:
+            try:
+                req = urllib.request.Request(url, data=urllib.parse.urlencode({"data": overpass_query(bounds)}).encode(),
+                                             headers={"User-Agent": UA})
+                elements = json.loads(urllib.request.urlopen(req, timeout=30).read()).get("elements", [])
+                _OSM_CACHE[key] = (time.time(), elements)
+                break
+            except Exception as e:                                   # noqa: BLE001
+                print(f"[smoke_classify] overpass {url.split('/')[2]}: {type(e).__name__}: {str(e)[:100]}", flush=True)
+        if elements is None:
+            # Every mirror failed: don't make each smoke pass wait out the
+            # same outage — decide without OSM for the next 15 minutes.
+            _OSM_DOWN["until"] = time.time() + OSM_BACKOFF_S
+            print("[smoke_classify] error: no Overpass mirror answered; OSM context off for 15 min", flush=True)
+            return {}
+    px = _to_px(bounds, shape)
+    pm = pixel_m(bounds, shape)
+    masks = {k: np.zeros(shape, dtype=np.uint8) for k in ("aeroway", "apron", "port", "tanks")}
+    for el in elements:
+        tags, geom = el.get("tags") or {}, el.get("geometry") or []
+        if len(geom) < 2:
+            continue
+        pts = np.round(np.array([px(g["lon"], g["lat"]) for g in geom])).astype(np.int32)
+        closed = geom[0] == geom[-1] and len(geom) >= 4
+        aero, mm = tags.get("aeroway"), tags.get("man_made")
+        if aero in ("runway", "taxiway"):
+            key = "aeroway"
+        elif aero == "apron":
+            key = "apron"
+        elif mm == "storage_tank" or tags.get("industrial") == "oil":
+            key = "tanks"
+        else:
+            key = "port"
+        if closed and key != "aeroway":
+            cv2.fillPoly(masks[key], [pts], 1)
+        else:
+            try:
+                wm = float(str(tags.get("width", "")).split()[0])
+            except (ValueError, IndexError):
+                wm = 45.0 if aero == "runway" else 23.0 if aero == "taxiway" else 15.0
+            cv2.polylines(masks[key], [pts], closed, 1, thickness=max(1, int(round(wm / pm))))
+            if closed:
+                cv2.fillPoly(masks[key], [pts], 1)
+    return {k: v.astype(bool) for k, v in masks.items()}
+
+
+def _window(comp: np.ndarray, px_m: float):
+    ys, xs = np.nonzero(comp)
+    pad = int(math.ceil(WINDOW_M / px_m))
+    h, w = comp.shape
+    return slice(max(0, ys.min() - pad), min(h, ys.max() + pad + 1)), slice(max(0, xs.min() - pad), min(w, xs.max() + pad + 1))
+
+
+def assess(now, hist, comp, bounds: dict, ctx: dict | None = None, base=None, firms_points=()) -> dict:
+    """Features and class of one candidate region on a scene. ctx holds
+    scene-grid arrays (worldcover, aeroway, apron, port, tanks, fire);
+    firms_points the (lat, lon) of FIRMS detections around that day."""
+    ctx = ctx or {}
+    now = np.asarray(now, dtype=np.float32)
+    hist = np.asarray(hist, dtype=np.float32)
+    comp = np.asarray(comp, dtype=bool)
+    if not comp.any():
+        raise ValueError("empty region")
+    pm = pixel_m(bounds, comp.shape)
+    ys, xs = _window(comp, pm)
+    sub = {k: v[ys, xs] for k, v in ctx.items() if isinstance(v, np.ndarray) and v.shape == comp.shape}
+    # FIRMS within 1 km of the region.
+    firms = 0
+    if firms_points:
+        from scipy import ndimage
+        near = ndimage.binary_dilation(comp[ys, xs], iterations=max(1, int(1000 / pm)))
+        px = _to_px(bounds, comp.shape)
+        for lat, lon in firms_points:
+            x, y = px(lon, lat)
+            yi, xi = int(round(y)) - ys.start, int(round(x)) - xs.start
+            if 0 <= yi < near.shape[0] and 0 <= xi < near.shape[1] and near[yi, xi]:
+                firms += 1
+    sub["firms"] = firms
+    b = None if base is None else np.asarray(base)[:, ys, xs]
+    f = features(now[:, ys, xs], hist[:, :, ys, xs], comp[ys, xs], px_m=pm, ctx=sub, base=b)
+    out = classify(f)
+    out["features"] = f
+    return out
+
+
+def assess_plumes(now, hist, plumes: list, bounds: dict, ctx: dict | None = None, firms_points=()) -> list:
+    """smoke.plumes() output -> the same list, each with class, confidence,
+    reasons, classifier and features. A region that cannot be measured is
+    "unclassified" — not a finding, so not published; the error is logged.
+    Smoke.py's word alone is what put fields and runways on the map."""
+    hist = np.asarray(hist, dtype=np.float32)
+    base = baseline(hist)
+    shape = np.asarray(now).shape[1:]
+    out = []
+    for p in plumes:
+        try:
+            comp = polygon_mask(p["geometry"], bounds, shape)
+            v = assess(now, hist, comp, bounds, ctx, base=base, firms_points=firms_points)
+        except Exception as e:                                       # noqa: BLE001
+            print(f"[smoke_classify] error: region at {p.get('source_lat')},{p.get('source_lon')} unclassified: "
+                  f"{type(e).__name__}: {e}", flush=True)
+            v = {"class": "unclassified", "confidence": None, "reasons": [], "classifier": "none", "features": None}
+        out.append({**p, **v})
+    return out

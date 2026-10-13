@@ -6,12 +6,14 @@
  * reasons the classifier gave; this shows them, and lets an analyst say
  * "Correct" or "Not this — it's: Runway", which the backend stores
  * (POST /api/imagery/detections/{id}/feedback) to calibrate the classifier.
- * The stored answer is read back on open and shown, and can be changed.
+ * Answers are stored one per user: your own is read back on open and shown,
+ * and can be changed; other analysts' are counted, not shown as yours.
+ * tools/train_detection_classifier.py fits the classifier on them.
  */
 import { useEffect, useState } from "react"
 import { apiFetch } from "../../auth.js"
 import {
-    classColor, classDetail, classLabel, FEEDBACK_CLASSES, feedbackLabel,
+    classColor, classDetail, classLabel, FEEDBACK_CLASSES, feedbackLabel, feedbackState,
 } from "../../destinations/imageryModel.js"
 
 const BTN = {
@@ -29,13 +31,12 @@ async function readError(r) {
     return typeof d?.detail === "string" ? d.detail : `the server answered ${r.status}`
 }
 
-const latest = (items) => [...(items || [])].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null
-
 export default function DetectionFeedback({ det, onClose, canFeedback = true }) {
     const id = feedbackId(det)
     const type = det?.object_type || det?.label
     const info = classDetail(det)
-    const [stored, setStored] = useState(null)       // the latest feedback row
+    const [stored, setStored] = useState(null)       // this user's answer (one per user)
+    const [others, setOthers] = useState({ others: 0, othersAgree: 0 })
     const [loadErr, setLoadErr] = useState(null)
     const [loading, setLoading] = useState(true)
     const [sending, setSending] = useState(null)     // the choice being sent
@@ -53,7 +54,11 @@ export default function DetectionFeedback({ det, onClose, canFeedback = true }) 
                 if (!r.ok) throw new Error(await readError(r))
                 return r.json()
             })
-            .then((d) => { if (live) setStored(latest(d?.items)) })
+            .then((d) => {
+                if (!live) return
+                const st = feedbackState(d?.items)
+                setStored(st.mine); setOthers(st)
+            })
             .catch((e) => { if (live) setLoadErr(e instanceof TypeError ? "the server did not answer" : e.message) })
             .finally(() => { if (live) setLoading(false) })
         return () => { live = false }
@@ -110,6 +115,9 @@ export default function DetectionFeedback({ det, onClose, canFeedback = true }) 
 
             {canFeedback && <div style={{ borderTop: "1px solid var(--gline)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                 {loading && <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>Reading your earlier answer…</span>}
+                {!loading && !stored && others.others > 0 && (
+                    <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>{others.others} other analyst{others.others === 1 ? " has" : "s have"} answered; yours is counted separately.</span>
+                )}
                 {loadErr && (
                     <span role="alert" style={{ fontSize: 12, color: "var(--amber)" }}>
                         Could not read earlier feedback — {loadErr} <button onClick={() => setLoadTry((n) => n + 1)} style={{ ...BTN, height: 22, fontSize: 11 }}>Try again</button>
@@ -120,7 +128,8 @@ export default function DetectionFeedback({ det, onClose, canFeedback = true }) 
                         <span style={{ fontWeight: 600, color: stored.verdict === "correct" ? "var(--green)" : "var(--txt)" }}>
                             {stored.verdict === "correct" ? "Marked correct" : `Marked as: ${feedbackLabel(stored.actual_class) || "not this"}`}
                         </span>
-                        {stored.user && <span style={{ fontSize: 11, color: "var(--txt4)" }}>by {stored.user}</span>}
+                        {others.others > 0 && <span style={{ fontSize: 11, color: "var(--txt4)" }}>
+                            {others.othersAgree} of {others.others} other analyst{others.others === 1 ? "" : "s"} agree</span>}
                         <button onClick={() => setEditing(true)} style={{ ...BTN, marginLeft: "auto", height: 22, fontSize: 11 }}>Change</button>
                     </div>
                 )}

@@ -61,9 +61,20 @@ export const findingDetections = (list) => (list || []).filter(isFindingClass)
 export const FEEDBACK_CLASSES = [
     { key: "field", label: "Field" }, { key: "runway", label: "Runway" }, { key: "cloud", label: "Cloud" },
     { key: "cloud_shadow", label: "Shadow" }, { key: "port_infrastructure", label: "Port" },
+    { key: "storage_tank", label: "Tanks" }, { key: "aircraft", label: "Aircraft" }, { key: "vessel", label: "Ship" },
     { key: "smoke_plume", label: "Smoke" }, { key: "burn_scar", label: "Burn scar" }, { key: "other", label: "Other" },
 ]
 export const feedbackLabel = (key) => FEEDBACK_CLASSES.find((c) => c.key === key)?.label || classLabel(key)
+
+/** From GET …/feedback's items: the caller's own answer (latest), and how
+ *  many other analysts answered. Answers are stored one per user. */
+export function feedbackState(items) {
+    const list = [...(items || [])].filter(Boolean)
+        .sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)))
+    const mine = list.find((r) => r.mine) || null
+    const others = list.filter((r) => !r.mine)
+    return { mine, others: others.length, othersAgree: mine ? others.filter((r) => r.verdict === mine.verdict && r.actual_class === mine.actual_class).length : 0 }
+}
 
 /** The classes present in a pass, in legend order (most first). */
 export function legendClasses(changes) {

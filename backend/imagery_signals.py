@@ -18,7 +18,8 @@ confirmed objects only (both detection models agree — obb_detect.ENSEMBLE):
   commercial_port  only an extreme swing: outside mean ± 3 sd AND ±50%
   other            vessels or aircraft outside mean ± 3 sd
   every kind       a confirmed storage tank or structure gone — possible damage;
-                   a new smoke plume (smoke.py), critical at energy sites and oil terminals
+                   a new smoke plume or burn scar (smoke.py, classified by
+                   smoke_classify.py), critical at energy sites and oil terminals
 
 Pure functions; sentinel_scanner.py feeds them and writes the alerts.
 """
@@ -72,9 +73,12 @@ def evaluate(*, kind: str, place: str, counts: dict, history: dict, new_by_type:
         kept.append(p)
     for p in kept:
         fire = " with active fire at its source" if p.get("fire_px") else ""
-        sig(p.get("description") or "smoke plume", "critical" if kind in ("energy_site", "oil_terminal") else "high",
-            f"A plume not there on the previous pass{fire}: a strike, an accident or a large fire. "
-            f"Source {p.get('source_lat')}, {p.get('source_lon')}.", "smoke_plume")
+        scar = p.get("class") == "burn_scar"
+        sig(p.get("description") or ("burn scar / impact point" if scar else "smoke plume"),
+            "critical" if kind in ("energy_site", "oil_terminal") else "high",
+            (f"Ground newly burnt since the previous pass{fire}: an impact point or a fire. " if scar else
+             f"A plume not there on the previous pass{fire}: a strike, an accident or a large fire. ")
+            + f"Source {p.get('source_lat')}, {p.get('source_lon')}.", "burn_scar" if scar else "smoke_plume")
     if any(p.get("fire_px") for p in kept):
         new_heat = 0
 

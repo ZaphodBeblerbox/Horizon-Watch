@@ -64,7 +64,7 @@ describe("pickInitialPass — what an area opens on", () => {
 })
 
 import {
-    CLASS_COLORS, CLASS_LABELS, classColor, classDetail, classLabel, FEEDBACK_CLASSES, feedbackLabel,
+    CLASS_COLORS, CLASS_LABELS, classColor, classDetail, classLabel, FEEDBACK_CLASSES, feedbackLabel, feedbackState,
     findingDetections, isFindingClass, kindDash, legendClasses, noun,
 } from "./imageryModel.js"
 
@@ -111,7 +111,9 @@ describe("detection classes", () => {
     })
 
     it("offers the analyst's answers, cloud and shadow among them", () => {
-        expect(FEEDBACK_CLASSES.map((c) => c.key)).toEqual(["field", "runway", "cloud", "cloud_shadow", "port_infrastructure", "smoke_plume", "burn_scar", "other"])
+        expect(FEEDBACK_CLASSES.map((c) => c.key)).toEqual(["field", "runway", "cloud", "cloud_shadow", "port_infrastructure",
+            "storage_tank", "aircraft", "vessel", "smoke_plume", "burn_scar", "other"])
+        expect(feedbackLabel("vessel")).toBe("Ship")
         expect(FEEDBACK_CLASSES.find((c) => c.key === "cloud_shadow").label).toBe("Shadow")
         expect(feedbackLabel("runway")).toBe("Runway")
     })
@@ -137,5 +139,23 @@ describe("detection classes", () => {
         expect(a.reasons).toHaveLength(2)
         expect(classDetail({ class_confidence: 0, reasons: [{ text: "x" }, null] })).toMatchObject({ classConfidence: 0, reasons: [{ text: "x" }] })
         expect(classDetail({ attributes: "not json" })).toMatchObject({ classConfidence: null, reasons: [] })
+    })
+})
+
+describe("detection feedback state", () => {
+    it("shows the caller's own answer, never another analyst's as theirs", () => {
+        const items = [
+            { verdict: "incorrect", actual_class: "field", mine: false, updated_at: "2026-10-13T10:00:00Z", user: "JC" },
+            { verdict: "incorrect", actual_class: "field", mine: true, updated_at: "2026-10-13T09:00:00Z", user: "me" },
+            { verdict: "correct", actual_class: null, mine: false, updated_at: "2026-10-13T11:00:00Z", user: "LM" },
+        ]
+        const s = feedbackState(items)
+        expect(s.mine).toMatchObject({ user: "me", actual_class: "field" })
+        expect(s.others).toBe(2)
+        expect(s.othersAgree).toBe(1)
+    })
+    it("no answer of mine: nothing stored, others still counted", () => {
+        expect(feedbackState([{ verdict: "correct", mine: false }])).toEqual({ mine: null, others: 1, othersAgree: 0 })
+        expect(feedbackState(null)).toEqual({ mine: null, others: 0, othersAgree: 0 })
     })
 })
