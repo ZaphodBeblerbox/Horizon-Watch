@@ -14,7 +14,7 @@ import { Color, DistanceDisplayCondition, HeightReference, LabelStyle, NearFarSc
 import { useMemo, useRef } from "react"
 import { useLivePeople } from "../location/useLivePositions.js"
 import { positionStream } from "../location/positionStream.js"
-import { freshness } from "../location/glide.js"
+import { freshness, presence } from "../location/glide.js"
 import { useGlidingPosition, useRenderTick } from "./useGlidingPosition.js"
 import { getCurrentUser } from "../state/authStore.js"
 
@@ -33,8 +33,7 @@ function Person({ p, me }) {
     // the label counts up between positions, on the server's clock
     const text = useMemo(() => new CallbackProperty(() => {
         const q = pRef.current
-        const f = freshness(q.at, positionStream().serverNow())
-        return `${name}\n${f.label}${coarseOf(q) ? " · city level" : ""}`
+        return `${name}\n${presence(q.at, positionStream().serverNow())}`
     }, false), [name])
     const live = freshness(p.at, positionStream().serverNow()).live
     return (

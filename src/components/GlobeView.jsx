@@ -1238,7 +1238,7 @@ export default function GlobeView({
                 <GlobeEndangeredPlacesLayer enabled={endangeredEnabled} />
                 {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}
                 <GlobeAoisLayer enabled={aoisEnabled} />
-                <GlobeAssetsLayer enabled={assetsEnabled} />
+                <GlobeAssetsLayer enabled={assetsEnabled} teamOn={!!teamEnabled} />
                 {/* the team, pushed live and gliding (location/positionStream.js) */}
                 <GlobeTeamLayer enabled={teamEnabled} />
                 {/* an asset's or a person's track over a range, and a route plan (location/track.js, routes/) */}

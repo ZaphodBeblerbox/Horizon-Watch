@@ -21,7 +21,7 @@ import { drawVesselThreat } from "./MVesselThreat.jsx"
 import { myPosition, myTrail, subscribeMyPosition } from "../../location/liveShare.js"
 import { devicePosition, saveHere, connectionPosition } from "../../components/LocationPrompt.jsx"
 import { useStream } from "../../location/useLivePositions.js"
-import { freshness } from "../../location/glide.js"
+import { freshness, presence } from "../../location/glide.js"
 import { createLiveMarkers } from "../liveMarkers.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
@@ -242,6 +242,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         for (const f of feats.assets || []) {
             const a = f.raw || {}
             const linked = a.identifiers?.user_id
+            if (linked && a.kind === "person" && on.people) continue        // shown as the person itself
             if (linked && me?.live && String(linked) === String(uid)) { liveAssets.set(a.id, { lat: me.lat, lon: me.lon, at: me.at, f }); continue }
             const sp = stream.asset(a.id)
             if (sp && sp.at >= (Date.parse(a.position?.as_of || "") || 0)) liveAssets.set(a.id, { lat: sp.lat, lon: sp.lon, at: sp.at, gapMs: sp.prevAt ? sp.at - sp.prevAt : undefined, f })
@@ -273,7 +274,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     }) // every render: the stream, your fix and the asset list all change it; sync() only moves what moved
     // "live · 3 s ago", counted up between positions
     useEffect(() => {
-        const id = setInterval(() => liveMarks.current?.refresh((e) => (e.at ? freshness(e.at, stream.serverNow()).label : null)), 1000)
+        const id = setInterval(() => liveMarks.current?.refresh((e) => (e.at ? presence(e.at, stream.serverNow()) : null)), 1000)
         return () => clearInterval(id)
     }, [stream])
     // AN ASSET LINKED TO YOU appears at once: the first live position creates
@@ -303,6 +304,9 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             if (!on[l.key] || l.key === "people") continue                // the team: live markers
             for (const f of feats[l.key] || []) {
                 if (l.key === "assets" && liveAssets.has(f.raw?.id)) continue    // moved by a phone: a live marker
+                // A PERSON'S OWN "(live)" ASSET is that person: drawn once, as the
+                // person (the blue dot for you, the team marker for others), never twice
+                if (l.key === "assets" && f.raw?.kind === "person" && f.raw?.identifiers?.user_id && on.people) continue
                 if (l.kind === "areas") {
                     if (!f.rings) continue
                     const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, interactive: !!f.title, className: f.className })

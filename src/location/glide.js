@@ -90,6 +90,13 @@ export function createGlide({
     }
 }
 
+/** On a marker, under a name: just "live", or "last seen 4 min ago" —
+ *  nothing more (owner, 2026-10-12: three lines under a name was too much). */
+export function presence(atMs, nowMs = Date.now(), liveMs = LIVE_MS) {
+    const f = freshness(atMs, nowMs, liveMs)
+    return f.live ? "live" : f.label
+}
+
 /** "live · 3 s ago" / "last seen 4 min ago". atMs and nowMs in ms. */
 export function freshness(atMs, nowMs = Date.now(), liveMs = LIVE_MS) {
     if (!Number.isFinite(atMs)) return { live: false, label: "no position yet", ageS: null }

@@ -42,7 +42,7 @@ function icon(group, exposure) {
     return _icons[key]
 }
 
-export default function GlobeAssetsLayer({ enabled = true }) {
+export default function GlobeAssetsLayer({ enabled = true, teamOn = false }) {
     const [assets, setAssets] = useState([])
     useEffect(() => {
         if (!enabled) { setAssets([]); return undefined }
@@ -67,6 +67,9 @@ export default function GlobeAssetsLayer({ enabled = true }) {
     return (
         <>
             {assets.map((a) => {
+                // a person's own "(live)" asset is that person, drawn once by the
+                // team layer (GlobeTeamLayer) — not a second pin with a second label
+                if (a.kind === "person" && a.identifiers?.user_id && teamOn) return null
                 const sp = a.identifiers?.user_id ? stream.asset(a.id) : null
                 const fresher = sp && sp.at >= (Date.parse(a.position?.as_of || "") || 0)
                 // ONE component whatever the source: swapping component types when the
