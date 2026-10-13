@@ -23,12 +23,16 @@ import { addBaseTiles } from "../mobile/tileSources.js"
 import { closeRoutePanel, updateRequest, publishPlan } from "./store.js"
 import { useRoutePanel, usePlan } from "./usePlan.js"
 import { sendPlan } from "./api.js"
-import { listModes, listProviders, defaultAvoid, getMode } from "./registry.js"
+import { listModes, listProviders, defaultAvoid, getMode, registerMode } from "./registry.js"
+import maritime from "./modes/maritime.js"
 import { drawPlan } from "./routeLayer.leaflet.js"
 import {
     viewState, STATE_TEXT, summary, exposureLabel, hazardLine, fromLabel, toLabel, toLocalInput, fromLocalInput,
 } from "./view.js"
 import "./routes.css"
+
+// SHIPPING (the maritime planner, routes/modes/maritime.js): its own component in this panel
+registerMode("sea", { label: "Shipping", order: 60, Component: maritime.Component, relevant: maritime.relevant })
 
 export default function RoutePanel({ variant = "desktop" }) {
     const panel = useRoutePanel()
