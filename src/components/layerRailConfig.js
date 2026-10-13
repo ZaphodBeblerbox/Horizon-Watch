@@ -169,6 +169,10 @@ export const SUB_LAYERS = [
     // reporting (globe/GlobeStrikesLayer.jsx) — so it lives, and switches
     // off, with News rather than as a group of its own.
     { key: "strikes",         label: "Strikes & control",        parent: "news" },
+    // Drawn from the same events (globe/GlobeFrontlineClaimsLayer.jsx).
+    { key: "frontlineClaims", label: "Frontline claims",         parent: "news" },
+    { key: "movements",       label: "Movements",                parent: "news" },
+    { key: "trajectories",    label: "Trajectories",             parent: "news" },
     { key: "airspace",        label: "Controlled airspace",      parent: null },
     { key: "gfw:encounters",  label: "Vessel encounters",        parent: null },
     { key: "gfw:gaps",        label: "AIS gaps",                 parent: null },
@@ -181,7 +185,7 @@ export const SUB_LAYERS = [
 export const DEFAULT_SUBS = {
     imagery: ["imagerySignals"],
     // GDELT is not a map signal (owner, 2026-10-13): it feeds the country risk index only
-    news: ["geoConfirmed", "telegram", "unrest", "strikes"],
+    news: ["geoConfirmed", "telegram", "unrest", "strikes", "frontlineClaims", "trajectories"],
     air: [],
 }
 

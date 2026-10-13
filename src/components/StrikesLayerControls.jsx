@@ -14,30 +14,44 @@ const KEY_ACTORS = ["Saudi-led coalition", "Houthis", "Israel", "Iran", "Russia"
 
 export default function StrikesLayerControls({ variant = "desktop" }) {
     const { window: win, acts } = useStrikeSettings()
-    const chip = { font: "400 10px var(--font)", padding: "1px 6px", cursor: "pointer" }
+    // the phone's Filters sheet: bigger type and taps, no panel indent
+    const phone = variant === "phone"
+    // (the desktop .chip class isn't in the phone's stylesheet: its own look there)
+    const chip = phone
+        ? { font: "500 13px var(--font, inherit)", padding: "6px 9px", cursor: "pointer", borderRadius: 10,
+            border: "1px solid rgba(255,255,255,.16)", background: "rgba(255,255,255,.06)", color: "inherit" }
+        : { font: "400 10px var(--font)", padding: "1px 6px", cursor: "pointer" }
     return (
         <div data-testid="strikes-controls" data-variant={variant}
-             style={{ display: "flex", flexDirection: "column", gap: 5, padding: "2px 12px 8px 27px" }}>
-            <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }} role="group" aria-label="Time window">
-                {STRIKE_WINDOWS.map((w) => (
-                    <button key={w.key} className="chip" aria-pressed={win === w.key} onClick={() => setStrikeWindow(w.key)}
-                            style={{ ...chip, opacity: win === w.key ? 1 : 0.5 }}>{w.label}</button>
-                ))}
-            </div>
+             style={{ display: "flex", flexDirection: "column", gap: phone ? 8 : 5, padding: phone ? "4px 0 10px" : "2px 12px 8px 27px" }}>
+            {phone ? (
+                <div className="m2-segs" role="group" aria-label="Time window">
+                    {STRIKE_WINDOWS.map((w) => (
+                        <button key={w.key} aria-pressed={win === w.key} onClick={() => setStrikeWindow(w.key)}>{w.label}</button>
+                    ))}
+                </div>
+            ) : (
+                <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }} role="group" aria-label="Time window">
+                    {STRIKE_WINDOWS.map((w) => (
+                        <button key={w.key} className="chip" aria-pressed={win === w.key} onClick={() => setStrikeWindow(w.key)}
+                                style={{ ...chip, opacity: win === w.key ? 1 : 0.5 }}>{w.label}</button>
+                    ))}
+                </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }} role="group" aria-label="Acts">
                 {STRIKE_ACTS.map((a) => {
                     const on = acts.includes(a.key)
                     return (
-                        <button key={a.key} className="chip" aria-pressed={on} data-act={a.key} onClick={() => toggleStrikeAct(a.key)}
+                        <button key={a.key} className={phone ? undefined : "chip"} aria-pressed={on} data-act={a.key} onClick={() => toggleStrikeAct(a.key)}
                                 title={`${on ? "Hide" : "Show"} ${a.label.toLowerCase()}`}
                                 style={{ ...chip, display: "flex", alignItems: "center", gap: 4, opacity: on ? 1 : 0.4, textAlign: "left" }}>
-                            <img src={strikeIconUri({ act: a.key, color: "#D7DCE4", size: 14 })} width={14} height={14} alt="" />
+                            <img src={strikeIconUri({ act: a.key, color: "#D7DCE4", size: 16 })} width={phone ? 20 : 16} height={phone ? 23 : 19} alt="" />
                             {a.label}
                         </button>
                     )
                 })}
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px", font: "400 10px var(--font)", color: "var(--txt-3)" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px", font: `400 ${phone ? 12 : 10}px var(--font)`, color: "var(--txt-3)" }}>
                 {KEY_ACTORS.map((k) => (
                     <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
                         <span style={{ width: 8, height: 8, borderRadius: 4, background: ACTOR_COLOR[k] }} />{k}
@@ -47,7 +61,7 @@ export default function StrikesLayerControls({ variant = "desktop" }) {
                     <span style={{ width: 8, height: 8, borderRadius: 4, background: UNKNOWN_ACTOR_COLOR }} />actor not stated
                 </span>
             </div>
-            <div style={{ font: "400 10px var(--font)", color: "var(--txt-4)", lineHeight: 1.35 }}>
+            <div style={{ font: `400 ${phone ? 12 : 10}px var(--font)`, color: "var(--txt-4)", lineHeight: 1.35 }}>
                 Colour is who acted · hollow is a place known only roughly · faded is older · bigger is more casualties
             </div>
         </div>

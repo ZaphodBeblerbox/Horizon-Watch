@@ -151,3 +151,16 @@ def test_campaigns_and_filters():
     assert len(se.filter_events(evts, acts=["missile"])) == 0
     assert len(se.filter_events(evts, actors=["KSA"])) == 5
     assert len(se.filter_events(evts, bbox=(43, 14.9, 45, 15.15))) == 2
+
+
+def test_gdelt_is_not_on_the_map_unless_asked(monkeypatch):
+    """GDELT is only for the country risk index (owner, 2026-10-13): collect()
+    leaves it out unless STRIKES_GDELT=1."""
+    calls = []
+    monkeypatch.setattr(se, "_collect_gdelt", lambda since: calls.append(since) or [{"rid": "gd:x"}])
+    monkeypatch.setattr(se, "_con", lambda *a, **k: (_ for _ in ()).throw(se.sqlite3.Error("no db in tests")))
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    monkeypatch.delenv("STRIKES_GDELT", raising=False)
+    assert se.collect(since) == [] and calls == []
+    monkeypatch.setenv("STRIKES_GDELT", "1")
+    assert se.collect(since) == [{"rid": "gd:x"}] and len(calls) == 1

@@ -32,6 +32,7 @@ import Columns, { BarList } from "../charts/Columns.jsx"
 import { safeArray } from "../utils/safeArray.js"
 import GlobeView from "../components/GlobeView.jsx"
 import StrikesLayerControls from "../components/StrikesLayerControls.jsx"
+import { FRONTLINE_LAYERS } from "../globe/frontlineClaims.js"
 import { GDELT_EVENT_TYPES } from "../globe/GlobeGdeltLayer.jsx"
 import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
@@ -416,6 +417,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
+    // Drawn from the same events (GlobeFrontlineClaimsLayer): claimed ground
+    // and drone/missile flights on; movement arrows off — most of their
+    // starts are our reading of the front, not the source's.
+    const [claimsOn, setClaimsOn] = useState(true)
+    const [movementsOn, setMovementsOn] = useState(false)
+    const [trajectoriesOn, setTrajectoriesOn] = useState(true)
     // Which CAMEO codings to draw. Starts as every kind rather than a
     // curated subset: a reader who has not chosen yet should see the whole
     // feed, not a silently narrowed one.
@@ -477,6 +484,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         telegram: [telegramOn, setTelegramOn],
         unrest: [unrestOn, setUnrestOn],
         strikes: [strikesOn, setStrikesOn],
+        frontlineClaims: [claimsOn, setClaimsOn],
+        movements: [movementsOn, setMovementsOn],
+        trajectories: [trajectoriesOn, setTrajectoriesOn],
         airspace: [airspaceOn, setAirspaceOn],
         gfwHeat: [gfwHeatOn, setGfwHeatOn],
         ...Object.fromEntries(Object.keys(gfwOn).map((k) =>
@@ -1518,6 +1528,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                     onToggle={() => setStrikesOn((v) => !v)} />
                             )}
                             {g.key === "news" && strikesOn && groupsOn.news && <StrikesLayerControls />}
+                            {g.key === "news" && FRONTLINE_LAYERS.map((l) => {
+                                const [on, set] = { frontlineClaims: [claimsOn, setClaimsOn], movements: [movementsOn, setMovementsOn],
+                                                    trajectories: [trajectoriesOn, setTrajectoriesOn] }[l.key]
+                                return <SubLayerRow key={l.key} label={l.label} hint={l.hint} on={on} parentOn={groupsOn.news}
+                                                    onToggle={() => set((v) => !v)} />
+                            })}
                             {g.key === "news" && gdeltOn && groupsOn.news && (
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3,
                                               padding: "2px 12px 6px 27px" }}>
@@ -2066,6 +2082,9 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         telegramEnabled={groupsOnV.news && telegramOn}
                         unrestEnabled={groupsOnV.news && unrestOn}
                         strikesEnabled={groupsOnV.news && strikesOn}
+                        frontlineClaimsEnabled={groupsOnV.news && claimsOn}
+                        movementsEnabled={groupsOnV.news && movementsOn}
+                        trajectoriesEnabled={groupsOnV.news && trajectoriesOn}
                         vesselFilter={vesselFilterOn}
                         aircraftFilter={aircraftFilterOn}
                         onTrackFacets={setTrackFacets}

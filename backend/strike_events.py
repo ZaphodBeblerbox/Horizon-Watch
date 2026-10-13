@@ -14,8 +14,9 @@ SOURCES (read, never written — except the GDELT archive below):
     explosion/clash/seizure (pinned by the post's own place + precision);
   * GDELT kinetic codings as JUDGED by gdelt_judge (the cheap model already
     read each article and pinned it where it happened, not where the coder
-    put it — "Riyadh airport struck" was coded at Sanaa). No new model call
-    is made here: unjudged stories are simply not drawn yet;
+    put it — "Riyadh airport struck" was coded at Sanaa). OFF unless
+    STRIKES_GDELT=1: GDELT is only for the country risk index (owner,
+    2026-10-13), never on the map;
   * alerts with a location from sources that are not tracks (news-derived,
     corroborations, …) — on the MAP news is fine;
   * UCDP candidate events (state-based violence → ground fighting).
@@ -783,8 +784,15 @@ def collect(since: datetime) -> list[dict]:
             con.close()
     except sqlite3.Error as ex:
         print(f"[strikes] db open error: {ex}")
-    raws.extend(_collect_gdelt(since))
+    # GDELT is only for the country risk index (owner, 2026-10-13): not on
+    # the map. STRIKES_GDELT=1 brings the judged GDELT points back.
+    if gdelt_on_map():
+        raws.extend(_collect_gdelt(since))
     return raws
+
+
+def gdelt_on_map() -> bool:
+    return os.getenv("STRIKES_GDELT", "").strip().lower() in ("1", "true", "yes")
 
 
 def build(raws: list[dict], now: float | None = None) -> list[dict]:

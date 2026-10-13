@@ -27,6 +27,8 @@ import { getCurrentUser } from "../../state/authStore.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { PHONE_LAYERS, layerGroups, forgetAssets } from "../mapLayers.js"
 import EndangeredCountryChips, { useEndangeredCountries, useEndangeredActive } from "../../components/EndangeredCountryChips.jsx"
+import StrikesLayerControls from "../../components/StrikesLayerControls.jsx"
+import { useStrikeSettings } from "../../globe/useStrikeSettings.js"
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
@@ -113,6 +115,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const mine = useMine()
     const epCountries = useEndangeredCountries()          // endangered places: the countries chosen
     const epActive = useEndangeredActive()                // and "Active only" (called, or a call within 2 km)
+    const strikeSet = useStrikeSettings()                 // strikes: the acts and time window chosen
 
     // the map itself, once
     useEffect(() => {
@@ -200,7 +203,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const first = setTimeout(run, 250)
         const t = setInterval(run, active ? 2 * 60_000 : 10 * 60_000)
         return () => { live = false; clearTimeout(first); clearInterval(t) }
-    }, [bounds, zoom, hours, on, active, epCountries, epActive])
+    }, [bounds, zoom, hours, on, active, epCountries, epActive, strikeSet])
 
     // THE BLUE DOT: where you are (location/liveShare.js), above everything —
     // with the way you came while sharing, and the accuracy as a soft ring.
@@ -310,7 +313,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 if (l.key === "assets" && f.raw?.kind === "person" && f.raw?.identifiers?.user_id && on.people) continue
                 if (l.kind === "areas") {
                     if (!f.rings) continue
-                    const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, interactive: !!f.title, className: f.className })
+                    const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, dashArray: f.dash || undefined, interactive: !!f.title, className: f.className })
                     if (f.title) a.on("click", tap(f, l))
                     a.addTo(g)
                     // A count on the area (a zone with a fresh finding).
@@ -328,6 +331,15 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     const ln = L.polyline(f.coords, { color: f.color, weight: f.weight || 2, dashArray: f.dash || undefined, opacity: 0.85, interactive: !!f.title })
                     if (f.title) ln.on("click", tap(f, l))
                     ln.addTo(g)
+                    // a symbol on the line (a movement's unit, a flight's weapon)
+                    const mk = f.marker
+                    if (mk?.iconUri && Number.isFinite(+mk.lat) && Number.isFinite(+mk.lon)) {
+                        const w = mk.iconWidth || 18, h = mk.iconHeight || 18
+                        L.marker([+mk.lat, +mk.lon], {
+                            icon: L.icon({ iconUrl: mk.iconUri, iconSize: [w, h], iconAnchor: mk.iconAnchor || [w / 2, h / 2] }),
+                            keyboard: false,
+                        }).on("click", tap(f, l)).addTo(g)
+                    }
                 } else {
                     if (!Number.isFinite(+f.lat) || !Number.isFinite(+f.lon) || !f.iconUri) continue
                     if (f.severity && (RANK[String(f.severity).toLowerCase()] ?? 3) > maxRank) continue
@@ -569,6 +581,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                                 </div>
                                 {/* under whichever group holds the layer (it moved to Infrastructure) */}
                                 {layers.some((l) => l.key === "endangered") && <EndangeredCountryChips enabled={!!on.endangered} variant="phone" />}
+                                {layers.some((l) => l.key === "strikes") && on.strikes && <StrikesLayerControls variant="phone" />}
                             </div>
                         ))}
                         <div className="m2-h">How serious</div>

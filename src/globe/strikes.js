@@ -6,15 +6,14 @@
  *
  * ONE GLYPH PER ACT — a bomb for an airstrike, a missile, a delta-wing
  * drone, an artillery shell, a ship, crossed swords, a flag for territory
- * taken, a shield for an interception — drawn in the facility-glyph style
- * (entityIcons.getFacilityMarkerDataUri: a dark disc, a thin ring, a
- * filled glyph, supersampled). COLOUR IS THE ACTOR, the same colour for
- * that actor everywhere. SIZE is what it did (casualties when known).
- * HOLLOW (no disc, dashed ring) is a place known only roughly — an oblast,
+ * taken, a shield for an interception — drawn in the asset-icon style
+ * (GlobeAssetsLayer.jsx: a dark callout pin, a coloured rounded tile, a
+ * line-drawn glyph), as the owner asked. COLOUR IS THE ACTOR, the same
+ * colour for that actor everywhere. SIZE is what it did (casualties when
+ * known). HOLLOW (dark tile, dashed outline) is a place known only roughly — an oblast,
  * a governorate, a GeoConfirmed camera position. FADING is age within the
  * event's persistence window (14 days for strikes, 30 for control).
  */
-import { MARKER_SUPERSAMPLE } from "./entityIcons.js"
 
 export const STRIKE_ACTS = [
     { key: "airstrike", label: "Airstrike / bombing" },
@@ -68,99 +67,75 @@ export function actorColor(actor) {
     return SPARE[h % SPARE.length]
 }
 
-// ── glyphs ──────────────────────────────────────────────────────────────
-// Each draws inside a px×px box centred on (c, c), radius r ≈ a third.
-const GLYPH = {
-    // a round bomb with its fuse and a spark
-    airstrike: (px) => {
-        const c = px / 2, r = px * 0.3
-        return `<circle cx="${c - r * 0.12}" cy="${c + r * 0.2}" r="${r * 0.68}"/>`
-            + `<rect x="${c + r * 0.12}" y="${c - r * 0.62}" width="${r * 0.36}" height="${r * 0.42}" transform="rotate(40 ${c + r * 0.3} ${c - r * 0.41})"/>`
-            + `<path d="M ${c + r * 0.42} ${c - r * 0.66} Q ${c + r * 0.62} ${c - r * 1.02} ${c + r * 0.95} ${c - r * 0.9}" fill="none" stroke-width="${px * 0.045}"/>`
-            + `<circle cx="${c + r * 0.98}" cy="${c - r * 0.92}" r="${r * 0.16}"/>`
-    },
-    // a missile, nose up-right, with fins
-    missile: (px) => {
-        const c = px / 2, r = px * 0.34
-        return `<path transform="rotate(45 ${c} ${c})" d="M ${c} ${c - r} L ${c + r * 0.2} ${c - r * 0.6} L ${c + r * 0.2} ${c + r * 0.45} `
-            + `L ${c + r * 0.48} ${c + r * 0.95} L ${c - r * 0.48} ${c + r * 0.95} L ${c - r * 0.2} ${c + r * 0.45} L ${c - r * 0.2} ${c - r * 0.6} Z"/>`
-    },
-    // a delta-wing one-way drone (the Shahed planform)
-    drone: (px) => {
-        const c = px / 2, r = px * 0.32
-        return `<path d="M ${c} ${c - r} L ${c + r} ${c + r * 0.62} L ${c + r * 0.2} ${c + r * 0.36} L ${c} ${c + r * 0.72} `
-            + `L ${c - r * 0.2} ${c + r * 0.36} L ${c - r} ${c + r * 0.62} Z"/>`
-    },
-    // an artillery shell: ogive nose, body, driving band
-    shelling: (px) => {
-        const c = px / 2, r = px * 0.34, w = r * 0.36
-        return `<path d="M ${c - w} ${c + r * 0.75} L ${c - w} ${c - r * 0.15} Q ${c - w} ${c - r * 0.85} ${c} ${c - r} `
-            + `Q ${c + w} ${c - r * 0.85} ${c + w} ${c - r * 0.15} L ${c + w} ${c + r * 0.75} Z"/>`
-            + `<rect x="${c - w * 1.18}" y="${c + r * 0.8}" width="${w * 2.36}" height="${r * 0.22}" rx="${r * 0.05}"/>`
-    },
-    // a warship in profile
-    naval: (px) => {
-        const c = px / 2, r = px * 0.34
-        return `<path d="M ${c - r} ${c + r * 0.15} L ${c + r} ${c + r * 0.15} L ${c + r * 0.62} ${c + r * 0.7} L ${c - r * 0.62} ${c + r * 0.7} Z"/>`
-            + `<rect x="${c - r * 0.42}" y="${c - r * 0.3}" width="${r * 0.7}" height="${r * 0.42}"/>`
-            + `<rect x="${c - r * 0.1}" y="${c - r * 0.8}" width="${r * 0.12}" height="${r * 0.5}"/>`
-    },
-    // crossed swords (the facility "military" glyph, with hilts)
-    assault: (px) => {
-        const c = px / 2, r = px * 0.33, w = px * 0.075
-        const blade = (deg) => `<rect x="${c - w / 2}" y="${c - r}" width="${w}" height="${r * 2}" transform="rotate(${deg} ${c} ${c})"/>`
-            + `<rect x="${c - w * 2}" y="${c + r * 0.45}" width="${w * 4}" height="${w}" transform="rotate(${deg} ${c} ${c})"/>`
-        return blade(45) + blade(-45)
-    },
-    // a flag on a pole: ground taken
-    control: (px) => {
-        const c = px / 2, r = px * 0.34
-        return `<rect x="${c - r * 0.62}" y="${c - r}" width="${r * 0.16}" height="${r * 2}"/>`
-            + `<path d="M ${c - r * 0.48} ${c - r} L ${c + r * 0.85} ${c - r * 0.55} L ${c - r * 0.48} ${c - r * 0.08} Z"/>`
-    },
-    // a shield: something stopped in the air
-    interception: (px) => {
-        const c = px / 2, r = px * 0.33
-        return `<path d="M ${c} ${c - r} L ${c + r * 0.85} ${c - r * 0.55} L ${c + r * 0.85} ${c + r * 0.1} `
-            + `Q ${c + r * 0.85} ${c + r * 0.8} ${c} ${c + r} Q ${c - r * 0.85} ${c + r * 0.8} ${c - r * 0.85} ${c + r * 0.1} `
-            + `L ${c - r * 0.85} ${c - r * 0.55} Z"/>`
-    },
+// ── icons ───────────────────────────────────────────────────────────────
+// THE ASSET-ICON STYLE (globe/GlobeAssetsLayer.jsx icon()): a dark callout
+// pin pointing at the place, ringed in a colour, holding a filled rounded
+// tile with a line-drawn glyph in the 24-unit icon grid. Here the ring and
+// the tile are the ACTOR's colour; the glyph is the ACT. A place known only
+// roughly gets a hollow tile (dark, dashed outline) and its glyph in the
+// actor's colour instead. The pin is 48×56; its tip is the place.
+export const STRIKE_GLYPH = {
+    // an aerial bomb falling nose-down, with its tail fins
+    airstrike: "M12 22c-2.9 0-4.6-2.7-4.6-6.6S9.1 8.2 12 8.2s4.6 3.3 4.6 7.2S14.9 22 12 22zM9.4 8.7 8 3h8l-1.4 5.7M12 3v5.2",
+    // a missile climbing to the upper right, fins at the tail
+    missile: "M20.5 3.5c-3.2.2-6 1.6-8.2 3.8L7.8 11.8l4.4 4.4 4.5-4.5c2.2-2.2 3.6-5 3.8-8.2zM7.8 11.8 4.5 11 3 12.5l3.3 1.7M12.2 16.2l.8 3.3-1.5 1.5-1.7-3.3M15 9h.01M6.3 17.7l-2.3 2.3",
+    // a delta-wing one-way attack drone (the Shahed/Geran planform), seen from above
+    drone: "M12 2.5 21 18.5l-6.3-1.8L12 21l-2.7-4.3L3 18.5zM12 2.5v14.2",
+    // an artillery shell: ogive nose, body, driving band, base
+    shelling: "M9 21V10.5C9 7 10.3 4.4 12 2.5c1.7 1.9 3 4.5 3 8V21zM7.5 21h9M9 14.5h6M9 17h6",
+    // a warship in profile: hull, superstructure, mast and a gun
+    naval: "M2 15.5h20l-3 4.5H5zM5 15.5V12h10v3.5M8 12V8.5h4V12M10 8.5V4M15 13l5-2.5",
+    // crossed swords: a ground assault
+    assault: "M14.5 17.5 3 6V3h3l11.5 11.5M13 19l6-6M16 16l4 4M19 21l2-2M9.5 17.5 21 6V3h-3L6.5 14.5M11 19l-6-6M8 16l-4 4M5 21l-2-2",
+    // a flag planted on a pole: ground taken
+    control: "M5.5 22V2.5M5.5 3.5h12.5l-2.8 4.3 2.8 4.2H5.5",
+    // a shield with a tick: something stopped in the air
+    interception: "M12 22s8-3.8 8-10V5.2L12 2 4 5.2V12c0 6.2 8 10 8 10zM8.6 12.2l2.4 2.4 4.6-4.8",
 }
 
 /** The glyph an act draws with (unknown → the bomb). */
 export function glyphFor(act) {
-    return GLYPH[act] ? act : "airstrike"
+    return STRIKE_GLYPH[act] ? act : "airstrike"
+}
+
+/** The pin's on-screen box for a marker of width `size`; the tip is the place. */
+export function strikeIconDims(size = 26) {
+    const w = Math.round(size)
+    const h = Math.round(size * 56 / 48)
+    return { width: w, height: h, anchor: [Math.round(w / 2), h] }
 }
 
 const _cache = new Map()
 
 /**
- * A crisp marker for one event. `hollow` = low-precision place;
- * `opacity` is quantised to tenths so the cache stays small.
+ * The marker for one event, as an SVG data URI in the asset-pin style.
+ * `hollow` = a place known only roughly; `opacity` is quantised to tenths
+ * so the cache stays small. `size` is only the cache key's width hint —
+ * the SVG is vector and the caller sets the drawn size (strikeIconDims).
  */
-export function strikeIconUri({ act = "airstrike", color = UNKNOWN_ACTOR_COLOR, size = 22, hollow = false, opacity = 1 } = {}) {
+export function strikeIconUri({ act = "airstrike", color = UNKNOWN_ACTOR_COLOR, size = 26, hollow = false, opacity = 1 } = {}) {
     const op = Math.max(0.1, Math.min(1, Math.round((Number(opacity) || 1) * 10) / 10))
-    const key = `${glyphFor(act)}:${color}:${size}:${hollow}:${op}`
+    const g = glyphFor(act)
+    const key = `${g}:${color}:${hollow}:${op}`
     if (_cache.has(key)) return _cache.get(key)
-    const px = size * MARKER_SUPERSAMPLE
-    const ring = 1.4 * MARKER_SUPERSAMPLE
-    const disc = hollow
-        ? `<circle cx="${px / 2}" cy="${px / 2}" r="${px * 0.44}" fill="#0B0F1A" fill-opacity="0.25" stroke="${color}" stroke-width="${ring}" stroke-dasharray="${px * 0.09} ${px * 0.06}"/>`
-        : `<circle cx="${px / 2}" cy="${px / 2}" r="${px * 0.44}" fill="#0B0F1A" fill-opacity="0.8" stroke="${color}" stroke-width="${ring}"/>`
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}" opacity="${op}">`
-        + disc
-        + `<g fill="${hollow ? "none" : color}" stroke="${color}" stroke-width="${(hollow ? 1.1 : 0.4) * MARKER_SUPERSAMPLE}" stroke-linejoin="round">${GLYPH[glyphFor(act)](px)}</g>`
+    const tile = hollow
+        ? `<rect x="7" y="7" width="34" height="32" rx="4" fill="#0b1220" stroke="${color}" stroke-width="2" stroke-dasharray="4 3"/>`
+        : `<rect x="7" y="7" width="34" height="32" rx="4" fill="${color}"/>`
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 48 56" opacity="${op}">`
+        + `<path d="M24 55 L16 44 H8 a6 6 0 0 1 -6 -6 V8 a6 6 0 0 1 6 -6 H40 a6 6 0 0 1 6 6 V38 a6 6 0 0 1 -6 6 H32 Z" fill="#0b1220" stroke="${color}" stroke-width="3.5"/>`
+        + tile
+        + `<g transform="translate(10 9) scale(1.17)" fill="none" stroke="${hollow ? color : "#0b1220"}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${STRIKE_GLYPH[g]}"/></g>`
         + `</svg>`
     const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
     _cache.set(key, uri)
     return uri
 }
 
-/** Marker size by what the event did: casualties when known. */
+/** Marker width by what the event did: casualties when known (the asset pins are 34). */
 export function strikeSize(e) {
     const c = e?.casualties
     const n = c ? (Number(c.killed) || 0) + (Number(c.injured) || 0) * 0.5 : 0
-    const base = e?.act === "control" ? 24 : 20
+    const base = e?.act === "control" ? 30 : 26
     if (n >= 100) return base + 12
     if (n >= 20) return base + 8
     if (n >= 5) return base + 5

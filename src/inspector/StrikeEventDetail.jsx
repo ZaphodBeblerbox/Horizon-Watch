@@ -14,7 +14,7 @@ export default function StrikeEventDetail({ event }) {
     return (
         <div data-testid="strike-detail" style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: "var(--space-4, 16px)" }}>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                <img src={strikeIconUri({ act: e.act, color, size: 34, hollow: isHollow(e) })} width={34} height={34} alt={actLabel(e.act)} />
+                <img src={strikeIconUri({ act: e.act, color, size: 34, hollow: isHollow(e) })} width={34} height={40} alt={actLabel(e.act)} />
                 <div style={{ fontSize: "var(--text-sm, 13px)", lineHeight: 1.45, color: "var(--txt)" }}>{strikeSummary(e)}</div>
             </div>
             {c && (

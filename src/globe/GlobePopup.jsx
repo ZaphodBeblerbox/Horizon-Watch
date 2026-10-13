@@ -60,6 +60,8 @@ export const INSPECTOR_TYPES = new Set([
     "endangered_place",
     // Strikes & control events (GlobeStrikesLayer).
     "strike_event",
+    // Frontline claims, movements and trajectories (GlobeFrontlineClaimsLayer).
+    "frontline_claim", "troop_movement", "trajectory",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────

@@ -44,6 +44,8 @@ import { SeaRouteSidebar }       from "../routes/modes/MaritimeRoute.jsx"
 import GlobeVesselThreatLayer    from "../globe/GlobeVesselThreatLayer.jsx"
 import GlobeGdeltLayer           from "../globe/GlobeGdeltLayer.jsx"
 import GlobeFrontlinesLayer      from "../globe/GlobeFrontlinesLayer.jsx"
+import GlobeStrikesLayer         from "../globe/GlobeStrikesLayer.jsx"
+import GlobeFrontlineClaimsLayer from "../globe/GlobeFrontlineClaimsLayer.jsx"
 import GlobeWarMapLayer          from "../globe/GlobeWarMapLayer.jsx"
 import GlobeFacilitiesLayer      from "../globe/GlobeFacilitiesLayer.jsx"
 import GlobeFiresLayer           from "../globe/GlobeFiresLayer.jsx"
@@ -157,6 +159,12 @@ export default function GlobeView({
     gdeltEnabled = false,
     telegramEnabled = false,
     unrestEnabled   = false,
+    // Strikes & control (GlobeStrikesLayer), and the frontline claims,
+    // movements and trajectories drawn from the same events.
+    strikesEnabled  = false,
+    frontlineClaimsEnabled = false,
+    movementsEnabled = false,
+    trajectoriesEnabled = false,
     imagerySignalsEnabled = false,
     // Places public calls name for blockades (endangered_places.py).
     endangeredEnabled = false,
@@ -1252,6 +1260,10 @@ export default function GlobeView({
                 <GlobeMeLayer />
                 <GlobeVesselThreatLayer />
                 <GlobeFrontlinesLayer enabled={frontlinesEnabled} at={frontlinesAt} />
+                {/* acts of force at the time strip's playhead; claims, arrows and flights over them */}
+                <GlobeStrikesLayer enabled={strikesEnabled} at={geoConfirmedEndDate} />
+                <GlobeFrontlineClaimsLayer claimsOn={frontlineClaimsEnabled} movementsOn={movementsEnabled}
+                                           trajectoriesOn={trajectoriesEnabled} />
                 <GlobeFacilitiesLayer types={facilityTypes} viewBounds={viewBounds}
                                       onStatus={onFacilityStatus} />
                 {warmapTheatres.map((t) => (

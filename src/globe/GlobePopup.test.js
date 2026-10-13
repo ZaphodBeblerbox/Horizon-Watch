@@ -27,6 +27,8 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "endangered_place",
             // Strikes & control events (GlobeStrikesLayer).
             "strike_event",
+            // Frontline claims, movements and trajectories (GlobeFrontlineClaimsLayer).
+            "frontline_claim", "troop_movement", "trajectory",
         ].sort())
     })
 

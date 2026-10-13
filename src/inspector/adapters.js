@@ -1343,6 +1343,91 @@ export function adaptStrikeEvent(data = {}) {
     }
 }
 
+// ── Frontline claims, movements, trajectories (frontline_claims.py) ─────
+const _when = (iso) => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toUTCString().replace(":00 GMT", " UTC") : null }
+const _srcAttrs = (srcs) => srcs.filter((s) => s?.url).map((s) => attr(`${s.source}${s.time ? ` · ${String(s.time).slice(0, 10)}` : ""}`, s.url))
+const _feed = (srcs) => srcs.map((s) => s?.source).filter((v, i, a) => v && a.indexOf(v) === i).join(", ") || null
+const _theatre = (d) => (d.theatre_label || d.theatre || null)
+
+/** A claimed control change: who claims where, and whether anything agrees. */
+export function adaptFrontlineClaim(data = {}) {
+    const srcs = Array.isArray(data.sources) ? data.sources : []
+    const status = { claimed: "Claimed, unverified", confirmed: "Confirmed", expired: "Expired", contradicted: "Contradicted" }[data.status] || "Claimed, unverified"
+    const attributes = compact([
+        attr("Status", `${status}${data.status_note ? ` — ${data.status_note}` : ""}`),
+        attr("Claimed by", data.actor || data.side_name || "Not stated"),
+        attr("Place", data.target_name || null),
+        attr("Theatre", _theatre(data)),
+        attr("Time", _when(data.time)),
+        attr("Drawn", data.radius_km ? `${data.radius_km} km around the place — ${data.size_basis || data.place_type || ""}` : null),
+        attr("Unit", data.unit_type || null),
+        attr("Official line", data.official_line === "deepstatemap" ? "DeepStateMap" : "No open control map for this theatre"),
+        attr("Position", fmtCoord(data.lat, data.lon)),
+        ..._srcAttrs(srcs),
+    ])
+    return {
+        identity: { title: data.label || `${status}: ${data.target_name || "claim"}`, subtitle: `Frontline claim · ${status}`,
+                    entityType: "frontline_claim", subtype: data.status || null, sanctionsStatus: null },
+        attributes,
+        provenance: { feed: _feed(srcs), ingestedAt: data.time || null },
+        actions: { canJumpToLocation: isFiniteNum(data.lat) && isFiniteNum(data.lon) },
+    }
+}
+
+/** A troop movement arrow: the act, the unit, and where we drew it from. */
+export function adaptTroopMovement(data = {}) {
+    const srcs = Array.isArray(data.sources) ? data.sources : []
+    const to = data.to || {}
+    const attributes = compact([
+        attr("Act", String(data.act || "").replace("_", " ") || null),
+        attr("Actor", data.actor || data.side_name || "Not stated"),
+        attr("Unit", data.unit_known ? (data.unit_label || data.unit_type) : `Not stated (drawn as ${data.unit_label || "a generic unit"})`),
+        attr("APP-6 code", data.sidc || null),
+        attr("Target", data.target_name || null),
+        attr("Arrow start", data.from ? data.from_basis : "No approach direction known"),
+        attr("Theatre", _theatre(data)),
+        attr("Time", _when(data.time)),
+        attr("Position", fmtCoord(to.lat, to.lon)),
+        ..._srcAttrs(srcs),
+    ])
+    return {
+        identity: { title: data.label || "Movement", subtitle: `Movement · ${data.side_name || data.actor || "side not stated"}`,
+                    entityType: "troop_movement", subtype: data.act || null, sanctionsStatus: null },
+        attributes,
+        provenance: { feed: _feed(srcs), ingestedAt: data.time || null },
+        actions: { canJumpToLocation: isFiniteNum(to.lat) && isFiniteNum(to.lon) },
+    }
+}
+
+/** A drone or missile flight: origin (assumed or reported), range, time. */
+export function adaptTrajectory(data = {}) {
+    const srcs = Array.isArray(data.sources) ? data.sources : []
+    const o = data.from || {}
+    const to = data.to || {}
+    const attributes = compact([
+        attr("Weapon", data.kind_label || data.kind || null),
+        attr("Actor", data.actor || "Not stated"),
+        attr("Target", data.target_name || null),
+        attr("Origin", o.name ? `${o.name}${o.assumed ? " (assumed)" : ""}` : null),
+        attr("Origin basis", o.basis || null),
+        attr("Launch area source", o.source || null),
+        attr("Range", data.range_km ? `${Math.round(data.range_km)} km` : null),
+        attr("Flight time", data.flight_minutes ? `about ${Math.round(data.flight_minutes)} min at ${data.speed_kmh} km/h` : null),
+        attr("Arc peak", data.apogee_km ? `${data.apogee_km} km (drawn)` : null),
+        attr("Flights from this origin", data.flights_from_here > 1 ? String(data.flights_from_here) : null),
+        attr("Time", _when(data.time)),
+        attr("Target position", fmtCoord(to.lat, to.lon)),
+        ..._srcAttrs(srcs),
+    ])
+    return {
+        identity: { title: data.label || "Trajectory", subtitle: `Trajectory · ${data.kind_label || data.kind || ""}${o.assumed ? " · assumed origin" : ""}`,
+                    entityType: "trajectory", subtype: data.kind || null, sanctionsStatus: null },
+        attributes,
+        provenance: { feed: _feed(srcs), ingestedAt: data.time || null },
+        actions: { canJumpToLocation: isFiniteNum(to.lat) && isFiniteNum(to.lon) },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -1374,6 +1459,9 @@ const ADAPTERS = {
     owned_asset: adaptOwnedAsset,
     endangered_place: adaptEndangeredPlace,
     strike_event: adaptStrikeEvent,
+    frontline_claim: adaptFrontlineClaim,
+    troop_movement: adaptTroopMovement,
+    trajectory: adaptTrajectory,
 }
 
 /**

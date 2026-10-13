@@ -31,6 +31,14 @@ import { styleFor as gfwStyleFor, summaryOf as gfwSummaryOf, ageLabel as gfwAgeL
 import { riskAlpha, buildA2ToA3, indexByIso3 } from "../globe/riskChoropleth.js"
 import { CAT } from "../components/timeStripMath.js"
 import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, defaultOnNow as endangeredDefaultOn, filterByCountry, placesUrl } from "../globe/endangeredPlaces.js"
+import {
+    actorColor, filterStrikes, isHollow, strikeIconDims, strikeIconUri, strikeOpacity, strikeSettings, strikeSize,
+    strikeSummary, strikeWindowHours, strikesUrl,
+} from "../globe/strikes.js"
+import {
+    claimRing, claimStyle, claimSummary, milSymbol, movementArrow, movementSummary, overlayUrl, sideColour,
+    trajectoryPath, trajectorySummary, FRONTLINE_LAYERS,
+} from "../globe/frontlineClaims.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -1111,6 +1119,108 @@ async function loadEndangered({ bounds, zoom }) {
     return clusterPlaces(inView, Number.isFinite(zoom) ? zoom : 5).slice(0, MAX_FEATURES)
 }
 
+// ── Strikes & control (globe/GlobeStrikesLayer.jsx) ───────────────────────
+// The same pins (strikes.js), the same act chips and time window (the
+// Filters sheet shows StrikesLayerControls), faded by age; no campaign
+// replay on the phone.
+
+function strikeFeature(e, campaign = null) {
+    const size = strikeSize(e)
+    const { width, height, anchor } = strikeIconDims(size)
+    return {
+        id: `strike-${e.id}`, lat: num(e.lat), lon: num(e.lon),
+        iconUri: strikeIconUri({ act: e.act, color: actorColor(e.actor), size, hollow: isHollow(e), opacity: strikeOpacity(e) }),
+        size, iconWidth: width, iconHeight: height, iconAnchor: anchor,
+        title: e.title || e.act_label || "Strike",
+        sub: [e.actor, e.target_name ? String(e.target_name).split(",")[0] : null].filter(Boolean).join(" · "),
+        raw: { ...e, kind: "strike_event", detail: strikeSummary(e, campaign), url: e.sources?.find((s) => s?.url)?.url || null,
+               source: e.sources?.[0]?.source || null, published_at: e.time },
+    }
+}
+
+async function loadStrikes({ bounds }) {
+    const [d, c] = await Promise.all([
+        getJson(strikesUrl(API_BASE), { ttlMs: 120_000 }),
+        getJson(`${API_BASE}/api/strikes/campaigns?since=30d`, { ttlMs: 120_000 }),
+    ])
+    if (!d) return []
+    const byCampaign = Object.fromEntries(arr(c?.campaigns).map((x) => [x.id, x]))
+    const { acts, window: win } = strikeSettings()
+    const shown = filterStrikes(arr(d.events), { acts, windowHours: strikeWindowHours(win) })
+    return cullPoints(shown.map((e) => strikeFeature(e, byCampaign[e.campaign_id] || null)), normBounds(bounds))
+}
+
+// ── Frontline claims, movements, trajectories (globe/GlobeFrontlineClaimsLayer.jsx) ──
+const OVERLAY_TTL = 120_000
+const toLL = (p) => [p.lat, p.lon]
+
+async function loadClaims({ bounds }) {
+    const d = await getJson(overlayUrl(API_BASE), { ttlMs: OVERLAY_TTL })
+    const out = []
+    for (const c of arr(d?.claims)) {
+        const ring = claimRing(c)
+        if (ring.length < 3) continue
+        const st = claimStyle(c)
+        out.push({
+            id: `fclaim-${c.id}`, rings: [ring.map(toLL)], color: st.color, fillOpacity: st.fill * (Number(c.opacity) || 1),
+            weight: st.grey ? 1.5 : 2.5, dash: st.dash ? "6 5" : null,
+            title: c.label || `${st.label}: ${c.target_name || "claim"}`,
+            sub: [st.label, c.actor].filter(Boolean).join(" · "),
+            raw: { ...c, kind: "frontline_claim", detail: claimSummary(c), url: c.sources?.find((s) => s?.url)?.url || null,
+                   source: c.sources?.[0]?.source || null, published_at: c.time },
+        })
+    }
+    return cullAreas(out, normBounds(bounds))
+}
+
+async function loadMovements({ bounds }) {
+    const d = await getJson(overlayUrl(API_BASE), { ttlMs: OVERLAY_TTL })
+    const out = []
+    for (const m of arr(d?.movements)) {
+        const arrow = movementArrow(m)
+        const tail = m.from || m.to
+        if (!tail || !finite(tail.lat, tail.lon)) continue
+        const colour = sideColour(m.side, m.colour)
+        const sym = milSymbol(m.sidc, { colour, size: 18 })
+        out.push({
+            id: `fmove-${m.id}`, color: colour, weight: 3,
+            // shaft, and the head as its own part
+            coords: arrow ? arrow.map((part) => part.map(toLL)) : [[toLL(tail), toLL(tail)]],
+            marker: sym.uri ? { lat: +tail.lat, lon: +tail.lon, iconUri: sym.uri, iconWidth: sym.width, iconHeight: sym.height, iconAnchor: sym.anchor } : null,
+            title: m.label || "Movement",
+            sub: m.from_basis || null,
+            raw: { ...m, kind: "troop_movement", lat: m.to?.lat, lon: m.to?.lon, detail: movementSummary(m),
+                   url: m.sources?.find((s) => s?.url)?.url || null, source: m.sources?.[0]?.source || null, published_at: m.time },
+        })
+    }
+    return cullLines(out, normBounds(bounds))
+}
+
+async function loadTrajectories({ bounds }) {
+    const d = await getJson(overlayUrl(API_BASE), { ttlMs: OVERLAY_TTL })
+    const out = []
+    for (const t of arr(d?.trajectories)) {
+        const path = trajectoryPath(t, { samples: 24 })
+        if (path.length < 2) continue
+        const colour = sideColour(t.side, t.colour)
+        const { width, height, anchor } = strikeIconDims(22)
+        out.push({
+            id: `ftraj-${t.id}`, color: colour, weight: 2, dash: t.from?.assumed ? "5 5" : null,
+            coords: path.map(toLL),
+            // the weapon at the launch end, in the strikes layer's pin — hollow
+            // (the strikes layer's "place known only roughly") when assumed
+            marker: { lat: +t.from.lat, lon: +t.from.lon, iconWidth: width, iconHeight: height, iconAnchor: anchor,
+                      iconUri: strikeIconUri({ act: t.kind === "drone" ? "drone" : "missile", color: actorColor(t.actor), size: 22,
+                                               hollow: !!t.from.assumed }) },
+            title: t.label || t.kind_label || "Trajectory",
+            sub: t.from?.name ? `${t.from.assumed ? "assumed origin" : "from"} ${t.from.name}` : null,
+            raw: { ...t, kind: "trajectory", lat: t.to?.lat, lon: t.to?.lon, detail: trajectorySummary(t),
+                   url: t.sources?.find((s) => s?.url)?.url || null, source: t.sources?.[0]?.source || null, published_at: t.time },
+        })
+    }
+    return cullLines(out, normBounds(bounds))
+}
+
 // ── the registry ──────────────────────────────────────────────────────────
 
 const G = {
@@ -1198,6 +1308,22 @@ export const PHONE_LAYERS = [
     {
         key: "unrest", label: "Unrest & protests", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
         legendIcon: tgUnrestIcon(), load: loadUnrest,
+    },
+    {
+        key: "strikes", label: "Strikes & control", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
+        legendIcon: strikeIconUri({ act: "airstrike", color: actorColor("Russia"), size: 22 }), load: loadStrikes,
+    },
+    {
+        key: "frontlineClaims", label: FRONTLINE_LAYERS[0].label, group: G.news, defaultOn: true, kind: "areas", minZoom: 0,
+        legendIcon: areaSwatch(sideColour("red"), 0.3), load: loadClaims,
+    },
+    {
+        key: "movements", label: FRONTLINE_LAYERS[1].label, group: G.news, defaultOn: false, kind: "lines", minZoom: 0,
+        legendIcon: milSymbol("SHGPUCI--------", { colour: sideColour("red"), size: 14 }).uri || lineSwatch(sideColour("red")), load: loadMovements,
+    },
+    {
+        key: "trajectories", label: FRONTLINE_LAYERS[2].label, group: G.news, defaultOn: true, kind: "lines", minZoom: 0,
+        legendIcon: strikeIconUri({ act: "drone", color: actorColor("Russia"), size: 22 }), load: loadTrajectories,
     },
 
     // Imagery.

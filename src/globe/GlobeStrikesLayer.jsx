@@ -3,7 +3,7 @@
  * drone strikes, shelling, naval strikes, assaults, territory taken and
  * interceptions (backend/strike_events.py, /api/strikes).
  *
- * One marker per event (strikes.js: glyph = act, colour = actor, size =
+ * One pin per event (strikes.js: glyph = act, colour = actor, size =
  * casualties, hollow = rough place, fading = age in its window). Markers
  * only: launch→target trajectories and frontline changes are drawn by
  * their own layers.
@@ -29,7 +29,7 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import {
-    actorColor, filterStrikes, isHollow, strikeIconUri, strikeOpacity, strikeSize, strikesUrl,
+    actorColor, filterStrikes, isHollow, strikeIconDims, strikeIconUri, strikeOpacity, strikeSize, strikesUrl,
     dayLabel, strikeWindowHours,
 } from "./strikes.js"
 import { useStrikeSettings } from "./useStrikeSettings.js"
@@ -37,9 +37,10 @@ import { useStrikeSettings } from "./useStrikeSettings.js"
 const REFRESH_MS = 3 * 60_000
 const REPLAY_MS = 10_000
 
-/** The playhead as ms: a YYYY-MM-DD day means the end of that day. */
+/** The playhead as ms: a YYYY-MM-DD day means the end of that day. Live is
+ *  now to the minute, so the markers aren't rebuilt on every render. */
 export function playheadMs(at) {
-    if (!at) return Date.now()
+    if (!at) return Math.floor(Date.now() / 60_000) * 60_000
     const s = String(at)
     const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T23:59:59Z` : s)
     return Number.isFinite(t) ? Math.min(t, Date.now()) : Date.now()
@@ -154,10 +155,12 @@ const StrikeEntity = memo(function StrikeEntity({ e, atMs }) {
     const opacity = strikeOpacity(e, atMs)
     const pos = useMemo(() => Cartesian3.fromDegrees(+e.lon, +e.lat, 0), [e.lon, e.lat])
     const image = strikeIconUri({ act: e.act, color: actorColor(e.actor), size, hollow: isHollow(e), opacity })
+    const { width, height } = strikeIconDims(size)
     return (
         <Entity id={`strike-${e.id}`} name={e.title} position={pos}
             billboard={{
-                image, width: size, height: size,
+                // a pin, like the asset icons: its tip is the place
+                image, width, height, verticalOrigin: VerticalOrigin.BOTTOM,
                 heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 12_000_000),
                 scaleByDistance: new NearFarScalar(150_000, 1.0, 8_000_000, 0.6),
@@ -177,7 +180,7 @@ function CampaignLabel({ c, replayT = null, count = null }) {
                 text, font: "600 12px system-ui, -apple-system, Segoe UI, sans-serif",
                 fillColor: Color.fromCssColorString(actorColor(c.actor)),
                 outlineColor: Color.fromCssColorString("#05070C"), outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
-                verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -26),
+                verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -40),
                 heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(200_000, replayT ? 20_000_000 : 6_000_000),
                 showBackground: true, backgroundColor: Color.fromCssColorString("#0B0F1A").withAlpha(0.72),
