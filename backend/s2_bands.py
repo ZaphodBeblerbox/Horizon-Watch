@@ -27,16 +27,18 @@ _TOKEN = {"value": None, "exp": 0.0}
 
 
 def _token() -> str:
-    if _TOKEN["value"] and time.time() < _TOKEN["exp"] - 60:
+    import copernicus_accounts
+    cid, sec = copernicus_accounts.active() or (os.getenv("COPERNICUS_CLIENT_ID", ""), os.getenv("COPERNICUS_CLIENT_SECRET", ""))
+    if _TOKEN["value"] and time.time() < _TOKEN["exp"] - 60 and _TOKEN.get("client_id") == cid:
         return _TOKEN["value"]
     form = urllib.parse.urlencode({
         "grant_type": "client_credentials",
-        "client_id": os.getenv("COPERNICUS_CLIENT_ID", ""),
-        "client_secret": os.getenv("COPERNICUS_CLIENT_SECRET", ""),
+        "client_id": cid,
+        "client_secret": sec,
     }).encode()
     req = urllib.request.Request(TOKEN_URL, data=form, headers={"Content-Type": "application/x-www-form-urlencoded"})
     d = json.loads(urllib.request.urlopen(req, timeout=30).read())
-    _TOKEN.update(value=d["access_token"], exp=time.time() + float(d.get("expires_in", 600)))
+    _TOKEN.update(value=d["access_token"], exp=time.time() + float(d.get("expires_in", 600)), client_id=cid)
     return _TOKEN["value"]
 
 
@@ -83,16 +85,31 @@ def fetch(west, south, east, north, date: str, width: int, height: int, upsampli
                    "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}]},
         "evalscript": EVALSCRIPT,
     }
-    req = urllib.request.Request(PROCESS_URL, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {_token()}"})
+    import copernicus_accounts
+
+    def _req():
+        return urllib.request.Request(PROCESS_URL, data=json.dumps(body).encode(),
+                                      headers={"Content-Type": "application/json", "Authorization": f"Bearer {_token()}"})
+    req = _req()
     # Sentinel Hub answers 429 when the account's rate is spent: wait and
-    # retry a few times rather than fail the whole smoke pass.
+    # retry a few times rather than fail the whole smoke pass. A 403 for
+    # spent processing units moves to the backup account (copernicus_accounts).
     import time
+    switched = False
     for attempt in range(4):
         try:
             raw = urllib.request.urlopen(req, timeout=120).read()
             break
         except urllib.error.HTTPError as e:
+            if e.code == 403 and not switched:
+                text = e.read().decode("utf-8", "replace")
+                if copernicus_accounts.is_quota_exhausted(403, text) and \
+                        copernicus_accounts.mark_saturated(_TOKEN.get("client_id") or ""):
+                    switched = True
+                    _TOKEN["value"] = None
+                    req = _req()
+                    continue
+                raise
             if e.code != 429 or attempt == 3:
                 raise
             time.sleep((5, 15, 40)[attempt])

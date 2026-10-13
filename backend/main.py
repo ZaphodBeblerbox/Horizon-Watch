@@ -18079,15 +18079,18 @@ async def _get_copernicus_access_token(client_h: httpx.AsyncClient) -> tuple[Opt
         return None, "missing_credentials"
 
     now = time.time()
+    # the primary account, or the backup while the primary's quota is spent
+    import copernicus_accounts
+    cid, csec = copernicus_accounts.active() or (_COPERNICUS_CLIENT_ID, _COPERNICUS_CLIENT_SECRET)
     token = _COPERNICUS_TOKEN_CACHE.get("access_token")
     expires_at = float(_COPERNICUS_TOKEN_CACHE.get("expires_at", 0.0))
-    if token and expires_at - now > 60:
+    if token and expires_at - now > 60 and _COPERNICUS_TOKEN_CACHE.get("client_id") == cid:
         return token, None
 
     form = {
         "grant_type": "client_credentials",
-        "client_id": _COPERNICUS_CLIENT_ID,
-        "client_secret": _COPERNICUS_CLIENT_SECRET,
+        "client_id": cid,
+        "client_secret": csec,
     }
     try:
         resp = await client_h.post(
@@ -18104,6 +18107,7 @@ async def _get_copernicus_access_token(client_h: httpx.AsyncClient) -> tuple[Opt
         expires_at_ts = now + max(300, expires_in - 120)
         _COPERNICUS_TOKEN_CACHE["access_token"] = access_token
         _COPERNICUS_TOKEN_CACHE["expires_at"] = expires_at_ts
+        _COPERNICUS_TOKEN_CACHE["client_id"] = cid
         with _DS_STATUS_LOCK:
             _DS_STATUS["copernicus"]["token_valid"] = True
             _DS_STATUS["copernicus"]["expires_at"] = expires_at_ts
@@ -18476,6 +18480,17 @@ def _sh_retry_after(resp) -> float | None:
     return max(0.5, min(60.0, v))
 
 
+def _sh_switched_account(resp) -> bool:
+    """A 403 for spent processing units sets the account aside (copernicus_accounts);
+    True when there is another one to retry with."""
+    import copernicus_accounts
+    if not copernicus_accounts.is_quota_exhausted(resp.status_code, resp.text):
+        return False
+    cid = _COPERNICUS_TOKEN_CACHE.get("client_id") or _COPERNICUS_CLIENT_ID
+    _COPERNICUS_TOKEN_CACHE["access_token"] = None
+    return copernicus_accounts.mark_saturated(cid)
+
+
 async def _sh_process_post(client_h, payload: dict, token: str, label: str = "process"):
     """POST to the Process API under the shared concurrency cap, backing off on 429."""
     resp = None
@@ -18487,6 +18502,11 @@ async def _sh_process_post(client_h, payload: dict, token: str, label: str = "pr
                                        headers={"Authorization": f"Bearer {token}"})
         finally:
             _SH_SLOTS.release()
+        if _sh_switched_account(resp):
+            new_token, _err = await _get_copernicus_access_token(client_h)
+            if new_token and new_token != token:
+                token = new_token
+                continue
         if resp.status_code != 429 or attempt == len(_SH_429_DELAYS):
             return resp
         wait = _sh_retry_after(resp) or _SH_429_DELAYS[attempt]
@@ -18656,11 +18676,7 @@ async def satellite_tile_png(z: int, x: int, y: int, dt: str = ""):
             "evalscript": _EVALSCRIPT_TRUE_COLOUR,
         }
 
-        resp = await client_h.post(
-            _SH_PROCESS_URL,
-            json=payload,
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        resp = await _sh_process_post(client_h, payload, token, "tile")
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail=resp.text[:300])
 
