@@ -29,9 +29,10 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import {
-    STRIKE_ACT_KEYS, actorColor, filterStrikes, isHollow, strikeIconUri, strikeOpacity, strikeSize, strikesUrl,
-    dayLabel,
+    actorColor, filterStrikes, isHollow, strikeIconUri, strikeOpacity, strikeSize, strikesUrl,
+    dayLabel, strikeWindowHours,
 } from "./strikes.js"
+import { useStrikeSettings } from "./useStrikeSettings.js"
 
 const REFRESH_MS = 3 * 60_000
 const REPLAY_MS = 10_000
@@ -44,8 +45,12 @@ export function playheadMs(at) {
     return Number.isFinite(t) ? Math.min(t, Date.now()) : Date.now()
 }
 
-export default function GlobeStrikesLayer({ enabled = false, acts = STRIKE_ACT_KEYS, windowHours = 24 * 14, at = null }) {
+export default function GlobeStrikesLayer({ enabled = false, at = null }) {
     const { viewer } = useCesium()
+    // the act chips and the time-window chip (layers panel / phone Filters)
+    const settings = useStrikeSettings()
+    const acts = settings.acts
+    const windowHours = strikeWindowHours(settings.window)
     const [events, setEvents] = useState([])
     const [campaigns, setCampaigns] = useState([])
     const [replay, setReplay] = useState(null)        // { campaign, t }

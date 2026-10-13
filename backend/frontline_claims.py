@@ -65,6 +65,7 @@ THEATRES: dict[str, dict] = {
         "label": "Russia–Ukraine",
         "bbox": (22.0, 43.5, 41.5, 53.5),
         "official_line": "deepstatemap",
+        "countries": ["Ukraine", "Russia", "Belarus", "Moldova"],
         "blue": {"name": "Ukraine", "aliases": ["ukrain", "afu", "zsu", "kyiv", "kiev", "sbu", "gur"]},
         "red": {"name": "Russia", "aliases": ["russia", "rf ", "wagner", "moscow", "kremlin", "vsrf", "chechen", "akhmat"]},
     },
@@ -72,6 +73,7 @@ THEATRES: dict[str, dict] = {
         "label": "Yemen / Saudi-led coalition",
         "bbox": (34.0, 11.0, 56.5, 32.5),          # Yemen, Saudi Arabia, the Red Sea
         "official_line": None,
+        "countries": ["Yemen", "Saudi Arabia", None],
         "blue": {"name": "Saudi-led coalition", "aliases": ["saudi", "coalition", "uae", "emirat", "yemeni government",
                                                              "government forces", "plc", "giants brigade", "stc", "southern transitional"]},
         "red": {"name": "Houthis", "aliases": ["houthi", "ansar allah", "ansarallah", "ansar-allah", "sanaa forces"]},
@@ -80,6 +82,7 @@ THEATRES: dict[str, dict] = {
         "label": "Israel / Iran and allies",
         "bbox": (29.0, 24.0, 63.5, 40.0),
         "official_line": None,
+        "countries": ["Israel", "Palestine", "Lebanon", "Syria", "Iran", "Iraq", "Jordan"],
         "blue": {"name": "Israel", "aliases": ["israel", "idf", "iaf"]},
         "red": {"name": "Iran and allies", "aliases": ["iran", "irgc", "hezbollah", "hamas", "islamic jihad", "pij",
                                                        "islamic resistance in iraq", "kataib"]},
@@ -88,6 +91,7 @@ THEATRES: dict[str, dict] = {
         "label": "Sudan",
         "bbox": (21.5, 8.5, 39.0, 23.0),
         "official_line": None,
+        "countries": ["Sudan"],
         "blue": {"name": "Sudanese Armed Forces", "aliases": ["saf", "sudanese army", "sudanese armed forces", "burhan"]},
         "red": {"name": "Rapid Support Forces", "aliases": ["rsf", "rapid support", "hemedti", "dagalo", "janjaweed"]},
     },
@@ -201,6 +205,8 @@ REAR_AREAS = {
     ("yemen", "blue"): [{"name": "Marib", "lat": 15.46, "lon": 45.32}, {"name": "Aden", "lat": 12.79, "lon": 45.03}],
     ("sudan", "blue"): [{"name": "Port Sudan", "lat": 19.62, "lon": 37.22}, {"name": "Omdurman", "lat": 15.65, "lon": 32.48}],
     ("sudan", "red"): [{"name": "Nyala", "lat": 12.05, "lon": 24.88}, {"name": "El Fasher area", "lat": 13.63, "lon": 25.35}],
+    ("israel", "blue"): [{"name": "Gaza envelope", "lat": 31.45, "lon": 34.50}, {"name": "Northern Israel", "lat": 33.05, "lon": 35.40},
+                         {"name": "Jerusalem", "lat": 31.78, "lon": 35.22}],
 }
 
 # ── units → APP-6 / MIL-STD-2525C letter SIDCs ───────────────────────────
@@ -437,6 +443,10 @@ def theatre_and_side(ev: dict) -> tuple[str | None, str]:
         s = _side_by_alias(actor, THEATRES[k])
         if s:
             return k, s
+    # no actor named for any theatre: only a theatre whose countries hold the point
+    country = ev.get("country") if "country" in ev else _country_at(lat, lon)
+    cands = [k for k in cands if country in THEATRES[k].get("countries", [])
+             or (country is None and None in THEATRES[k].get("countries", []))]
     key = cands[0] if cands else None
     if given in ("blue", "red"):
         return key, given
@@ -446,6 +456,32 @@ def theatre_and_side(ev: dict) -> tuple[str | None, str]:
         if s:
             return key, s
     return key, "unknown"
+
+
+def _country_at(lat, lon):
+    try:
+        import geo_land
+        return geo_land.country_at(lat, lon)
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
+def self_target(ev: dict, theatre: str | None, side: str, occ=None) -> bool:
+    """A strike on the actor's own ground: almost always a misattribution
+    (an interception, a strike BY the other side). Not drawn as a flight."""
+    try:
+        lat, lon = float(ev["lat"]), float(ev["lon"])
+    except Exception:                                       # noqa: BLE001
+        return False
+    if theatre == "ukraine" and occ is not None and side in ("red", "blue"):
+        try:
+            from shapely.geometry import Point
+            own = held_ground(occ).get(side)
+            return bool(own is not None and own.contains(Point(lon, lat)))
+        except Exception:                                   # noqa: BLE001
+            return False
+    home, country = ev.get("actor_home"), ev.get("country")
+    return bool(home and country and home == country)
 
 
 def actor_key(actor: str | None) -> str | None:
@@ -596,7 +632,7 @@ def build_claims(events: list[dict], now: float | None = None, occ=None, dis=Non
         if t is None or now - t > DROP_AFTER_S:
             continue
         theatre, side = theatre_and_side(ev)
-        if not theatre and not ev.get("actor"):
+        if not ev.get("actor"):
             continue            # "a vehicle seized near X" with nobody named is not a claim of ground
         rows.append((t, ev, lat, lon, theatre, side))
     rows.sort(key=lambda r: r[0])
@@ -681,6 +717,7 @@ MOVEMENT_ACTS = ("control_change", "assault", "airstrike", "shelling", "naval")
 ARROW_MAX_KM = {"control_change": 25.0, "assault": 25.0, "shelling": 30.0, "airstrike": 60.0, "naval": 60.0,
                 "drone": 15.0}
 ARROW_MIN_KM = 4.0
+FRONT_ADJACENT_KM = 80.0
 
 
 def _approach_start(ev, theatre, side, lat, lon, prior: list, occ) -> tuple[tuple | None, str]:
@@ -740,6 +777,15 @@ def build_movements(events: list[dict], claims: list[dict], occ=None) -> list[di
             continue
         if not theatre or side == "unknown":
             continue            # an arrow needs a front and a side to come from
+        if act not in ("control_change", "assault") and self_target(ev, theatre, side, occ):
+            continue
+        if act in ("airstrike", "shelling", "naval") and theatre == "ukraine" and occ is not None:
+            try:
+                own = held_ground(occ).get(side)
+                if own is not None and haversine_km(_nearest_on(own, lat, lon), (lat, lon)) > FRONT_ADJACENT_KM:
+                    continue    # a deep strike is a trajectory question, not a troop movement
+            except Exception:                               # noqa: BLE001
+                pass
         start, basis = _approach_start(ev, theatre, side, lat, lon, claims, occ)
         unit = ev.get("unit_type") or {"airstrike": "air force", "shelling": "artillery", "naval": "naval",
                                        "drone": "drones"}.get(act)
@@ -912,7 +958,7 @@ def build_trajectories(events: list[dict], occ=None) -> list[dict]:
         except Exception:                                   # noqa: BLE001
             continue
         theatre, side = theatre_and_side(ev)
-        if is_tactical_drone(ev, theatre, occ):
+        if is_tactical_drone(ev, theatre, occ) or self_target(ev, theatre, side, occ):
             continue
         origin = infer_origin(ev, theatre, side, occ)
         if not origin:

@@ -25,6 +25,8 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "infra_feature",
             // Places public calls name for blockades (GlobeEndangeredPlacesLayer).
             "endangered_place",
+            // Strikes & control events (GlobeStrikesLayer).
+            "strike_event",
         ].sort())
     })
 

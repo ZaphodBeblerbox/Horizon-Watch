@@ -112,7 +112,7 @@ def test_russian_drone_without_hint_assumed_from_nearest_area_or_front():
     # with an occupied area close to the target, the front line is nearer
     zap = ev(act="drone", actor="Russia", target_name="Pokrovsk", lat=48.28, lon=37.18)
     o2 = fc.infer_origin(zap, "ukraine", "red", occ=OCC)
-    assert o2["name"] == "Russian-held front line"
+    assert o2["name"] == "Russian-held ground"
     assert fc.haversine_km((o2["lat"], o2["lon"]), (48.28, 37.18)) < 40
 
 
@@ -193,3 +193,18 @@ def test_overlay_reads_synthetic_file(tmp_path, monkeypatch):
     d = fc.overlay(24, now=time.time())
     assert d["synthetic"] is True
     assert d["trajectories"] and d["trajectories"][0]["synthetic"] is True
+
+
+def test_ukrainian_drone_into_russia_from_ukrainian_held_ground():
+    e = ev(act="drone", actor="Ukraine", target_name="Belgorod", lat=50.60, lon=36.59, title="drone attack on Belgorod")
+    o = fc.infer_origin(e, "ukraine", "blue", occ=OCC)
+    assert o["assumed"] and "Ukrainian" in o["name"]
+    assert fc.haversine_km((o["lat"], o["lon"]), (50.60, 36.59)) < 80
+
+
+def test_fpv_drone_is_tactical_not_a_trajectory():
+    e = ev(act="drone", actor="Ukraine", title="Russian vehicle hit by Ukrainian FPV drones", lat=48.09, lon=37.01)
+    assert fc.is_tactical_drone(e)
+    assert fc.build_trajectories([e], occ=OCC) == []
+    shahed = ev(act="drone", actor="Russia", title="Shahed drones attack Kyiv", lat=50.45, lon=30.52)
+    assert not fc.is_tactical_drone(shahed) and fc.build_trajectories([shahed], occ=OCC)
