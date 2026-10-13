@@ -17397,7 +17397,9 @@ async def _gdelt_loop():
             # to the AIS/sanctions path after the 2026-09 event-loop
             # starvation incident — see _check_sanctions_on_update. The
             # pattern is established; GDELT had simply not been moved yet.
-            if _gdelt_batch and _fusion_engine:
+            # Not into the fusion engine either: a GDELT wire story plus a GPS
+            # reading made "Tourist fees rise amid GPS jamming" fusion alerts.
+            if _gdelt_batch and _fusion_engine and os.getenv("GDELT_IN_FUSION", "").strip().lower() in ("1", "true", "yes"):
                 batch = _gdelt_batch
 
                 def _feed():
@@ -17412,6 +17414,8 @@ async def _gdelt_loop():
                 new_count += await asyncio.get_event_loop().run_in_executor(
                     _executor, _feed)
                 _gdelt_batch = []
+            else:
+                _gdelt_batch = []          # never fed: still emptied, or it grows forever
 
             seeded = True
             with _DS_STATUS_LOCK:
@@ -17484,6 +17488,10 @@ def get_surface_pool(response: FastAPIResponse):
     total_ms = (time.perf_counter() - started) * 1000
     payload_bytes = len(_json.dumps(enriched, ensure_ascii=False).encode("utf-8"))
     print(f"[surface/api] count={len(enriched)} attach_ms={attach_ms:.1f} total_ms={total_ms:.1f} payload={payload_bytes}B")
+    # GDELT IS NOT A SIGNAL (owner, 2026-10-13: "I never care about Katie
+    # Price"). It feeds the country risk index only (risk_index reads its own
+    # cache) — never the map's signals, the inbox, Home or notifications.
+    enriched = [it for it in enriched if str(it.get("source") or "").lower() != "gdelt" and not str(it.get("id") or "").startswith("gdelt_")]
     # NO NOISE (owner, 2026-10-05: "pedestrian struck in Ohio"). The cheap
     # enrichment pass judges each signal security or general; general ones
     # leave the surface. Unjudged ones stay until judged — a background pass

@@ -31,6 +31,7 @@ import ConflictContext from "../conflicts/ConflictContext.jsx"
 import Columns, { BarList } from "../charts/Columns.jsx"
 import { safeArray } from "../utils/safeArray.js"
 import GlobeView from "../components/GlobeView.jsx"
+import StrikesLayerControls from "../components/StrikesLayerControls.jsx"
 import { GDELT_EVENT_TYPES } from "../globe/GlobeGdeltLayer.jsx"
 import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
@@ -407,11 +408,14 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // They were both tied to one "News" toggle, so an analyst who wanted
     // only what had been verified could not have it.
     const [geoConfirmedOn, setGeoConfirmedOn] = useState(true)
-    const [gdeltOn, setGdeltOn] = useState(true)
+    const [gdeltOn, setGdeltOn] = useState(false)      // GDELT: country risk index only, never map signals (owner, 2026-10-13)
     const [telegramOn, setTelegramOn] = useState(true)
     // Riots, protests and civil unrest, and the gatherings announced for
     // the coming days — kept apart from the fighting by their own toggle.
     const [unrestOn, setUnrestOn] = useState(true)
+    // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
+    // the owner wants an air campaign visible. Acts and window: strikes.js.
+    const [strikesOn, setStrikesOn] = useState(true)
     // Which CAMEO codings to draw. Starts as every kind rather than a
     // curated subset: a reader who has not chosen yet should see the whole
     // feed, not a silently narrowed one.
@@ -472,6 +476,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         gdelt: [gdeltOn, setGdeltOn],
         telegram: [telegramOn, setTelegramOn],
         unrest: [unrestOn, setUnrestOn],
+        strikes: [strikesOn, setStrikesOn],
         airspace: [airspaceOn, setAirspaceOn],
         gfwHeat: [gfwHeatOn, setGfwHeatOn],
         ...Object.fromEntries(Object.keys(gfwOn).map((k) =>
@@ -1247,6 +1252,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         gdelt: [gdeltOn, setGdeltOn, "news"],
         telegram: [telegramOn, setTelegramOn, "news"],
         unrest: [unrestOn, setUnrestOn, "news"],
+        strikes: [strikesOn, setStrikesOn, "news"],
         geoconfirmed: [geoConfirmedOn, setGeoConfirmedOn, "news"],
         gps_interference: [gpsInterferenceOn, setGpsInterferenceOn, "air"],
         airspace: [airspaceOn, setAirspaceOn],
@@ -1492,13 +1498,6 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             )}
                             {g.key === "news" && (
                                 <SubLayerRow
-                                    label="Unconfirmed"
-                                    hint="Machine-coded from a news wire · city-level only · every pin cites its article"
-                                    on={gdeltOn} parentOn={groupsOn.news}
-                                    onToggle={() => setGdeltOn((v) => !v)} />
-                            )}
-                            {g.key === "news" && (
-                                <SubLayerRow
                                     label="Telegram"
                                     hint="Channels you joined · AI-screened for relevance · pinned only where the post names a precise place · unverified"
                                     on={telegramOn} parentOn={groupsOn.news}
@@ -1511,6 +1510,14 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                     on={unrestOn} parentOn={groupsOn.news}
                                     onToggle={() => setUnrestOn((v) => !v)} />
                             )}
+                            {g.key === "news" && (
+                                <SubLayerRow
+                                    label="Strikes & control"
+                                    hint="Airstrikes, missile and drone strikes, shelling, naval strikes, assaults, ground taken and interceptions, read from the reporting above · one marker per act, coloured by who acted · stays 14 days (30 for ground taken), fading"
+                                    on={strikesOn} parentOn={groupsOn.news}
+                                    onToggle={() => setStrikesOn((v) => !v)} />
+                            )}
+                            {g.key === "news" && strikesOn && groupsOn.news && <StrikesLayerControls />}
                             {g.key === "news" && gdeltOn && groupsOn.news && (
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3,
                                               padding: "2px 12px 6px 27px" }}>
@@ -2058,6 +2065,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         gdeltEnabled={groupsOnV.news && gdeltOn}
                         telegramEnabled={groupsOnV.news && telegramOn}
                         unrestEnabled={groupsOnV.news && unrestOn}
+                        strikesEnabled={groupsOnV.news && strikesOn}
                         vesselFilter={vesselFilterOn}
                         aircraftFilter={aircraftFilterOn}
                         onTrackFacets={setTrackFacets}

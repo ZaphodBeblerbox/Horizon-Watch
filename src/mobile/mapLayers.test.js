@@ -24,7 +24,7 @@ describe("phone map layer registry", () => {
 
     it("carries every desktop sub-layer that draws points or areas", () => {
         const keys = new Set(PHONE_LAYERS.map((l) => l.key))
-        for (const k of ["geoConfirmed", "gdelt", "telegram", "unrest", "fires", "imagerySignals",
+        for (const k of ["geoConfirmed", "telegram", "unrest", "fires", "imagerySignals",
                          "assets", "airspace", "gpsInterference",
                          "gfw:encounters", "gfw:gaps", "gfw:loitering", "gfw:port-visits"]) {
             expect(keys.has(k), k).toBe(true)
@@ -45,17 +45,8 @@ describe("phone map layer registry", () => {
         }
     })
 
-    it("maps a GDELT point to the desktop diamond with its headline", async () => {
-        vi.stubGlobal("fetch", vi.fn(async () => ({
-            ok: true,
-            json: async () => ({ points: [{ id: 1, lat: 45, lon: 32, goldstein: -9, title: "Shelling reported", location_name: "Kherson" }] }),
-        })))
-        const gdelt = PHONE_LAYERS.find((l) => l.key === "gdelt")
-        const [f] = await gdelt.load({ bounds: { south: 44, west: 30, north: 47, east: 34 }, zoom: 6, hours: 24 })
-        expect(f.title).toBe("Shelling reported")
-        expect(f.sub).toBe("Kherson")
-        expect(f.iconUri).toMatch(/^data:image\/svg\+xml/)
-        expect(decodeURIComponent(f.iconUri)).toContain("#d4553f")
+    it("has no GDELT layer (country risk index only, owner 2026-10-13)", () => {
+        expect(PHONE_LAYERS.find((l) => l.key === "gdelt")).toBeUndefined()
     })
 })
 

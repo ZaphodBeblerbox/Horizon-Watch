@@ -163,7 +163,6 @@ export const SUB_LAYERS = [
     { key: "satImage",        label: "Satellite base image",     parent: "imagery" },
     { key: "gpsInterference", label: "Nav interference",         parent: "air" },
     { key: "geoConfirmed",    label: "Confirmed",                parent: "news" },
-    { key: "gdelt",           label: "Unconfirmed (wire)",       parent: "news" },
     { key: "telegram",        label: "Telegram",                 parent: "news" },
     { key: "unrest",          label: "Unrest & protests",        parent: "news" },
     // Strikes, bombings, assaults and ground taken, read out of the same
@@ -181,7 +180,8 @@ export const SUB_LAYERS = [
 /** The sub-layers a group brings with it when it is first chosen. */
 export const DEFAULT_SUBS = {
     imagery: ["imagerySignals"],
-    news: ["geoConfirmed", "gdelt", "telegram", "unrest", "strikes"],
+    // GDELT is not a map signal (owner, 2026-10-13): it feeds the country risk index only
+    news: ["geoConfirmed", "telegram", "unrest", "strikes"],
     air: [],
 }
 

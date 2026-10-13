@@ -1190,10 +1190,7 @@ export const PHONE_LAYERS = [
         key: "geoConfirmed", label: "Confirmed", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
         legendIcon: getGeoConfirmedMarkerDataUri({ color: null, size: GEOCONFIRMED_MARKER_SIZE }), load: loadGeoConfirmed,
     },
-    {
-        key: "gdelt", label: "Unconfirmed (wire)", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
-        legendIcon: getShapeMarkerDataUri({ shape: "diamond", color: gdeltColourFor(-6), size: MARK_SIZE.gdelt }), load: loadGdelt,
-    },
+    // GDELT is not a map signal (owner, 2026-10-13): the country risk index only
     {
         key: "telegram", label: "Telegram", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
         legendIcon: tgIcon(), load: loadTelegram,

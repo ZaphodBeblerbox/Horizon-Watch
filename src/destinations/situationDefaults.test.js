@@ -17,8 +17,9 @@ describe("default map layers", () => {
         expect(SRC).toContain('g.key === "news"')
     })
 
-    it("opens with GDELT on", () => {
-        expect(SRC).toContain("const [gdeltOn, setGdeltOn] = useState(true)")
+    it("never shows GDELT as map signals (country risk index only)", () => {
+        expect(SRC).toMatch(/const \[gdeltOn, setGdeltOn\] = useState\(false\)/)
+        expect(SRC).not.toMatch(/label="Unconfirmed"/)
     })
 
     it("opens with country risk on", () => {
