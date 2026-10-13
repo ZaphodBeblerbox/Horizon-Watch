@@ -241,11 +241,11 @@ export default function PlxTabBar({
                                 color: "var(--txt4)",
                             }}>{t.n}</span>
                             <button
-                                title="Remove this theater"
+                                title="Delete this theater" aria-label={`Delete theater ${t.name}`} data-testid="tab-close"
                                 onClick={(e) => { e.stopPropagation(); onCloseTab(t.id) }}
                                 style={{
-                                    width: 18, height: 18, flex: "none", padding: 0, border: 0,
-                                    background: OFF, color: "var(--txt4)", fontSize: 10,
+                                    width: 20, height: 20, flex: "none", padding: 0, border: 0,
+                                    background: OFF, color: "var(--txt3)", fontSize: 12,
                                     cursor: "pointer", borderRadius: 0,
                                 }}
                             >✕</button>

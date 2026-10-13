@@ -36,6 +36,7 @@ import FindingViewer from "../components/imagery/FindingViewer.jsx"
 import FindingThumb from "../components/imagery/FindingThumb.jsx"
 import { buildZoneTree, hasFindings, isBackground, isProposal, zoneFinding } from "./overwatchTree.js"
 import { hm } from "../utils/clock.js"
+import { confirmAction } from "../ui/confirm.js"
 
 const safeArray = (v) => (Array.isArray(v) ? v : [])
 const ON = "var(--accdim)"
@@ -542,8 +543,8 @@ export default function Imagery() {
 
     const deleteScene = useCallback(async () => {
         if (!zone || !scanId) return
-        if (!window.confirm(`Delete this pass over "${zone.name}"?\n\nIts ${safeArray(scene?.changes).length} detections go with it, `
-            + "and a later pass loses it as its comparison.")) return
+        if (!(await confirmAction({ title: "Are you sure?", message: `Delete this pass over "${zone.name}"?\n\nIts ${safeArray(scene?.changes).length} detections go with it, `
+            + "and a later pass loses it as its comparison.", confirm: "Delete", danger: true }))) return
         try {
             const r = await fetch(`${API_BASE}/api/watch-zones/${zone.system_id}/scans/${scanId}`, { method: "DELETE", credentials: "include" })
             if (!r.ok) throw new Error(`HTTP ${r.status}`)
@@ -1376,11 +1377,11 @@ function AreasTab({ zones, onChanged, onOpen, focusGroup }) {
         onChanged()
     }
     const del = async (z) => {
-        if (!window.confirm(
+        if (!(await confirmAction({ title: "Are you sure?", message: 
             `Delete "${z.name}" (${z.system_id})?\n\n`
             + `This also deletes every scan of this area and all their detections, `
             + `permanently. Change detection has no baseline to compare against afterwards.`
-        )) return
+        , confirm: "Delete", danger: true }))) return
         try {
             const r = await fetch(`${API_BASE}/api/watch-zones/${z.system_id}`,
                 { method: "DELETE", credentials: "include" })

@@ -7,6 +7,7 @@ import { detectionCorners } from "../globe/detectionShape.js"
 import { SENSOR_OPTIONS } from "./imagery/sceneComparison.jsx"
 import { usablePasses, isSar, bboxAreaKm2, cornerCount, fmtArea, confidenceBand, detectionDiamond } from "./imagery/taskingMath.js"
 import { fileSignal } from "../state/filing.js"
+import { confirmAction } from "../ui/confirm.js"
 
 const API = API_BASE
 
@@ -246,7 +247,7 @@ export default function ImagerySidebar({
     }, [tab, loadAreas])
     // DELETE AN AREA from here (owner, 2026-10-11: "I still can't delete detection zones")
     const deleteArea = async (z) => {
-        if (!window.confirm(`Delete "${z.name}"? Its scans and detections go with it.`)) return
+        if (!(await confirmAction({ title: "Are you sure?", message: `Delete "${z.name}"? Its scans and detections go with it.`, confirm: "Delete", danger: true }))) return
         const r = await fetch(`${API}/api/watch-zones/${z.system_id}`, { method: "DELETE", credentials: "include" }).catch(() => null)
         if (!r?.ok) { toast(`Could not delete ${z.name}${r ? ` (HTTP ${r.status})` : ""}`, { icon: "i-alert" }); return }
         toast(`${z.name} deleted`, { icon: "i-check" })

@@ -39,6 +39,7 @@ import { BASES, FALLBACKS } from "../tileSources.js"
 import TrackPanel, { useTrackState } from "../../location/TrackPanel.jsx"
 import { drawTrack } from "../trackLeaflet.js"
 import { openRoutePanel } from "../../routes/store.js"
+import { confirmAction } from "../../ui/confirm.js"
 const WINDOWS = [24, 48, 72]
 const FLOORS = [["all", "All"], ["high", "High +"], ["critical", "Critical"]]
 const RANK = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
@@ -607,7 +608,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                                        style={{ fontSize: 20, lineHeight: 1, padding: "2px 4px", color: "var(--txt3)" }}
                                        onClick={async (e) => {
                                            e.stopPropagation()
-                                           if (!window.confirm(`Delete the theater “${t.name}”? Anything you filed while watching it stays.`)) return
+                                           if (!(await confirmAction({ title: "Are you sure?", message: `Delete the theater “${t.name}”? Anything you filed while watching it stays.`, confirm: "Delete", danger: true }))) return
                                            try {
                                                await deleteTheater(t.id)
                                                if (theater === t.id) goTheater("global")

@@ -78,6 +78,7 @@ import AoiMiniMap from "./AoiMiniMap.jsx"
 import ForceGraph from "../components/forge/ForceGraph.jsx"
 import { summarizeHealth, STATUS_COLOR_TOKEN, STATUS_WORD } from "../utils/systemHealth.js"
 import { timeAgoLabel } from "./dashboardLogic.js"
+import { confirmAction } from "../ui/confirm.js"
 import {
     RULE_TRIGGER_TYPES, TRIGGER_FIELD_SPECS,
     validateRuleForm, buildRulePayload, boundsToPolygon,
@@ -460,7 +461,7 @@ function WatchAreasTab({ zones, reloadZones }) {
         reloadZones()
     }
     const deleteZone = async (zone) => {
-        if (!window.confirm(`Delete "${zone.name}"? Its scans and detections go with it.`)) return
+        if (!(await confirmAction({ title: "Are you sure?", message: `Delete "${zone.name}"? Its scans and detections go with it.`, confirm: "Delete", danger: true }))) return
         const r = await fetch(`${API}/api/watch-zones/${zone.system_id}`, { method: "DELETE", headers: forgeHeaders(), credentials: "include" }).catch(() => null)
         if (!r?.ok) { window.alert(`Could not delete "${zone.name}"${r ? ` (HTTP ${r.status})` : " — no connection"}.`); return }
         if (inspectingZoneId === zone.system_id) setInspectingZoneId(null)

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import API_BASE from "../apiBase.js"
 import { fmtWhen } from "../utils/formatTime.js"
+import { confirmAction } from "../ui/confirm.js"
 
 // ── Named exports preserved for app.jsx imports ───────────────────────────────
 export function IconOverwatch({ size = 18, color = "currentColor" }) {
@@ -171,7 +172,7 @@ export default function OverwatchSidebar({
     useEffect(() => { loadZones() }, [])
     // DELETE A ZONE from here too (owner, 2026-10-11): its scans and detections go with it
     const deleteZone = async (zone) => {
-        if (!window.confirm(`Delete "${zone.name}"? Its scans and detections go with it.`)) return
+        if (!(await confirmAction({ title: "Are you sure?", message: `Delete "${zone.name}"? Its scans and detections go with it.`, confirm: "Delete", danger: true }))) return
         const r = await fetch(`${API_BASE}/api/watch-zones/${zone.system_id}`, { method: "DELETE", credentials: "include" }).catch(() => null)
         if (!r?.ok) { window.alert(`Could not delete "${zone.name}"${r ? ` (HTTP ${r.status})` : " — no connection"}.`); return }
         setSavedZones((zs) => zs.filter((z) => z.system_id !== zone.system_id))

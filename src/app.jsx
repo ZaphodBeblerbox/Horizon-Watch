@@ -22,6 +22,7 @@ import { useChrome } from "./state/useChrome.js"
 import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayManager.js"
 import NotificationStack from "./components/NotificationStack.jsx"
 import { startPushPresence } from "./notify/pushPresence.js"
+import { confirmAction } from "./ui/confirm.js"
 import NotificationTray from "./components/NotificationTray.jsx"
 import { pushNotification, unreadCount as notifUnread, subscribeNotifications, getNotifications } from "./state/notificationStore.js"
 import { subscribeLive } from "./state/liveEvents.js"
@@ -2222,12 +2223,19 @@ export default function App() {
                                 detail: { id, name: t.name, view: t.view, layers: t.layers },
                             }))
                         }}
-                        onCloseTab={(id) => {
-                            // Never the last one (A2.1); if the closed tab
-                            // was active, the first survivor opens.
+                        onCloseTab={async (id) => {
+                            // THE ✕ DELETES THE THEATER, after a short, clear
+                            // confirmation of our own (owner, 2026-10-12) —
+                            // window.confirm shows nothing in the desktop app,
+                            // so the ✕ silently did nothing there.
                             const rest = theaters.filter((t) => t.id !== id)
                             const gone = theaters.find((t) => t.id === id)
-                            if (!confirm(`Remove “${gone?.name || "this theater"}” from the strip? Anything you filed while watching it stays where it is.`)) return
+                            const ok = await confirmAction({
+                                title: `Delete “${gone?.name || "this theater"}”?`,
+                                message: "Are you sure you want to delete it? This is not reversible.",
+                                confirm: "Delete", danger: true,
+                            })
+                            if (!ok) return
                             setTheaters(rest)
                             if (theaterId === id) setTheaterId(rest[0]?.id ?? "global")
                             // The strip is a view of rows now, so closing a
