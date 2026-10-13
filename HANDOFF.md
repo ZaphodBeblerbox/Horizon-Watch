@@ -1,3 +1,21 @@
+# Addendum — 2026-10-13, later session
+
+- Committed locally (not pushed): `c23529d` (strikes chips in shared state,
+  frontline-claims filtering), `dd43c94` (air_route knows FR/NO/XK),
+  `581fdea` (evacuation plans answer within 30 s: 22 s budget abroad,
+  shelter capped at 28 s).
+- Jordan CZIB-2026-08-R2 checked on EASA 2026-10-13: still R2, valid until
+  2026-10-16, no revision yet. Look again after the 16th.
+- Three agents were left running, each told NOT to commit:
+  A. strikes icons plus the frontline claims / movements / trajectories layers
+     (desktop, phone, theater editor);
+  B. smoke false-positive classifier (prod read-only, dry run only);
+  C. phone: satellite image missing when a finding is opened from a notification.
+  If the session ended before they reported, their work is uncommitted in the
+  tree: run `git status`, build, test, and commit each piece separately.
+
+---
+
 # Handoff — 2026-10-13
 
 Written for the next session (an engineer or a Claude agent) so it can carry on
