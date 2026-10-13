@@ -417,11 +417,11 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
-    // Drawn from the same events (GlobeFrontlineClaimsLayer): claimed ground
-    // and drone/missile flights on; movement arrows off — most of their
-    // starts are our reading of the front, not the source's.
+    // Drawn from the same events (GlobeFrontlineClaimsLayer): claimed ground,
+    // ground-troop movements (GeoConfirmed / Telegram; they replaced
+    // DeepStateMap's axes of attack) and drone/missile flights, all on.
     const [claimsOn, setClaimsOn] = useState(true)
-    const [movementsOn, setMovementsOn] = useState(false)
+    const [movementsOn, setMovementsOn] = useState(true)
     const [trajectoriesOn, setTrajectoriesOn] = useState(true)
     // Which CAMEO codings to draw. Starts as every kind rather than a
     // curated subset: a reader who has not chosen yet should see the whole

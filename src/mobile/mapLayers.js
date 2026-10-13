@@ -1318,7 +1318,7 @@ export const PHONE_LAYERS = [
         legendIcon: areaSwatch(sideColour("red"), 0.3), load: loadClaims,
     },
     {
-        key: "movements", label: FRONTLINE_LAYERS[1].label, group: G.news, defaultOn: false, kind: "lines", minZoom: 0,
+        key: "movements", label: FRONTLINE_LAYERS[1].label, group: G.news, defaultOn: true, kind: "lines", minZoom: 0,
         legendIcon: milSymbol("SHGPUCI--------", { colour: sideColour("red"), size: 14 }).uri || lineSwatch(sideColour("red")), load: loadMovements,
     },
     {
