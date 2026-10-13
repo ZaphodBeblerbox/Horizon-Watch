@@ -39,7 +39,8 @@ import { AirRoutePanel } from "../routes/modes/AirRoute.jsx"
 import "../routes/modes/air.js"           // the Flights mode: the route panel's chip
 import { SeaRouteSidebar } from "../routes/modes/MaritimeRoute.jsx"
 import { fetchVesselThreat } from "../state/vesselThreatStore.js"
-import { findingsForAlert, showFindings } from "../lib/findings.js"
+import { showFindings } from "../lib/findings.js"
+import { findingsForRoute } from "./openFinding.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
@@ -117,11 +118,16 @@ export default function MobileApp() {
                 else if (sheet) go("alerts")
                 return
             }
-            // an imagery finding: its boxes on the map (lib/findings.js, mobile/findingsLeaflet.js)
+            // an imagery finding: its pass's image, its boxes, the one it is about in
+            // focus (mobile/openFinding.js; lib/findings.js, mobile/findingsLeaflet.js).
+            // The alert row is fetched when the route came without it, as on the desktop.
             if (r.action === "finding") {
-                const { zoneId, findings } = await findingsForAlert(r.alert || { alert_id: r.alertId || r.id, alert_type: r.alertType,
-                    entity_type: r.entityType, entity_id: r.entityId, raw_json: { zone_id: r.zoneId } })
-                if (findings.length) { setTab("map"); showFindings({ zoneId, findings, title: r.title, fit: true, alertId: r.alertId || r.id }); return }
+                const { alert, show } = await findingsForRoute(r)
+                if (show.findings.length) {
+                    setTab("map")
+                    showFindings({ ...show, title: r.title || alert.title, fit: true, alertId: r.alertId || r.id })
+                    return
+                }
             }
             // the signal's own marker, highlighted (lib/signalPin.js → findingsLeaflet.js)
             const pin = pinFor(r.action === "finding" ? { ...r, action: "signal" } : r)

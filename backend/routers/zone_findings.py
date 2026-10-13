@@ -28,6 +28,25 @@ from fastapi import APIRouter, HTTPException, Query, Request
 router = APIRouter(prefix="/api/watch-zones", tags=["imagery"])
 
 
+def _notified_about(db, Alert, system_id: str) -> bool:
+    """Was an imagery notification about this zone sent out? A radar change
+    names the zone as its entity; an optical "Imagery signal" (a smoke plume,
+    a vessel, a port structure) has the object's kind as its entity and the
+    zone only in raw_json — so those were refused (404) to everyone but the
+    zone's owner, and the phone that opened one showed a pin and no image
+    (2026-10-13)."""
+    from sqlalchemy import or_
+    import json as _json
+    zid = _json.dumps(str(system_id))                    # '"ZONE-004"', quoted: ZONE-004 is not ZONE-0041
+    hit = (db.query(Alert.id)
+           .filter(Alert.alert_type == "Imagery signal",
+                   or_(Alert.entity_id == system_id,
+                       Alert.raw_json.like(f'%"zone_id": {zid}%'),
+                       Alert.raw_json.like(f'%"zone_id":{zid}%')))
+           .first())
+    return hit is not None
+
+
 def _zone_for(request: Request, system_id: str):
     from database import Alert, WatchZone, get_db
     from main import _zone_user, _zones_visible
@@ -39,9 +58,7 @@ def _zone_for(request: Request, system_id: str):
             raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
         if user.get("is_super_admin") or _zones_visible(q, user).first() is not None:
             return z.id
-        notified = (db.query(Alert.id)
-                    .filter(Alert.alert_type == "Imagery signal", Alert.entity_id == system_id).first())
-        if notified is None:
+        if not _notified_about(db, Alert, system_id):
             raise HTTPException(status_code=404, detail=f"Watch zone {system_id} not found")
         return z.id
 

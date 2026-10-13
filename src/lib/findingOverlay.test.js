@@ -25,6 +25,19 @@ describe("the overlay's pure helpers", () => {
         expect(overlayKey({ zoneId: "ZONE-005", findings: [a] })).toBe("ZONE-005|radar:S-R")
         expect(overlayKey({ zoneId: "ZONE-016", findings: [opticalF] })).toBe("ZONE-016|scene:S-O")
     })
+    it("a notification's own pass (shown.scanId) wins over the zone's other passes", () => {
+        const a = radarF("a", [38.2, 48.46, 38.21, 48.47])
+        const mine = { ...opticalF, id: "obj:2", scan_id: "S-MINE" }
+        // the zone's list holds a radar comparison too; the notification was about the optical pass
+        expect(overlayFinding({ findings: [a, opticalF, mine], scanId: "S-MINE" }).id).toBe("obj:2")
+        // none of the boxes is from that pass (a signal about something gone): the pass by itself
+        const bare = overlayFinding({ zoneId: "ZONE-016", findings: [a, opticalF], scanId: "S-GONE", scanKind: "scene" })
+        expect(bare).toMatchObject({ scan_id: "S-GONE", kind: "scene", zone_id: "ZONE-016" })
+        expect(overlayKey({ zoneId: "ZONE-016", findings: [a], scanId: "S-GONE", scanKind: "scene" })).toBe("ZONE-016|scene:S-GONE")
+        expect(overlayKey({ zoneId: "ZONE-005", findings: [opticalF], scanId: "S-R2", scanKind: "radar" })).toBe("ZONE-005|radar:S-R2")
+        // the focus still decides first
+        expect(overlayFinding({ findings: [a, mine], scanId: "S-MINE", focusId: "a" }).id).toBe("a")
+    })
     it("bounds: Leaflet [[s, w], [n, e]], Cesium degrees, and a broken box refused", () => {
         expect(leafletImageBounds(BOUNDS)).toEqual([[48.452, 38.19], [48.488, 38.244]])
         expect(leafletImageBounds({ min_lon: 38.19, min_lat: 48.452, max_lon: 38.244, max_lat: 48.488 })).toEqual([[48.452, 38.19], [48.488, 38.244]])
@@ -98,6 +111,19 @@ describe("the overlay follows the findings on show", () => {
         showFindings({ zoneId: "ZONE-016", findings: [opticalF] })
         await flush(); await flush()
         expect(getOverlay()).toMatchObject({ status: "ready", kind: "optical", bounds: [10, 50, 10.5, 50.5] })
+        expect(viewsFor(getOverlay()).map((v) => v[1])).toEqual(["after", "before"])
+    })
+    it("opened from a notification: that pass's image is fetched, not another of the zone's", async () => {
+        const scene = vi.fn(async () => ({ image_b64: "/9j/a", reference_image_b64: "/9j/b" }))
+        const radar = vi.fn(async () => ({ status: "ready", bounds: BOUNDS, after_b64: "iVBORa" }))
+        __setOverlayDeps({ scene, radar, zone: async () => { throw new Error("not needed: the zone came with the findings") } })
+        subscribeOverlay(() => {})
+        showFindings({ zoneId: "ZONE-016", findings: [radarF("a", [38.2, 48.46, 38.21, 48.47]), opticalF], scanId: "S-O", scanKind: "scene",
+                       zone: { bbox: { min_lon: 10, min_lat: 50, max_lon: 10.5, max_lat: 50.5 } } })
+        await flush(); await flush()
+        expect(radar).not.toHaveBeenCalled()
+        expect(scene).toHaveBeenCalledWith("S-O")
+        expect(getOverlay()).toMatchObject({ status: "ready", kind: "optical", scanId: "S-O", bounds: [10, 50, 10.5, 50.5] })
         expect(viewsFor(getOverlay()).map((v) => v[1])).toEqual(["after", "before"])
     })
     it("a stale answer for findings already replaced is dropped", async () => {

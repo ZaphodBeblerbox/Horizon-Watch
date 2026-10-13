@@ -40,11 +40,21 @@ export function b64Mime(b64) {
     return "image/png"
 }
 
-/** The finding whose image is laid down: the one in focus, else a radar one, else any with a scan. Pure. */
+/** The finding whose image is laid down: the one in focus; else, when a
+ *  notification named its pass (shown.scanId), that pass — through one of
+ *  its findings, or by itself when none of the boxes is from it (an optical
+ *  signal about something gone has no "new" box); else a radar one, else
+ *  any with a scan. Pure. */
 export function overlayFinding(shown) {
     const fs = Array.isArray(shown?.findings) ? shown.findings : []
-    return fs.find((f) => f.id === shown.focusId && f.scan_id)
-        || fs.find((f) => f.scan_id && isRadarFinding(f))
+    const focus = fs.find((f) => f.id === shown.focusId && f.scan_id)
+    if (focus) return focus
+    const sid = shown?.scanId
+    if (sid) {
+        return fs.find((f) => f.scan_id === sid && isRadarFinding(f)) || fs.find((f) => f.scan_id === sid)
+            || { id: `scan:${sid}`, scan_id: sid, kind: shown.scanKind === "radar" ? "radar_change" : "scene", zone_id: shown.zoneId || null }
+    }
+    return fs.find((f) => f.scan_id && isRadarFinding(f))
         || fs.find((f) => f.scan_id) || null
 }
 
