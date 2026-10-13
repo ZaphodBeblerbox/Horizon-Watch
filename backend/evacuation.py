@@ -75,6 +75,8 @@ ORIGIN_AIRPORT_KM = 350
 DEST_AIRPORT_KM = 250
 MAX_OVERLAND_KM = 1500
 ABROAD_HOUSES = 2               # the nearest houses abroad tried
+BUDGET_S = 22.0                 # routes to safe houses; the client gives up at 30 s
+HARD_S = 28.0                   # and the shelter fallback after them
 OFF_ROUTE_M = {"foot": 80, "car": 300, "truck": 300}
 ARRIVED_M = 150
 LONG_LEG_M = 6000               # a leg longer than this is driven whatever the mode asked
@@ -611,6 +613,7 @@ async def build(origin: tuple, houses: list[dict], mode: str = "car", *, exclude
                 deps: Deps | None = None) -> dict:
     """The evacuation plan from `origin` to the best of `houses` (usable() views)."""
     deps = deps or Deps()
+    t0 = time.monotonic()
     now = now or _dt.datetime.now(_dt.timezone.utc)
     md = sr.mode_of(mode)
     mode = md["name"]
@@ -636,17 +639,39 @@ async def build(origin: tuple, houses: list[dict], mode: str = "car", *, exclude
             if r:
                 its.append(itinerary("direct", [ground_leg(r, start, h, r["mode"])], h))
     if abroad and (include_abroad or house_id or not its):
-        for h in abroad[:ABROAD_HOUSES]:
-            found = await via_border(origin, h, mode, iso_o, h["iso3"], hz0, deps, now)
-            found += await via_air(origin, h, mode, (c_o or {}).get("iso2"), hz0, deps, now)
-            if not found:
-                found = await via_sea(origin, h, mode, hz0, deps, now)
-            tried.append({"house": h["name"], "id": h["id"], "reached": bool(found), "how": ", ".join(sorted({i["kind"] for i in found})) or "none"})
+        async def _abroad(h):
+            border, air = await asyncio.gather(
+                via_border(origin, h, mode, iso_o, h["iso3"], hz0, deps, now),
+                via_air(origin, h, mode, (c_o or {}).get("iso2"), hz0, deps, now))
+            return border + air or await via_sea(origin, h, mode, hz0, deps, now)
+
+        # the houses abroad side by side, within what is left of the budget:
+        # a cross-border plan took 30-50 s one after another, past the client's limit
+        picked = abroad[:ABROAD_HOUSES]
+        tasks = [asyncio.ensure_future(_abroad(h)) for h in picked]
+        done, pending = await asyncio.wait(tasks, timeout=max(1.0, BUDGET_S - (time.monotonic() - t0)))
+        for t in pending:
+            t.cancel()
+        for h, t in zip(picked, tasks):
+            found = []
+            if t in done and t.exception():
+                e = t.exception()
+                print(f"[evacuation] error: abroad plan to {h['name']}: {type(e).__name__}: {e}", flush=True)
+            elif t in done:
+                found = t.result()
+            how = "timed out" if t in pending else ", ".join(sorted({i["kind"] for i in found})) or "none"
+            tried.append({"house": h["name"], "id": h["id"], "reached": bool(found), "how": how})
             its += found
     chosen = _pick(its)
     status = "ok"
     if not chosen:
-        chosen = _tag(await shelter(origin, mode if mode != "truck" else "car", hz0, deps, now))
+        try:
+            sh = await asyncio.wait_for(shelter(origin, mode if mode != "truck" else "car", hz0, deps, now),
+                                        timeout=max(2.0, HARD_S - (time.monotonic() - t0)))
+        except asyncio.TimeoutError:
+            print("[evacuation] error: shelter plan ran out of time", flush=True)
+            sh = []
+        chosen = _tag(sh)
         status = "shelter" if chosen else "no_route"
     rec = chosen[0] if chosen else None
     first = next((l for l in (rec or {}).get("legs", []) if l["kind"] == "ground"), None)

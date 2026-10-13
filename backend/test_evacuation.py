@@ -347,3 +347,26 @@ def test_a_declared_building_is_an_evacuation_destination(db):
     ok, _ = ev.usable(ev.visible_houses(_user("agent")), {"id": "agent"})
     p = asyncio.run(ev.build(PARIS, ok, "car", now=NOW, deps=deps()))
     assert p["destination"]["name"] == "Office declared"
+
+
+def test_a_slow_routing_service_does_not_outlast_the_budget(db, monkeypatch):
+    # a cross-border plan once took 30-50 s, past the client's 30 s limit
+    import time as _t
+    ok, _ = views(house("owner", "Geneva", GENEVA_HOUSE))
+    d = deps()
+
+    async def stuck(origin, dest, mode, *a, **k):
+        await asyncio.sleep(4)
+        return []
+    d.fetchers = {"fetch_valhalla": stuck, "fetch_osrm": stuck}
+    monkeypatch.setattr(ev, "BUDGET_S", 1.0)
+    monkeypatch.setattr(ev, "HARD_S", 2.0)
+
+    async def timed():
+        t0 = _t.monotonic()
+        p = await ev.build(PARIS, ok, "car", now=NOW, deps=d)
+        return p, _t.monotonic() - t0
+    p, took = asyncio.run(timed())
+    assert took < 3.5
+    assert [t["how"] for t in p["tried"]] == ["timed out"]
+    assert p["status"] == "no_route" and "try again" in p["explanation"]
