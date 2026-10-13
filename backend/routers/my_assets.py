@@ -305,7 +305,8 @@ def live(request: Request, body: dict = Body(...)):
         # every other asset. Under a lock: two positions in flight at once
         # made two assets (seen in the 2026-10-12 browser run).
         with _CREATE_LOCK:
-            if r["stored"] and not r["moved"] and not oa.linked_to(uid):
+            # …unless their live asset was deleted on purpose (oa.delete): not brought back by itself
+            if r["stored"] and not r["moved"] and not oa.linked_to(uid) and not oa.live_asset_dismissed(uid):
                 name = (user.get("name") or user.get("email") or "Me").split("@")[0]
                 oa.create(uid, {"name": f"{name} (live)", "kind": "person", "lat": lat, "lon": lon, "shared": True,
                                 "identifiers": {"user_id": uid}, "importance": "high",
@@ -584,10 +585,25 @@ async def update_asset(asset_id: str, request: Request):
 
 @router.delete("/{asset_id}")
 def delete_asset(asset_id: str, request: Request):
+    """Remove one: its owner or an admin. Someone who can see it but may not
+    remove it is told so (403), not left wondering (owner, 2026-10-12)."""
+    import position_stream as ps
     user = _me(request)
-    if not oa.delete(asset_id, _uid(user)):
-        raise HTTPException(404, "no such asset of yours")
-    return {"ok": True}
+    a = oa.visible_to(asset_id, user)
+    if not a:
+        raise HTTPException(404, "no such asset")
+    admin = ps.is_admin(user)
+    if str(a.get("owner_id")) != _uid(user) and not admin:
+        raise HTTPException(403, "only whoever added this asset, or an admin, can remove it")
+    if not oa.delete(asset_id, _uid(user), admin=admin):
+        raise HTTPException(404, "no such asset")
+    ps.forget_users()
+    try:
+        import asset_watch
+        asset_watch.invalidate(str(a.get("owner_id")))
+    except Exception:                                        # noqa: BLE001
+        pass
+    return {"ok": True, "id": asset_id}
 
 
 @router.get("/{asset_id}/situation")

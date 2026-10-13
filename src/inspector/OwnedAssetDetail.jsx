@@ -12,6 +12,7 @@ import { agoLabel } from "../utils/formatTime.js"
 import { ShowTrackButton } from "../location/TrackPanel.jsx"
 import { openRoutePanel } from "../routes/store.js"
 import RouteContextCards from "../routes/RouteContextCards.jsx"
+import AdviseEvacuation from "../evacuation/AdviseEvacuation.jsx"
 
 const EXPO = { high: "#E5484D", elevated: "#F5A524", low: "#8FB4E8", quiet: "#4CAF7A", unknown: "#9AA9BC" }
 const EXPO_TEXT = { high: "Exposed — serious events close by", elevated: "Something is happening nearby", low: "Minor activity nearby", quiet: "Quiet around it", unknown: "No position to judge from" }
@@ -48,6 +49,12 @@ export default function OwnedAssetDetail({ asset }) {
         ["Watch radius", a.radius_km ? `${Math.round(a.radius_km)} km` : null],
         ...Object.entries(a.identifiers || {}).map(([k, v]) => [ID[k] || k, v]),
         ["Shared", a.shared ? "with the team" : null],
+        // a safe house's own (owned_assets details)
+        ...(a.kind === "safe_house" || a.is_safe_house ? [
+            ["Status", (a.details?.status || "open") === "open" ? "Open" : "Closed — not offered"],
+            ["Places", a.details?.capacity != null ? `${Math.max(0, a.details.capacity - (a.details.occupancy || 0))} of ${a.details.capacity} free` : "not tracked"],
+            ["Contact", a.details?.contact],
+        ] : []),
     ].filter(([, v]) => v)
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", marginBottom: "var(--space-4)" }}>
@@ -72,6 +79,8 @@ export default function OwnedAssetDetail({ asset }) {
             </div>
             {/* EXIT ROUTE / DELIVERIES — ACCESS ROUTE when a route plan is relevant here (routes/contexts.js) */}
             <RouteContextCards assetId={a.id} />
+            {/* ADVISE EVACUATION — the owner or an admin, for a linked person (evacuation/) */}
+            <AdviseEvacuation asset={a} />
             <div>
                 <SectionLabel>Essentials</SectionLabel>
                 <div style={ROW}>

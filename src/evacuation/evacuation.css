@@ -1,0 +1,12 @@
+/* evacuation.css — the evacuation's map marks and the safe-house pin (both maps) */
+.plx-safehouse-pin { background: #2E9E5B !important; color: #fff !important; font-size: 16px; line-height: 23px !important; }
+.plx-evac-stop { width: 14px; height: 14px; margin: 6px; border-radius: 7px; background: #8fb4e8; border: 2px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+.plx-evac-stop.border { background: #F5A524; border-radius: 3px; transform: rotate(45deg); }
+/* the safe-house layer's icon: a green house with a check, white rim */
+.plx-sh-icon { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; background: #2E9E5B; border: 2px solid #fff;
+               box-shadow: 0 1px 4px rgba(0,0,0,.45); }
+.plx-sh-icon.closed { background: #6b7480; }
+.plx-evac-panel { border: 1px solid rgba(229,72,77,.45); background: rgba(229,72,77,.07); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; border-radius: 8px; }
+.plx-evac-btn { height: 34px; padding: 0 14px; border: 0; border-radius: 8px; background: #c4161f; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.plx-evac-btn:disabled { opacity: .6; cursor: default; }
+.plx-evac-btn.ghost { background: transparent; color: inherit; border: 1px solid rgba(255,255,255,.25); font-weight: 600; }

@@ -51,6 +51,7 @@ export const MODEL_LABEL = {
     city: "City or area (no precise place)",
     generic_building: "Building",
     rally: "Outdoor gathering",
+    safe_house: "Safe house",
 }
 export const MODEL_TYPES = Object.keys(MODEL_LABEL)
 

@@ -1292,3 +1292,23 @@ def still_safe(coords: list[list[float]], hazards: list[dict]) -> dict:
               if hid not in already and p["min_m"] is not None and p["min_m"] <= by[hid]["radius_m"]]
     return {"safe": not ex["through_core"] and not inside, "through_core": ex["through_core"], "inside": inside,
             "exposure": ex["exposure"]}
+
+
+# ── a local check's synthetic dangers (never set in production) ─────────────
+# SAFE_ROUTE_TEST_HAZARDS=/path/to.json — [{id, kind, lat, lon, weight, place}]:
+# a browser check can put a kettle in central Paris in ITS OWN server process
+# without writing a fake alert to the shared database (which would notify people).
+def _p_test(box, inside, now):
+    path = os.getenv("SAFE_ROUTE_TEST_HAZARDS")
+    try:
+        rows = json.loads(open(path).read()) if path else []
+    except (OSError, ValueError):
+        return []
+    return [make_hazard(hid=r["id"], kind=r.get("kind") or "clashes", lat=r["lat"], lon=r["lon"], weight=float(r.get("weight") or 1.0),
+                        at=now.isoformat(), place=r.get("place"), what=r.get("what") or "synthetic hazard (local check)",
+                        source="local check", radius_m=r.get("radius_m"))
+            for r in rows if inside(r.get("lat"), r.get("lon"))]
+
+
+if os.getenv("SAFE_ROUTE_TEST_HAZARDS"):
+    register_provider("test", "Local check", _p_test, "Synthetic hazards for a local browser check")

@@ -30,6 +30,7 @@ import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
 import GlobeEndangeredPlacesLayer from "../globe/GlobeEndangeredPlacesLayer.jsx"
 import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
 import GlobeAssetsLayer          from "../globe/GlobeAssetsLayer.jsx"
+import GlobeSafeHousesLayer      from "../globe/GlobeSafeHousesLayer.jsx"
 import GlobeMeLayer              from "../globe/GlobeMeLayer.jsx"
 import GlobeTeamLayer            from "../globe/GlobeTeamLayer.jsx"
 import GlobeAssetTrackLayer      from "../globe/GlobeAssetTrackLayer.jsx"
@@ -161,6 +162,7 @@ export default function GlobeView({
     endangeredEnabled = false,
     assetsEnabled = true,
     teamEnabled = true,
+    safeHousesEnabled = true,
     gdeltTypes = null,
     frontlinesEnabled = false,
     warmapTheatres = [],
@@ -1239,6 +1241,7 @@ export default function GlobeView({
                 {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}
                 <GlobeAoisLayer enabled={aoisEnabled} />
                 <GlobeAssetsLayer enabled={assetsEnabled} teamOn={!!teamEnabled} />
+                <GlobeSafeHousesLayer enabled={safeHousesEnabled} />
                 {/* the team, pushed live and gliding (location/positionStream.js) */}
                 <GlobeTeamLayer enabled={teamEnabled} />
                 {/* an asset's or a person's track over a range, and a route plan (location/track.js, routes/) */}

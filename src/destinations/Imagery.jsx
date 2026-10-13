@@ -29,7 +29,9 @@ import { squareAround } from "../insight/respond.js"
 import {
     AOI_CLASSES, fmtDate, SceneComparison,
 } from "../components/imagery/sceneComparison.jsx"
-import { acquisitions, changeHeadline, countSeries, DET_COLORS, fmtDay, groupDetections, noun, pickInitialPass } from "./imageryModel.js"
+import { acquisitions, changeHeadline, classColor, classLabel, countSeries, findingDetections, fmtDay, groupDetections, kindDash, noun, pickInitialPass } from "./imageryModel.js"
+import { ClassLegend, KindLegend } from "../components/imagery/DetectionLegend.jsx"
+import DetectionFeedback from "../components/imagery/DetectionFeedback.jsx"
 import { fetchFindings, findingOutlines as findingOutlinesFor, isRadarFinding, shortLabel, showFindings, strengthText } from "../lib/findings.js"
 import { RADAR_BRIGHTER, RADAR_CAVEATS, RADAR_DARKER, RADAR_WHAT } from "../lib/radarExplain.js"
 import FindingViewer from "../components/imagery/FindingViewer.jsx"
@@ -57,7 +59,6 @@ const FIELD = {
     background: "var(--glass2)", color: "var(--txt)", font: "inherit",
     fontSize: 12.5, outline: "none", borderRadius: 0, boxSizing: "border-box",
 }
-const KIND_C = DET_COLORS
 const KIND_WORD = { new: "new since the last pass", removed: "gone since the last pass", existing: "there before", expanded: "grew", unconfirmed: "one model only, not seen before" }
 const SENSOR = { OPTICAL: "Sentinel-2 optical · 10 m", SAR: "Sentinel-1 radar · 10 m" }
 const MODES = [["Scene", "scene"], ["Swipe", "swipe"], ["Side by side", "split"], ["Fade", "fade"], ["Blink", "blink"]]
@@ -309,7 +310,9 @@ export default function Imagery() {
     const allChanges = useMemo(() => {
         const doubtful = new Set(note?.doubtful || [])
         const notable = new Map((note?.notable || []).map((n) => [n.id, n.note]))
-        return safeArray(scene?.changes).map((c) => ({ ...c, doubtful: doubtful.has(c.id), note: notable.get(c.id) || c.note || "" }))
+        // Cloud, cloud shadow and field change are what the classifier sets
+        // aside, not findings: never drawn or counted as detections.
+        return findingDetections(safeArray(scene?.changes)).map((c) => ({ ...c, doubtful: doubtful.has(c.id), note: notable.get(c.id) || c.note || "" }))
     }, [scene, note])
     const changes = useMemo(
         () => (changesOnly ? allChanges.filter((c) => c.type === "new" || c.type === "removed") : allChanges),
@@ -497,7 +500,9 @@ export default function Imagery() {
                 ctx.lineWidth = Math.max(2, Math.round(c.width / 500))
                 ctx.font = `${Math.max(11, Math.round(c.width / 90))}px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif`
                 for (const d of changes) {
-                    ctx.strokeStyle = d.type === "new" ? "#d8a24a" : d.type === "removed" ? "#f46043" : "#a0b2d2"
+                    ctx.strokeStyle = classColor(d.object_type || d.label)
+                    const dash = kindDash(d)
+                    ctx.setLineDash(dash ? dash.split(" ").map((v) => Number(v) * ctx.lineWidth) : [])
                     ctx.beginPath()
                     const pts = Array.isArray(d.polygon) && d.polygon.length >= 3 ? d.polygon
                         : d.bbox ? [[d.bbox[0], d.bbox[1]], [d.bbox[0] + d.bbox[2], d.bbox[1]], [d.bbox[0] + d.bbox[2], d.bbox[1] + d.bbox[3]], [d.bbox[0], d.bbox[1] + d.bbox[3]]] : []
@@ -505,7 +510,7 @@ export default function Imagery() {
                     ctx.closePath(); ctx.stroke()
                     if (pts.length) {
                         ctx.fillStyle = ctx.strokeStyle
-                        ctx.fillText(`${String(d.label).replace(/_/g, " ")} ${Math.round((d.conf ?? 0) * 100)}%`,
+                        ctx.fillText(`${classLabel(d.object_type || d.label)} ${Math.round((d.conf ?? 0) * 100)}%`,
                             pts[0][0] * c.width, Math.max(12, pts[0][1] * c.height - 4))
                     }
                 }
@@ -762,16 +767,13 @@ export default function Imagery() {
                             )}
                             <button onClick={() => setShowBoxes((v) => !v)} style={{ ...BTN, height: 26, fontSize: 11.5, background: showBoxes ? ON : "transparent" }}>Outlines</button>
                             {sensor !== "radar" && <button onClick={() => setChangesOnly((v) => !v)} style={{ ...BTN, height: 26, fontSize: 11.5, background: changesOnly ? ON : "transparent" }}>Changes only</button>}
-                            <span style={{ marginLeft: "auto", display: "flex", gap: 10, fontSize: 11, color: "var(--txt3)" }}>
-                                {(sensor === "radar" ? ["existing"] : ["new", "removed", "existing"]).map((k) => (
-                                    <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                                        <i style={{ width: 12, height: 0, borderTop: `3px ${k === "removed" ? "dashed" : "solid"} ${KIND_C[k]}` }} />
-                                        {sensor === "radar" ? "radar contact on water" : KIND_WORD[k]}
-                                    </span>
-                                ))}
-                                {sensor !== "radar" && <span title="Found by only one of the two detection models">┄ one model only</span>}
-                            </span>
+                            {/* THE KEY: colour is what it is (only the classes in
+                                this pass), the line is what changed. */}
+                            {sensor === "radar"
+                                ? <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--txt3)" }}>radar contact on water</span>
+                                : <KindLegend style={{ marginLeft: "auto" }} />}
                         </div>
+                        {showBoxes && <ClassLegend changes={shown} style={{ flex: "none" }} />}
                         {/* WHEN EACH IMAGE WAS TAKEN, right above it — the one fact an
                             image cannot be read without. */}
                         {displayScene && (
@@ -876,6 +878,14 @@ export default function Imagery() {
 
                     {/* ── READING IT ── */}
                     <aside style={{ width: 360, flex: "none", borderLeft: "1px solid var(--gline)", overflow: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                        {/* The detection clicked on the image or in the list: what
+                            the classifier says it is, why, and the analyst's answer. */}
+                        {selectedDet && !selectedDet.finding && (
+                            <div data-selected-detection style={{ ...CARD, borderColor: classColor(selectedDet.object_type || selectedDet.label) }}>
+                                <DetectionFeedback key={selectedDet.id} det={selectedDet} canFeedback={!liveRadar}
+                                    onClose={() => setSelectedDet(null)} />
+                            </div>
+                        )}
                         {/* What the automatic watch found comes first: it is the answer. */}
                         {(findings.list.length > 0 || findings.error) && (
                             <div data-findings-card={findings.list.length} style={{ ...CARD, borderColor: findings.list.some((f) => f.tone === "red") ? "var(--red)" : "var(--gline)" }}>
@@ -967,6 +977,7 @@ export default function Imagery() {
                                             display: "flex", alignItems: "baseline", gap: 8, width: "100%", padding: "8px 12px",
                                             border: 0, background: "transparent", color: "var(--txt)", font: "inherit", cursor: "pointer", textAlign: "left",
                                         }}>
+                                            <i style={{ width: 9, height: 9, flex: "none", alignSelf: "center", background: classColor(g.label), boxShadow: "0 0 0 1.5px rgba(0,0,0,.6)" }} />
                                             <span style={{ fontWeight: 600, fontSize: 13 }}>{g.items.length} {noun(g.label, g.items.length)}</span>
                                             <span style={{ fontSize: 11, color: "var(--txt3)" }}>
                                                 {sensor === "radar" ? "on the water" : [g.new && `${g.new} new`, g.removed && `${g.removed} gone`].filter(Boolean).join(" · ") || "unchanged"}
@@ -979,7 +990,7 @@ export default function Imagery() {
                                                 alignItems: "center", padding: "7px 12px 7px 20px", cursor: "pointer",
                                                 background: selectedDet?.id === d.id ? ON : "transparent",
                                             }}>
-                                                <i style={{ width: 12, height: 0, borderTop: `3px ${d.type === "removed" ? "dashed" : "solid"} ${KIND_C[d.type] || "var(--txt4)"}` }} />
+                                                <i style={{ width: 12, height: 0, borderTop: `3px ${kindDash(d) ? (d.type === "removed" || d.doubtful ? "dashed" : "dotted") : "solid"} ${classColor(d.object_type || d.label)}`, opacity: d.type === "existing" ? 0.7 : 1 }} />
                                                 <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                                     {d.length_m ? `${Math.round(d.length_m)} × ${Math.round(d.width_m || 0)} m` : noun(d.label, 1)}
                                                     <span style={{ color: "var(--txt3)" }}> · {sensor === "radar" ? (d.note || "radar contact") : KIND_WORD[d.type] || d.type}</span>

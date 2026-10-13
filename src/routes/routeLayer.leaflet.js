@@ -5,6 +5,7 @@
  * the safe point. Returns the bounds to fit.
  */
 import { ringStyle } from "./view.js"
+import { isEvacuation, itineraryLines, itineraryStops } from "../evacuation/itinerary.js"
 
 const esc = (t) => String(t ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]))
 
@@ -22,6 +23,27 @@ export function drawPlan(L, group, plan, sel = null) {
                          { permanent: true, direction: "top", className: "plx-hazard-label", offset: [0, -6] }).addTo(group)
         const dLat = h.radius_m / 111_000, dLon = h.radius_m / (111_000 * Math.cos(h.lat * Math.PI / 180))
         if (h.distance_m == null || h.distance_m < 3000) pts.push([h.lat + dLat * 1.6, h.lon - dLon], [h.lat - dLat, h.lon + dLon * 1.4])     // the ring and its label in view
+    }
+    if (isEvacuation(plan)) {
+        // AN EVACUATION: every leg of the chosen itinerary in its own colour (air and sea dashed),
+        // the change points (airport, crossing) and the safe house
+        for (const ln of itineraryLines(plan, sel)) {
+            L.polyline(ln.coords, { color: "#0b1d2e", weight: 9, opacity: 0.45, interactive: false }).addTo(group)
+            L.polyline(ln.coords, { color: ln.color, weight: 5.5, opacity: 1, dashArray: ln.dashed ? "10 8" : null, interactive: false,
+                                    className: `plx-evac-leg plx-evac-${ln.kind}` }).addTo(group)
+            ln.coords.forEach((c) => pts.push(c))
+        }
+        for (const st of itineraryStops(plan, sel)) {
+            const html = st.kind === "safe_house" ? '<div class="plx-route-dest plx-safehouse-pin" title="Safe house">⌂</div>'
+                : st.kind === "safe_point" ? '<div class="plx-route-dest" title="Safe point">✓</div>'
+                : `<div class="plx-evac-stop ${st.kind}"></div>`
+            L.marker([st.lat, st.lon], { icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13], html }), keyboard: false })
+                .bindTooltip(esc(st.name || ""), { direction: "right", offset: [12, 0], permanent: st.kind !== "change" }).addTo(group)
+            pts.push([st.lat, st.lon])
+        }
+        L.marker([plan.origin.lat, plan.origin.lon], { icon: L.divIcon({ className: "", iconSize: [20, 20], iconAnchor: [10, 10], html: '<div class="plx-route-origin"></div>' }),
+                                                       zIndexOffset: 1000, keyboard: false, interactive: false }).addTo(group)
+        return L.latLngBounds(pts)
     }
     const f = plan.fastest
     const s = (sel && (plan.candidates || []).find((c) => c.key === sel)) || plan.safest

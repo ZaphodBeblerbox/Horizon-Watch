@@ -58,6 +58,8 @@ export const INSPECTOR_TYPES = new Set([
     "airspace",
     // Places public calls name for blockades (GlobeEndangeredPlacesLayer).
     "endangered_place",
+    // Strikes & control events (GlobeStrikesLayer).
+    "strike_event",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────

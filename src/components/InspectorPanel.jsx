@@ -26,6 +26,7 @@ import { AroundSection, CableSection } from "./InfrastructureContext.jsx"
 import InfraDetail from "../inspector/InfraDetail.jsx"
 import OwnedAssetDetail from "../inspector/OwnedAssetDetail.jsx"
 import EndangeredPlaceDetail from "../inspector/EndangeredPlaceDetail.jsx"
+import StrikeEventDetail from "../inspector/StrikeEventDetail.jsx"
 import FindingPreview from "./FindingPreview.jsx"
 import { findingZoneOf, isFindingAlert, showFindings } from "../lib/findings.js"
 import SectionLabel from "../inspector/SectionLabel.jsx"
@@ -819,6 +820,7 @@ export default function InspectorPanel({
                 {entityType === "infra_feature" && <InfraDetail feature={data} />}
                 {entityType === "owned_asset" && <OwnedAssetDetail asset={data} />}
                 {entityType === "endangered_place" && <EndangeredPlaceDetail place={data} />}
+                {entityType === "strike_event" && <StrikeEventDetail event={data} />}
 
                 {/* A Telegram post's picture or video, in our own frame:
                     autoplaying, paused by a click (TelegramMedia.jsx). */}

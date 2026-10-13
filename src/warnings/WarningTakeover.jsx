@@ -23,6 +23,7 @@ import { positionStream } from "../location/positionStream.js"
 import { ackWarning, warningInbox } from "./api.js"
 import { createAlarm } from "./alarm.js"
 import { alarming, deviceNote, initialTakeover, reduceTakeover, takeoverEffects } from "./takeover.js"
+import { takeoverWording } from "../evacuation/itinerary.js"
 
 export const POLL_ON_SCREEN_MS = 8_000
 export const POLL_AWAY_MS = 20_000
@@ -115,6 +116,7 @@ export default function WarningTakeover() {
     if (!signedIn || !alarming(state, getSettings())) return null
     const w = state.active[0]
     const evac = w.kind === "evacuate"
+    const words = takeoverWording(w)
     const note = deviceNote({ ua: typeof navigator !== "undefined" ? navigator.userAgent : "", canVibrate: snd.canVibrate, desktop: isDesktop() })
     const ack = async () => {
         setBusy(w.id); setErr(null)
@@ -142,7 +144,7 @@ export default function WarningTakeover() {
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <svg width="44" height="44" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 1 21h22L12 2Zm0 6 .01 0M12 9v5m0 3v.01" stroke="#fff" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     <div>
-                        <div id="plx-warning-title" style={{ fontSize: 34, fontWeight: 800, letterSpacing: ".06em", lineHeight: 1 }}>{evac ? "EVACUATE" : "WARNING"}</div>
+                        <div id="plx-warning-title" style={{ fontSize: 34, fontWeight: 800, letterSpacing: ".06em", lineHeight: 1 }}>{words.title}</div>
                         <div style={{ fontSize: 14, opacity: 0.9, marginTop: 4 }}>
                             from {w.from_name || "your team"} · {hhmm(w.created_at)}{w.severity === "critical" ? " · critical" : ""}
                             {state.active.length > 1 ? ` · 1 of ${state.active.length}` : ""}
@@ -153,9 +155,15 @@ export default function WarningTakeover() {
                     {w.message}
                 </div>
                 {w.asset_name && <div style={{ fontSize: 15, opacity: 0.95 }}>About: {w.asset_name}</div>}
+                {/* EVACUATE: where to and how — the legs of the itinerary sent (evacuation.py) */}
+                {words.legs.length > 0 && (
+                    <ol data-testid="warning-evac-legs" style={{ margin: 0, paddingLeft: 22, fontSize: 15.5, lineHeight: 1.45, fontWeight: 600 }}>
+                        {words.legs.map((t, i) => <li key={i}>{t}</li>)}
+                    </ol>
+                )}
                 {w.route?.route_plan_id && (
-                    <button onClick={openRoute} style={{ height: 52, borderRadius: 12, border: "2px solid #fff", background: "transparent", color: "#fff", font: "inherit", fontSize: 17, fontWeight: 700, cursor: "pointer" }}>
-                        Open the route{w.route.safe_house ? ` to ${w.route.safe_house}` : ""}
+                    <button onClick={openRoute} data-testid="warning-open-route" style={{ height: 52, borderRadius: 12, border: "2px solid #fff", background: "transparent", color: "#fff", font: "inherit", fontSize: 17, fontWeight: 700, cursor: "pointer" }}>
+                        {words.open}
                     </button>
                 )}
                 <button onClick={ack} disabled={busy === w.id} data-testid="warning-ack" autoFocus

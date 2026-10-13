@@ -30,6 +30,8 @@ import {
     viewState, STATE_TEXT, summary, exposureLabel, hazardLine, fromLabel, toLabel, toLocalInput, fromLocalInput,
 } from "./view.js"
 import "./routes.css"
+import { isEvacuation, chosenItinerary } from "../evacuation/itinerary.js"
+import EvacuationOutput from "../evacuation/EvacuationOutput.jsx"
 
 // SHIPPING (the maritime planner, routes/modes/maritime.js): its own component in this panel
 registerMode("sea", { label: "Shipping", order: 60, Component: maritime.Component, relevant: maritime.relevant })
@@ -50,7 +52,9 @@ function Panel({ panel, variant }) {
     useEffect(() => { setSel(null) }, [r.plan?.id, r.plan?.generated_at])
     useEffect(() => { publishPlan(r.plan ? { ...r.plan, selected: sel } : null) }, [r.plan, sel])
     const phone = variant === "phone"
-    const title = panel.title || (panel.request?.purpose === "access" ? "Deliveries / access route" : panel.request?.to ? "Route" : "Safest way out")
+    // AN EVACUATION (evacuation.py): multi-leg itineraries to a safe house, its own body
+    const evac = isEvacuation(r.plan)
+    const title = evac ? "Evacuation" : panel.title || (panel.request?.purpose === "access" ? "Deliveries / access route" : panel.request?.to ? "Route" : "Safest way out")
     return (
         <div className={`plx-route-panel ${phone ? "phone" : "desktop"}`} data-testid="route-panel" role="dialog" aria-label={title}>
             {phone && <PhoneMap plan={r.plan} sel={sel} />}
@@ -58,14 +62,16 @@ function Panel({ panel, variant }) {
                 <button className="plx-route-close" onClick={closeRoutePanel} aria-label="Close">×</button>
                 <div style={{ minWidth: 0 }}>
                     <div className="plx-route-eyebrow">{title}</div>
-                    <div className="plx-route-title">{fromLabel(panel.request, r.plan)} → {toLabel(panel.request, r.plan)}</div>
+                    <div className="plx-route-title">{evac
+                        ? `${r.plan.subject?.name || "You"} → ${chosenItinerary(r.plan, sel)?.destination?.name || "a safe point"}`
+                        : `${fromLabel(panel.request, r.plan)} → ${toLabel(panel.request, r.plan)}`}</div>
                 </div>
             </div>
             <div className="plx-route-body">
                 {Custom ? <>
                     <ModeChips mode={panel.request?.mode} />
                     <Custom panel={panel} request={panel.request} variant={variant} onClose={closeRoutePanel} />
-                </> : <>
+                </> : evac ? <EvacuationOutput r={r} sel={sel} setSel={setSel} /> : <>
                     <Inputs panel={panel} plan={r.plan} />
                     <Output r={r} sel={sel} setSel={setSel} panel={panel} />
                 </>}

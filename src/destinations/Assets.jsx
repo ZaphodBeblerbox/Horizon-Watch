@@ -29,6 +29,10 @@ import Dots from "../ui/Dots.jsx"
 import { shareToDesk } from "../desk/shareToDesk.js"
 import { agoLabel } from "../utils/formatTime.js"
 import { getCurrentUser } from "../state/authStore.js"
+import { toast } from "../ui/toast.js"
+import { confirmAction } from "../ui/confirm.js"
+import SafeHouseFields, { detailsBody, emptyDetails, declarable, isSafeHouse } from "../evacuation/SafeHouseFields.jsx"
+import AdviseEvacuation from "../evacuation/AdviseEvacuation.jsx"
 
 const EYE = { fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }
 const BTN = {
@@ -94,10 +98,10 @@ function Chip({ exposure }) {
 }
 
 /** Add or edit an asset: what it is (with its model), and where — by address or on the map. */
-function AssetForm({ kinds, initial, onSaved, onCancel }) {
+function AssetForm({ kinds, initial, initialKind = "", onSaved, onCancel }) {
     const [f, setF] = useState(() => ({
-        name: "", kind: "", importance: "normal", country: "", notes: "", shared: false, radius_km: "",
-        lat: null, lon: null, address: "", identifiers: {}, ...(initial || {}),
+        name: "", kind: initialKind, importance: "normal", country: "", notes: "", shared: initialKind === "safe_house", radius_km: "",
+        lat: null, lon: null, address: "", identifiers: {}, details: emptyDetails(), ...(initial || {}),
     }))
     const [err, setErr] = useState(null)
     const [busy, setBusy] = useState(false)
@@ -106,7 +110,8 @@ function AssetForm({ kinds, initial, onSaved, onCancel }) {
     const groups = useMemo(() => {
         const g = {}
         for (const k of kinds) (g[k.group] ||= []).push(k)
-        return Object.entries(g)
+        // SAFE HOUSES FIRST (owner, 2026-10-12: "I still can't add a safe house"): easy to find
+        return Object.entries(g).sort(([a], [b]) => (b === "Safety") - (a === "Safety"))
     }, [kinds])
     const set = (k, v) => setF((p) => ({ ...p, [k]: v }))
     const setId = (k, v) => setF((p) => ({ ...p, identifiers: { ...p.identifiers, [k]: v } }))
@@ -130,6 +135,8 @@ function AssetForm({ kinds, initial, onSaved, onCancel }) {
                 shared: f.shared, lat: f.lat, lon: f.lon, radius_km: f.radius_km === "" ? null : Number(f.radius_km),
                 address: f.address || null,
                 identifiers: Object.fromEntries(Object.entries(f.identifiers || {}).filter(([, v]) => String(v || "").trim())),
+                // a safe house, or a building declared one (or no longer): its details go too
+                ...(f.kind === "safe_house" || declarable(kind) ? { details: f.kind === "safe_house" || f.details?.safe_house ? detailsBody(f.details) : {} } : {}),
             }
             const saved = initial?.id ? await api(`/${initial.id}`, { method: "PUT", body: JSON.stringify(body) })
                 : await api("", { method: "POST", body: JSON.stringify(body) })
@@ -164,6 +171,16 @@ function AssetForm({ kinds, initial, onSaved, onCancel }) {
                             <option value="critical">Critical</option><option value="high">High</option><option value="normal">Normal</option>
                         </select></label>
                 </div>
+                {/* DECLARE AS SAFE HOUSE (owner, 2026-10-12): any building or site, keeping its kind */}
+                {declarable(kind) && (
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: "var(--txt)" }} data-testid="declare-safe-house">
+                        <input type="checkbox" checked={!!f.details?.safe_house} onChange={(e) => set("details", { ...emptyDetails(), ...(f.details || {}), safe_house: e.target.checked })} />
+                        Declare as safe house — people can be evacuated here
+                    </label>
+                )}
+                {(f.kind === "safe_house" || (declarable(kind) && f.details?.safe_house)) && (
+                    <SafeHouseFields value={f.details} onChange={(d) => set("details", d)} inputStyle={INPUT} labelStyle={LABEL} />
+                )}
                 {kind && kind.ids.length > 0 && (
                     <div style={{ display: "grid", gridTemplateColumns: `repeat(${kind.ids.length}, minmax(0,1fr))`, gap: 12 }}>
                         {kind.ids.map((k) => k === "user_id" ? (
@@ -178,7 +195,7 @@ function AssetForm({ kinds, initial, onSaved, onCancel }) {
                 {/* ANY ASSET CAN BE LINKED TO A TEAM MEMBER (owner, 2026-10-10): a
                     car, a vessel, a site manager's office — their shared live
                     location then moves it, and it is assessed where they are. */}
-                {kind && !kind.ids.includes("user_id") && (
+                {kind && !kind.ids.includes("user_id") && f.kind !== "safe_house" && (
                     <label><span style={LABEL}>Linked team member — their phone's live location moves this asset</span>
                         <MemberSelect value={f.identifiers?.user_id || ""} onChange={(v) => setId("user_id", v)} /></label>
                 )}
@@ -317,12 +334,26 @@ function Detail({ asset, onEdit, onDeleted, onChanged }) {
         const it = [...(s?.signals || []), ...(s?.analogues || [])].find((x) => x.id === id)
         if (it) flyTo(it.lat, it.lon, 40_000)
     }
+    // REMOVE (owner, 2026-10-12: "I still can't remove an asset"): its owner or an admin;
+    // a refusal or a failure is said, never swallowed
     const remove = async () => {
-        if (!window.confirm(`Remove ${asset.name} from the register?`)) return
-        await api(`/${asset.id}`, { method: "DELETE" }).catch(() => {})
-        onDeleted()
+        // our own dialog: window.confirm shows nothing in the desktop app (Tauri), so the delete never happened
+        const ok = await confirmAction({ title: `Delete “${asset.name}”?`, danger: true, confirm: "Delete",
+            message: `This is not reversible.${asset.identifiers?.user_id && asset.kind === "person" ? " Their live location will not create it again until someone links them to an asset." : ""}` })
+        if (!ok) return
+        setRmErr(null)
+        try {
+            await api(`/${asset.id}`, { method: "DELETE" })
+            toast(`${asset.name} removed`)
+            onDeleted()
+        } catch (e) {
+            // said on the page (and as a toast): an alert() does not show in the desktop app either
+            setRmErr(`Could not remove ${asset.name}: ${e.message || "no connection"}`)
+            toast(`Could not remove ${asset.name}`, { icon: "i-alert" })
+        }
     }
     const ais = vf?.ais
+    const [rmErr, setRmErr] = useState(null)
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
             {/* THE ASSET: its model, large, beside what we know about it */}
@@ -365,6 +396,9 @@ function Detail({ asset, onEdit, onDeleted, onChanged }) {
                     )}
                     {/* LINK A PERSON (their phone moves it) · SEND THEM A WARNING (warnings/AssetPeople.jsx) */}
                     <AssetPeople asset={asset} onChanged={onChanged} />
+                    {/* ADVISE EVACUATION — to the best safe house, abroad if it must (evacuation/) */}
+                    <AdviseEvacuation asset={asset} onOpenRoute={() => window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "situation" } }))} />
+                    {isSafeHouse(asset) && <SafeHouseFacts asset={asset} />}
                     {asset.notes && <p style={{ margin: 0, fontSize: 13, color: "var(--txt2)", lineHeight: 1.55, borderTop: "1px solid var(--gline)", paddingTop: 12 }}>{asset.notes}</p>}
                     <div style={{ display: "flex", gap: 6, marginTop: "auto", flexWrap: "wrap" }}>
                         {pos && <button onClick={() => flyTo(pos.lat, pos.lon)} style={PRIMARY}>Show on the map</button>}
@@ -383,8 +417,9 @@ function Detail({ asset, onEdit, onDeleted, onChanged }) {
                         {asset.identifiers?.user_id && (asset.mine || isAdmin()) && <SendRouteButton asset={asset} />}
                         <button onClick={() => shareToDesk({ kind: "asset", id: asset.id, name: asset.name, asset_kind: asset.kind, kind_label: asset.kind_label, group: asset.group, exposure: s?.exposure || null })} style={BTN}>Share to the desk</button>
                         {asset.mine && <button onClick={onEdit} style={BTN}>Edit</button>}
-                        {asset.mine && <button onClick={remove} style={BTN}>Remove</button>}
+                        {(asset.mine || isAdmin()) && <button onClick={remove} style={BTN} data-testid="asset-remove">Remove</button>}
                     </div>
+                    {rmErr && <div role="alert" data-testid="asset-remove-error" style={{ color: "#FF6B6B", fontSize: 13 }}>{rmErr}</div>}
                 </div>
             </div>
             {/* WHAT IT MEANS, beside WHAT IS HAPPENING */}
@@ -454,6 +489,8 @@ export default function Assets() {
     const [assets, setAssets] = useState(null)
     const [sel, setSel] = useState(null)
     const [mode, setMode] = useState("view")        // view | add | edit
+    const [addKind, setAddKind] = useState("")
+    const [only, setOnly] = useState("all")            // all | safe — the "Safe houses" filter
     const load = useCallback(() => api("").then((d) => { setAssets(d.assets || []); window.dispatchEvent(new CustomEvent("akili:assets-changed")) }).catch(() => setAssets([])), [])
     // The kinds are fixed, but the first request can lose a race with a
     // backend still warming up — ask again until they arrive.
@@ -489,16 +526,29 @@ export default function Assets() {
                 <span style={{ fontSize: 13, color: "var(--txt3)" }}>
                     {assets ? `${assets.length} registered${counts.high ? ` · ${counts.high} highly exposed` : ""}${counts.elevated ? ` · ${counts.elevated} elevated` : ""}` : "reading the register"}
                 </span>
-                <button onClick={() => setMode("add")} style={{ ...PRIMARY, marginLeft: "auto" }}>+ Add asset</button>
+                <button onClick={() => { setAddKind("safe_house"); setMode("add") }} style={{ ...BTN, height: 28, marginLeft: "auto", borderColor: "rgba(46,158,91,.7)" }} data-testid="add-safe-house">+ Safe house</button>
+                <button onClick={() => { setAddKind(""); setMode("add") }} style={PRIMARY}>+ Add asset</button>
             </header>
             <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(300px, 380px) minmax(0,1fr)" }}>
                 <nav aria-label="Registered assets" style={{ borderRight: "1px solid var(--gline)", overflow: "auto", padding: "8px 0" }}>
+                    {/* SAFE HOUSES, easy to find: of the kind, or buildings declared one */}
+                    <div role="tablist" style={{ display: "flex", gap: 6, padding: "4px 16px 8px" }}>
+                        {[["all", `All${assets ? ` · ${assets.length}` : ""}`], ["safe", `Safe houses${assets ? ` · ${assets.filter(isSafeHouse).length}` : ""}`]].map(([k, label]) => (
+                            <button key={k} role="tab" aria-selected={only === k} data-testid={`assets-filter-${k}`} onClick={() => setOnly(k)}
+                                    style={{ ...BTN, height: 26, borderRadius: 13, ...(only === k ? { background: k === "safe" ? "rgba(46,158,91,.2)" : "var(--accdim)", color: "var(--txt)", borderColor: k === "safe" ? "#2E9E5B" : "var(--acchi)" } : {}) }}>{label}</button>
+                        ))}
+                    </div>
+                    {only === "safe" && assets && !assets.some(isSafeHouse) && (
+                        <div style={{ padding: "8px 20px", fontSize: 13, color: "var(--txt3)", lineHeight: 1.5 }}>
+                            No safe house yet. Add one with “+ Safe house”, or open a building in the register, Edit, and tick “Declare as safe house”.
+                        </div>
+                    )}
                     {assets?.length === 0 && (
                         <div style={{ padding: "16px 20px", fontSize: 13, color: "var(--txt3)", lineHeight: 1.55 }}>
                             Nothing registered yet. Add a vessel, an aircraft, a site or a team, and Parallax will rank what happens near it and say how it affects you.
                         </div>
                     )}
-                    {(assets || []).map((a) => (
+                    {(assets || []).filter((a) => only === "all" || isSafeHouse(a)).map((a) => (
                         <button key={a.id} onClick={() => { setSel(a.id); setMode("view") }} style={{
                             display: "grid", gridTemplateColumns: "84px minmax(0,1fr)", gap: 12, width: "100%", textAlign: "left", alignItems: "center",
                             padding: "10px 16px", border: 0,
@@ -510,14 +560,14 @@ export default function Assets() {
                                     <span style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
                                     <span style={{ marginLeft: "auto" }}><Chip exposure={a.exposure} /></span>
                                 </span>
-                                <span style={{ fontSize: 12, color: "var(--txt3)" }}>{a.kind_label}{a.signal_count ? ` · ${a.signal_count} signal${a.signal_count === 1 ? "" : "s"} near it` : ""}</span>
+                                <span style={{ fontSize: 12, color: "var(--txt3)" }}>{a.kind_label}{isSafeHouse(a) && a.kind !== "safe_house" ? <span style={{ color: "#4fd08a" }}> · safe house</span> : null}{a.signal_count ? ` · ${a.signal_count} signal${a.signal_count === 1 ? "" : "s"} near it` : ""}</span>
                                 {a.top && <span style={{ fontSize: 12, color: "var(--txt2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.top.title}</span>}
                             </span>
                         </button>
                     ))}
                 </nav>
                 <div style={{ overflow: "auto", padding: "20px 24px 40px", minWidth: 0 }}>
-                    {mode === "add" && <AssetForm kinds={kinds} onCancel={() => setMode("view")} onSaved={(a) => { setMode("view"); setSel(a.id); load() }} />}
+                    {mode === "add" && <AssetForm key={addKind} kinds={kinds} initialKind={addKind} onCancel={() => setMode("view")} onSaved={(a) => { setMode("view"); setSel(a.id); load() }} />}
                     {mode === "edit" && current && <AssetForm kinds={kinds} initial={current} onCancel={() => setMode("view")} onSaved={() => { setMode("view"); load() }} />}
                     {mode === "view" && current && <Detail asset={current} onEdit={() => setMode("edit")} onDeleted={() => { setSel(null); load() }} onChanged={load} />}
                     {mode === "view" && !current && assets?.length === 0 && (
@@ -552,4 +602,18 @@ function UserName({ id }) {
         _users.then((us) => { const u = us.find((x) => String(x.id) === String(id)); setName(u ? (u.name || u.email) : null) })
     }, [id])
     return <>{name || "a team member"}</>
+}
+
+/** A safe house's own facts: open or closed, places, contact, who may use it. */
+function SafeHouseFacts({ asset }) {
+    const d = asset.details || {}
+    const places = d.capacity != null ? `${Math.max(0, d.capacity - (d.occupancy || 0))} of ${d.capacity} free` : "capacity not tracked"
+    return (
+        <div data-testid="safe-house-facts" style={{ borderTop: "1px solid var(--gline)", paddingTop: 12, display: "grid", gridTemplateColumns: "max-content minmax(0,1fr)", gap: "6px 14px", alignItems: "baseline" }}>
+            <Fact k="Safe house" v={<span style={{ color: d.status === "closed" ? "#F5A524" : "#4fd08a", fontWeight: 600 }}>{d.status === "closed" ? "Closed — not offered" : "Open"}</span>} />
+            <Fact k="Places" v={places} />
+            <Fact k="Contact" v={d.contact} />
+            <Fact k="May use it" v={[...(d.allowed_teams || []), ...((d.allowed_users || []).length ? [`${d.allowed_users.length} named people`] : [])].join(", ") || "anyone who can see it"} />
+        </div>
+    )
 }

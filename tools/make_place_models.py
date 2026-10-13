@@ -1233,6 +1233,82 @@ def generic_building(status):
     return m
 
 
+def shield(m, cx, y, z0, w, h, col, inner=None, facing=-1):
+    """A heraldic shield standing upright in the XZ plane at y (its face
+    towards `facing` along Y): a flat top, straight sides, a point below;
+    a smaller one of `inner` colour on it, and a check mark."""
+    def outline(sw, sh, zb):
+        pts = [(-sw / 2, zb + sh), (sw / 2, zb + sh), (sw / 2, zb + sh * 0.45)]
+        for k in range(1, 6):                                     # the curved lower edge to the point
+            a = k / 6
+            pts.append((sw / 2 * (1 - a) ** 1.3, zb + sh * 0.45 * (1 - a) ** 0.8))
+        pts.append((0.0, zb))
+        for k in range(5, 0, -1):
+            a = k / 6
+            pts.append((-sw / 2 * (1 - a) ** 1.3, zb + sh * 0.45 * (1 - a) ** 0.8))
+        pts.append((-sw / 2, zb + sh * 0.45))
+        return pts
+    nrm = (0.0, float(facing), 0.0)
+    def face(pts, yy, colr):
+        ctr = (cx, yy, sum(p[1] for p in pts) / len(pts))
+        for a, b in zip(pts, pts[1:] + pts[:1]):
+            m.tri(ctr, (cx + a[0], yy, a[1]), (cx + b[0], yy, b[1]), colr, (nrm,) * 3)
+    face(outline(w, h, z0), y, col)
+    face(outline(w * 0.78, h * 0.8, z0 + h * 0.1), y + facing * 0.05, inner or C["white"])
+    # the check mark, two bars
+    zc = z0 + h * 0.5
+    m.rod((cx - w * 0.2, y + facing * 0.1, zc), (cx - w * 0.04, y + facing * 0.1, zc - h * 0.16), h * 0.05, col, seg=6)
+    m.rod((cx - w * 0.04, y + facing * 0.1, zc - h * 0.16), (cx + w * 0.24, y + facing * 0.1, zc + h * 0.2), h * 0.05, col, seg=6)
+
+
+def safe_house(status):
+    """A SAFE HOUSE (evacuation.py): a plain two-storey house — nothing on it
+    says what it is from the street — inside a high fence with a sliding
+    gate and an intercom post, shutters on the ground floor, a generator and
+    a water tank at the back, and, for the map only, a green shield with a
+    check mark at the gate and over the door."""
+    m = Mesh()
+    g = plinth(m, 56, 48, status, C["grass"])
+    green, white = srgb("#2E9E5B"), C["white"]
+    wall = srgb("#D9D1C2")
+    m.cbox(0, -3, 50, 7, g, g + 0.1, C["concrete"])                          # the drive
+    m.cbox(0, 6, 22, 14, g, g + 7.2, wall)                                   # the house
+    windows(m, 0, 6, 22, 14, g, g + 7.2, g, floor_h=3.6)
+    gable_roof(m, 0, 6, 23.4, 15.4, g + 7.2, 4.2, srgb("#6B4B3E"))
+    for x in (-7.5, -3, 3, 7.5):                                             # ground-floor shutters, closed
+        m.cbox(x, -1.06, 2.2, 0.12, g + 0.9, g + 2.9, srgb("#4A5560"))
+    m.cbox(0, -1.08, 2.0, 0.14, g, g + 2.6, srgb("#3B3F45"))                 # the steel door
+    m.cbox(0, -1.5, 3.2, 1.2, g + 2.7, g + 2.9, C["darksteel"])              # its canopy
+    shield(m, 0, -1.2, g + 4.0, 2.4, 2.8, green, white)                      # over the door
+    m.cbox(-9, 14.5, 4, 2, g, g + 2.2, C["darksteel"], top=C["steel"])       # the generator
+    m.cyl(9, 15, g, g + 3.4, 1.6, col=srgb("#5F7F95"), seg=14)               # the water tank
+    m.cyl(-10.8, 1.5, g + 7.2, g + 10.5, 0.12, col=C["steel"], seg=6)        # the radio aerial
+    # the fence: a low wall with high bars all round, the sliding gate open a little
+    def fence(x0, y0, x1, y1):
+        L = math.hypot(x1 - x0, y1 - y0)
+        n = max(2, int(L / 1.6))
+        m.cbox((x0 + x1) / 2, (y0 + y1) / 2, abs(x1 - x0) or 0.6, abs(y1 - y0) or 0.6, g, g + 0.9, C["concrete"])
+        for k in range(n + 1):
+            x, y = x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n
+            m.cbox(x, y, 0.16, 0.16, g + 0.9, g + 3.6, C["darksteel"])
+        m.cbox((x0 + x1) / 2, (y0 + y1) / 2, (abs(x1 - x0) or 0.12) + 0.1, (abs(y1 - y0) or 0.12) + 0.1, g + 3.5, g + 3.7, C["darksteel"])
+    fence(-24, -10, -4, -10)
+    fence(8, -10, 24, -10)
+    fence(-24, -10, -24, 20)
+    fence(24, -10, 24, 20)
+    fence(-24, 20, 24, 20)
+    # the gate: a heavier frame, slid half open behind the right-hand fence
+    m.cbox(4, -10.6, 9, 0.25, g + 0.2, g + 3.4, srgb("#3B3F45"))
+    for x in (-4, 8):
+        m.cbox(x, -10, 0.7, 0.7, g, g + 4.0, C["concrete"], top=C["roof"])
+    m.cbox(-6, -12, 0.5, 0.5, g, g + 1.5, C["steel"])                        # the intercom post
+    shield(m, -6, -12.3, g + 1.6, 1.6, 1.9, green, white)                    # the sign at the gate
+    for x, y in ((-18, 12), (18, 4), (-17, -4)):
+        tree(m, x, y, g, 7, 2.3)
+    car(m, -12, -3, g + 0.1, C["car4"])
+    return m
+
+
 MODELS = {
     "refinery": refinery, "fuel_depot": fuel_depot, "fuel_station": fuel_station, "roundabout": roundabout,
     "motorway_junction": motorway_junction, "town_square": town_square, "street": street,
@@ -1242,7 +1318,7 @@ MODELS = {
     "military_base": military_base, "bridge": bridge, "factory": factory, "office_building": office_building,
     "shopping_centre": shopping_centre, "warehouse": warehouse, "power_plant": power_plant,
     "stadium": stadium, "church": church, "monument": monument, "park": park, "car_park": car_park,
-    "city": city, "generic_building": generic_building, "rally": rally,
+    "city": city, "generic_building": generic_building, "rally": rally, "safe_house": safe_house,
 }
 
 def to_gltf(p):

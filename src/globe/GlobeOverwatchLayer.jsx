@@ -4,10 +4,11 @@ import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import {
     Cartesian2, Cartesian3, Rectangle, Color, PolygonHierarchy,
-    SingleTileImageryProvider, ColorMaterialProperty,
+    SingleTileImageryProvider, ColorMaterialProperty, PolylineDashMaterialProperty,
     ClassificationType, LabelStyle, DistanceDisplayCondition, SplitDirection, SceneTransforms,
 } from "cesium"
 import { detectionCorners } from "./detectionShape.js"
+import { CLASS_COLORS, classLabel, isFindingClass } from "../destinations/imageryModel.js"
 
 const CATEGORY_COLORS = {
     Aircraft:        "#5856D6",
@@ -25,12 +26,11 @@ const CATEGORY_COLORS = {
     default:         "#FFCC00",
 }
 
-// A scene compared against its previous pass colours by what changed —
-// the same key as the Imagery page.
-const CHANGE_COLORS = { new: "#FFB300", removed: "#FF3B30", existing: "#00E5FF" }
-
+// A detection with a known class is coloured by it — the same key as the
+// Imagery page (imageryModel.CLASS_COLORS); what changed since the last
+// pass is the line (dashed: gone), as there.
 function colorForDet(det) {
-    return CHANGE_COLORS[det.type] || CATEGORY_COLORS[det.category] || CATEGORY_COLORS.default
+    return CLASS_COLORS[det.object_type || det.label] || CATEGORY_COLORS[det.category] || CATEGORY_COLORS.default
 }
 
 export default function GlobeOverwatchLayer({ enabled, detections = [], sentinelOverlay = null, onSceneRect = null }) {
@@ -183,6 +183,8 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
         const added = []
 
         for (const det of detections) {
+            // Cloud, shadow, field change: set aside by the classifier, not findings.
+            if (!isFindingClass(det.object_type || det.label)) continue
             const hex   = colorForDet(det)
             const color = Color.fromCssColorString(hex)
 
@@ -220,7 +222,8 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
             // what, which is the half of a detection that makes it usable —
             // and with all fifteen DOTA classes now running, "a box" could
             // be a vessel, an aircraft, a storage tank or a truck.
-            const _tag = (det.label || det.object_type || det.category || "object")
+            const _cls = det.object_type || det.label
+            const _tag = (CLASS_COLORS[_cls] ? classLabel(_cls) : (_cls || det.category || "object"))
                 .toString().replace(/_/g, " ")
             const _conf = typeof det.confidence === "number"
                 ? ` ${Math.round(det.confidence * 100)}%` : ""
@@ -252,7 +255,9 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                 polyline: {
                     positions: ring,
                     width: 3,
-                    material: new ColorMaterialProperty(color.withAlpha(0.95)),
+                    material: det.type === "removed"
+                        ? new PolylineDashMaterialProperty({ color: color.withAlpha(0.95), dashLength: 12 })
+                        : new ColorMaterialProperty(color.withAlpha(det.type === "existing" ? 0.7 : 0.95)),
                     clampToGround: true,
                     classificationType: ClassificationType.TERRAIN,
                 },

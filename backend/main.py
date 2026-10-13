@@ -436,6 +436,8 @@ def _sea_vessel(mmsi: str):
         v = _AIS_VESSELS.get(str(mmsi))
         return dict(v) if v else None
 _sea_route_router.VESSEL_LOOKUP = _sea_vessel
+import evacuation as _evacuation                            # ADVISE EVACUATION: safe houses, multi-leg itineraries, progress; before /api/routes/{id}
+app.include_router(_evacuation.router)
 from routers import routes as _routes_router                # route planning: the safest way (safe_route.py, route_plans.py)
 app.include_router(_routes_router.router)
 try:
@@ -479,6 +481,8 @@ app.include_router(_chat_router.router)
 # The regions somebody watches — see routers/theaters.py.
 from routers import theaters as _theaters_router
 app.include_router(_theaters_router.router)
+from routers import strikes as _strikes_router              # "Strikes & control" map layer (strike_events.py)
+app.include_router(_strikes_router.router)
 # Observations published to the desk — see routers/desk.py.
 from routers import desk as _desk_router
 app.include_router(_desk_router.router)
@@ -495,6 +499,9 @@ app.include_router(_finding_assess_router.router)
 # see routers/enrichment.py and enrich.py.
 from routers import enrichment as _enrichment_router
 app.include_router(_enrichment_router.router)
+# Claimed control changes, troop movements, drone/missile trajectories — routers/frontline_claims.py.
+from routers import frontline_claims as _frontline_claims_router
+app.include_router(_frontline_claims_router.router)
 
 # ── Optional fastapi-cache2 response caching ──────────────────────────────────
 try:

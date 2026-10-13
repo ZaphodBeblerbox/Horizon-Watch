@@ -61,14 +61,16 @@ def passes(west, south, east, north, days_back: int = 60, max_cloud: float = 100
 
 
 EVALSCRIPT = """//VERSION=3
-function setup(){return{input:[{bands:["B02","B03","B04","B08","B11","B12","SCL","dataMask"],
- units:["REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","DN","DN"]}],
- output:{bands:8,sampleType:"FLOAT32"}}}
-function evaluatePixel(s){return[s.B02,s.B03,s.B04,s.B08,s.B11,s.B12,s.SCL,s.dataMask]}"""
+function setup(){return{input:[{bands:["B02","B03","B04","B08","B11","B12","SCL","dataMask","B01"],
+ units:["REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","DN","DN","REFLECTANCE"]}],
+ output:{bands:9,sampleType:"FLOAT32"}}}
+function evaluatePixel(s){return[s.B02,s.B03,s.B04,s.B08,s.B11,s.B12,s.SCL,s.dataMask,s.B01]}"""
 
 
 def fetch(west, south, east, north, date: str, width: int, height: int, upsampling: str = "BICUBIC"):
-    """float32 array (8, H, W): B02 B03 B04 B08 B11 B12 SCL mask, for one day."""
+    """float32 array (9, H, W): B02 B03 B04 B08 B11 B12 SCL mask B01, for one day.
+    B01 (443 nm, coastal aerosol, 60 m resampled) is last so every index
+    before it keeps its meaning; smoke scatters it most of all."""
     import numpy as np
     body = {
         "input": {"bounds": {"bbox": [west, south, east, north],

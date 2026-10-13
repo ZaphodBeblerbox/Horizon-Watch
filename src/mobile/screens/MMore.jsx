@@ -25,19 +25,25 @@ import { openRoutePanel } from "../../routes/store.js"
 import RouteContextCards from "../../routes/RouteContextCards.jsx"
 import LivePositionLine from "../../location/LivePositionLine.jsx"
 import AssetPeople from "../../warnings/AssetPeople.jsx"
+import AdviseEvacuation from "../../evacuation/AdviseEvacuation.jsx"
+import SafeHouseFields, { detailsBody, emptyDetails, declarable, isSafeHouse } from "../../evacuation/SafeHouseFields.jsx"
+import AssetModel from "../../assets/AssetModel.jsx"
+import { confirmAction } from "../../ui/confirm.js"
 import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 import { locate } from "../../location/geo.js"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
 import PushDevices from "../../notify/PushDevices.jsx"
 
 const EXPOSURE = { high: ["High exposure", "#E5484D"], elevated: ["Elevated", "#F5A524"], low: ["Low", "#8FB4E8"], quiet: ["Quiet", "#4CAF7A"], unknown: ["No position", "#9AA9BC"] }
+const isAdmin = () => { try { const u = getCurrentUser(); return !!u?.is_super_admin || String(u?.role || "").toLowerCase() === "admin" } catch { return false } }
 const post = (path, body) => fetch(`${API_BASE}${path}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) })
     .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json().catch(() => ({}))).detail || `${r.status}`))))
 
-function AssetDetail({ a, onClose, onShowOnMap }) {
+function AssetDetail({ a, onClose, onShowOnMap, onRemoved }) {
     const [sit, setSit] = useState(null)
     const [brief, setBrief] = useState(null)
     const [open, setOpen] = useState(null)
+    const [rmErr, setRmErr] = useState(null)
     useEffect(() => {
         getJSON(`/api/my-assets/${a.id}/situation`).then(setSit)
         post(`/api/my-assets/${a.id}/brief`).then(setBrief).catch(() => setBrief({ error: true }))
@@ -48,6 +54,15 @@ function AssetDetail({ a, onClose, onShowOnMap }) {
             <div className="m2-eyebrow" style={{ color: ex[1] }}>{ex[0]}</div>
             <h2 style={{ margin: "6px 0 2px", fontSize: 20 }}>{a.name}</h2>
             <div className="m2-sub" style={{ marginBottom: 12 }}>{[a.kind_label || a.kind, a.address || a.country, a.radius_km && `watch radius ${a.radius_km} km`].filter(Boolean).join(" · ")}</div>
+            {isSafeHouse(a) && <>
+                {/* THE SAFE HOUSE: its model turning, whether it is open, places, contact */}
+                <div style={{ marginBottom: 10 }}><AssetModel kind={a.kind} height={200} /></div>
+                <div className="m2-card" data-testid="safe-house-facts" style={{ padding: 12, marginBottom: 12, fontSize: 14, lineHeight: 1.5 }}>
+                    <div style={{ fontWeight: 650, color: a.details?.status === "closed" ? "#F5A524" : "#4fd08a" }}>{a.details?.status === "closed" ? "Closed — not offered in an evacuation" : "Open"}</div>
+                    <div>{a.details?.capacity != null ? `${Math.max(0, a.details.capacity - (a.details.occupancy || 0))} of ${a.details.capacity} places free` : "Capacity not tracked"}</div>
+                    {a.details?.contact && <div>{a.details.contact}</div>}
+                </div>
+            </>}
             <div className="m2-eyebrow" style={{ marginBottom: 6 }}>How it affects you</div>
             <div className="m2-card" style={{ padding: 12, marginBottom: 12, fontSize: 14, lineHeight: 1.5 }}>
                 {!brief ? "Reading the situation…" : brief.error ? "The brief could not be written right now." : (
@@ -78,6 +93,8 @@ function AssetDetail({ a, onClose, onShowOnMap }) {
             </>}
             {/* LINK A PERSON (their phone moves it) · SEND THEM A WARNING (warnings/AssetPeople.jsx) */}
             <AssetPeople asset={a} variant="phone" />
+            {/* ADVISE EVACUATION — the safest route to a safe house, sent with an alarm (evacuation/) */}
+            <div style={{ margin: "10px 0" }}><AdviseEvacuation asset={a} variant="phone" onOpenRoute={onClose} /></div>
             {/* WHEN A ROUTE PLAN IS RELEVANT HERE: exit (a danger within 1 km) or deliveries/access (a call near a site) */}
             <div style={{ marginBottom: 10 }}><RouteContextCards assetId={a.id} /></div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -87,16 +104,29 @@ function AssetDetail({ a, onClose, onShowOnMap }) {
                                  onShown={() => { window.dispatchEvent(new CustomEvent("m2:go", { detail: "map" })); onClose() }} />
                 {Number.isFinite(+(sit?.position?.lat ?? a.lat)) && <button className="m2-btn ghost" data-testid="asset-sheet-safe-route"
                     onClick={() => openRoutePanel({ request: { from: { asset_id: a.id }, to: null, mode: a.group === "Vehicles" ? "car" : "foot", purpose: "exit" } })}>Safest route</button>}
+                {/* REMOVE: its owner or an admin; a failure is said (owner, 2026-10-12) */}
+                {(a.mine || isAdmin()) && <button className="m2-btn ghost" data-testid="asset-sheet-remove" style={{ color: "#ff8a8d" }} onClick={async () => {
+                    if (!(await confirmAction({ title: `Delete “${a.name}”?`, message: "This is not reversible.", confirm: "Delete", danger: true }))) return
+                    setRmErr(null)
+                    try {
+                        const r = await fetch(`${API_BASE}/api/my-assets/${encodeURIComponent(a.id)}`, { method: "DELETE", credentials: "include" })
+                        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`)
+                        window.dispatchEvent(new CustomEvent("akili:assets-changed"))
+                        onRemoved?.(); onClose()
+                    } catch (e) { setRmErr(`Could not remove ${a.name}: ${e.message || "no connection"}`) }
+                }}>Remove</button>}
             </div>
+            {rmErr && <div role="alert" className="m2-sub" data-testid="asset-sheet-remove-error" style={{ color: "#ff8a8d", marginTop: 8 }}>{rmErr}</div>}
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
         </Sheet>
     )
 }
 
-function AddAsset({ onClose, onAdded }) {
+function AddAsset({ onClose, onAdded, initialKind = "office" }) {
     const kinds = usePoll("/api/my-assets/kinds", 0, (d) => arr(d?.kinds ?? d))
     const [name, setName] = useState("")
-    const [kind, setKind] = useState("office")
+    const [kind, setKind] = useState(initialKind)
+    const [details, setDetails] = useState(emptyDetails())
     const [address, setAddress] = useState("")
     const [at, setAt] = useState(null)
     const [msg, setMsg] = useState(null)
@@ -109,17 +139,33 @@ function AddAsset({ onClose, onAdded }) {
     }
     const save = async () => {
         if (!name.trim()) { setMsg("Give it a name."); return }
-        try { await post("/api/my-assets", { name, kind, address: address || undefined, ...(at || {}) }); onAdded(); onClose() }
+        try {
+            await post("/api/my-assets", { name, kind, address: address || undefined, ...(at || {}),
+                                           ...(kind === "safe_house" || details.safe_house ? { details: detailsBody(details), shared: true } : {}) })
+            window.dispatchEvent(new CustomEvent("akili:assets-changed"))
+            onAdded(); onClose()
+        }
         catch (e) { setMsg(e.message) }
     }
     return (
         <Sheet onClose={onClose}>
-            <div className="m2-eyebrow" style={{ marginBottom: 8 }}>Register an asset</div>
+            <div className="m2-eyebrow" style={{ marginBottom: 8 }}>{kind === "safe_house" ? "Add a safe house" : "Register an asset"}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <input className="m2-input" placeholder="Name (e.g. Head office Munich)" value={name} onChange={(e) => setName(e.target.value)} />
-                <select className="m2-input" value={kind} onChange={(e) => setKind(e.target.value)}>
-                    {(kinds || []).map((k) => <option key={k.key || k.kind || k} value={k.key || k.kind || k}>{k.label || k.key || k}</option>)}
+                <select className="m2-input" value={kind} onChange={(e) => setKind(e.target.value)} data-testid="m-add-kind">
+                    {/* the safe house first: easy to find (owner, 2026-10-12) */}
+                    {[...(kinds || [])].sort((x, y) => (y.key === "safe_house") - (x.key === "safe_house"))
+                        .map((k) => <option key={k.key || k.kind || k} value={k.key || k.kind || k}>{k.label || k.key || k}</option>)}
                 </select>
+                {/* DECLARE AS SAFE HOUSE: any building or site keeps its kind (owner, 2026-10-12) */}
+                {declarable((kinds || []).find((k) => k.key === kind)) && (
+                    <label className="m2-sub" style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 14 }} data-testid="m-declare-safe-house">
+                        <input type="checkbox" checked={!!details.safe_house} onChange={(e) => setDetails({ ...details, safe_house: e.target.checked })} />
+                        Declare as safe house
+                    </label>
+                )}
+                {(kind === "safe_house" || details.safe_house) && <SafeHouseFields value={details} onChange={setDetails} inputStyle={{ width: "100%", minHeight: 40, padding: "8px 10px", border: "1px solid rgba(255,255,255,.14)", background: "rgba(0,0,0,.2)",
+                                                                                                      color: "inherit", font: "inherit", borderRadius: 8, boxSizing: "border-box" }} />}
                 <input className="m2-input" placeholder="Address — enough to find it" value={address} onChange={(e) => setAddress(e.target.value)} />
                 <div style={{ display: "flex", gap: 8 }}>
                     <button className="m2-btn ghost" onClick={here}><Icon id="g-pin" size={14} /> Where I am</button>
@@ -135,7 +181,8 @@ function AddAsset({ onClose, onAdded }) {
 export function MAssets({ onShowOnMap, initial }) {
     const [assets, setAssets] = useState(null)
     const [open, setOpen] = useState(null)
-    const [adding, setAdding] = useState(false)
+    const [adding, setAdding] = useState(false)       // false | an asset kind to start from
+    const [only, setOnly] = useState("all")           // all | safe
     const load = () => getJSON("/api/my-assets").then((d) => setAssets(arr(d?.assets)))
     useEffect(() => { load() }, [])
     useEffect(() => { if (initial && assets) setOpen(assets.find((a) => a.id === initial) || null) }, [initial, assets])
@@ -143,18 +190,26 @@ export function MAssets({ onShowOnMap, initial }) {
         <div className="m2-scroll" data-screen-label="Phone assets">
             <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
                 <span className="m2-eyebrow" style={{ flex: 1 }}>What you protect</span>
-                <button className="m2-chip" onClick={() => setAdding(true)}><Icon id="g-plus" size={14} />Add</button>
+                <button className="m2-chip" onClick={() => setAdding("safe_house")} data-testid="m-add-safe-house" style={{ marginRight: 6 }}><Icon id="g-plus" size={14} />Safe house</button>
+                <button className="m2-chip" onClick={() => setAdding("office")}><Icon id="g-plus" size={14} />Add</button>
+            </div>
+            {/* SAFE HOUSES, easy to find */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                <button className="m2-chip" aria-pressed={only === "all"} onClick={() => setOnly("all")} style={only === "all" ? { borderColor: "var(--acchi, #7aa7ff)" } : undefined}>All{assets ? ` · ${assets.length}` : ""}</button>
+                <button className="m2-chip" aria-pressed={only === "safe"} data-testid="m-assets-filter-safe" onClick={() => setOnly("safe")}
+                        style={only === "safe" ? { borderColor: "#2E9E5B", background: "rgba(46,158,91,.2)" } : undefined}>Safe houses{assets ? ` · ${assets.filter(isSafeHouse).length}` : ""}</button>
             </div>
             <div className="m2-card">
                 {assets === null ? <div className="m2-empty">Loading…</div> : assets.length === 0 ? <div className="m2-empty">No assets yet. Register a site, a vessel or a vehicle, and Parallax tells you what happens near it.</div>
-                    : assets.map((a) => {
+                    : only === "safe" && !assets.some(isSafeHouse) ? <div className="m2-empty">No safe house yet. Tap “Safe house” above, or declare a building one when you add it.</div>
+                    : assets.filter((a) => only === "all" || isSafeHouse(a)).map((a) => {
                         const ex = EXPOSURE[a.exposure] || EXPOSURE.unknown
-                        return <Row key={a.id} color={ex[1]} title={a.name} sub={[ex[0], a.kind_label || a.kind, a.top?.title].filter(Boolean).join(" · ")}
+                        return <Row key={a.id} color={ex[1]} title={a.name} sub={[ex[0], a.kind_label || a.kind, isSafeHouse(a) && a.kind !== "safe_house" ? "safe house" : null, a.top?.title].filter(Boolean).join(" · ")}
                             when={a.signal_count ? `${a.signal_count} near` : ""} onClick={() => setOpen(a)} />
                     })}
             </div>
-            {open && <AssetDetail a={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
-            {adding && <AddAsset onClose={() => setAdding(false)} onAdded={load} />}
+            {open && <AssetDetail a={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} onRemoved={load} />}
+            {adding && <AddAsset key={adding} initialKind={adding} onClose={() => setAdding(false)} onAdded={load} />}
         </div>
     )
 }

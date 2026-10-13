@@ -1302,6 +1302,47 @@ export function adaptEndangeredPlace(data = {}) {
     }
 }
 
+// ── Strike / control event (Strikes & control layer) ───────────────────
+/**
+ * One act of force from backend/strike_events.py: what, who, where, when,
+ * every report merged into it (each a Sources link), and the campaign it
+ * belongs to. inspector/StrikeEventDetail.jsx adds the campaign replay.
+ */
+export function adaptStrikeEvent(data = {}) {
+    const what = data.act === "airstrike" && data.weapon_stated === false ? "Strike (weapon not stated)" : (data.act_label || data.act || "Strike")
+    const cas = data.casualties
+    const c = data.campaign
+    const srcs = Array.isArray(data.sources) ? data.sources : []
+    const when = (iso) => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toUTCString().replace(":00 GMT", " UTC") : null }
+    const attributes = compact([
+        attr("Act", what),
+        attr("Actor", data.actor ? [data.actor, data.actor_side && data.actor_side !== data.actor ? `(${data.actor_side})` : null].filter(Boolean).join(" ") : "Not stated"),
+        attr("Target", data.target_name || null),
+        attr("Time", when(data.time)),
+        attr("Last report", data.last_time && data.last_time !== data.time ? when(data.last_time) : null),
+        attr("Casualties", cas ? `${cas.killed || 0} killed, ${cas.injured || 0} injured (as reported)` : null),
+        attr("Unit", data.unit_type || null),
+        attr("Launched from", data.origin_hint || null),
+        attr("Place precision", data.precision === "region" ? "Approximate (region only)" : data.precision === "precise" ? "Precise" : "City"),
+        attr("Campaign", c ? `${c.title} — ${c.count} events, ${String(c.first).slice(0, 10)} to ${String(c.last).slice(0, 10)}` : null),
+        attr("Reports", srcs.length ? srcs.map((s) => `${s.source}: ${s.title}`).join(" · ") : null),
+        attr("Position", fmtCoord(data.lat, data.lon)),
+        ...srcs.filter((s) => s.url).map((s) => attr(`${s.source}${s.time ? ` · ${String(s.time).slice(0, 10)}` : ""}`, s.url)),
+    ])
+    return {
+        identity: {
+            title: data.title || what,
+            subtitle: `${what}${data.actor ? ` · ${data.actor}` : ""}`,
+            entityType: "strike_event",
+            subtype: data.act || null,
+            sanctionsStatus: null,
+        },
+        attributes,
+        provenance: { feed: srcs.map((s) => s.source).filter((v, i, a) => a.indexOf(v) === i).join(", ") || null, ingestedAt: data.time || null },
+        actions: { canJumpToLocation: isFiniteNum(data.lat) && isFiniteNum(data.lon) },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -1332,6 +1373,7 @@ const ADAPTERS = {
     infra_feature: adaptInfraFeature,
     owned_asset: adaptOwnedAsset,
     endangered_place: adaptEndangeredPlace,
+    strike_event: adaptStrikeEvent,
 }
 
 /**

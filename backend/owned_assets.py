@@ -85,10 +85,19 @@ KINDS: dict[str, dict] = {
     # phone, with their consent, moves the asset (live_position below).
     "person":            {"label": "Person",              "group": "People",    "radius": 15,  "moves": True,  "ids": ["user_id"]},
     "team":              {"label": "Team",                "group": "People",    "radius": 20,  "moves": False, "ids": []},
+    # A SAFE HOUSE (owner, 2026-10-12): where an evacuated person is sent
+    # (evacuation.py). Its own fields live in `details` (clean_details).
+    "safe_house":        {"label": "Safe house",          "group": "Safety",    "radius": 5,   "moves": False, "ids": []},
 }
 IMPORTANCE = ("critical", "high", "normal")
 ASSET_MODEL = os.getenv("OPENAI_ASSET_MODEL", "gpt-4o")
-FIELDS = ("name", "kind", "lat", "lon", "radius_km", "country", "importance", "notes", "identifiers", "shared")
+FIELDS = ("name", "kind", "lat", "lon", "radius_km", "country", "importance", "notes", "identifiers", "shared", "details")
+# details of a safe house: capacity (people, optional), occupancy (people
+# there now, optional), status open|closed, contact (who to call, how to get
+# in), allowed_users / allowed_teams (user ids, team ids or company names;
+# both empty: anyone who can see the house may be sent there)
+SAFE_HOUSE_STATUS = ("open", "closed")
+MOBILE_GROUPS = ("Vessels", "Aircraft", "Vehicles", "People")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS owned_assets (
@@ -120,6 +129,9 @@ CREATE TABLE IF NOT EXISTS user_live (
     user_id TEXT PRIMARY KEY, at TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL,
     accuracy_m REAL, source TEXT       -- the latest position, always; user_positions is the thinned history
 );
+CREATE TABLE IF NOT EXISTS live_asset_dismissed (
+    user_id TEXT PRIMARY KEY, at TEXT NOT NULL, by_user TEXT   -- their live asset was deleted: not recreated by itself
+);
 CREATE TABLE IF NOT EXISTS owned_asset_briefs (
     asset_id    TEXT NOT NULL,
     signals_key TEXT NOT NULL,
@@ -142,7 +154,7 @@ def _con(timeout: float = 60):
     con = sqlite3.connect(_db_path(), timeout=timeout)
     con.executescript(DDL)
     cols = {r[1] for r in con.execute("PRAGMA table_info(owned_assets)")}
-    for col, typ in (("address", "TEXT"), ("pos_accuracy_m", "REAL"), ("pos_source", "TEXT")):
+    for col, typ in (("address", "TEXT"), ("pos_accuracy_m", "REAL"), ("pos_source", "TEXT"), ("details", "TEXT")):
         if col not in cols:
             con.execute(f"ALTER TABLE owned_assets ADD COLUMN {col} {typ}")
     if "source" not in {r[1] for r in con.execute("PRAGMA table_info(owned_asset_track)")}:
@@ -204,6 +216,8 @@ def clean(body: dict, partial: bool = False) -> dict:
             out["identifiers"]["icao"] = out["identifiers"]["icao"].lower()
     if "shared" in body:
         out["shared"] = 1 if body.get("shared") else 0
+    if "details" in body:
+        out["details"] = clean_details(body.get("details"))
     if not partial:
         kind = KINDS[out["kind"]]
         has_point = out.get("lat") is not None and out.get("lon") is not None
@@ -213,13 +227,59 @@ def clean(body: dict, partial: bool = False) -> dict:
     return out
 
 
+def clean_details(v) -> dict:
+    """A safe house's own fields, checked (other kinds keep an empty dict)."""
+    v = v if isinstance(v, dict) else {}
+    out: dict = {}
+    # DECLARED A SAFE HOUSE (owner, 2026-10-12: "an option for buildings to be
+    # declarable as safe houses"): any fixed asset — an office, a hotel, a
+    # warehouse — keeps its kind and becomes a destination (is_safe_house)
+    if v.get("safe_house"):
+        out["safe_house"] = True
+    for f in ("capacity", "occupancy"):
+        if v.get(f) not in (None, ""):
+            try:
+                n = int(v[f])
+            except (TypeError, ValueError):
+                raise ValueError(f"{f} is a number of people")
+            if not 0 <= n <= 100000:
+                raise ValueError(f"{f} is between 0 and 100000")
+            out[f] = n
+    st = str(v.get("status") or "open").lower()
+    if st not in SAFE_HOUSE_STATUS:
+        raise ValueError("a safe house is open or closed")
+    out["status"] = st
+    if str(v.get("contact") or "").strip():
+        out["contact"] = " ".join(str(v["contact"]).split())[:500]
+    for f in ("allowed_users", "allowed_teams"):
+        xs = v.get(f) or []
+        if isinstance(xs, str):
+            xs = [x for x in xs.split(",")]
+        out[f] = sorted({str(x).strip() for x in xs if str(x).strip()})[:200]
+    return out
+
+
+def is_safe_house(a: dict) -> bool:
+    """A safe house: of that kind, or a fixed asset declared one (details.safe_house)."""
+    if a.get("kind") == "safe_house":
+        return True
+    k = KINDS.get(a.get("kind"), {})
+    # a building or a site — never a vessel, an aircraft, a vehicle or a person
+    return bool((a.get("details") or {}).get("safe_house")) and k.get("group") not in MOBILE_GROUPS and not k.get("moves")
+
+
 def _row(r: sqlite3.Row) -> dict:
     d = dict(r)
     d["identifiers"] = json.loads(d.get("identifiers") or "{}")
+    try:
+        d["details"] = json.loads(d.get("details") or "{}") or {}
+    except (TypeError, ValueError):
+        d["details"] = {}
     d["shared"] = bool(d.get("shared"))
     k = KINDS.get(d["kind"], {})
     d["kind_label"], d["group"] = k.get("label", d["kind"]), k.get("group", "Other")
     d["radius_km"] = d.get("radius_km") or k.get("radius", 25)
+    d["is_safe_house"] = is_safe_house(d)
     return d
 
 
@@ -261,11 +321,13 @@ def create(user_id: str, body: dict) -> dict:
     d = clean(body)
     aid = f"OA-{uuid.uuid4().hex[:8]}"
     con = _con()
+    if d["kind"] == "safe_house" and "details" not in d:
+        d["details"] = clean_details({})
     con.execute("INSERT INTO owned_assets (id, owner_id, name, kind, identifiers, lat, lon, radius_km, country, address, importance,"
-                " notes, shared, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " notes, shared, details, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (aid, str(user_id), d["name"], d["kind"], json.dumps(d.get("identifiers") or {}), d.get("lat"), d.get("lon"),
                  d.get("radius_km"), d.get("country"), d.get("address"), d.get("importance") or "normal", d.get("notes"), d.get("shared", 0),
-                 _now(), _now()))
+                 json.dumps(d["details"]) if d.get("details") else None, _now(), _now()))
     con.commit(); con.close()
     return get(aid, user_id)
 
@@ -276,6 +338,8 @@ def update(asset_id: str, user_id: str, body: dict) -> dict | None:
         return get(asset_id, user_id)
     if "identifiers" in d:
         d["identifiers"] = json.dumps(d["identifiers"])
+    if "details" in d:
+        d["details"] = json.dumps(d["details"])
     sets = ", ".join(f"{k}=?" for k in d)
     con = _con()
     cur = con.execute(f"UPDATE owned_assets SET {sets}, updated_at=? WHERE id=? AND owner_id=?",
@@ -284,12 +348,43 @@ def update(asset_id: str, user_id: str, body: dict) -> dict | None:
     return get(asset_id, user_id) if cur.rowcount else None
 
 
-def delete(asset_id: str, user_id: str) -> bool:
+def delete(asset_id: str, user_id: str, admin: bool = False) -> bool:
+    """Remove an asset: its owner, or an admin (who may remove anyone's —
+    the automatic "<name> (live)" person assets included).
+
+    A PERSON'S LIVE ASSET DOES NOT COME BACK BY ITSELF (owner, 2026-10-12:
+    "I still can't remove an asset"): the first position of someone with no
+    linked asset creates one (routers/my_assets.live), so deleting the last
+    asset that followed a person would have it recreated at their next fix,
+    seconds later. Deleting it records that person in live_asset_dismissed
+    — for everyone, as the asset was shared with the whole team — and no
+    asset is created for them again until someone links them to an asset
+    on purpose (link_user clears it)."""
     con = _con()
-    cur = con.execute("DELETE FROM owned_assets WHERE id=? AND owner_id=?", (asset_id, str(user_id)))
-    con.execute("DELETE FROM owned_asset_briefs WHERE asset_id=?", (asset_id,))
-    con.commit(); con.close()
-    return cur.rowcount > 0
+    try:
+        r = con.execute("SELECT owner_id, identifiers FROM owned_assets WHERE id=?", (asset_id,)).fetchone()
+        if r is None or not (admin or str(r["owner_id"]) == str(user_id)):
+            return False
+        con.execute("DELETE FROM owned_assets WHERE id=?", (asset_id,))
+        con.execute("DELETE FROM owned_asset_briefs WHERE asset_id=?", (asset_id,))
+        linked = (json.loads(r["identifiers"] or "{}") or {}).get("user_id")
+        if linked and not con.execute("SELECT 1 FROM owned_assets WHERE json_extract(identifiers, '$.user_id') = ? LIMIT 1",
+                                      (str(linked),)).fetchone():
+            con.execute("INSERT OR REPLACE INTO live_asset_dismissed (user_id, at, by_user) VALUES (?,?,?)",
+                        (str(linked), _now(), str(user_id)))
+        con.commit()
+    finally:
+        con.close()
+    return True
+
+
+def live_asset_dismissed(user_id: str) -> bool:
+    """Was this person's live asset deleted (and not linked again since)?"""
+    con = _con()
+    try:
+        return con.execute("SELECT 1 FROM live_asset_dismissed WHERE user_id=?", (str(user_id),)).fetchone() is not None
+    finally:
+        con.close()
 
 
 # ── people who share where they are ──────────────────────────────────────
@@ -363,6 +458,7 @@ def link_user(asset_id: str, user_id: str | None, now: _dt.datetime | None = Non
         ids = json.loads(r[0] or "{}")
         if user_id:
             ids["user_id"] = str(user_id)
+            con.execute("DELETE FROM live_asset_dismissed WHERE user_id=?", (str(user_id),))
         else:
             ids.pop("user_id", None)
         con.execute("UPDATE owned_assets SET identifiers=? WHERE id=?", (json.dumps(ids), asset_id))

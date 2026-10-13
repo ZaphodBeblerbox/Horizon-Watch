@@ -166,6 +166,10 @@ export const SUB_LAYERS = [
     { key: "gdelt",           label: "Unconfirmed (wire)",       parent: "news" },
     { key: "telegram",        label: "Telegram",                 parent: "news" },
     { key: "unrest",          label: "Unrest & protests",        parent: "news" },
+    // Strikes, bombings, assaults and ground taken, read out of the same
+    // reporting (globe/GlobeStrikesLayer.jsx) — so it lives, and switches
+    // off, with News rather than as a group of its own.
+    { key: "strikes",         label: "Strikes & control",        parent: "news" },
     { key: "airspace",        label: "Controlled airspace",      parent: null },
     { key: "gfw:encounters",  label: "Vessel encounters",        parent: null },
     { key: "gfw:gaps",        label: "AIS gaps",                 parent: null },
@@ -177,7 +181,7 @@ export const SUB_LAYERS = [
 /** The sub-layers a group brings with it when it is first chosen. */
 export const DEFAULT_SUBS = {
     imagery: ["imagerySignals"],
-    news: ["geoConfirmed", "gdelt", "telegram", "unrest"],
+    news: ["geoConfirmed", "gdelt", "telegram", "unrest", "strikes"],
     air: [],
 }
 

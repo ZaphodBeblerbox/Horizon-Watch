@@ -429,6 +429,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // The team's live locations (GlobeTeamLayer, pushed as they move): on —
     // their own switch, so a desk that hides the register still sees its people.
     const [teamOn, setTeamOn] = useState(true)
+    // Our safe houses (GlobeSafeHousesLayer): on — where an evacuation leads.
+    const [safeHousesOn, setSafeHousesOn] = useState(true)
     // Places public calls name for blockades and other actions
     // (GlobeEndangeredPlacesLayer): on by default while a call is within 7 days.
     const [endangeredOn, setEndangeredOn] = useState(() => endangeredDefaultOn())
@@ -1433,7 +1435,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     onSaveCurrent={(name) => { saveCurrentAsView(name).catch(() => toast("Could not save view", { icon: "i-alert" })) }}
                 />
 
-                <LayerGroup id="our-assets" title="Our assets" activeCount={(assetsOn ? 1 : 0) + (teamOn ? 1 : 0)}>
+                <LayerGroup id="our-assets" title="Our assets" activeCount={(assetsOn ? 1 : 0) + (teamOn ? 1 : 0) + (safeHousesOn ? 1 : 0)}>
                     <SubLayerRow
                         label="Assets in the register"
                         hint="Your vessels, aircraft, sites and people, each ringed in how exposed it is now, with its watch radius close in. A click opens it."
@@ -1444,6 +1446,11 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         hint="Your team, and people linked to your assets, where their phones are now — pushed as they move, with how fresh each position is."
                         on={teamOn} parentOn={true}
                         onToggle={() => setTeamOn((v) => !v)} />
+                    <SubLayerRow
+                        label="Safe houses"
+                        hint="Where an evacuation leads: your safe houses, green when open, grey when closed, with the places free."
+                        on={safeHousesOn} parentOn={true}
+                        onToggle={() => setSafeHousesOn((v) => !v)} />
                 </LayerGroup>
 
 
@@ -2102,6 +2109,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         endangeredEnabled={endangeredOn}
                         assetsEnabled={!asCanvas && assetsOn}
                         teamEnabled={!asCanvas && teamOn}
+                        safeHousesEnabled={!asCanvas && safeHousesOn}
                         nauticalEnabled={infraOnV.nautical}
                         eezEnabled={groupsOnV.zones}
                         aoisEnabled={contextOnV.aois}

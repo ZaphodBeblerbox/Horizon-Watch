@@ -276,6 +276,9 @@ async def saved(plan_id: str, request: Request, replan: bool = False, lat: float
     row = await asyncio.to_thread(rp.get, plan_id)
     if not row or not rp.visible(row, user):
         raise HTTPException(404, "no such plan")
+    if (row["plan"] or {}).get("kind") == "evacuation":
+        import evacuation                                    # a multi-leg evacuation: its own re-check
+        return await evacuation.recheck(row, user, replan)
     plan = row["plan"] or {}
     o = plan.get("origin") or row["origin"]
     hz = await asyncio.to_thread(sr.hazards_near, o["lat"], o["lon"], sr.HAZARD_SEARCH_KM, None, plan.get("providers"))

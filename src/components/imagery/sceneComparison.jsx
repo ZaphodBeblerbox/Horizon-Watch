@@ -17,7 +17,7 @@
 // real, selectable, persisted choices (an analyst's stated intent is never
 // silently dropped), but a real scan attempt against one of them is
 // honestly rejected server-side.
-import { DET_COLORS } from "../../destinations/imageryModel.js"
+import { classColor, classLabel, kindDash } from "../../destinations/imageryModel.js"
 import { useRef, useState } from "react"
 import ZoomPanViewer, { DetectionArrow, useViewerScale, useViewerView } from "./ZoomPanViewer.jsx"
 import { IDENTITY } from "./viewportMath.js"
@@ -146,8 +146,10 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
         h: scale * b[3] * imgH,
     })
     // A finding of the automatic watch (lib/findings.js) brings its own
-    // colour and caption — red: appeared, amber: went or changed.
-    const strokeFor = (c) => c.color || DET_COLORS[c.type] || DET_COLORS.existing
+    // colour and caption — red: appeared, amber: went or changed. A
+    // detection is coloured by its CLASS (imageryModel.CLASS_COLORS); what
+    // changed since the last pass is the line style (kindDash).
+    const strokeFor = (c) => c.color || classColor(c.object_type || c.label)
 
     // A caption earns its place by on-screen size; on a dense scene every
     // box carrying one is an unreadable mass over the imagery. A finding is
@@ -163,15 +165,18 @@ export function ScreenBoxes({ changes, selectedDet, onSelectDet, arrowFor, arrow
                 if (r.x + r.w < 0 || r.y + r.h < 0 || r.x > frameW || r.y > frameH) return null
                 const isSel = selectedDet?.id === c.id
                 const w = Math.max(r.w, 3), h = Math.max(r.h, 3)
-                const name = c.caption || `${String(c.label || "").replace(/_/g, " ")} · ${Math.round(c.conf * 100)}%`
+                const name = c.caption || `${classLabel(c.object_type || c.label)} · ${Math.round(c.conf * 100)}%`
                 const shape = {
                     // A finding's box is left clear: what is inside it is the
                     // thing to look at (a tint hid the radar returns themselves).
                     fill: isSel && c.type !== "finding" ? "rgba(0,229,255,0.18)" : "transparent",
-                    stroke: c.doubtful ? "#B8BCC6" : strokeFor(c), strokeWidth: isSel ? 2.6 : 2,
+                    stroke: strokeFor(c), strokeWidth: isSel ? 2.6 : 2,
+                    // There before: the class colour, quieter than what is new.
+                    strokeOpacity: c.type === "existing" && !isSel ? 0.7 : 1,
                     // Dashed: gone since the last pass, doubted by the imagery
-                    // note, or found by only one of the two models.
-                    strokeDasharray: c.type === "removed" || c.doubtful || c.estimate ? "4 3" : c.tier === "probable" ? "2 2" : undefined,
+                    // note, or a finding's estimated extent; dotted: found by
+                    // only one of the two models.
+                    strokeDasharray: c.type === "finding" ? (c.estimate ? "4 3" : undefined) : kindDash(c) || undefined,
                     style: { pointerEvents: "auto", cursor: "pointer" },
                     onClick: (e) => { e.stopPropagation(); onSelectDet && onSelectDet(c) },
                 }

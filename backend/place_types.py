@@ -69,6 +69,7 @@ MODEL_LABEL = {
     "city": "City or area (no precise place)",
     "generic_building": "Building",
     "rally": "Outdoor gathering",
+    "safe_house": "Safe house",
 }
 MODEL_TYPES = tuple(MODEL_LABEL)
 

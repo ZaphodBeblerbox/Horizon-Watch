@@ -13,6 +13,8 @@ const GLYPH = {
     Energy: "M13 2L5 13h6l-1 9 8-11h-6z",
     Transport: "M4 20h16M6 20V12h12v8M9 12V7h6v5M12 7V3",
     People: "M12 4a3.2 3.2 0 100 6.4A3.2 3.2 0 0012 4zM5 20c.8-4 3.6-6 7-6s6.2 2 7 6",
+    // a safe house: a house with a check mark
+    Safety: "M3 11l9-7 9 7M5 9.5V20h14V9.5M8.8 14.2l2.3 2.3 4.2-4.6",
 }
 
 export default function AssetFigure({ group, size = 40, color = "var(--acchi)" }) {

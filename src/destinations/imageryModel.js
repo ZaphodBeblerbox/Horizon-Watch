@@ -12,12 +12,103 @@
  *  read over water, desert and city at a glance, each drawn over a dark halo. */
 export const DET_COLORS = { new: "#FFB300", removed: "#FF3B30", existing: "#00E5FF", expanded: "#FFB300", unconfirmed: "#B8BCC6" }
 
+/**
+ * WHAT A DETECTION IS, BY COLOUR (owner, 2026-10-13: "the detector reports
+ * dark fields and runways as smoke plumes"). Every detection now carries a
+ * class, and the class is the outline's colour wherever imagery detections
+ * are drawn; the change against the last pass (new / gone / there before /
+ * one model only) is the line's style. Chosen to stay apart over desert,
+ * water, city and fields, each drawn over a dark halo.
+ */
+export const CLASS_COLORS = {
+    active_fire: "#FF2D2D",          // red
+    burn_scar: "#FF8A00",            // orange
+    smoke_plume: "#E6E9EF",          // pale smoke grey
+    runway: "#FFE600",               // yellow
+    airfield: "#A66BFF",             // violet
+    port_infrastructure: "#4D8DFF",  // blue
+    storage_tank: "#FF4FD8",         // magenta
+    aircraft: "#76FF03",             // lime
+    vessel: "#00E5FF",               // cyan
+    // the rest: muted, so the classes above stand out
+    vehicle: "#C9B48F", bridge: "#9FC79A", structural_change: "#D9A0A0",
+    recreation: "#9DB9CC", road_feature: "#B3AC93",
+}
+const DEFAULT_CLASS_COLOR = "#B8BCC6"
+
+export const CLASS_LABELS = {
+    smoke_plume: "Smoke plume", burn_scar: "Burn scar / impact point", active_fire: "Active fire",
+    runway: "Runway / landing strip", airfield: "Airfield", port_infrastructure: "Port infrastructure",
+    storage_tank: "Storage tank", aircraft: "Aircraft", vessel: "Vessel", vehicle: "Vehicle",
+    bridge: "Bridge", structural_change: "Structural change", recreation: "Recreation ground",
+    road_feature: "Road feature", cloud: "Cloud", cloud_shadow: "Cloud shadow", field_change: "Field change",
+    field: "Field", other: "Other",
+}
+
+/** Not findings: the classifier names them so they can be set aside, and an
+ *  analyst can answer with them — they are never drawn as detections. */
+export const NON_FINDING_CLASSES = new Set(["cloud", "cloud_shadow", "field_change"])
+
+const classOf = (d) => (d && typeof d === "object" ? d.object_type || d.label : d)
+export const classColor = (type) => CLASS_COLORS[type] || DEFAULT_CLASS_COLOR
+export const classLabel = (type) => CLASS_LABELS[type]
+    || (type ? String(type).replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : "Object")
+/** Is this detection (or class) a finding worth drawing? */
+export const isFindingClass = (d) => !NON_FINDING_CLASSES.has(classOf(d))
+export const findingDetections = (list) => (list || []).filter(isFindingClass)
+
+/** The answers an analyst can give to "Not this — it's:". */
+export const FEEDBACK_CLASSES = [
+    { key: "field", label: "Field" }, { key: "runway", label: "Runway" }, { key: "cloud", label: "Cloud" },
+    { key: "cloud_shadow", label: "Shadow" }, { key: "port_infrastructure", label: "Port" },
+    { key: "smoke_plume", label: "Smoke" }, { key: "burn_scar", label: "Burn scar" }, { key: "other", label: "Other" },
+]
+export const feedbackLabel = (key) => FEEDBACK_CLASSES.find((c) => c.key === key)?.label || classLabel(key)
+
+/** The classes present in a pass, in legend order (most first). */
+export function legendClasses(changes) {
+    const n = new Map()
+    for (const c of changes || []) {
+        const t = classOf(c)
+        if (!t || c?.type === "finding" || !isFindingClass(t)) continue
+        n.set(t, (n.get(t) || 0) + 1)
+    }
+    return [...n.entries()].sort((a, b) => b[1] - a[1])
+        .map(([key, count]) => ({ key, count, label: classLabel(key), color: classColor(key) }))
+}
+
+/** The change against the last pass, as a line style (SVG dash array; null = solid). */
+export function kindDash(c) {
+    if (c?.type === "removed" || c?.doubtful) return "6 4"
+    if (c?.type === "unconfirmed" || c?.tier === "probable") return "2 3"
+    return null
+}
+
+/** Classifier detail from a detection's attributes (object or JSON string),
+ *  or from the same fields on the row itself. */
+export function classDetail(d) {
+    let a = d?.attributes
+    if (typeof a === "string") { try { a = JSON.parse(a) } catch { a = null } }
+    a = a && typeof a === "object" ? a : {}
+    const pick = (k) => a[k] ?? d?.[k] ?? null
+    const conf = Number(pick("class_confidence"))
+    const reasons = pick("reasons")
+    return {
+        classConfidence: Number.isFinite(conf) && pick("class_confidence") !== null ? conf : null,
+        classifier: pick("classifier"),
+        reasons: Array.isArray(reasons) ? reasons.filter((r) => r && r.text) : [],
+        description: pick("description"),
+        tier: pick("tier"),
+    }
+}
+
 const SINGULAR = {
     storage_tank: ["storage tank", "storage tanks"], vessel: ["vessel", "vessels"],
     port_infrastructure: ["port structure", "port structures"], aircraft: ["aircraft", "aircraft"],
     vehicle: ["vehicle", "vehicles"], bridge: ["bridge", "bridges"], airfield: ["airfield", "airfields"],
     helicopter: ["helicopter", "helicopters"], large_vehicle: ["large vehicle", "large vehicles"],
     smoke_plume: ["smoke plume", "smoke plumes"], active_fire: ["active fire", "active fires"],
+    runway: ["runway", "runways"], burn_scar: ["burn scar", "burn scars"],
 }
 export function noun(label, n) {
     const [one, many] = SINGULAR[label] || [String(label || "object").replace(/_/g, " "), `${String(label || "object").replace(/_/g, " ")}s`]

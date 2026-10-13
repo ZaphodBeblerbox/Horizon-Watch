@@ -4,8 +4,18 @@
  * asset in focus, and AssetThumb for lists (browsers allow ~16 live views).
  */
 import { useEffect, useRef } from "react"
+import PlaceModel from "./PlaceModel.jsx"
+
+// KINDS DRAWN BY A GENERATED .glb (tools/make_place_models.py), not three/index.js:
+// the safe house (owner, 2026-10-12: "a new 3D model for a safe house")
+const GLB_KINDS = { safe_house: "safe_house" }
 
 export default function AssetModel({ kind, height = 420, autoRotate = true }) {
+    if (GLB_KINDS[kind]) return <PlaceModel place={{ model_type: GLB_KINDS[kind] }} height={height} label={false} radius={0} />
+    return <ProceduralModel kind={kind} height={height} autoRotate={autoRotate} />
+}
+
+function ProceduralModel({ kind, height, autoRotate }) {
     const box = useRef(null)
     useEffect(() => {
         const el = box.current

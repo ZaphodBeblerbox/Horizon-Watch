@@ -12,7 +12,8 @@
  */
 import { useEffect, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
-import { DET_COLORS, fmtDay } from "../destinations/imageryModel.js"
+import { findingDetections, fmtDay } from "../destinations/imageryModel.js"
+import { ClassLegend, KindLegend } from "./imagery/DetectionLegend.jsx"
 
 const BTN = {
     height: 24, padding: "0 9px", border: "1px solid var(--gline2)", background: "transparent",
@@ -25,7 +26,7 @@ export const MAP_SCENE_UI = { compare: null, split: 0.5, alpha: 1, outlines: tru
 export function mapSceneOverlay(scene, ui) {
     if (!scene) return null
     const other = ui.compare === "before" ? scene.before : ui.compare === "hires" ? scene.hires : null
-    const shown = (scene.changes || []).filter((c) => c.geo_geometry
+    const shown = findingDetections(scene.changes).filter((c) => c.geo_geometry
         && (!ui.changesOnly || c.type === "new" || c.type === "removed"))
     return {
         image_b64: scene.after.b64, bounds: scene.bounds, alpha: ui.alpha,
@@ -124,11 +125,9 @@ export default function MapSceneCard({ scene, ui, onUi, onClose, onScene }) {
                         onChange={(e) => set("alpha", Number(e.target.value))} style={{ width: 64, accentColor: "var(--acchi)" }} />
                 </label>
             </div>
-            <span style={{ display: "flex", gap: 10, fontSize: 10.5, color: "var(--txt3)" }}>
-                <span><i style={{ display: "inline-block", width: 10, borderTop: `2px solid ${DET_COLORS.new}`, marginRight: 4, verticalAlign: "middle" }} />new</span>
-                <span><i style={{ display: "inline-block", width: 10, borderTop: `2px dashed ${DET_COLORS.removed}`, marginRight: 4, verticalAlign: "middle" }} />gone</span>
-                <span><i style={{ display: "inline-block", width: 10, borderTop: `2px solid ${DET_COLORS.existing}`, marginRight: 4, verticalAlign: "middle" }} />there before</span>
-            </span>
+            {/* Colour is the class (only those in this pass); the line, what changed. */}
+            <ClassLegend size={10.5} changes={findingDetections(scene.changes).filter((c) => !ui.changesOnly || c.type === "new" || c.type === "removed")} />
+            <KindLegend size={10.5} kinds={["new", "existing", "removed"]} />
         </div>
     )
 }

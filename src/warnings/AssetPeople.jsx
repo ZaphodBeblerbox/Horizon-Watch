@@ -11,6 +11,7 @@
  *   alarm until they acknowledge (warnings/WarningTakeover.jsx); here, what
  *   was sent and whether it was seen and acknowledged.
  */
+import { confirmAction } from "../ui/confirm.js"
 import { useEffect, useMemo, useState } from "react"
 import { getCurrentUser } from "../state/authStore.js"
 import { useFreshness, useLiveAsset, useStream } from "../location/useLivePositions.js"
@@ -189,7 +190,9 @@ export default function AssetPeople({ asset, variant = "desktop", onChanged }) {
         try { setLink(await linkUser(asset.id, u.id)); setPicking(false); onChanged?.() } catch (e) { setErr(e.message) }
     }
     const unlink = async () => {
-        if (!window.confirm(`Unlink ${linked?.name}? ${asset.name} stays where it was last seen and no longer follows their phone.`)) return
+        // our own dialog: window.confirm shows nothing in the desktop app (Tauri)
+        if (!(await confirmAction({ title: `Unlink ${linked?.name || "this person"}?`, confirm: "Unlink", danger: true,
+                                    message: `${asset.name} stays where it was last seen and no longer follows their phone.` }))) return
         try { setLink(await unlinkUser(asset.id)); onChanged?.() } catch (e) { setErr(e.message) }
     }
 

@@ -18,6 +18,7 @@
  * them, everything else is culled to the viewport here, each layer is
  * capped, and any failure is an empty list.
  */
+import { safeHouseIcon, placesLabel } from "../evacuation/safeHouseIcon.js"
 import API_BASE from "../apiBase.js"
 import { myPosition } from "../location/liveShare.js"
 import { getCurrentUser } from "../state/authStore.js"
@@ -655,7 +656,8 @@ export function forgetAssets() {
 async function loadAssets({ bounds }) {
     const d = await getJson(`${API_BASE}/api/my-assets`)
     const me = myPosition(), uid = getCurrentUser()?.id
-    const rows = arr(d?.assets).map((a) => ({ ...a, position: atMyLivePosition(a, me, uid) })).filter((a) => a.position)
+    // safe houses are their own layer ("Safe houses", loadSafeHouses), with their own pin
+    const rows = arr(d?.assets).filter((a) => a.kind !== "safe_house" && !a.is_safe_house).map((a) => ({ ...a, position: atMyLivePosition(a, me, uid) })).filter((a) => a.position)
     return cullPoints(rows.map((a) => ({
         id: `asset-${a.id}`,
         lat: num(a.position.lat), lon: num(a.position.lon),
@@ -667,6 +669,19 @@ async function loadAssets({ bounds }) {
         sub: [a.type_label || a.kind_label || a.group, a.exposure ? `${a.exposure} exposure` : null].filter(Boolean).join(" · ") || null,
         severity: a.exposure || null,
         raw: a,
+    })), normBounds(bounds))
+}
+
+// ── Safe houses (backend/evacuation.py) — where an evacuation leads ──────
+async function loadSafeHouses({ bounds }) {
+    const d = await getJson(`${API_BASE}/api/evacuations/safe-houses`, { ttlMs: 60_000 })
+    return cullPoints(arr(d?.safe_houses).filter((h) => h.lat != null).map((h) => ({
+        id: `safehouse-${h.id}`, lat: num(h.lat), lon: num(h.lon),
+        iconUri: safeHouseIcon(h.status === "closed"), size: 32, iconWidth: 30, iconHeight: 35, iconAnchor: [15, 35],
+        title: `Safe house — ${h.name}`,
+        sub: [h.status === "closed" ? "closed" : `open${placesLabel(h)}`, h.contact].filter(Boolean).join(" · "),
+        severity: null,
+        raw: { ...h, kind: "safe_house", headline: `Safe house — ${h.name}`, summary: h.contact || h.notes || null },
     })), normBounds(bounds))
 }
 
@@ -1127,6 +1142,10 @@ export const PHONE_LAYERS = [
     {
         key: "people", label: "Team, live location", group: G.assets, defaultOn: true, kind: "points", minZoom: 0,
         legendIcon: personIcon(true, false), load: loadPeople,
+    },
+    {
+        key: "safeHouses", label: "Safe houses", group: G.assets, defaultOn: true, kind: "points", minZoom: 0,
+        legendIcon: safeHouseIcon(false), load: loadSafeHouses,
     },
 
     // Maritime (LAYER_GROUPS.maritime; live vessels are the phone's own).
