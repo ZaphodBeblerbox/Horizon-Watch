@@ -264,3 +264,9 @@ def test_the_http_endpoints(monkeypatch, db):
     assert c.get("/api/routes/air/airports", params={"q": "dubai"}).json()["airports"][0]["icao"] == "OMDB"
     monkeypatch.setattr(rr, "_live", lambda icao: None)
     assert c.get("/api/routes/air/context", params={"icao": "abcdef"}).json()["relevant"] is False
+
+
+def test_countries_with_minus_99_codes_are_resolved_by_name():
+    # Natural Earth gives France, Norway and Kosovo as "-99"; Paris, Oslo and
+    # Pristina must still fall in a country.
+    assert ar.country_of([48.85, 59.91, 42.66], [2.35, 10.75, 21.16]) == ["FRA", "NOR", "XKX"]

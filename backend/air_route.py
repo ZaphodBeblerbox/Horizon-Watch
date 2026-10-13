@@ -193,6 +193,11 @@ _LOCK = threading.Lock()
 _HAZ_CACHE: dict = {}
 
 
+# geo/countries.geojson gives France, Norway and Kosovo as "-99" (Natural
+# Earth); their codes are put back by name, as in evacuation.py.
+_ISO_FIX = {"France": "FRA", "Norway": "NOR", "Kosovo": "XKX"}
+
+
 def countries() -> dict:
     """ISO3 → {name, geom} (simplified a little), loaded once."""
     global _COUNTRIES, _COUNTRY_TREE
@@ -202,6 +207,8 @@ def countries() -> dict:
         for f in d.get("features") or []:
             p = f.get("properties") or {}
             iso = p.get("ISO3166-1-Alpha-3")
+            if iso in (None, "-99"):
+                iso = _ISO_FIX.get(p.get("name"))
             try:
                 g = shape(f["geometry"]).buffer(0)
             except Exception:                                # noqa: BLE001
