@@ -192,7 +192,7 @@ def test_overlay_reads_synthetic_file(tmp_path, monkeypatch):
     monkeypatch.setenv("FRONTLINE_CLAIMS_SYNTHETIC", str(p))
     d = fc.overlay(24, now=time.time())
     assert d["synthetic"] is True
-    assert d["trajectories"] and d["trajectories"][0]["synthetic"] is True
+    assert any(t.get("synthetic") is True and t["event_id"] == "s1" for t in d["trajectories"])
 
 
 def test_ukrainian_drone_into_russia_from_ukrainian_held_ground():

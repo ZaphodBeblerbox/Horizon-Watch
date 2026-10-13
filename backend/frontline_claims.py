@@ -713,7 +713,9 @@ def build_claims(events: list[dict], now: float | None = None, occ=None, dis=Non
 
 # ── 2. movements ─────────────────────────────────────────────────────────
 
-MOVEMENT_ACTS = ("control_change", "assault", "airstrike", "shelling", "naval")
+# Ground troops only (owner, 2026-10-13): an air, artillery, naval or drone
+# strike is not a troop movement; those are strikes and trajectories.
+MOVEMENT_ACTS = ("control_change", "assault")
 ARROW_MAX_KM = {"control_change": 25.0, "assault": 25.0, "shelling": 30.0, "airstrike": 60.0, "naval": 60.0,
                 "drone": 15.0}
 ARROW_MIN_KM = 4.0
@@ -771,21 +773,10 @@ def build_movements(events: list[dict], claims: list[dict], occ=None) -> list[di
         except Exception:                                   # noqa: BLE001
             continue
         theatre, side = theatre_and_side(ev)
-        if act == "drone" and ev.get("unit_type") and is_tactical_drone(ev, theatre, occ):
-            pass                                            # a named drone unit on the front: its symbol
-        elif act not in MOVEMENT_ACTS:
+        if act not in MOVEMENT_ACTS:
             continue
         if not theatre or side == "unknown":
             continue            # an arrow needs a front and a side to come from
-        if act not in ("control_change", "assault") and self_target(ev, theatre, side, occ):
-            continue
-        if act in ("airstrike", "shelling", "naval") and theatre == "ukraine" and occ is not None:
-            try:
-                own = held_ground(occ).get(side)
-                if own is not None and haversine_km(_nearest_on(own, lat, lon), (lat, lon)) > FRONT_ADJACENT_KM:
-                    continue    # a deep strike is a trajectory question, not a troop movement
-            except Exception:                               # noqa: BLE001
-                pass
         start, basis = _approach_start(ev, theatre, side, lat, lon, claims, occ)
         unit = ev.get("unit_type") or {"airstrike": "air force", "shelling": "artillery", "naval": "naval",
                                        "drone": "drones"}.get(act)
