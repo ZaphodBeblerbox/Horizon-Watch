@@ -164,3 +164,10 @@ def test_gdelt_is_not_on_the_map_unless_asked(monkeypatch):
     assert se.collect(since) == [] and calls == []
     monkeypatch.setenv("STRIKES_GDELT", "1")
     assert se.collect(since) == [{"rid": "gd:x"}] and len(calls) == 1
+
+
+def test_map_entity_ids_of_sources():
+    import strike_events as se
+    assert se.map_entity_id("tg:rybar:1234") == "tg-rybar-1234"
+    assert se.map_entity_id("gc:abc-1") == "geoconfirmed-abc-1"
+    assert se.map_entity_id("al:ALT-1") is None

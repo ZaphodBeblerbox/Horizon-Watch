@@ -232,3 +232,20 @@ export function strikesUrl(base, { bbox = null, since = "30d" } = {}) {
     if (bbox) q.set("bbox", bbox.map((v) => Number(v).toFixed(2)).join(","))
     return `${base}/api/strikes?${q}`
 }
+
+// ── reports a strike pin stands for ─────────────────────────────────────
+// The Telegram posts and GeoConfirmed placemarks behind the strike pins on
+// the map (the server's `covers`). Their own markers give way to the pin
+// (owner, 2026-10-13); their videos and photos open from the pin's card.
+let _covered = new Set()
+const _coveredSubs = new Set()
+export function coveredIds() { return _covered }
+export function setCoveredIds(ids) {
+    const next = new Set(ids)
+    if (next.size === _covered.size && [...next].every((x) => _covered.has(x))) return
+    _covered = next
+    _coveredSubs.forEach((fn) => fn(_covered))
+}
+export function subscribeCovered(fn) { _coveredSubs.add(fn); return () => _coveredSubs.delete(fn) }
+/** The ids the strike events cover, for a set of events. */
+export const coversOf = (events) => (events || []).flatMap((e) => e?.covers || [])

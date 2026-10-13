@@ -30,7 +30,7 @@ import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import {
     actorColor, filterStrikes, isHollow, strikeIconDims, strikeIconUri, strikeOpacity, strikeSize, strikesUrl,
-    dayLabel, strikeWindowHours,
+    dayLabel, strikeWindowHours, setCoveredIds, coversOf,
 } from "./strikes.js"
 import { useStrikeSettings } from "./useStrikeSettings.js"
 
@@ -111,6 +111,12 @@ export default function GlobeStrikesLayer({ enabled = false, at = null }) {
         }
         return filterStrikes(events, { acts, atMs, windowHours })
     }, [events, acts, atMs, windowHours, replay])
+
+    // the reports these pins stand for: their own markers give way
+    useEffect(() => {
+        setCoveredIds(enabled ? coversOf(shown) : [])
+        return () => setCoveredIds([])
+    }, [enabled, shown])
 
     const byCampaign = useMemo(() => Object.fromEntries(campaigns.map((c) => [c.id, c])), [campaigns])
 

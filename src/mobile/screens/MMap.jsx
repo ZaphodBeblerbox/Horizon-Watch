@@ -304,10 +304,14 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const tap = (f, l) => () => setOpen({ ...(f.raw || {}), headline: f.title || l.label, title: f.title || l.label, location: f.sub,
                                                severity_tier: f.severity || f.raw?.severity_tier, lat: f.lat ?? f.raw?.lat, lon: f.lon ?? f.raw?.lon })
         const order = { areas: 0, lines: 1, points: 2 }
+        // Telegram posts and GeoConfirmed placemarks a strike pin stands for
+        // are drawn as that pin (globe/strikes.js covers)
+        const covered = new Set(on.strikes ? (feats.strikes || []).flatMap((f) => f.raw?.covers || []) : [])
         for (const l of [...PHONE_LAYERS].sort((a, c) => order[a.kind] - order[c.kind])) {
             if (!on[l.key] || l.key === "people") continue                // the team: live markers
             for (const f of feats[l.key] || []) {
                 if (l.key === "assets" && liveAssets.has(f.raw?.id)) continue    // moved by a phone: a live marker
+                if ((l.key === "telegram" || l.key === "geoConfirmed") && covered.has(f.id)) continue
                 // A PERSON'S OWN "(live)" ASSET is that person: drawn once, as the
                 // person (the blue dot for you, the team marker for others), never twice
                 if (l.key === "assets" && f.raw?.kind === "person" && f.raw?.identifiers?.user_id && on.people) continue

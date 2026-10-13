@@ -12,12 +12,15 @@ import { Entity } from "resium"
 import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
+import { useCoveredIds } from "./useStrikeSettings.js"
 import { getGeoConfirmedMarkerDataUri, GEOCONFIRMED_MARKER_SIZE, MARKER_MAX_CAMERA_M } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
 const MARKER_SIZE = GEOCONFIRMED_MARKER_SIZE
 
 export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 30, theatres = null, endDate = null }) {
+    // placemarks a strike pin stands for are drawn as that pin (strikes.js)
+    const covered = useCoveredIds()
     const [placemarks, setPlacemarks] = useState([])
     // Real, stable cache keys — theatres is a fresh array reference on every
     // parent render even when its contents are unchanged, which would
@@ -82,6 +85,7 @@ export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 3
                 // currently unreachable, but the cheap fix keeps this layer
                 // safe against that assumption ever changing.
                 if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return null
+                if (covered.has(`geoconfirmed-${p.id}`)) return null
                 return (
                     <Entity
                         id={`geoconfirmed-${p.id}`}

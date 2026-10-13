@@ -6,6 +6,7 @@
  * the adapter's (adapters.js adaptStrikeEvent), sources as links.
  */
 import { actorColor, isHollow, strikeIconUri, strikeSummary, actLabel, dayLabel } from "../globe/strikes.js"
+import StrikeSourceMedia from "./StrikeSourceMedia.jsx"
 
 export default function StrikeEventDetail({ event }) {
     const e = event || {}
@@ -17,6 +18,7 @@ export default function StrikeEventDetail({ event }) {
                 <img src={strikeIconUri({ act: e.act, color, size: 34, hollow: isHollow(e) })} width={34} height={40} alt={actLabel(e.act)} />
                 <div style={{ fontSize: "var(--text-sm, 13px)", lineHeight: 1.45, color: "var(--txt)" }}>{strikeSummary(e)}</div>
             </div>
+            <StrikeSourceMedia event={e} maxHeight="60vh" />
             {c && (
                 <div style={{ border: `1px solid ${color}55`, background: `${color}12`, borderRadius: 8, padding: "9px 11px",
                               fontSize: "var(--text-sm, 13px)", lineHeight: 1.45 }}>

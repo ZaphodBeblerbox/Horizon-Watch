@@ -509,7 +509,7 @@ def to_report(raw: dict) -> dict | None:
         "act": act, "weapon_stated": stated, "actor": actor, "actor_from": actor_from,
         "target_name": raw.get("place") or "", "lat": lat, "lon": lon, "precision": prec,
         "ts": ts, "casualties": cas, "unit_type": unit_type(text), "origin_hint": origin_hint(text, act),
-        "country": raw.get("country"),
+        "country": raw.get("country"), "post": raw.get("post"),
     }
 
 
@@ -543,6 +543,16 @@ def merge(reports: list[dict], now: float | None = None) -> list[dict]:
     return out
 
 
+def map_entity_id(rid: str) -> str | None:
+    """The map's id for a source report: tg:chan:msg -> tg-chan-msg, gc:id -> geoconfirmed-id."""
+    if rid.startswith("tg:"):
+        chan, _, msg = rid[3:].rpartition(":")
+        return f"tg-{chan}-{msg}"
+    if rid.startswith("gc:"):
+        return f"geoconfirmed-{rid[3:]}"
+    return None
+
+
 def _event_from(act: str, members: list[dict], now: float) -> dict:
     # the point: the most precise report; the words: the longest title
     best = max(members, key=lambda r: (_PREC_RANK.get(r["precision"], 0), r["source"] == "GeoConfirmed"))
@@ -565,7 +575,11 @@ def _event_from(act: str, members: list[dict], now: float) -> dict:
         "target_name": best["target_name"], "lat": best["lat"], "lon": best["lon"],
         "precision": best["precision"], "country": best.get("country"),
         "time": _iso(t0), "last_time": _iso(t1), "title": head["title"],
-        "sources": [{"source": r["source"], "title": r["title"], "url": r["url"], "time": _iso(r["ts"])} for r in srcs][:12],
+        "sources": [{"source": r["source"], "title": r["title"], "url": r["url"], "time": _iso(r["ts"]),
+                     "entity_id": map_entity_id(r["rid"]), "post": r.get("post")} for r in srcs][:12],
+        # the Telegram posts and GeoConfirmed placemarks this event stands for:
+        # their own markers give way to it on the map (owner, 2026-10-13)
+        "covers": [e for e in (map_entity_id(r["rid"]) for r in members) if e],
         "source_count": len(members),
         "casualties": {"killed": killed, "injured": injured} if (killed or injured) else None,
         "unit_type": next((r["unit_type"] for r in members if r["unit_type"]), None),
@@ -659,16 +673,29 @@ def _collect_geoconfirmed(con, since: datetime) -> list[dict]:
 _TG_TYPES = ("attack", "strike", "interception", "explosion", "clash", "seizure", "infrastructure_damage", "maritime")
 
 
+def _graphic(r) -> bool:
+    try:
+        from telegram_ingest import _is_graphic
+        return _is_graphic(r)
+    except Exception:                                       # noqa: BLE001
+        return True             # unknown: shown behind the warning, never unwarned
+
+
 def _collect_telegram(con, since: datetime) -> list[dict]:
     out = []
     q = ("SELECT channel, msg_id, channel_title, posted_at, headline, summary_en, event_type, place, precision, "
-         "lat, lon FROM telegram_posts WHERE posted_at >= ? AND lat IS NOT NULL AND event_type IN (%s)"
+         "lat, lon, media, thumb, graphic FROM telegram_posts WHERE posted_at >= ? AND lat IS NOT NULL AND event_type IN (%s)"
          % ",".join("?" * len(_TG_TYPES)))
     for r in con.execute(q, (since.strftime("%Y-%m-%dT%H:%M:%S"), *_TG_TYPES)).fetchall():
         out.append({"rid": f"tg:{r['channel']}:{r['msg_id']}", "source": f"Telegram · {r['channel_title'] or r['channel']}",
                     "title": r["headline"] or "", "text": (r["summary_en"] or "")[:400], "lat": r["lat"], "lon": r["lon"],
                     "time": r["posted_at"], "place": r["place"] or "", "precision": precision_from(r["precision"]),
-                    "hint": r["event_type"], "url": f"https://t.me/{r['channel']}/{r['msg_id']}"})
+                    "hint": r["event_type"], "url": f"https://t.me/{r['channel']}/{r['msg_id']}",
+                    # what TelegramMedia.jsx needs to play the post's own video or photo
+                    "post": {"id": f"tg-{r['channel']}-{r['msg_id']}", "channel": r["channel"], "msg_id": r["msg_id"],
+                             "channel_title": r["channel_title"], "media": r["media"],
+                             "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
+                             "graphic": _graphic(r)} if (r["media"] or r["thumb"]) else None})
     return out
 
 

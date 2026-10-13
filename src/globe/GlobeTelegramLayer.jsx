@@ -11,6 +11,7 @@ import { recencyAlpha, makeArrivalTracker, arrivalScale, ARRIVAL_MS } from "./li
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { useCoveredIds } from "./useStrikeSettings.js"
 
 const SIZE = 18
 let _unrest = null, _soon = null
@@ -61,6 +62,8 @@ function icon() {
  * announced for the coming days as hollow pins.
  */
 export default function GlobeTelegramLayer({ enabled = false, unrest = false, hours = 24 }) {
+    // posts a strike pin stands for are drawn as that pin (strikes.js)
+    const covered = useCoveredIds()
     const [allPosts, setPosts] = useState([])
     const [upcoming, setUpcoming] = useState([])
     const posts = allPosts.filter((p) => (p.category === "unrest" ? unrest : enabled))
@@ -134,7 +137,7 @@ export default function GlobeTelegramLayer({ enabled = false, unrest = false, ho
     return (
         <>
             {posts.map((p) => {
-                if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return null
+                if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon) || covered.has(p.id)) return null
                 const alpha = recencyAlpha(Date.parse(p.posted_at), nowMs)
                 const size = Math.round(SIZE * arrivalScale(arrivedAt[p.id], nowMs))
                 return (

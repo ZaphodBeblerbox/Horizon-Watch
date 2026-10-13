@@ -833,7 +833,7 @@ export default function InspectorPanel({
                 {/* The X posts this record cites, in our own frame: author, text,
                     photos and video (XPost.jsx) — GeoConfirmed cites one for
                     nearly every placemark. */}
-                {sources.filter((src) => xPostId(src.url)).slice(0, 2).map((src) => (
+                {entityType !== "strike_event" && sources.filter((src) => xPostId(src.url)).slice(0, 2).map((src) => (
                     <XPost key={`x:${src.url}`} url={src.url} />
                 ))}
                 {media?.photoUrl && entityType !== "telegram" && (

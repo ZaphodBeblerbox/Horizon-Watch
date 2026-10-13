@@ -3,6 +3,7 @@
  * "when" label, and the sheet a signal opens into (what it is, its
  * footage or the X posts it cites, show it on the map, share it to the desk).
  */
+import StrikeSourceMedia from "../../inspector/StrikeSourceMedia.jsx"
 import { ShowTrackButton } from "../../location/TrackPanel.jsx"
 import { openRoutePanel } from "../../routes/store.js"
 import SourceLink from "../../components/SourceLink.jsx"
@@ -105,7 +106,9 @@ export function SignalSheet({ s, onClose, onShowOnMap, half = false }) {
             {/* AN ENDANGERED PLACE: its model turning slowly (never on the map; three.js loads only here) */}
             {s.kind === "endangered_place" && <div style={{ marginBottom: 12 }}><PlaceModel key={s.id} place={s} height={210} /></div>}
             {(s.media === "video" || s.thumb_url) && s.channel && <div style={{ margin: "0 -14px 10px" }}><TelegramMedia post={s} maxHeight="46vh" radius="0" /></div>}
-            {xs.map((u) => <XPost key={u} url={u} />)}
+            {s.kind === "strike_event"
+                ? <div style={{ marginBottom: 10 }}><StrikeSourceMedia event={s} /></div>
+                : xs.map((u) => <XPost key={u} url={u} />)}
             {(s.summary_en || s.context || s.summary || s.why || s.detail) && (
                 <p style={{ fontSize: 14, lineHeight: 1.5, color: "var(--txt2, #c3c7cf)", margin: "0 0 12px" }}>{s.summary_en || s.context || s.summary || s.why || s.detail}</p>
             )}
