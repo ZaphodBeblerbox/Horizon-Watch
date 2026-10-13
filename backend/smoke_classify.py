@@ -70,7 +70,7 @@ BAD_SCL = (0, 1, 3, 8, 9, 10, 11)
 
 FINDING_CLASSES = ("smoke_plume", "burn_scar")
 CLASSES = ("smoke_plume", "burn_scar", "runway", "aircraft", "port_infrastructure", "storage_tank", "vessel",
-           "field_change", "cloud", "cloud_shadow", "persistent")
+           "field_change", "cloud", "cloud_shadow", "persistent", "water")
 DARK_SCL = (2,)          # Sentinel-2 "dark area pixels": dark ground, burn scars, topographic shadow
 
 # The smoke evidence score a candidate must reach. Set by hand, not fitted;
@@ -284,6 +284,16 @@ def features(now, hist, comp, px_m: float = 20.0, ctx: dict | None = None, base=
         return float(m[comp].mean()) if m is not None and getattr(m, "shape", None) == comp.shape else 0.0
     aeroway, apron, port, tanks = cover("aeroway"), cover("apron"), cover("port"), cover("tanks")
     water = float((wc[comp] == 80).mean()) if wc is not None and wc.shape == comp.shape else 0.0
+    # Water also from the scene itself, so it holds without WorldCover: the
+    # scene class (6 = water) and NDWI on the earlier passes, where the sea
+    # is green-bright and near-infrared-dark (owner, 2026-10-13: water was
+    # published as a smoke plume).
+    try:
+        b3, b8 = base[IB["B03"]][comp], base[IB["B08"]][comp]
+        ndwi_water = float(((b3 - b8) / np.maximum(b3 + b8, 1e-4) > 0.2).mean())
+    except Exception:                                       # noqa: BLE001
+        ndwi_water = 0.0
+    water = max(water, float((scl == 6).mean()) if scl.size else 0.0, ndwi_water)
     dark_frac = float(np.isin(scl, DARK_SCL).mean()) if scl.size else 0.0
     fire_m = ctx.get("fire")
     fire = 0
@@ -411,6 +421,11 @@ def _rule_class(f: dict) -> tuple[str, float, list]:
     if g("water") > 0.6 and bright and f["area_km2"] < 0.5 and f["solidity"] > 0.7:
         first("context", "+", "small, compact and bright on open water (ESA WorldCover) — a ship")
         return "vessel", 0.6, why
+    # On water and nothing burning: glint, waves, sediment or algae change the
+    # sea between passes; smoke over water comes from a fire, which has heat.
+    if g("water") > 0.5:
+        first("context", "-", f"{round(g('water') * 100)}% on water (scene class / NDWI / WorldCover) with no heat — the sea changing, not smoke")
+        return "water", 0.85, why
     if f["persist"] >= 2:
         return "persistent", 0.75, why
     # Burn scar / impact point: newly dark, burnt (NBR drop), compact, hot.

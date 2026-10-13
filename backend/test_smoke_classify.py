@@ -254,3 +254,25 @@ def test_no_labelled_false_positive_of_this_kind_is_published(kind):
         pytest.skip(f"no {kind} in the labelled set")
     published = [x["detection_id"] for x in xs if sc.is_finding(sc._rule_class(x["features"])[0])]
     assert len(published) <= max(1, len(xs) // 20), published
+
+
+def sea():
+    """Open sea: green-brighter than near-infrared (NDWI > 0), scene class 6."""
+    a = np.zeros((9, H, W), dtype=np.float32)
+    a[0], a[1], a[2], a[3], a[4], a[5], a[8] = 0.06, 0.05, 0.03, 0.015, 0.01, 0.008, 0.07
+    a[6], a[7] = 6, 1
+    a[:6] += rng.normal(0, 0.002, (6, H, W)).astype(np.float32)
+    return a
+
+
+@pytest.mark.parametrize("label", ["no worldcover", "scene says water"])
+def test_brightened_sea_without_heat_is_water_not_smoke(label):
+    # owner, 2026-10-13: "our system identified water as a smoke plume"
+    hist = hist_of(sea)
+    now = sea()
+    now[0:3, 80:120, 40:160] += np.array([0.06, 0.05, 0.04])[:, None, None]       # glint / haze-like brightening
+    now[8, 80:120, 40:160] += 0.07
+    v = sc.assess(now, hist, rect(80, 120, 40, 160), B, {})
+    assert v["class"] == "water", v["reasons"]
+    assert not sc.is_finding(v["class"])
+
