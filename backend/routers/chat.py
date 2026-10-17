@@ -20,6 +20,8 @@ import datetime
 import json
 import os
 import re
+import threading
+import time
 import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -151,6 +153,68 @@ def _conversation_dict(db, c, me_id, people=None, last=None, unread=None):
         "last_message_at": c.last_message_at.isoformat() if c.last_message_at else None,
         "created_at": c.created_at.isoformat() if c.created_at else None,
     }
+
+
+# ── who is typing (2026-10-17) ───────────────────────────────────────────
+#
+# The owner: "On X, if people type in the DMs, it should show a typing
+# indicator." IN MEMORY, NOT A TABLE. "Ana is typing" is true for a few
+# seconds and worthless after; writing it to SQLite every three seconds per
+# person would be the busiest table in the database for the least durable
+# fact in it, and the write lock it takes is the one the prune storms
+# already fight over. One web process serves the API (start.sh runs a
+# single uvicorn; the worker role serves no requests), so one dict is the
+# whole truth. A restart forgets who was typing, which is correct.
+#
+# A TTL, NOT A STOP MESSAGE. The client pings at most every 3 s while the
+# box has text and changes; a phone that locks mid-word never sends "stopped",
+# so the claim expires on its own after TYPING_TTL_S. Sending a message
+# clears it at once, so the dots never hang beside the message they became.
+
+TYPING_TTL_S = 6.0
+_typing: dict = {}            # conversation_id -> {user_id: (expires_at, name)}
+_typing_lock = threading.Lock()
+
+
+def note_typing(conversation_id: str, user_id: str, name: str, on: bool = True, now: float | None = None):
+    now = time.monotonic() if now is None else now
+    with _typing_lock:
+        seats = _typing.setdefault(conversation_id, {})
+        if on:
+            seats[user_id] = (now + TYPING_TTL_S, name or "")
+        else:
+            seats.pop(user_id, None)
+        # Expired claims go when anybody writes, so the dict holds only the
+        # conversations somebody is typing in right now.
+        for uid in [u for u, (exp, _) in seats.items() if exp <= now]:
+            seats.pop(uid, None)
+        if not seats:
+            _typing.pop(conversation_id, None)
+
+
+def typing_in(conversation_id: str, exclude: str | None = None, now: float | None = None) -> list:
+    """Who is typing here now, without the caller — you never see your own dots."""
+    now = time.monotonic() if now is None else now
+    with _typing_lock:
+        seats = _typing.get(conversation_id) or {}
+        return [{"id": uid, "name": name} for uid, (exp, name) in sorted(seats.items())
+                if exp > now and uid != exclude]
+
+
+def _others_read_at(db, conversation_id: str, me_id: str):
+    """How far everyone else has read, for the read ticks on my messages.
+
+    The EARLIEST of the others' last reads: in a group a message is "read"
+    when everybody has read it, as WhatsApp marks it, not when the first
+    person did. None while anybody has never opened the chat.
+    """
+    from database import ConversationMember
+    rows = db.query(ConversationMember).filter(
+        ConversationMember.conversation_id == conversation_id,
+        ConversationMember.user_id != me_id).all()
+    if not rows or any(r.last_read_at is None for r in rows):
+        return None
+    return min(r.last_read_at for r in rows).isoformat()
 
 
 def _system(db, conversation_id, text):
@@ -379,7 +443,43 @@ def list_messages(conversation_id: str, request: Request,
         rows.reverse()                      # oldest first, the way it reads
         people = _people(db, [r.sender_id for r in rows])
         return {"messages": [_msg_dict(r, people) for r in rows],
-                "has_more": len(rows) == limit}
+                "has_more": len(rows) == limit,
+                # Riding on the poll the thread already makes, so a client
+                # that never asks /typing still sees the dots and the ticks.
+                "typing": typing_in(conversation_id, exclude=me["id"]),
+                "read_at": _others_read_at(db, conversation_id, me["id"])}
+
+
+@router.post("/conversations/{conversation_id}/typing")
+async def post_typing(conversation_id: str, request: Request):
+    """I am typing here. Body (optional): {typing: false} to say I stopped.
+
+    The client throttles this to one ping every few seconds; the claim
+    lasts TYPING_TTL_S. See the note above note_typing.
+    """
+    from database import get_db
+    me = _me(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    on = bool((body or {}).get("typing", True)) if isinstance(body, dict) else True
+    with get_db() as db:
+        _membership(db, conversation_id, me["id"])
+    note_typing(conversation_id, me["id"], me.get("name") or me.get("email") or "", on=on)
+    return {"ok": True, "ttl_s": TYPING_TTL_S}
+
+
+@router.get("/conversations/{conversation_id}/typing")
+def get_typing(conversation_id: str, request: Request):
+    """Who else is typing, and how far they have read: the small, fast poll
+    an open thread makes between its message polls."""
+    from database import get_db
+    me = _me(request)
+    with get_db() as db:
+        _membership(db, conversation_id, me["id"])
+        read_at = _others_read_at(db, conversation_id, me["id"])
+    return {"typing": typing_in(conversation_id, exclude=me["id"]), "read_at": read_at}
 
 
 @router.post("/conversations/{conversation_id}/messages")
@@ -409,6 +509,8 @@ async def post_message(conversation_id: str, request: Request):
         # to you as unread.
         seat.last_read_at = _now()
         db.commit()
+        # The dots become the message: clear them now, not TTL seconds later.
+        note_typing(conversation_id, me["id"], "", on=False)
         return _msg_dict(m, _people(db, [me["id"]]))
 
 
