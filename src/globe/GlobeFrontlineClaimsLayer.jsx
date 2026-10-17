@@ -5,8 +5,11 @@
  *   "Frontline claims" — a disc around each place a report says was taken,
  *     on top of the official line: hatched while CLAIMED, unverified; solid
  *     once DeepStateMap agrees; grey and faint when expired or contradicted.
- *   "Movements" — an arrow from the actor's side of the front to the place,
- *     the unit's NATO APP-6 symbol (milsymbol) at its tail.
+ *   "Movements" — a side's ground fighting followed over the days: legs of
+ *     a path, numbered and dated at each joint, later legs more opaque, the
+ *     unit's NATO APP-6 symbol (milsymbol) at the newest head; converging
+ *     arrows round a place reported besieged (open approaches dashed), its
+ *     name above it; a single arrow where nothing earlier is known.
  *   "Trajectories" — each drone or missile from its launch origin (the
  *     report's, or an ASSUMED one, labelled so) to its target: drones low,
  *     ballistic missiles on a high arc, cruise missiles on a low one. A
@@ -30,8 +33,8 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import {
-    claimMapLabel, claimRing, claimStyle, milSymbol, movementArrow, overlayUrl, replaySeconds, sideColour,
-    trajectoryPath,
+    claimMapLabel, claimRing, claimStyle, milSymbol, movementArrow, movementLabel, movementStyle, movementSymbolPoint,
+    overlayUrl, replaySeconds, sideColour, trajectoryPath,
 } from "./frontlineClaims.js"
 import { fmtMinutes, modelHeadingRad, pathLengthKm, positionAlong, shahedModelUri } from "./vesselThreat.js"
 
@@ -58,6 +61,7 @@ export default function GlobeFrontlineClaimsLayer({ claimsOn = false, movementsO
 
     const claims = useMemo(() => (claimsOn ? safeArray(data?.claims).filter((c) => claimRing(c).length > 2) : []), [data, claimsOn])
     const moves = useMemo(() => (movementsOn ? safeArray(data?.movements).filter((m) => m?.to) : []), [data, movementsOn])
+    const moveLabels = useMemo(() => moves.map((m) => ({ m, l: movementLabel(m) })).filter((x) => x.l), [moves])
     const trajs = useMemo(() => (trajectoriesOn ? safeArray(data?.trajectories).filter((t) => t?.from && t?.to) : []), [data, trajectoriesOn])
     // one label per launch area, however many flights left from it
     const origins = useMemo(() => {
@@ -76,21 +80,24 @@ export default function GlobeFrontlineClaimsLayer({ claimsOn = false, movementsO
         // lat/lon = the target, which the inspector's "jump to" reads.
         claims.forEach((c) => setEntity(`fclaim-${c.id}`, "frontline_claim", c))
         moves.forEach((m) => setEntity(`fmove-${m.id}`, "troop_movement", { ...m, lat: m.to.lat, lon: m.to.lon }))
+        moveLabels.forEach(({ m }) => setEntity(`fmove-label-${m.id}`, "troop_movement", { ...m, lat: m.to.lat, lon: m.to.lon }))
         trajs.forEach((t) => setEntity(`ftraj-${t.id}`, "trajectory", { ...t, lat: t.to.lat, lon: t.to.lon }))
         origins.forEach((o) => setEntity(`ftraj-origin-${o.key}`, "trajectory",
             { ...o.t, lat: o.t.to.lat, lon: o.t.to.lon, flights_from_here: o.n }))
         viewer?.scene?.requestRender?.()
         return () => [
             ...claims.map((c) => `fclaim-${c.id}`), ...moves.map((m) => `fmove-${m.id}`),
+            ...moveLabels.map(({ m }) => `fmove-label-${m.id}`),
             ...trajs.map((t) => `ftraj-${t.id}`), ...origins.map((o) => `ftraj-origin-${o.key}`),
         ].forEach(deleteEntity)
-    }, [claims, moves, trajs, origins, viewer])
+    }, [claims, moves, moveLabels, trajs, origins, viewer])
 
     if (!any || !data) return <TrajectoryReplay trajectories={trajs} />
     return (
         <>
             {claims.map((c) => <ClaimEntity key={c.id} c={c} />)}
             {moves.map((m) => <MovementEntity key={m.id} m={m} />)}
+            {moveLabels.map(({ m, l }) => <MovementLabelEntity key={`label-${m.id}`} m={m} l={l} />)}
             {trajs.map((t) => <TrajectoryEntity key={t.id} t={t} />)}
             {origins.map((o) => <OriginEntity key={o.key} id={`ftraj-origin-${o.key}`} t={o.t} n={o.n} />)}
             <TrajectoryReplay trajectories={trajs} />
@@ -129,8 +136,13 @@ const ClaimEntity = memo(function ClaimEntity({ c }) {
     )
 })
 
+// A path's joint ("2 · 13 Oct") and a siege's name: small, on the ground,
+// shown only when close enough to read (a theatre, not the whole globe).
+const JOINT_FONT = "600 11px system-ui, -apple-system, Segoe UI, sans-serif"
+
 const MovementEntity = memo(function MovementEntity({ m }) {
     const colour = sideColour(m.side, m.colour)
+    const st = movementStyle(m)
     const arrow = useMemo(() => movementArrow(m), [m])
     // ONE polyline for shaft and head: from → to → left barb → to → right barb
     const positions = useMemo(() => {
@@ -138,12 +150,18 @@ const MovementEntity = memo(function MovementEntity({ m }) {
         const [[a, b], [l, , r]] = arrow
         return [a, b, l, b, r].map((p) => Cartesian3.fromDegrees(p.lon, p.lat))
     }, [arrow])
-    const tail = m.from || m.to
-    const pos = useMemo(() => Cartesian3.fromDegrees(+tail.lon, +tail.lat), [tail.lon, tail.lat])
-    const sym = milSymbol(m.sidc, { colour, size: 22 })
+    // the symbol where the style puts it (newest head of a path, tail of a
+    // ring arrow or a single arrow); the entity sits there, or at the head
+    const at = movementSymbolPoint(m) || m.to
+    const pos = useMemo(() => Cartesian3.fromDegrees(+at.lon, +at.lat), [at.lon, at.lat])
+    const sym = st.symbolAt ? milSymbol(m.sidc, { colour, size: 22 }) : {}
+    // later legs of a path more opaque; an open siege approach dashed
+    const material = st.dash
+        ? new PolylineDashMaterialProperty({ color: css(colour, st.alpha), dashLength: 12 })
+        : css(colour, st.alpha)
     return (
         <Entity id={`fmove-${m.id}`} name={m.label} position={pos}
-            polyline={positions ? { positions, width: 3, clampToGround: true, material: css(colour, 0.9) } : undefined}
+            polyline={positions ? { positions, width: st.width, clampToGround: true, material } : undefined}
             billboard={sym.uri ? {
                 image: sym.uri, width: sym.width, height: sym.height,
                 // milsymbol's anchor is the frame's centre, not the image's
@@ -153,6 +171,26 @@ const MovementEntity = memo(function MovementEntity({ m }) {
                 scaleByDistance: new NearFarScalar(80_000, 1.1, 3_000_000, 0.6),
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
             } : undefined} />
+    )
+})
+
+const MovementLabelEntity = memo(function MovementLabelEntity({ m, l }) {
+    const colour = sideColour(m.side, m.colour)
+    const pos = useMemo(() => Cartesian3.fromDegrees(+l.at.lon, +l.at.lat), [l.at.lon, l.at.lat])
+    return (
+        <Entity id={`fmove-label-${m.id}`} name={l.text} position={pos}
+            label={{
+                text: l.text, font: l.siege ? FONT : JOINT_FONT, fillColor: css(l.siege ? colour : "#f2f4f8"),
+                outlineColor: css("#05070C"), outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
+                showBackground: true, backgroundColor: css("#0B0F1A", 0.72), backgroundPadding: new Cartesian2(5, 3),
+                // a joint sits just past the arrow's head; a siege's name above the place
+                verticalOrigin: l.siege ? VerticalOrigin.BOTTOM : VerticalOrigin.TOP,
+                pixelOffset: new Cartesian2(0, l.siege ? -8 : 8),
+                heightReference: HeightReference.CLAMP_TO_GROUND,
+                distanceDisplayCondition: new DistanceDisplayCondition(0, l.siege ? 2_500_000 : 1_200_000),
+                scaleByDistance: new NearFarScalar(80_000, 1, 1_200_000, 0.8),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            }} />
     )
 })
 

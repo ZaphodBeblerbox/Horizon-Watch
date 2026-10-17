@@ -91,6 +91,20 @@ def _raw(rid, title, lat, lon, hours_ago=1, precision="city", source="Telegram",
             "place": place, "precision": precision, "country": "Yemen"}
 
 
+def test_siege_is_ground_fighting_and_movement_posts_are_read_for_it_only():
+    # owner, 2026-10-17: a besieged city is drawn with converging arrows
+    assert se.classify_act("Houthi forces besiege Ta'izz city")[0] == "assault"
+    assert se.classify_act("Pokrovsk encircled")[0] == "assault"
+    siege = {**_raw("s", "Houthi forces besiege Ta'izz city", 13.58, 44.02, place="Taiz, Yemen"), "ground_only": "unrest"}
+    assert se.to_report(siege)["act"] == "assault"
+    protest = {**_raw("p", "Clashes between protesters and police in Aden", 12.79, 45.03), "ground_only": "unrest"}
+    assert se.to_report(protest) is None
+    sighting = {**_raw("d", "Drone heading towards Marib", 15.46, 45.32), "ground_only": "movement"}
+    assert se.to_report(sighting) is None
+    advance = {**_raw("g", "Houthi forces launch assault on Marib", 15.46, 45.32), "ground_only": "movement"}
+    assert se.to_report(advance)["act"] == "assault"
+
+
 def test_country_only_points_are_dropped():
     assert se.to_report(_raw("a", "Saudi airstrikes hit Yemen", 15.5, 48.0, precision=None)) is None
     assert se.precision_from("country") is None and se.precision_from("none") is None

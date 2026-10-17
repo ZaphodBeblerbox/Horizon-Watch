@@ -36,8 +36,8 @@ import {
     strikeSummary, strikeWindowHours, strikesUrl,
 } from "../globe/strikes.js"
 import {
-    claimRing, claimStyle, claimSummary, milSymbol, movementArrow, movementSummary, overlayUrl, sideColour,
-    trajectoryPath, trajectorySummary, FRONTLINE_LAYERS,
+    claimRing, claimStyle, claimSummary, milSymbol, movementArrow, movementLabel, movementStyle, movementSummary,
+    movementSymbolPoint, overlayUrl, pillUri, sideColour, trajectoryPath, trajectorySummary, FRONTLINE_LAYERS,
 } from "../globe/frontlineClaims.js"
 import {
     DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, demoSub, demoTitle, trackSegments,
@@ -1207,17 +1207,36 @@ async function loadMovements({ bounds }) {
         const tail = m.from || m.to
         if (!tail || !finite(tail.lat, tail.lon)) continue
         const colour = sideColour(m.side, m.colour)
-        const sym = milSymbol(m.sidc, { colour, size: 18 })
+        const st = movementStyle(m)
+        // the map draws every line at one opacity: a path's earlier legs read
+        // as earlier by being thinner and dashed, the newest solid and wide
+        const early = m.kind === "leg" ? !m.tip : m.kind === "approach" && m.path_legs > 0
+        const at = movementSymbolPoint(m)
+        const sym = at ? milSymbol(m.sidc, { colour, size: 18 }) : null
+        const raw = { ...m, kind: "troop_movement", lat: m.to?.lat, lon: m.to?.lon, detail: movementSummary(m),
+                      url: m.sources?.find((s) => s?.url)?.url || null, source: m.sources?.[0]?.source || null, published_at: m.time }
         out.push({
-            id: `fmove-${m.id}`, color: colour, weight: 3,
+            id: `fmove-${m.id}`, color: colour, weight: Math.max(2, st.width - (early ? 0.5 : 0)),
+            dash: st.dash ? "5 6" : early ? "8 5" : null,
             // shaft, and the head as its own part
             coords: arrow ? arrow.map((part) => part.map(toLL)) : [[toLL(tail), toLL(tail)]],
-            marker: sym.uri ? { lat: +tail.lat, lon: +tail.lon, iconUri: sym.uri, iconWidth: sym.width, iconHeight: sym.height, iconAnchor: sym.anchor } : null,
+            marker: sym?.uri ? { lat: at.lat, lon: at.lon, iconUri: sym.uri, iconWidth: sym.width, iconHeight: sym.height, iconAnchor: sym.anchor } : null,
             title: m.label || "Movement",
             sub: m.from_basis || null,
-            raw: { ...m, kind: "troop_movement", lat: m.to?.lat, lon: m.to?.lon, detail: movementSummary(m),
-                   url: m.sources?.find((s) => s?.url)?.url || null, source: m.sources?.[0]?.source || null, published_at: m.time },
+            raw,
         })
+        // a path's joint ("2 · 13 Oct") or a siege's name, as its own marker:
+        // a line carries one image, and the symbol already has it
+        const l = movementLabel(m)
+        if (l && finite(l.at.lat, l.at.lon)) {
+            const pill = pillUri(l.text, colour)
+            out.push({
+                id: `fmove-label-${m.id}`, color: colour, weight: 0, coords: [[toLL(l.at), toLL(l.at)]],
+                marker: { lat: +l.at.lat, lon: +l.at.lon, iconUri: pill.uri, iconWidth: pill.width, iconHeight: pill.height,
+                          iconAnchor: l.siege ? [pill.anchor[0], pill.height + 6] : [pill.anchor[0], -6] },
+                title: m.label || "Movement", sub: m.from_basis || null, raw,
+            })
+        }
     }
     return cullLines(out, normBounds(bounds))
 }

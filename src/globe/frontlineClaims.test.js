@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
     arrowHead, claimMapLabel, claimRing, claimStyle, claimSummary, milSymbol, movementArrow, overlayUrl,
+    movementLabel, movementStyle, movementSummary, movementSymbolPoint, pillUri, shortDay, siegeLabel,
     trajectoryPath, trajectorySummary, replaySeconds, FRONTLINE_LAYERS, SIDE_COLOURS, factionCountry,
 } from "./frontlineClaims.js"
 import { haversineKm, positionAlong, pathLengthKm } from "./vesselThreat.js"
@@ -53,6 +54,81 @@ describe("movements", () => {
         expect(s.uri).toMatch(/^data:image\/svg\+xml/)
         expect(s.width).toBeGreaterThan(10)
         expect(milSymbol("SHGPUCI--------", { colour: "#e5484d" })).toBe(s)
+    })
+})
+
+describe("movements followed over the days, and sieges", () => {
+    const ev = (role, place, day, time, url) => ({ role, place, day, time, act: "assault", sources: [{ url }] })
+    const leg = (n, extra = {}) => ({
+        id: `move-${n}`, kind: "leg", leg: n, path_legs: 2, path_id: "path-a", side: "red", side_name: "Houthis", actor: "Houthis",
+        from: { lat: 13.6, lon: 44.0 }, to: { lat: 13.7, lon: 44.12 }, to_day: "13 Oct", target_name: "Jabal Habashi, Yemen",
+        from_basis: "inferred: Houthis at Al-Ma'afer on 12 Oct, at Jabal Habashi on 13 Oct, 17 km apart",
+        distance_km: 17.2, gap_hours: 24, unit_known: false, unit_label: null, sidc: "SHGPU----------",
+        evidence: [ev("from", "Al-Ma'afer", "12 Oct", "2026-10-12T08:00:00Z", "u1"), ev("to", "Jabal Habashi", "13 Oct", "2026-10-13T08:00:00Z", "u2")],
+        ...extra,
+    })
+    it("makes later legs of a path more opaque, numbers and dates each joint, and puts the symbol at the newest head", () => {
+        const first = movementStyle(leg(1)), last = movementStyle(leg(2, { tip: true }))
+        expect(last.alpha).toBe(1)
+        expect(first.alpha).toBeLessThan(last.alpha)
+        expect(first.joint).toBe("1 · 13 Oct")
+        expect(first.symbolAt).toBe(null)
+        expect(last.symbolAt).toBe("head")
+        expect(movementSymbolPoint(leg(2, { tip: true }))).toEqual({ lat: 13.7, lon: 44.12 })
+        expect(movementLabel(leg(1))).toEqual({ text: "1 · 13 Oct", at: { lat: 13.7, lon: 44.12 }, siege: false })
+        // the path's first step is faint, with the day it began
+        const start = movementStyle({ kind: "approach", leg: 0, path_legs: 2, to_day: "12 Oct" })
+        expect(start).toMatchObject({ alpha: 0.4, joint: "0 · 12 Oct", symbolAt: null })
+        // a lone arrow keeps its symbol at the tail and no joint
+        expect(movementStyle({ kind: "approach", path_legs: 0 })).toMatchObject({ symbolAt: "tail", joint: null })
+    })
+    it("explains a leg as an inference from two events, in plain words", () => {
+        const s = movementSummary(leg(1))
+        expect(s).toMatch(/^Houthis · leg 1 of 2 → Jabal Habashi, Yemen\./)
+        expect(s).toMatch(/Inferred, not reported: reports place Houthis at Al-Ma'afer on 12 Oct \(fought\), then at Jabal Habashi on 13 Oct \(fought\), 17 km and 1 day apart\./)
+        expect(s).toMatch(/no source says it did/)
+        expect(s).toMatch(/2 sources/)
+        expect(movementSummary(leg(2, { tip: true }))).toMatch(/newest step/)
+    })
+    it("says why a single arrow is single", () => {
+        const s = movementSummary({ kind: "approach", actor: "Houthis", act: "assault", target_name: "Marib", from: { lat: 1, lon: 1 },
+                                    from_basis: "no earlier event by Houthis within 4 days and 60 km — single arrow from Sanaa (configured rear area)" })
+        expect(s).toMatch(/no earlier event by Houthis within 4 days/)
+        expect(s).toMatch(/our reading, not the source's/)
+    })
+    const siege = (i, extra = {}) => ({
+        id: `siege-s-${i}`, kind: "siege", siege_index: i, side: "red", side_name: "Houthis", actor: "Houthis", compass: "south",
+        basis_kind: "own_events", from: { lat: 13.45, lon: 44.02 }, to: { lat: 13.55, lon: 44.02 }, centre: { lat: 13.58, lon: 44.02 },
+        target_name: "Ta'izz, Yemen", from_basis: "inferred: Ta'izz reported besieged on 4 Oct; from the south, toward Al-Ma'afer, where Houthis fought on 9 Oct (15 km)",
+        siege: { place: "Ta'izz", reported_day: "4 Oct", quote: "Houthi forces besiege Ta'izz city", approaches: 5,
+                 blocked: [{ compass: "west", why: "open sea" }], terrain_note: "approaches over open sea are left out (Natural Earth coastline, coarse); mountains are not read" },
+        ...extra,
+    })
+    it("draws a siege as converging arrows: open approaches dashed, the place named once", () => {
+        expect(movementStyle(siege(0))).toMatchObject({ dash: false, symbolAt: "tail" })
+        expect(movementStyle(siege(1, { basis_kind: "open" })).dash).toBe(true)
+        expect(siegeLabel(siege(0))).toBe("Besieged · Ta'izz · reported 4 Oct")
+        expect(siegeLabel(siege(1))).toBe(null)
+        expect(movementLabel(siege(0))).toMatchObject({ at: { lat: 13.58, lon: 44.02 }, siege: true })
+        expect(movementSymbolPoint(siege(0))).toEqual({ lat: 13.45, lon: 44.02 })
+    })
+    it("explains the ring: the report, the bearing's basis, the sea, and what is not read", () => {
+        const s = movementSummary(siege(0))
+        expect(s).toMatch(/siege of Ta'izz/)
+        expect(s).toMatch(/\("Houthi forces besiege Ta'izz city"\)/)
+        expect(s).toMatch(/5 arrows converging/)
+        expect(s).toMatch(/from the south, where reports place Houthis in the fighting \(toward Al-Ma'afer, where Houthis fought on 9 Oct/)
+        expect(s).toMatch(/None from the west: open sea\./)
+        expect(s).toMatch(/mountains are not read/)
+        expect(movementSummary(siege(1, { basis_kind: "open", compass: "north" }))).toMatch(/from the north, is an open approach on land/)
+    })
+    it("draws a joint pill in a sans face, never a typewriter one", () => {
+        const p = pillUri("2 · 13 Oct", "#e5484d")
+        const svg = decodeURIComponent(p.uri.split(",")[1])
+        expect(svg).toMatch(/sans-serif/)
+        expect(svg).not.toMatch(/mono|courier/i)
+        expect(p.width).toBeGreaterThan(30)
+        expect(shortDay("2026-10-13T23:30:00Z")).toBe("13 Oct")
     })
 })
 
