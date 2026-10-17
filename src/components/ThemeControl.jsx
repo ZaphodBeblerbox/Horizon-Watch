@@ -173,7 +173,7 @@ export default function ThemeControl({ inline = false }) {
                                 padding: "4px 10px", font: "400 11px var(--font)", cursor: "pointer",
                                 borderRadius: "var(--r)", border: "1px solid var(--line-strong)",
                                 background: mode === m.value ? "var(--acc)" : "var(--bg-2)",
-                                color: mode === m.value ? "#fff" : "var(--txt-2)",
+                                color: mode === m.value ? "var(--mz-cream, #fff)" : "var(--txt-2)",
                             }}
                         >
                             {m.label}

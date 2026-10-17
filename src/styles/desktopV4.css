@@ -1,0 +1,258 @@
+/* desktopV4.css — the phone's v4 language on the desktop console (2026-10-17).
+
+   The owner, approving the phone's redesign after Benji Taylor's rules:
+   "Implement our new design language into the desktop version. We also need
+   those smooth transitions, animations and so on on the desktop version."
+   The phone's sheet is src/mobile/m2.css ("PHONE v4"); this is the same
+   language restated for the console, by tokens first and a few scoped rules
+   after, so no screen had to be rewritten for it:
+
+     · Monochrome words and controls. Titles, times, labels, buttons and
+       tabs are white or a grey (ink on paper in the light theme) — "the only
+       big colour differences we should have are in the icons": map marks,
+       severity diamonds and dots, flags, the rail's module glyphs. Alert
+       counts stay red (owner: red alert badges).
+     · Glass, so the globe shows through.
+     · Clean sans only, never a typewriter face; numbers keep their columns
+       with tabular-nums.
+     · Motion with purpose — "we fly instead of teleport": a mark that
+       travels between tabs (ui/travelMark.js), panes and trays that slide
+       from the side they live on, menus that grow from what opened them,
+       screens that arrive from the side they were chosen on, a slight give
+       under a press. Nothing already on screen moves, and reduced motion is
+       respected.
+
+   EVERYTHING HERE IS UNDER :root[data-shell="desk"], which app.jsx sets only
+   while the console (not the phone shell) is mounted. The phone keeps its
+   own language in its own sheet; nothing here can reach it. */
+
+/* ── Tokens: accent → monochrome ─────────────────────────────────────────
+   The accent tokens are what every inline style in the console already
+   reads (var(--acc) under a primary button, var(--acchi) on a link or a
+   chosen label, var(--accdim) under a selection), so restating them here is
+   the whole colour change. A primary button is near-white with ink words:
+   every one of them pairs var(--acc) with var(--mz-cream) for its text, so
+   --mz-cream becomes the ink. Severity, the semantic --red/--amber and the
+   map's own colours are left exactly as they were. */
+:root[data-shell="desk"]:not([data-theme="light"]) {
+    --acc: #f4f5f7; --acchi: #ffffff; --acc-hi: #ffffff; --acchov: #ffffff; --acc-hover: #ffffff;
+    --accdim: rgba(255, 255, 255, .1); --acc-dim: rgba(255, 255, 255, .1); --acc-line: rgba(255, 255, 255, .26);
+    --acc-cover: #3b3e48;
+    --mz-cream: #0a0b0d;                       /* the ink on a primary button */
+    --btn-primary-border: #f4f5f7; --btn-primary-text: #0a0b0d; --btn-primary-hover: #ffffff;
+    --check-mark-color: #0a0b0d;
+    --xref-color: #e8eaee; --xref-hover-color: #ffffff; --xref-hover-bg: rgba(255, 255, 255, .08);
+    --xref-active-bg: rgba(255, 255, 255, .14); --xref-active-color: #ffffff;
+    --focus-ring: rgba(255, 255, 255, .5);
+    /* glass a touch clearer and neutral rather than blue, as on the phone */
+    --glass: rgba(18, 20, 26, .58); --bar: rgba(12, 14, 19, .8);
+    --plx-tm-fill: rgba(255, 255, 255, .1);
+    --plx-tm-ink: #ffffff;
+}
+:root[data-shell="desk"][data-theme="light"] {
+    --acc: #1a1d2c; --acchi: #1a1d2c; --acc-hi: #1a1d2c; --acchov: #000000; --acc-hover: #000000;
+    --accdim: rgba(26, 29, 44, .07); --acc-dim: rgba(26, 29, 44, .07); --acc-line: rgba(26, 29, 44, .3);
+    --acc-cover: #d8d6cd;
+    --mz-cream: #fcfbf6;
+    --btn-primary-border: #1a1d2c; --btn-primary-text: #fcfbf6; --btn-primary-hover: #2c3040;
+    --check-mark-color: #fcfbf6;
+    --xref-color: #1a1d2c; --xref-hover-color: #000000; --xref-hover-bg: rgba(26, 29, 44, .06);
+    --xref-active-bg: rgba(26, 29, 44, .12); --xref-active-color: #000000;
+    --focus-ring: rgba(26, 29, 44, .45);
+    --plx-tm-fill: rgba(26, 29, 44, .08);
+    --plx-tm-ink: #1a1d2c;
+}
+:root[data-shell="desk"] {
+    --plx-spring: cubic-bezier(.22, 1, .36, 1);   /* a spring's tail: fast out, long settle */
+    /* clean sans only — the system face, Inter where there is no SF */
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --mono: var(--font);
+}
+
+/* ── Words: white or a grey, never a colour ──────────────────────────────
+   A severity word keeps its colour on its diamond, not on its letters; a
+   tag's colour moves into a small dot in front of it. */
+:root[data-shell="desk"] .sev.critical, :root[data-shell="desk"] .sev.high,
+:root[data-shell="desk"] .sev.moderate, :root[data-shell="desk"] .sev.low { color: var(--txt-2); }
+:root[data-shell="desk"] .tag.red, :root[data-shell="desk"] .tag.amber,
+:root[data-shell="desk"] .tag.green, :root[data-shell="desk"] .tag.blue { color: var(--txt-2); border-color: var(--line-strong); gap: 5px; }
+:root[data-shell="desk"] .tag.red::before, :root[data-shell="desk"] .tag.amber::before,
+:root[data-shell="desk"] .tag.green::before, :root[data-shell="desk"] .tag.blue::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%; flex: none;
+}
+:root[data-shell="desk"] .tag.red::before   { background: var(--tag-red); }
+:root[data-shell="desk"] .tag.amber::before { background: var(--tag-amber); }
+:root[data-shell="desk"] .tag.green::before { background: var(--tag-green); }
+:root[data-shell="desk"] .tag.blue::before  { background: var(--tag-blue); }
+:root[data-shell="desk"] .riskidx .srctag { color: var(--txt-3); }
+:root[data-shell="desk"] .gcb.play.on { color: var(--txt); }
+/* the density strip's bars are a quiet grey; its hot bars keep their red */
+:root[data-shell="desk"] #stripsvg .dbar:not(.hot) { fill: var(--txt-4); }
+/* times and counts keep their columns, in the same clean face */
+:root[data-shell="desk"] :is(.evrow .time, .nc-head .t, .gcx-read, .riskrow, .stat .value, .mapmeta, .timestrip .head .lbl, .plx-alert-badge) {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Buttons: primary near-white with ink, secondary glass with a hairline */
+:root[data-shell="desk"] .btn { background: rgba(255, 255, 255, .06); border-color: var(--gline2); transition: background .12s linear, scale .14s var(--plx-spring); }
+:root[data-shell="desk"] .btn:hover { background: rgba(255, 255, 255, .11); }
+:root[data-shell="desk"][data-theme="light"] .btn { background: rgba(26, 29, 44, .04); }
+:root[data-shell="desk"][data-theme="light"] .btn:hover { background: rgba(26, 29, 44, .08); }
+:root[data-shell="desk"] .btn.primary { background: var(--acc); color: var(--btn-primary-text); border-color: var(--acc); font-weight: 600; }
+:root[data-shell="desk"] .btn.primary:hover { background: var(--btn-primary-hover); }
+:root[data-shell="desk"] .btn.ghost { background: transparent; border-color: transparent; }
+:root[data-shell="desk"] .chip[aria-pressed="true"] { background: var(--plx-tm-fill); border-color: var(--acc-line); }
+
+/* RED ALERT BADGES (owner, 2026-10-17): the bell's count, a small red pill */
+:root[data-shell="desk"] .plx-alert-badge:not(:empty) {
+    min-width: 15px; height: 13px; padding: 0 4px; box-sizing: border-box; border-radius: 999px;
+    display: inline-grid; place-items: center; background: var(--red); color: #fff !important; font-weight: 650 !important;
+}
+
+/* ── A slight give under a press ─────────────────────────────────────────
+   On the small controls only; a full-width row that shrank under the
+   pointer would read as the layout jumping. `scale`, not `transform`, so it
+   composes with any transform a control already carries. */
+:root[data-shell="desk"] :is(.btn, .chip, .seg > button, .mapbtn, .tool, .gcb, .iconbtn,
+    header[data-tour="tabs"] button, aside[data-tour="rail"] button, [data-travel] > button) {
+    transition-property: background, color, border-color, opacity, scale;
+    transition-duration: .12s, .12s, .12s, .12s, .16s;
+    transition-timing-function: linear, linear, linear, linear, var(--plx-spring);
+}
+:root[data-shell="desk"] :is(.btn, .chip, .seg > button, .mapbtn, .tool, .gcb, .iconbtn,
+    header[data-tour="tabs"] button, aside[data-tour="rail"] button, [data-travel] > button):active:not(:disabled) {
+    scale: .97;
+}
+
+/* ── THE TRAVELLING MARK (ui/travelMark.js) ──────────────────────────────
+   One mark per tab row that slides to the chosen tab. The group's ::before
+   is the mark, painted under the tabs (isolation keeps z-index:-1 inside the
+   group). While a group's mark is on, its chosen item drops its own fill or
+   underline — inline in most screens, hence !important — so there is one
+   selection on screen, the one that moves. */
+:root[data-shell="desk"] [data-tm] { isolation: isolate; }
+:root[data-shell="desk"] :is(.seg, .scantabs, .ntfilt, [data-travel])[data-tm] { position: relative; }
+:root[data-shell="desk"] [data-tm]::before {
+    content: ""; position: absolute; left: 0; top: 0; z-index: -1; pointer-events: none;
+    width: var(--tm-w, 0); height: var(--tm-h, 0);
+    transform: translate(var(--tm-x, 0), var(--tm-y, 0));
+    background: var(--plx-tm-fill);
+    transition: transform .38s var(--plx-spring), width .38s var(--plx-spring), height .38s var(--plx-spring), opacity .2s ease;
+}
+:root[data-shell="desk"] [data-tm="off"]::before { opacity: 0; }
+:root[data-shell="desk"] [data-tm-still]::before { transition: none; }
+/* a fill: under the chosen tab, with a white rule at its foot like the phone's */
+:root[data-shell="desk"] [data-travel="fill"][data-tm]::before { box-shadow: inset 0 -2px 0 var(--plx-tm-ink); }
+:root[data-shell="desk"] :is(.seg, .scantabs, .ntfilt)[data-tm]::before { box-shadow: none; }
+/* a line: only the 2px rule, sliding along the foot of the row */
+:root[data-shell="desk"] [data-travel="line"][data-tm]::before {
+    height: 2px; background: var(--plx-tm-ink);
+    transform: translate(var(--tm-x, 0), calc(var(--tm-y, 0px) + var(--tm-h, 2px) - 2px));
+}
+/* the rail: a wash under the mode, with a rule on its inner edge */
+:root[data-shell="desk"] [data-travel="rail"][data-tm]::before { box-shadow: inset 2px 0 0 var(--plx-tm-ink); }
+:root[data-shell="desk"] [data-tm="on"] > [data-travel-on="true"],
+:root[data-shell="desk"] :is(.seg, .scantabs, .ntfilt)[data-tm="on"] > [aria-pressed="true"],
+:root[data-shell="desk"] :is(.seg, .scantabs, .ntfilt)[data-tm="on"] > [aria-selected="true"] {
+    background: transparent !important; border-bottom-color: transparent !important;
+}
+/* the notification filters are opaque buttons; under a travelling mark they
+   go clear so the mark is seen crossing them */
+:root[data-shell="desk"] .ntfilt[data-tm] > button { background: transparent; }
+
+/* ── Screens arrive from the side they were chosen on ───────────────────
+   app.jsx modeLayer: --plx-mode-dy is +18px going down the rail, -18px
+   going up, 0 for a screen that is not on it. */
+@keyframes plx-mode-in {
+    from { opacity: 0; transform: translateY(var(--plx-mode-dy, 4px)); }
+    to   { opacity: 1; transform: none; }
+}
+/* A pane's content swapped by its tabs slides in from that tab's side
+   (ui/useSwap.js). Two names per side so a second change restarts it. */
+:root[data-shell="desk"] .plx-swap[data-dir="r"][data-p="0"] { animation: plx-swap-r0 .34s var(--plx-spring); }
+:root[data-shell="desk"] .plx-swap[data-dir="r"][data-p="1"] { animation: plx-swap-r1 .34s var(--plx-spring); }
+:root[data-shell="desk"] .plx-swap[data-dir="l"][data-p="0"] { animation: plx-swap-l0 .34s var(--plx-spring); }
+:root[data-shell="desk"] .plx-swap[data-dir="l"][data-p="1"] { animation: plx-swap-l1 .34s var(--plx-spring); }
+:root[data-shell="desk"] .plx-swap[data-dir="fade"][data-p="0"] { animation: plx-swap-f0 .22s ease; }
+:root[data-shell="desk"] .plx-swap[data-dir="fade"][data-p="1"] { animation: plx-swap-f1 .22s ease; }
+@keyframes plx-swap-r0 { from { opacity: 0; translate: 24px 0 } to { opacity: 1; translate: none } }
+@keyframes plx-swap-r1 { from { opacity: 0; translate: 24px 0 } to { opacity: 1; translate: none } }
+@keyframes plx-swap-l0 { from { opacity: 0; translate: -24px 0 } to { opacity: 1; translate: none } }
+@keyframes plx-swap-l1 { from { opacity: 0; translate: -24px 0 } to { opacity: 1; translate: none } }
+@keyframes plx-swap-f0 { from { opacity: 0 } to { opacity: 1 } }
+@keyframes plx-swap-f1 { from { opacity: 0 } to { opacity: 1 } }
+
+/* ── Panes, trays and drawers slide from the side they live on ──────────
+   The map's Layers (left) and Inspector (right) panes already slide by an
+   inline transform (Situation.jsx); here they take the phone's spring. */
+:root[data-shell="desk"] :is([data-testid="glass-layers-pane"], [data-testid="glass-inspector-pane"]) {
+    transition: transform .4s var(--plx-spring), opacity .26s ease, width .4s var(--plx-spring) !important;
+}
+:root[data-shell="desk"] .pane-glass { transition: transform .4s var(--plx-spring), opacity .26s ease, width .4s var(--plx-spring); }
+/* the notification tray, from the right edge it lives on: glass, like the
+   phone's sheets — dense enough to read on, clear enough to see the map */
+:root[data-shell="desk"] .notiftray {
+    transition: transform .4s var(--plx-spring), box-shadow .4s ease;
+}
+:root[data-shell="desk"] .notiftray.open { box-shadow: -18px 0 44px rgba(0, 0, 0, .35); }
+:root[data-shell="desk"]:not([data-theme="light"]) .notiftray {
+    background: rgba(16, 19, 25, .9);
+    backdrop-filter: blur(28px) saturate(1.3); -webkit-backdrop-filter: blur(28px) saturate(1.3);
+}
+:root[data-shell="desk"][data-theme="light"] .notiftray.open { box-shadow: -14px 0 36px rgba(26, 29, 44, .1); }
+/* notification cards drop in from the top, where they live */
+:root[data-shell="desk"] .ncard-slot { animation: ncard-in .38s var(--plx-spring) both; }
+:root[data-shell="desk"] .ncard-slot.leaving { animation: ncard-out .22s ease-in both; }
+:root[data-shell="desk"] .ncard { transition: opacity .3s ease, transform .38s var(--plx-spring); }
+
+/* ── Toasts rise into place and sink away ───────────────────────────────*/
+@keyframes plx-rise   { from { opacity: 0; translate: 0 -10px; scale: .97 } to { opacity: 1; translate: none; scale: none } }
+@keyframes plx-rise-up { from { opacity: 0; translate: 0 12px; scale: .97 } to { opacity: 1; translate: none; scale: none } }
+:root[data-shell="desk"] .toast {
+    background: var(--glass); border-color: var(--gline2); border-radius: 999px; padding: 8px 14px;
+    backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    animation: plx-rise .36s var(--plx-spring);
+    transition: opacity .22s ease, translate .22s ease;
+}
+:root[data-shell="desk"] .toast.leaving { opacity: 0; translate: 0 -8px; }
+:root[data-shell="desk"] .plx-toast { animation: plx-rise-up .36s var(--plx-spring); transition: opacity .18s ease, translate .18s ease; }
+:root[data-shell="desk"] .plx-toast.leaving { opacity: 0; translate: 0 8px; }
+
+/* ── Menus grow from what opened them ───────────────────────────────────*/
+@keyframes plx-pop-in  { from { opacity: 0; scale: .96; translate: 0 -4px } to { opacity: 1; scale: none; translate: none } }
+@keyframes plx-pop-out { from { opacity: 1; scale: none } to { opacity: 0; scale: .97 } }
+:root[data-shell="desk"] .plx-pop { animation: plx-pop-in .22s var(--plx-spring); }
+:root[data-shell="desk"] .plx-pop.leaving { animation: plx-pop-out .14s ease-in forwards; }
+/* the shared small menu (ui/FlyoutMenu.jsx) opens as the sibling of its
+   expanded trigger: it grows down out of it */
+:root[data-shell="desk"] [aria-expanded="true"] + div { animation: plx-pop-in .22s var(--plx-spring); transform-origin: top center; }
+/* the search palette settles in rather than only fading */
+:root[data-shell="desk"] .palette { scale: .98; transition: opacity .14s linear, scale .3s var(--plx-spring); }
+:root[data-shell="desk"] .palette.open { scale: none; }
+
+/* ── Dialogs fade in over a dimmed map and settle into place ────────────*/
+@keyframes plx-fade-only { from { opacity: 0 } to { opacity: 1 } }
+@keyframes plx-dlg-in  { from { opacity: 0; scale: .97; translate: 0 8px } to { opacity: 1; scale: none; translate: none } }
+@keyframes plx-dlg-out { from { opacity: 1 } to { opacity: 0; scale: .98 } }
+:root[data-shell="desk"] .plx-scrim { animation: plx-fade-only .2s ease; }
+:root[data-shell="desk"] .plx-scrim.leaving { animation: plx-fade-out .16s ease-in forwards; }
+:root[data-shell="desk"] .plx-dlg { animation: plx-dlg-in .32s var(--plx-spring); }
+:root[data-shell="desk"] .plx-dlg.leaving { animation: plx-dlg-out .16s ease-in forwards; }
+:root[data-shell="desk"] .dlg { animation: plx-dlg-in .32s var(--plx-spring); }
+:root[data-shell="desk"] [data-testid="confirm-dialog"] { animation: plx-fade-only .18s ease; }
+:root[data-shell="desk"] [data-testid="confirm-dialog"] > [role="alertdialog"] {
+    animation: plx-dlg-in .3s var(--plx-spring);
+    background: rgba(16, 19, 25, .88) !important;
+    backdrop-filter: blur(26px) saturate(1.3); -webkit-backdrop-filter: blur(26px) saturate(1.3);
+}
+:root[data-shell="desk"][data-theme="light"] [data-testid="confirm-dialog"] > [role="alertdialog"] { background: rgba(252, 251, 246, .9) !important; }
+
+/* ── Reduced motion: the same states, arrived at without travel ──────────
+   (index.css already shortens every animation to nothing; these make sure
+   the travelling mark and the presses do not even begin.) */
+@media (prefers-reduced-motion: reduce) {
+    :root[data-shell="desk"] [data-tm]::before { transition: none !important; }
+    :root[data-shell="desk"] :is(.btn, .chip, .seg > button, .mapbtn, .tool, .gcb, .iconbtn,
+        header[data-tour="tabs"] button, aside[data-tour="rail"] button, [data-travel] > button):active { scale: none; }
+    :root[data-shell="desk"] :is(.plx-swap, .plx-pop, .plx-dlg, .plx-scrim, .plx-toast, .toast, .dlg) { animation: none !important; }
+}

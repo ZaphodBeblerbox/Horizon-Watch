@@ -6,6 +6,8 @@ import App from './app.jsx'
 import LaunchIntro from './plx6/LaunchIntro.jsx'
 import './index.css'
 import './styles/designSystem.css'
+// the phone's v4 language on the console, scoped to :root[data-shell="desk"] (2026-10-17)
+import './styles/desktopV4.css'
 import { initPushNotifications } from './utils/pushNotifications.js'
 import { parseOpenParams } from './notify/openSignal.js'
 import { registerSW } from 'virtual:pwa-register'

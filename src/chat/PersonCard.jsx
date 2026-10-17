@@ -49,7 +49,7 @@ export default function PersonCard({ person, onClose, onMessage = null, isMe = f
             >
                 <div style={{
                     position: "relative", height: 132,
-                    background: person.cover ? "var(--hov)" : "linear-gradient(120deg, var(--acc) 0%, var(--bg-2) 100%)",
+                    background: person.cover ? "var(--hov)" : "linear-gradient(120deg, var(--acc-cover, var(--acc)) 0%, var(--bg-2) 100%)",
                     borderBottom: "1px solid var(--gline)",
                 }}>
                     {person.cover && (

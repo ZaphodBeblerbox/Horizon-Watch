@@ -176,7 +176,11 @@ export default function PlxTabBar({
                 thing as the search box beside it. Case files are on the
                 rail's folder icon. */}
 
-            <nav style={{
+            {/* data-travel: the chosen theater's fill slides to the next one
+                you pick instead of jumping (2026-10-17, the phone's v4
+                language on the desktop — ui/travelMark.js). A tab being
+                dragged lets go of the mark until it is dropped. */}
+            <nav data-travel="fill" style={{
                 display: "flex", alignItems: "stretch", height: 40,
                 minWidth: 0, flex: 1, overflow: "hidden",
                 borderLeft: "1px solid var(--gline)",
@@ -185,6 +189,7 @@ export default function PlxTabBar({
                     whatever layers are on (the owner, 2026-10-07: a theater
                     mode that is not stuck to one region). */}
                 <div onClick={() => onTab("global")} title="Global — the whole world · double-click to choose what it shows" data-tour="global-theater"
+                    data-travel-on={activeTab === "global" && !drag?.active}
                     onDoubleClick={(e) => { if (onEditTab) { e.stopPropagation(); onEditTab("global") } }}
                     style={{
                         display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flex: "none",
@@ -202,6 +207,7 @@ export default function PlxTabBar({
                         <div
                             key={t.id} onClick={() => { if (!justDragged.current) onTab(t.id) }}
                             data-tab-id={t.id}
+                            data-travel-on={on && !drag?.active}
                             onPointerDown={(e) => startDrag(e, t)}
                             /* DOUBLE-CLICK EDITS IT, which is where anybody
                                who has used a browser or a spreadsheet will
@@ -306,9 +312,12 @@ export default function PlxTabBar({
                             <path d="M3 15a9 9 0 0118 0z" fill="var(--mz-sky)" />
                             <path d="M3 15a9 9 0 0018 0z" fill="var(--mz-navy)" />
                             <circle cx="12" cy="9.2" r="2.1" fill="var(--mz-orange)" />
-                            <path d="M13.2 18.6a2.3 2.3 0 11-1.6 3.9a2.9 2.9 0 001.6-3.9z" fill="var(--mz-cream)" />
-                            <circle cx="8.6" cy="21.4" r=".45" fill="var(--mz-cream)" />
-                            <circle cx="15.8" cy="22.1" r=".35" fill="var(--mz-cream)" />
+                            {/* the moon is a picture, not text on a button: a
+                                fixed cream, since --mz-cream is the ink on a
+                                primary button in the monochrome desktop */}
+                            <path d="M13.2 18.6a2.3 2.3 0 11-1.6 3.9a2.9 2.9 0 001.6-3.9z" fill="#fcfbf6" />
+                            <circle cx="8.6" cy="21.4" r=".45" fill="#fcfbf6" />
+                            <circle cx="15.8" cy="22.1" r=".35" fill="#fcfbf6" />
                         </g>
                     </g>
                     <path d="M3 15a9 9 0 0118 0" stroke="currentColor" strokeWidth="1" />
@@ -330,9 +339,12 @@ export default function PlxTabBar({
                 }}
             >
                 <PlxIcon href="#g-bell" size={15} />
-                <span style={{
-                    fontFamily: "var(--mz-font-mono)", fontSize: 9, lineHeight: 1,
-                    color: "var(--red)",
+                {/* RED ALERT BADGES (owner, 2026-10-17): the one coloured
+                    word in the bar is the count of what needs you — a small
+                    red pill, as on the phone. */}
+                <span className="plx-alert-badge" style={{
+                    fontFamily: "var(--font)", fontSize: 9, lineHeight: 1,
+                    color: "var(--red)", fontVariantNumeric: "tabular-nums",
                 }}>{alertCount || ""}</span>
             </button>
         </header>

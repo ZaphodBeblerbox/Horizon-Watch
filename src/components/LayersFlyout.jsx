@@ -30,7 +30,9 @@ function Toggle({ on, onClick }) {
         >
             <span style={{
                 position: "absolute", top: 2, left: on ? 18 : 2, width: 16, height: 16,
-                borderRadius: "50%", background: "#fff", transition: "left 0.15s ease", display: "block",
+                // on: the ink of a primary button, so the knob still shows
+                // on the monochrome desktop's near-white track (2026-10-17)
+                borderRadius: "50%", background: on ? "var(--mz-cream, #fff)" : "#fff", transition: "left 0.15s ease", display: "block",
             }} />
         </button>
     )

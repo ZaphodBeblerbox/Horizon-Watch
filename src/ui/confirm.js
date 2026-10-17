@@ -36,7 +36,9 @@ export function confirmAction({ title = "Are you sure?", message = "", confirm =
             b.textContent = label
             b.style.cssText = "height:34px;padding:0 14px;border-radius:8px;font:inherit;font-size:14px;cursor:pointer;"
                 + (primary
-                    ? `border:0;color:#fff;background:${danger ? "#d23c3c" : "var(--acc,#3d7bf0)"};font-weight:600`
+                    // a plain confirm takes the primary button's own ink
+                    // (near-white fill, dark ink on the monochrome desktop)
+                    ? `border:0;color:${danger ? "#fff" : "var(--mz-cream,#fff)"};background:${danger ? "#d23c3c" : "var(--acc,#3d7bf0)"};font-weight:600`
                     : "border:1px solid var(--gline2,rgba(255,255,255,.14));background:transparent;color:var(--txt,#e9ebef)")
             return b
         }

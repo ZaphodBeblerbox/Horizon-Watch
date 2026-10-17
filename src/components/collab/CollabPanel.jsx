@@ -160,7 +160,7 @@ function Assignment({ recordRef }) {
                     </select>
                     <input type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)}
                         style={{ background: "var(--bg-2)", border: "1px solid var(--line-strong)", borderRadius: "var(--r)", color: "var(--txt)", font: "400 11px var(--font)", padding: "3px 6px" }} />
-                    <button onClick={submit} disabled={!pendingUserId} style={{ background: "var(--acc)", border: "none", borderRadius: "var(--r)", color: "#fff", cursor: pendingUserId ? "pointer" : "default", font: "400 11px var(--font)", padding: "3px 8px", opacity: pendingUserId ? 1 : 0.5 }}>
+                    <button onClick={submit} disabled={!pendingUserId} style={{ background: "var(--acc)", border: "none", borderRadius: "var(--r)", color: "var(--mz-cream, #fff)", cursor: pendingUserId ? "pointer" : "default", font: "400 11px var(--font)", padding: "3px 8px", opacity: pendingUserId ? 1 : 0.5 }}>
                         Save
                     </button>
                     <button onClick={() => setPicking(false)} style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", font: "400 11px var(--font)" }}>
@@ -265,7 +265,7 @@ function Composer({ recordRef, users, onPosted }) {
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <button onClick={send} disabled={!text.trim()} style={{
-                    background: "var(--acc)", border: "none", borderRadius: "var(--r)", color: "#fff",
+                    background: "var(--acc)", border: "none", borderRadius: "var(--r)", color: "var(--mz-cream, #fff)",
                     cursor: text.trim() ? "pointer" : "default", font: "400 11px var(--font)", padding: "4px 10px",
                     opacity: text.trim() ? 1 : 0.5,
                 }}>

@@ -96,11 +96,13 @@ export default function PlxMenuBar({
             </div>
 
             <div style={{ display: wideFlex, alignItems: "center", paddingLeft: 6, marginRight: 6 }}>
-                {presence.slice(0, 4).map(([name, i, bg]) => (
+                {/* GREY INITIALS, as on the phone (2026-10-17): a person is
+                    not a severity, so their mark carries no colour */}
+                {presence.slice(0, 4).map(([name, i]) => (
                     <span key={name} title={`${name} · online now`} style={{
                         width: 22, height: 22, marginLeft: -5, display: "flex",
                         alignItems: "center", justifyContent: "center", borderRadius: 0,
-                        background: bg, color: "var(--mz-cream)",
+                        background: "color-mix(in srgb, var(--txt) 16%, var(--canvas))", color: "var(--txt)",
                         border: "1.5px solid var(--canvas)",
                         fontSize: 9, fontWeight: 600,
                     }}>{i}</span>

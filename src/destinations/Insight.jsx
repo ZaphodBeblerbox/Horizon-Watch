@@ -25,6 +25,7 @@ import API_BASE from "../apiBase.js"
 import Loading from "../ui/Loading.jsx"
 import { splitByTheater, boardCountry } from "../data/theaterScope.js"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
+import useSwap from "../ui/useSwap.js"
 import RiskRanking from "./RiskRanking.jsx"
 import WhatsNext from "../insight/WhatsNext.jsx"
 import WhatChanged from "../insight/WhatChanged.jsx"
@@ -50,9 +51,9 @@ const CARD = {
 
 function Seg({ options, value, onChange }) {
     return (
-        <div style={{ display: "flex", border: "1px solid var(--gline2)", borderRadius: 0, overflow: "hidden" }}>
+        <div data-travel="fill" style={{ display: "flex", border: "1px solid var(--gline2)", borderRadius: 0, overflow: "hidden" }}>
             {options.map(([k, v]) => (
-                <button key={v} onClick={() => onChange(v)} style={{
+                <button key={v} onClick={() => onChange(v)} data-travel-on={value === v} style={{
                     height: 26, padding: "0 10px", border: 0,
                     background: value === v ? ON : "transparent",
                     color: value === v ? "var(--txt)" : "var(--txt3)",
@@ -129,6 +130,8 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
 
     /* ── header ───────────────────────────────────────────────────── */
     const TABS = [["What changed", "changes"], ["Risk ranking", "risk"], ["What happens next", "forecast"], ["Mood on Telegram", "mood"]]
+    // the body slides in from the side of the tab chosen (ui/useSwap.js)
+    const swap = useSwap(tab, TABS.map(([, v]) => v))
 
     const body = () => {
         /* THE OVERVIEW IS NOT THE WHOLE SCREEN.
@@ -488,9 +491,10 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
                     margin: 0, fontWeight: 600, fontSize: 17,
                     letterSpacing: "-.01em", whiteSpace: "nowrap",
                 }}>Insight</h2>
-                <nav style={{ display: "flex", gap: 2, padding: 2, border: "1px solid var(--gline)", borderRadius: 0 }}>
+                {/* one fill that slides to the chosen tab (ui/travelMark.js) */}
+                <nav data-travel="fill" style={{ display: "flex", gap: 2, padding: 2, border: "1px solid var(--gline)", borderRadius: 0 }}>
                     {TABS.map(([k, v]) => (
-                        <button key={v} onClick={() => setTab(v)} style={{
+                        <button key={v} onClick={() => setTab(v)} data-travel-on={tab === v} style={{
                             height: 26, padding: "0 14px", border: 0, borderRadius: 0,
                             background: tab === v ? ON : "transparent",
                             color: tab === v ? "var(--txt)" : "var(--txt3)",
@@ -533,7 +537,7 @@ export default function Insight({ onOpenModule = () => {}, onFocusSignal = () =>
                 )}
             </div>
 
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "18px 16px 24px" }}>
+            <div {...swap} style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "18px 16px 24px" }}>
                 {body()}
             </div>
         </section>

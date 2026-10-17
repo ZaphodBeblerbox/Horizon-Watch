@@ -62,7 +62,7 @@ export const RAIL_MODES = [
     ["work",      "My work",                                   "#g-work"],
 ]
 
-function RailButton({ label, icon, active, badge, onClick, hue = null }) {
+function RailButton({ label, icon, active, badge, onClick, hue = null, travel = false }) {
     const ink = hue || "var(--acchi)"
     const [tip, setTip] = useState(null)
     return (
@@ -70,13 +70,19 @@ function RailButton({ label, icon, active, badge, onClick, hue = null }) {
         <RailTip at={tip}>{label}</RailTip>
         <button
             aria-label={label} aria-pressed={!!active}
+            // a place you go (a mode) carries the travelling mark; a tool
+            // pane that opens over the map keeps its own fill
+            data-travel-on={travel ? !!active : undefined}
             onFocus={(e) => setTip(e.currentTarget.getBoundingClientRect())}
             onBlur={() => setTip(null)}
             onClick={onClick}
             style={{
                 position: "relative", display: "flex", alignItems: "center",
                 justifyContent: "center", width: 36, height: 34, flex: "none",
-                border: 0, background: active ? (hue ? `color-mix(in srgb, ${hue} 18%, transparent)` : ON) : OFF,
+                // MONOCHROME FILL (2026-10-17, the phone's v4 language): the
+                // module's hue stays on its glyph — an icon is where colour
+                // belongs — and the chosen place is a white wash, not a tint.
+                border: 0, background: active ? ON : OFF,
                 // WHERE YOU ARE, AT A GLANCE. Active was a faint grey fill
                 // that read as hover. Now: the accent on the icon and a 2px
                 // bar on the inner edge — one hue for every module, because
@@ -144,6 +150,8 @@ export default function PlxRail({
     return (
         <aside
             data-tour="rail" data-screen-label="Rail" aria-label="Modes"
+            // the chosen mode's fill travels up and down the rail (ui/travelMark.js)
+            data-travel="rail"
             style={{
                 position: "absolute", left: 0, top: 40, bottom: 0, width: 48,
                 boxSizing: "border-box", display: "flex", flexDirection: "column",
@@ -155,7 +163,7 @@ export default function PlxRail({
             }}
         >
             {RAIL_MODES.map(([k, label, icon]) => (
-                <RailButton key={k} label={label} icon={icon} hue={RAIL_HUE[k]}
+                <RailButton key={k} label={label} icon={icon} hue={RAIL_HUE[k]} travel
                             active={isActive(k)} onClick={() => onMode(k)} />
             ))}
 
@@ -213,7 +221,7 @@ export default function PlxRail({
                 a help icon nobody read as settings. Lit while the page is
                 open. The feed-health square that sat under it is gone — the
                 same thing, in full, is Settings → Feeds and health. */}
-            <RailButton label="Settings" icon="#g-gear" hue={RAIL_HUE.settings}
+            <RailButton label="Settings" icon="#g-gear" hue={RAIL_HUE.settings} travel
                         active={mode === "settings"} onClick={onSettings} />
         </aside>
     )

@@ -364,7 +364,7 @@ export default function Profile({ onClose = null, section = null }) {
                                         onPos={(v) => set("cover_pos", v)} alt=""
                                         style={{
                                             height: 176, width: "100%",
-                                            background: pf.cover ? "var(--hov)" : "linear-gradient(120deg, var(--acc) 0%, var(--bg-2) 100%)",
+                                            background: pf.cover ? "var(--hov)" : "linear-gradient(120deg, var(--acc-cover, var(--acc)) 0%, var(--bg-2) 100%)",
                                             borderBottom: "1px solid var(--gline)",
                                         }}
                                     />

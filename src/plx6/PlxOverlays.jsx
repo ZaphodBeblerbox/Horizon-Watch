@@ -28,6 +28,7 @@
 import Dots from "../ui/Dots.jsx"
 import { useEffect, useRef } from "react"
 import PlxIcon from "./PlxIcon.jsx"
+import usePresence from "../ui/usePresence.js"
 
 /* ── A6.2 · notification cards ─────────────────────────────────────── */
 
@@ -156,9 +157,15 @@ export function PlxAlerts({ open, alerts = [], since = "", onClose = () => {}, o
 /* ── A6.4 · toast ──────────────────────────────────────────────────── */
 
 export function PlxToast({ text, bottom = 48 }) {
-    if (!text) return null
+    /* IN AND OUT, NOT ON AND OFF (2026-10-17, the phone's v4 motion on the
+       desktop): it rises into place and sinks away holding its last words,
+       rather than blinking. desktopV4.css .plx-toast. */
+    const last = useRef(text)
+    if (text) last.current = text
+    const { mounted, leaving } = usePresence(!!text, 180)
+    if (!mounted) return null
     return (
-        <div style={{
+        <div className={`plx-toast${leaving ? " leaving" : ""}`} style={{
             position: "absolute", left: "50%", bottom, transform: "translateX(-50%)",
             padding: "8px 14px",
             background: "var(--glass)",
@@ -166,7 +173,7 @@ export function PlxToast({ text, bottom = 48 }) {
             WebkitBackdropFilter: "blur(22px) saturate(1.15)",
             border: "1px solid var(--gline)", boxShadow: "var(--gshadow)",
             borderRadius: 999, zIndex: 80, fontSize: 12, whiteSpace: "nowrap",
-        }}>{text}</div>
+        }}>{text || last.current}</div>
     )
 }
 
@@ -180,12 +187,20 @@ export function PlxMenu({ open, pos = { l: 60, t: 60 }, head = null, items = [],
         window.addEventListener("keydown", esc)
         return () => window.removeEventListener("keydown", esc)
     }, [open, onClose])
-    if (!open) return null
+    /* A MENU GROWS FROM WHAT OPENED IT (2026-10-17): from its top-left
+       corner, which is where the trigger is for the menu bar and the rail
+       alike, and shrinks back there on close still holding its items. */
+    const lastItems = useRef(items)
+    if (open) lastItems.current = items
+    const { mounted, leaving } = usePresence(open, 140)
+    if (!mounted) return null
+    const shown = open ? items : lastItems.current
 
     return (
         <>
-            <div onClick={onClose} style={{ position: "absolute", inset: 0, zIndex: 55 }} />
-            <div ref={ref} style={{
+            {open && <div onClick={onClose} style={{ position: "absolute", inset: 0, zIndex: 55 }} />}
+            <div ref={ref} className={`plx-pop${leaving ? " leaving" : ""}`} style={{
+                transformOrigin: "top left", pointerEvents: leaving ? "none" : undefined,
                 position: "absolute", left: pos.l, top: pos.t, width: 240, zIndex: 56,
                 background: "var(--glass)",
                 backdropFilter: "blur(22px) saturate(1.15)",
@@ -202,7 +217,7 @@ export function PlxMenu({ open, pos = { l: 60, t: 60 }, head = null, items = [],
                         <div style={{ fontSize: 11, color: "var(--txt3)" }}><Dots text={head.sub} /></div>
                     </div>
                 )}
-                {items.map(([label, go, kbd], i) => (
+                {shown.map(([label, go, kbd], i) => (
                     <button key={i} onClick={() => { onClose(); go && go() }} style={{
                         display: "flex", alignItems: "center", gap: 10, width: "100%",
                         padding: "7px 12px", border: 0, background: "transparent",
@@ -231,14 +246,17 @@ export function PlxDialog({ open, title, sub = "", width = 480, note = "", prima
         window.addEventListener("keydown", esc)
         return () => window.removeEventListener("keydown", esc)
     }, [open, onClose])
-    if (!open) return null
+    // fades and settles in, and leaves the same way (desktopV4.css .plx-dlg)
+    const { mounted, leaving } = usePresence(open, 160)
+    if (!mounted) return null
 
     return (
-        <div onClick={onClose} style={{
+        <div onClick={onClose} className={`plx-scrim${leaving ? " leaving" : ""}`} style={{
             position: "absolute", inset: 0, zIndex: 70, background: "var(--scrim)",
             display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "10vh",
+            pointerEvents: leaving ? "none" : undefined,
         }}>
-            <div onClick={(e) => e.stopPropagation()} style={{
+            <div onClick={(e) => e.stopPropagation()} className={`plx-dlg${leaving ? " leaving" : ""}`} style={{
                 width, maxWidth: "calc(100% - 32px)", maxHeight: "78vh",
                 display: "flex", flexDirection: "column", overflow: "hidden",
                 background: "var(--glass)",
