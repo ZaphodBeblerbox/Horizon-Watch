@@ -1384,7 +1384,16 @@ export function adaptTroopMovement(data = {}) {
         attr("Unit", data.unit_known ? (data.unit_label || data.unit_type) : `Not stated (drawn as ${data.unit_label || "a generic unit"})`),
         attr("APP-6 code", data.sidc || null),
         attr("Target", data.target_name || null),
+        // every arrow is an inference: say which kind, and on what (owner, 2026-10-17)
+        attr("Drawn as", data.kind === "leg" ? `Leg ${data.leg}${data.path_legs ? ` of ${data.path_legs}` : ""} of a path followed over the days (inferred)`
+            : data.kind === "siege" ? `One of ${data.siege?.approaches || "several"} arrows round a besieged place (${data.basis_kind === "open" ? "open approach" : "from the side's own fighting"})`
+            : data.kind === "approach" ? (data.path_legs > 0 ? "Start of a path (single arrow)" : "Single arrow") : null),
         attr("Arrow start", data.from ? data.from_basis : "No approach direction known"),
+        ...(Array.isArray(data.evidence) ? data.evidence.slice(0, 6).map((e, i) => attr(
+            `Evidence ${i + 1}`,
+            `${e.role === "from" ? "From: " : e.role === "to" ? "To: " : e.role === "siege report" ? "Siege report: " : e.role === "ring" ? "Ring: " : ""}`
+            + `${e.place || "a place"}, ${_when(e.time) || e.day || "time unknown"}${e.title ? ` — ${e.title}` : ""}`)) : []),
+        attr("Topography", data.siege?.terrain_note || null),
         attr("Theatre", _theatre(data)),
         attr("Time", _when(data.time)),
         attr("Position", fmtCoord(to.lat, to.lon)),

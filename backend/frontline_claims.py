@@ -30,6 +30,11 @@ here shows up on the next request (feedback: derive on read, don't store).
    area for Russia; outside it for Ukraine), or the same actor's previous
    claim nearby, or the actor's configured rear area — and the basis is
    always carried, because the arrow is ours, not the source's.
+   Since 2026-10-17 a side's ground events are also FOLLOWED OVER THE
+   DAYS: the same side at a nearby place within days becomes one leg of a
+   path (A→B→C), labelled as an inference with both events as evidence,
+   and a place reported besieged gets converging arrows from the
+   directions open to the ring (section 2b).
 
 3. TRAJECTORIES (drone, missile). The launch origin is the event's own
    origin_hint when it has one; otherwise it is ASSUMED from a per-actor
@@ -764,48 +769,480 @@ def _approach_start(ev, theatre, side, lat, lon, prior: list, occ) -> tuple[tupl
     return None, "no approach direction known"
 
 
-def build_movements(events: list[dict], claims: list[dict], occ=None) -> list[dict]:
-    out = []
+# ── 2b. movements followed over the days, and sieges ─────────────────────
+#
+# Owner (2026-10-17): "Currently we only display a random troop location and
+# point an arrow to a signal that happened. Instead we should follow over the
+# days. If we know Saudi Arabia attacked in city A, and tomorrow they're
+# attacking city B, and it's nearby, it's likely the troops moved from city A
+# to B. When we say they are currently besieging a certain city, then we know
+# they're attacking from all directions, or from the directions possible
+# given the topography."
+#
+# CHAINS. Each side's ground events (assaults, ground taken) in a theatre are
+# ordered by time and gathered into STOPS (the same place, ≤ SAME_PLACE_KM,
+# while the fighting there continues). A stop is linked to the side's
+# previous stop when that one was active at most CHAIN_WINDOW_S earlier and
+# lies within chain_reach_km(gap): the arrow A→B is one LEG of a path that
+# goes on over the days (A→B→C…). Every leg carries both events, their dates
+# and sources, and says it is an inference ("inferred: Houthis at A on
+# 12 Oct, at B on 13 Oct, 23 km apart") — no source ever reported the move.
+# A stop with no such predecessor keeps the old single arrow (_approach_start)
+# and says why it is single.
+#
+# Why 4 days: news-derived ground events are daily at best, and in Yemen
+# often two or three days apart for the same front; past four days the same
+# force has as likely been relieved, rotated or redirected, and a link would
+# be a guess. Why 15 km + 15 km per day, capped at 60 km: on the same day,
+# two places within 15 km are one fight on adjacent ground; beyond that the
+# move must be credible for the time elapsed — infantry and pickup-mounted
+# forces in Yemen cover a few to ~30 km a day on contested roads (the 2018
+# west-coast push, Mocha to Hodeidah's edge, ~150 km in about two weeks of
+# stop-start fighting). The 60 km cap keeps separate fronts apart: Marib–
+# al-Jawf, Taiz, Dhale and the west coast are 60–150 km from one another, so
+# a jump between them is another unit, not the same one moving.
+#
+# SIEGES. A report that a place is besieged, encircled or surrounded
+# (English, French, German, Russian, Ukrainian and Arabic words; "siege
+# lifted/broken" ends it) is drawn as arrows converging on the place from
+# several bearings instead of one: first the directions the besieging side's
+# own recent ground events lie in, then open approaches round the compass.
+# Topography is read only where it is cheap and certain: an approach whose
+# start and midpoint are both at sea (Natural Earth land, geo_land) is not
+# drawn, nor one starting on ground the other side holds (DeepStateMap, where
+# it exists). Mountains are not read — no elevation data is loaded — and the
+# card says so.
+
+CHAIN_WINDOW_S = 4 * 86400
+CHAIN_BASE_KM = 15.0
+CHAIN_KM_PER_DAY = 15.0
+CHAIN_MAX_KM = 60.0
+SIEGE_CONTEXT_KM = 60.0             # the same reach as a chain: one force's ring
+SIEGE_CONTEXT_S = 14 * 86400        # a siege is slow: two weeks of the ring's own fighting
+SIEGE_SEP_DEG = 40.0                # two approaches closer than this are one
+SIEGE_MAX_ARROWS = 8
+
+
+def chain_reach_km(gap_s: float) -> float:
+    """How far one force can plausibly have moved in gap_s seconds."""
+    return min(CHAIN_MAX_KM, CHAIN_BASE_KM + CHAIN_KM_PER_DAY * max(0.0, gap_s) / 86400.0)
+
+
+def _day(t: float) -> str:
+    d = _dt.datetime.fromtimestamp(t, _dt.timezone.utc)
+    return f"{d.day} {d.strftime('%b')}"
+
+
+def _place(ev: dict) -> str:
+    n = str(ev.get("target_name") or "").split(",")[0].strip()
+    # "Yemen" is where a geocoder put a report it could not place: not a place
+    countries = {str(c).lower() for t in THEATRES.values() for c in t.get("countries", []) if c}
+    if n and n.lower() not in countries and n.lower() != str(ev.get("country") or "").lower():
+        return n
+    try:
+        la, lo = float(ev["lat"]), float(ev["lon"])
+        return f"{abs(la):.2f}°{'N' if la >= 0 else 'S'} {abs(lo):.2f}°{'E' if lo >= 0 else 'W'}"
+    except Exception:                                       # noqa: BLE001
+        return "an unnamed place"
+
+
+def _event_text(ev: dict) -> str:
+    parts = [str(ev.get(k) or "") for k in ("title", "summary", "text", "headline")]
+    for s in _sources(ev):
+        if isinstance(s, dict):
+            parts.append(str(s.get("title") or ""))
+    return " ".join(p for p in parts if p)
+
+
+_SIEGE = re.compile(
+    r"besieg\w*|\bsieges?\b|under siege|encircl\w*|\bsurround(?:s|ed|ing)\b|\bcauldron\b|\bkessel\b"      # en
+    r"|assi[eéè]g\w*|encercl\w*"                                                                           # fr
+    r"|belager\w*|eingekesselt|einkessel\w*|umzingel\w*"                                                  # de
+    r"|осад\w*|окруж(?:ени|ил|ен|ают|ает)\w*|\bкот[её]л\b|в котле"                                        # ru
+    r"|облог\w*|оточ(?:ен|ил|ує|ують|енн)\w*"                                                             # uk
+    r"|حصار|محاصر\w*|يحاصر\w*|تحاصر\w*|تطويق",                                                             # ar
+    re.I)
+_SIEGE_LIFTED = re.compile(
+    r"(?:break|breaks|broke|broken|breaking|lift|lifts|lifted|lifting|end|ends|ended|ending|ease|eased)"
+    r" (?:the |a )?(?:siege|encirclement|blockade)"
+    r"|(?:siege|encirclement) (?:was |has been |is |had been )?(?:lifted|broken|ended|over)"
+    r"|(?:escap\w*|broke out|break out|withdr\w*) (?:from |of )?(?:the )?(?:encirclement|cauldron|pocket)"
+    r"|lev(?:er|ée|ent) (?:le |du )?siège|belagerung (?:aufgehoben|durchbrochen)|aufhebung der belagerung"
+    r"|снят\w* осад\w*|прорыв\w* (?:осады|окружения|блокады)|вышл\w* из окружения|прорвал\w* окружение"
+    r"|знятт\w* облоги|прорив\w* облоги|вийшл\w* з оточення"
+    r"|فك الحصار|كسر الحصار|رفع الحصار",
+    re.I)
+# who is INSIDE: "besieged by the Houthis" names the besieger; "besieged
+# Ukrainian troops" and "forces in besieged X" name the besieged
+_BESIEGED_BY = re.compile(r"(?:besieged|encircled|surrounded|under siege|trapped) by (?:the )?([^.,;:]{2,40})", re.I)
+_BESIEGED_ARE = re.compile(r"(?:besieged|encircled|surrounded|trapped) ([^.,;:]{2,30}?) (?:forces|troops|fighters|garrison|soldiers|units)"
+                           r"|(?:forces|troops|fighters|garrison|soldiers) (?:trapped |encircled )?in (?:the )?besieged", re.I)
+
+
+def siege_state(ev: dict) -> str | None:
+    """'siege' when the report says the place is besieged/encircled,
+    'lifted' when it says the siege ended, else None."""
+    t = _event_text(ev)
+    if not t:
+        return None
+    if _SIEGE_LIFTED.search(t):
+        return "lifted"
+    if _SIEGE.search(t):
+        return "siege"
+    return None
+
+
+def besieger_side(ev: dict, theatre: str | None, side: str) -> str | None:
+    """Which side holds the ring: the actor, unless the words put the
+    actor inside it. None when the report can't tell."""
+    th = THEATRES.get(theatre or "")
+    if not th or side not in ("blue", "red"):
+        return None
+    other = "blue" if side == "red" else "red"
+    t = _event_text(ev)
+    m = _BESIEGED_BY.search(t)
+    if m:
+        s = _side_by_alias(m.group(1), th)
+        if s:
+            return s
+    m = _BESIEGED_ARE.search(t)
+    if m:
+        if m.group(1) is None:
+            return other            # "forces in besieged X": the actor is inside
+        named = _side_by_alias(m.group(1), th)
+        if named:
+            return "blue" if named == "red" else "red"
+    return side
+
+
+_COMPASS = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+
+
+def compass_word(brg: float) -> str:
+    return _COMPASS[int(((brg % 360) + 22.5) // 45) % 8]
+
+
+def _ang(a: float, b: float) -> float:
+    d = abs((a - b) % 360)
+    return min(d, 360 - d)
+
+
+def _land_at(lat: float, lon: float) -> bool | None:
+    """True on land, False at sea, None when the land mask can't be read
+    (Natural Earth countries via geo_land; coarse — a harbour city may read
+    as sea, so an approach is blocked only when two samples agree)."""
+    try:
+        import geo_land
+        if geo_land._index()[0] is None:
+            return None
+        return geo_land.country_at(lat, lon) is not None
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
+def siege_approaches(centre: tuple, radius_km: float, side_points: list[dict], land_at=None, blocked_at=None,
+                     max_arrows: int = SIEGE_MAX_ARROWS, sep_deg: float = SIEGE_SEP_DEG) -> tuple[list[dict], list[dict], bool]:
+    """(approaches, blocked, land_checked) for a ring round `centre`.
+
+    side_points are the besieging side's own recent ground events nearby
+    ({lat, lon, ...}); each gives an approach from its direction (nearest
+    first, one per sep_deg). Then the eight compass points fill the ring,
+    skipping any within sep_deg of one already drawn, any whose start AND
+    midpoint are at sea (land_at → False), and any whose start blocked_at
+    names (→ a reason string, e.g. the other side's held ground)."""
+    r = max(0.5, float(radius_km or 4.0))
+    start_km = r + max(6.0, min(15.0, r))
+    end_km = max(1.0, r * 0.85)
+    mid_km = (start_km + r) / 2.0
+    land_at = land_at or (lambda la, lo: None)
+    probe = [land_at(*centre)] + [land_at(*destination(centre, b, start_km)) for b in range(0, 360, 45)]
+    land_checked = any(x is not None for x in probe)
+
+    def why_not(brg):
+        s, m = destination(centre, brg, start_km), destination(centre, brg, mid_km)
+        if land_at(*s) is False and land_at(*m) is False:
+            return "open sea"
+        if blocked_at:
+            w = blocked_at(*s)
+            if w:
+                return w
+        return None
+
+    out, blocked = [], []
+    for p in sorted(side_points, key=lambda p: haversine_km(centre, (p["lat"], p["lon"]))):
+        brg = bearing_deg(centre, (p["lat"], p["lon"]))
+        if any(_ang(brg, a["bearing"]) < sep_deg for a in out) or why_not(brg):
+            continue
+        out.append({"bearing": round(brg, 1), "basis_kind": "own_events", "via": p})
+        if len(out) >= max_arrows:
+            break
+    for brg in range(0, 360, 45):
+        if len(out) >= max_arrows:
+            break
+        if any(_ang(brg, a["bearing"]) < sep_deg for a in out):
+            continue
+        w = why_not(brg)
+        if w:
+            blocked.append({"bearing": float(brg), "compass": compass_word(brg), "why": w})
+            continue
+        out.append({"bearing": float(brg), "basis_kind": "open", "via": None})
+    for a in out:
+        a["compass"] = compass_word(a["bearing"])
+        a["from"] = destination(centre, a["bearing"], start_km)
+        a["to"] = destination(centre, a["bearing"], end_km)
+    return out, blocked, land_checked
+
+
+def _ground_rows(events: list[dict]) -> list[dict]:
+    """The ground events a path or a siege is built from, one row each."""
+    rows = []
     for ev in events:
         act = str(ev.get("act") or "")
+        st = siege_state(ev)
+        # artillery on a place said to be besieged places the ring too
+        if act not in MOVEMENT_ACTS and not (act == "shelling" and st == "siege"):
+            continue
         try:
             lat, lon = float(ev["lat"]), float(ev["lon"])
         except Exception:                                   # noqa: BLE001
             continue
-        theatre, side = theatre_and_side(ev)
-        if act not in MOVEMENT_ACTS:
+        t = _parse_time(ev.get("time"))
+        if t is None:
             continue
+        theatre, side = theatre_and_side(ev)
         if not theatre or side == "unknown":
             continue            # an arrow needs a front and a side to come from
-        start, basis = _approach_start(ev, theatre, side, lat, lon, claims, occ)
-        unit = ev.get("unit_type") or {"airstrike": "air force", "shelling": "artillery", "naval": "naval",
-                                       "drone": "drones"}.get(act)
-        out.append({
-            "id": f"move-{ev.get('id')}",
-            "event_id": ev.get("id"),
-            "act": act,
-            "theatre": theatre,
-            "side": side,
-            "side_name": THEATRES.get(theatre or "", {}).get(side, {}).get("name") if side in ("blue", "red") else None,
-            "colour": SIDE_COLOURS.get(side, SIDE_COLOURS["unknown"]),
-            "actor": ev.get("actor"),
-            "target_name": ev.get("target_name"),
-            "to": {"lat": lat, "lon": lon},
-            "from": {"lat": start[0], "lon": start[1]} if start else None,
-            "from_basis": basis,
-            "unit_type": unit,
-            "unit_known": bool(ev.get("unit_type")),
-            "unit_label": unit_label(unit),
-            "sidc": sidc_for(unit, side, act),
-            "time": ev.get("time"),
-            "sources": _sources(ev),
-            "casualties": ev.get("casualties"),
-            "synthetic": bool(ev.get("synthetic")),
-            "label": " · ".join(x for x in [
-                (ev.get("actor") or ""), act.replace("_", " "),
-                unit_label(unit) if ev.get("unit_type") else None,
-                f"→ {ev.get('target_name')}" if ev.get("target_name") else None] if x),
-        })
+        if st == "siege":
+            side = besieger_side(ev, theatre, side) or side
+        rows.append({"ev": ev, "t": t, "lat": lat, "lon": lon, "theatre": theatre, "side": side, "act": act,
+                     "actor": ev.get("actor"), "key": (theatre, side), "siege": st})
+    rows.sort(key=lambda r: r["t"])
+    return rows
+
+
+def build_stops(rows: list[dict]) -> list[dict]:
+    """Rows → stops: the same side at the same place while the fighting
+    there goes on (gaps ≤ CHAIN_WINDOW_S) is one stop, not a move."""
+    stops: list[dict] = []
+    for r in rows:
+        s = next((s for s in reversed(stops) if s["key"] == r["key"]
+                  and haversine_km((s["lat"], s["lon"]), (r["lat"], r["lon"])) <= SAME_PLACE_KM
+                  and r["t"] - s["t_last"] <= CHAIN_WINDOW_S), None)
+        if s:
+            s["rows"].append(r)
+            s["t_last"] = r["t"]
+            continue
+        stops.append({"key": r["key"], "theatre": r["theatre"], "side": r["side"], "lat": r["lat"], "lon": r["lon"],
+                      "name": _place(r["ev"]), "rows": [r], "t_first": r["t"], "t_last": r["t"],
+                      "prev": None, "prev_row": None, "gap_s": None, "dist_km": None, "leg": 0, "path_id": None})
+    return stops
+
+
+def link_stops(stops: list[dict]) -> list[dict]:
+    """Each stop's predecessor: the same side's stop active most recently
+    before it (≤ CHAIN_WINDOW_S) and within chain_reach_km of the gap. The
+    same actor is preferred to another of the same side."""
+    for i, s in enumerate(stops):
+        best, best_key = None, None
+        first_actor = s["rows"][0]["actor"]
+        for p in stops[:i]:
+            if p["key"] != s["key"]:
+                continue
+            before = [r for r in p["rows"] if r["t"] <= s["t_first"]]
+            if not before:
+                continue
+            a = before[-1]
+            gap = s["t_first"] - a["t"]
+            if gap > CHAIN_WINDOW_S:
+                continue
+            d = haversine_km((p["lat"], p["lon"]), (s["lat"], s["lon"]))
+            if d <= SAME_PLACE_KM or d > chain_reach_km(gap):
+                continue
+            k = (0 if (first_actor and a["actor"] == first_actor) else 1, gap, d)
+            if best_key is None or k < best_key:
+                best, best_key = (p, a, gap, d), k
+        if best:
+            p, a, gap, d = best
+            s.update(prev=p, prev_row=a, gap_s=gap, dist_km=d, leg=p["leg"] + 1, path_id=p["path_id"])
+        else:
+            s["path_id"] = f"path-{s['rows'][0]['ev'].get('id') or i}"
+    return stops
+
+
+def _evidence(r: dict, role: str) -> dict:
+    ev = r["ev"]
+    return {"role": role, "event_id": ev.get("id"), "time": ev.get("time"), "day": _day(r["t"]),
+            "place": _place(ev), "act": r["act"], "actor": ev.get("actor"), "title": ev.get("title"),
+            "lat": r["lat"], "lon": r["lon"], "sources": _sources(ev)}
+
+
+def _side_name(theatre, side) -> str | None:
+    return THEATRES.get(theatre or "", {}).get(side, {}).get("name") if side in ("blue", "red") else None
+
+
+def _movement(r: dict, frm, basis: str, kind: str, unit_row=None, **extra) -> dict:
+    ev, act, theatre, side = r["ev"], r["act"], r["theatre"], r["side"]
+    unit = ev.get("unit_type") or ((unit_row or {}).get("ev") or {}).get("unit_type")
+    return {
+        "id": f"move-{ev.get('id')}",
+        "event_id": ev.get("id"),
+        "act": act,
+        "kind": kind,                   # leg | approach | siege
+        "inferred": True,               # every arrow is our reading, never a reported move
+        "theatre": theatre,
+        "side": side,
+        "side_name": _side_name(theatre, side),
+        "colour": SIDE_COLOURS.get(side, SIDE_COLOURS["unknown"]),
+        "actor": ev.get("actor"),
+        "target_name": ev.get("target_name"),
+        "to": {"lat": r["lat"], "lon": r["lon"]},
+        "from": {"lat": frm[0], "lon": frm[1]} if frm else None,
+        "from_basis": basis,
+        "unit_type": unit,
+        "unit_known": bool(unit),
+        "unit_label": unit_label(unit),
+        "sidc": sidc_for(unit, side, act),
+        "time": ev.get("time"),
+        "sources": _sources(ev),
+        "casualties": ev.get("casualties"),
+        "synthetic": bool(ev.get("synthetic")),
+        "label": " · ".join(x for x in [
+            (ev.get("actor") or ""), act.replace("_", " "),
+            unit_label(unit) if unit else None,
+            f"→ {ev.get('target_name')}" if ev.get("target_name") else None] if x),
+        **extra,
+    }
+
+
+def _siege_of(stop: dict, rows: list[dict]) -> dict | None:
+    """The stop's standing siege report, unless a later report at the
+    place (by either side) says it was lifted."""
+    rep = next((r for r in reversed(stop["rows"]) if r["siege"] == "siege"), None)
+    if not rep:
+        return None
+    for r in rows:
+        if r["siege"] == "lifted" and r["t"] > rep["t"] and r["theatre"] == stop["theatre"] \
+                and haversine_km((r["lat"], r["lon"]), (stop["lat"], stop["lon"])) <= SAME_PLACE_KM * 3:
+            return None
+    return rep
+
+
+def build_movements(events: list[dict], claims: list[dict], occ=None, since: float | None = None,
+                    land_at=None, now: float | None = None) -> list[dict]:
+    """Ground movements: legs of paths followed over the days, single
+    arrows where no path is known, and converging arrows round a siege.
+
+    `events` may reach back before `since` (the overlay's window): those
+    only serve as the start of a path or the ring of a siege; a stop is
+    drawn when it was active since `since`, with the path that led to it."""
+    land_at = land_at or _land_at
+    rows = _ground_rows(events)
+    stops = link_stops(build_stops(rows))
+    lo = since if since is not None else float("-inf")
+    t_now = now or time.time()
+    drawn: dict[int, dict] = {}
+    for s in stops:
+        # a siege is slow: it stays drawn SIEGE_CONTEXT_S after its last
+        # report, whatever the window, unless a report says it was lifted
+        rep = _siege_of(s, rows)
+        if s["t_last"] >= lo or (rep is not None and rep["t"] >= t_now - SIEGE_CONTEXT_S):
+            x = s
+            while x is not None and id(x) not in drawn:
+                drawn[id(x)] = x
+                x = x["prev"]
+    path_legs: dict[str, int] = {}
+    fed = set()
+    for s in drawn.values():
+        path_legs[s["path_id"]] = max(path_legs.get(s["path_id"], 0), s["leg"])
+        if s["prev"] is not None:
+            fed.add(id(s["prev"]))
+
+    held = held_ground(occ) if occ is not None else {}
+    out = []
+    for s in stops:
+        if id(s) not in drawn:
+            continue
+        r = s["rows"][0]
+        who = _side_name(s["theatre"], s["side"]) or r["actor"] or "the same side"
+        ev_rows = [_evidence(x, "at") for x in s["rows"]]
+        common = {"path_id": s["path_id"], "leg": s["leg"], "path_legs": path_legs.get(s["path_id"], 0),
+                  "tip": id(s) not in fed, "to_time": r["ev"].get("time"), "to_day": _day(r["t"]),
+                  "stop_events": len(s["rows"])}
+        siege = _siege_of(s, rows)
+        # a besieged place gets the ring instead of one arrow; the place the
+        # path came from is one of the ring's own-event approaches
+        if siege:
+            out.extend(_siege_arrows(s, siege, rows, who, held, land_at, common))
+        elif s["prev"] is not None:
+            a, p = s["prev_row"], s["prev"]
+            gap_h = s["gap_s"] / 3600.0
+            when_b = "later the same day" if _day(a["t"]) == _day(r["t"]) else f"on {_day(r['t'])}"
+            basis = (f"inferred: {who} at {p['name']} on {_day(a['t'])}, at {s['name']} {when_b}, "
+                     f"{s['dist_km']:.0f} km apart")
+            out.append(_movement(r, (p["lat"], p["lon"]), basis, "leg", unit_row=a, **common,
+                                 from_name=p["name"], from_time=a["ev"].get("time"), from_day=_day(a["t"]),
+                                 gap_hours=round(gap_h, 1), distance_km=round(s["dist_km"], 1),
+                                 evidence=[_evidence(a, "from"), _evidence(r, "to")] + ev_rows[1:],
+                                 sources=_sources(a["ev"]) + [x for x in _sources(r["ev"]) if x not in _sources(a["ev"])]))
+        else:
+            start, why = _approach_start(r["ev"], s["theatre"], s["side"], r["lat"], r["lon"], claims, occ)
+            basis = (f"no earlier event by {who} within {CHAIN_WINDOW_S // 86400} days and "
+                     f"{CHAIN_MAX_KM:.0f} km — single arrow {why}")
+            out.append(_movement(r, start, basis, "approach", **common, evidence=ev_rows))
+    return out
+
+
+def _siege_arrows(s, rep, rows, who, held, land_at, common) -> list[dict]:
+    ev = rep["ev"]
+    radius, _ptype, _basis = place_radius(ev)
+    centre = (s["lat"], s["lon"])
+    pts = []
+    for r in rows:
+        # the ring's own fighting: from two weeks before the report on
+        if r["key"] != s["key"] or r is rep or r["t"] < rep["t"] - SIEGE_CONTEXT_S:
+            continue
+        d = haversine_km(centre, (r["lat"], r["lon"]))
+        if radius + 2.0 < d <= SIEGE_CONTEXT_KM:
+            pts.append({"lat": r["lat"], "lon": r["lon"], "row": r, "km": d})
+    other = held.get("blue" if s["side"] == "red" else "red") if held else None
+
+    def blocked_at(la, lo):
+        if other is None:
+            return None
+        try:
+            from shapely.geometry import Point
+            return "held by the other side (DeepStateMap)" if other.contains(Point(lo, la)) else None
+        except Exception:                                   # noqa: BLE001
+            return None
+
+    approaches, blocked, land_checked = siege_approaches(centre, radius, pts, land_at, blocked_at)
+    quote = next((x for x in [ev.get("title")] + [y.get("title") for y in _sources(ev) if isinstance(y, dict)]
+                  if x and _SIEGE.search(str(x))), ev.get("title")) or "a report"
+    meta = {"id": f"siege-{ev.get('id')}", "place": s["name"], "lat": s["lat"], "lon": s["lon"],
+            "radius_km": radius, "reported": ev.get("time"), "reported_day": _day(rep["t"]), "quote": quote,
+            "approaches": len(approaches), "blocked": blocked, "land_checked": land_checked,
+            "terrain_note": ("approaches over open sea are left out (Natural Earth coastline, coarse); "
+                             "mountains are not read" if land_checked else
+                             "the coastline could not be read, so no approach was ruled out; mountains are not read")}
+    out = []
+    for i, a in enumerate(approaches):
+        if a["basis_kind"] == "own_events":
+            v = a["via"]["row"]
+            why = (f"from the {a['compass']}, toward {_place(v['ev'])}, where {who} "
+                   f"{'took ground' if v['act'] == 'control_change' else 'fought'} on {_day(v['t'])} "
+                   f"({a['via']['km']:.0f} km)")
+            evid = [_evidence(rep, "siege report"), _evidence(v, "ring")]
+        else:
+            why = f"from the {a['compass']}: an open approach on land — no report of {who} there"
+            evid = [_evidence(rep, "siege report")]
+        basis = (f"inferred: {s['name']} reported besieged on {_day(rep['t'])}; {why}")
+        m = _movement(rep, a["from"], basis, "siege", **{**common, "tip": False},
+                      siege=meta, siege_index=i, bearing=a["bearing"], compass=a["compass"],
+                      basis_kind=a["basis_kind"], evidence=evid)
+        m["id"] = f"siege-{ev.get('id')}-{i}"
+        m["to"] = {"lat": a["to"][0], "lon": a["to"][1]}
+        m["centre"] = {"lat": s["lat"], "lon": s["lon"]}
+        out.append(m)
     return out
 
 
@@ -1021,7 +1458,9 @@ def overlay(hours: int = 168, now: float | None = None) -> dict:
     win = t_now - hours * 3600
     recent = [e for e in events if (_parse_time(e.get("time")) or 0) >= win]
     claims_all = [dict(c) for c in claims]
-    movements = build_movements(recent, claims_all, occ)
+    # all loaded events, so a path can start before the window; only stops
+    # active inside it (and the path that led there) are drawn
+    movements = build_movements(events, claims_all, occ, since=win, now=t_now)
     trajectories = build_trajectories(recent, occ)
     for c in claims:
         c.pop("_t", None)

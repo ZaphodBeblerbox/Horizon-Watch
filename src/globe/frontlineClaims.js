@@ -10,8 +10,10 @@
  *     solid and quieter once DeepStateMap agrees ("confirmed"); grey and
  *     faint when 7 days pass without that ("expired") or the other side
  *     claims it back ("contradicted"). The backend decides the status.
- *   MOVEMENTS — an arrow from the actor's side of the front to the place,
- *     with the unit's NATO APP-6 symbol (milsymbol) at its tail. The start
+ *   MOVEMENTS — a side's ground fighting followed over the days: legs of a
+ *     path from place to place, converging arrows round a besieged place,
+ *     or one arrow from the actor's side of the front where nothing earlier
+ *     is known; the unit's NATO APP-6 symbol (milsymbol) on each. The start
  *     is the backend's reading (from_basis), never the source's.
  *   TRAJECTORIES — a drone or missile drawn from its launch origin (the
  *     report's, or an ASSUMED one, always said so) to its target: drones
@@ -134,14 +136,149 @@ export function movementArrow(m) {
 
 const ACT_WORD = { control_change: "took ground", assault: "assault", airstrike: "air strike", shelling: "shelling",
                    naval: "naval strike", drone: "drone unit" }
+const ACT_PAST = { control_change: "took ground", assault: "fought", shelling: "shelled" }
+
+/*
+ * PATHS AND SIEGES (owner, 2026-10-17: "we should follow over the days … when
+ * we say they are currently besieging a certain city, then we know they're
+ * attacking from all directions"). The backend sends three kinds of arrow:
+ *   leg      — one step of a path the same side took over the days (A→B→C),
+ *              inferred from two nearby events a few days apart; numbered,
+ *              later legs more opaque, the unit's symbol only at the newest
+ *              head (where the force is now, as far as we can tell);
+ *   approach — a single arrow where no earlier nearby event is known (or the
+ *              first step of a path, before its legs);
+ *   siege    — one of several arrows converging on a besieged place, from
+ *              the side's own nearby fighting or an open approach on land;
+ *              open approaches are dashed, since nobody reported them.
+ * Every one of them is our reading, and the card says on what.
+ */
+
+/** The day of an ISO time, "13 Oct" (UTC), or null. */
+export function shortDay(iso) {
+    const t = Date.parse(iso || "")
+    if (!Number.isFinite(t)) return null
+    const d = new Date(t)
+    return `${d.getUTCDate()} ${d.toLocaleString("en-GB", { month: "short", timeZone: "UTC" })}`
+}
+
+/**
+ * How an arrow is drawn: alpha (later legs of a path more opaque), width,
+ * dash (an open siege approach), where its APP-6 symbol sits ("head",
+ * "tail" or null) and the small words at its head ("2 · 13 Oct") — the
+ * joint of a path, so the sequence reads on the map.
+ */
+export function movementStyle(m) {
+    const kind = m?.kind || "approach"
+    const legs = Math.max(0, Number(m?.path_legs) || 0)
+    const leg = Math.max(0, Number(m?.leg) || 0)
+    const day = m?.to_day || shortDay(m?.to_time || m?.time)
+    if (kind === "leg") {
+        const tip = !!m?.tip
+        return { alpha: legs ? 0.4 + 0.6 * (leg / legs) : 1, width: tip ? 3.5 : 2.5, dash: false,
+                 symbolAt: tip ? "head" : null, joint: day ? `${leg} · ${day}` : String(leg) }
+    }
+    if (kind === "siege") {
+        const open = m?.basis_kind === "open"
+        return { alpha: open ? 0.7 : 0.95, width: open ? 2 : 3, dash: open, symbolAt: "tail", joint: null }
+    }
+    // the first step of a path: faint, with the day it began
+    if (legs > 0) return { alpha: 0.4, width: 2.5, dash: false, symbolAt: null, joint: day ? `0 · ${day}` : null }
+    return { alpha: 0.9, width: 3, dash: false, symbolAt: "tail", joint: null }
+}
+
+/** Where the arrow's symbol goes, {lat, lon} or null. */
+export function movementSymbolPoint(m) {
+    const at = movementStyle(m).symbolAt
+    const p = at === "head" ? m?.to : at === "tail" ? (m?.from || m?.to) : null
+    return p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lon)) ? { lat: +p.lat, lon: +p.lon } : null
+}
+
+/** The words at a besieged place, once per siege (its first arrow), or null. */
+export function siegeLabel(m) {
+    if (m?.kind !== "siege" || Number(m?.siege_index) !== 0) return null
+    const s = m.siege || {}
+    return `Besieged · ${s.place || String(m.target_name || "").split(",")[0] || "place"}${s.reported_day ? ` · reported ${s.reported_day}` : ""}`
+}
+
+/** The words beside an arrow, {text, at, siege}: a path's joint at its head, a siege's name at the place. */
+export function movementLabel(m) {
+    const siege = siegeLabel(m)
+    if (siege && m.centre) return { text: siege, at: m.centre, siege: true }
+    const joint = movementStyle(m).joint
+    return joint && m?.to ? { text: joint, at: m.to, siege: false } : null
+}
+
+const _gap = (h) => {
+    if (h < 24) return `${Math.max(1, Math.round(h))} h`
+    const d = Math.round(h / 24 * 10) / 10
+    return `${d} day${d === 1 ? "" : "s"}`
+}
+const _evLine = (e) => `${e.place || "a place"} on ${e.day || shortDay(e.time) || "an unknown day"}`
+    + `${e.act ? ` (${ACT_PAST[e.act] || String(e.act).replace("_", " ")})` : ""}`
 
 export function movementSummary(m) {
     const place = m?.target_name ? String(m.target_name).split(",").slice(0, 2).join(",") : "the target"
+    const who = m?.actor || m?.side_name || "Unnamed side"
+    const side = m?.side_name || m?.actor || "the same side"
+    const unit = m?.unit_known ? `Unit: ${m.unit_label || m.unit_type}.` : `Unit not stated (symbol: ${m?.unit_label || "generic unit"}).`
+    const kind = m?.kind || "approach"
+    if (kind === "leg") {
+        const [a, b] = Array.isArray(m.evidence) ? m.evidence : []
+        const from = a ? _evLine(a) : (m.from_name || "an earlier place")
+        const to = b ? _evLine(b) : place
+        const nSrc = new Set([...(a?.sources || []), ...(b?.sources || [])].map((s) => s?.url || s?.title || JSON.stringify(s))).size
+        return [
+            `${who} · leg ${m.leg}${m.path_legs ? ` of ${m.path_legs}` : ""} → ${place}.`,
+            `Inferred, not reported: reports place ${side} at ${from}, then at ${to}`
+                + `${Number.isFinite(Number(m.distance_km)) ? `, ${Math.round(m.distance_km)} km` : ""}`
+                + `${Number.isFinite(Number(m.gap_hours)) ? ` and ${_gap(Number(m.gap_hours))}` : ""} apart.`,
+            "Close enough in place and time for one force, so the arrow assumes it moved from the first place to the second; no source says it did.",
+            m.tip ? "The newest step of this path: the symbol marks where the force was last reported." : null,
+            unit,
+            nSrc ? `${nSrc} source${nSrc > 1 ? "s" : ""}, one or more for each place.` : null,
+        ].filter(Boolean).join(" ")
+    }
+    if (kind === "siege") {
+        const s = m.siege || {}
+        const blocked = Array.isArray(s.blocked) ? s.blocked : []
+        const seaSides = blocked.filter((b) => b.why === "open sea").map((b) => b.compass)
+        const held = blocked.filter((b) => b.why !== "open sea").map((b) => b.compass)
+        return [
+            `${who} · siege of ${s.place || place}.`,
+            `A report on ${s.reported_day || shortDay(s.reported) || "a recent day"} says it is besieged${s.quote ? ` ("${s.quote}")` : ""}.`,
+            `A siege is fought from every side the ground allows, so the ring is drawn as ${s.approaches || "several"} arrows converging on it.`,
+            m.basis_kind === "own_events"
+                ? `This one comes from the ${m.compass}, where reports place ${side} in the fighting (${String(m.from_basis || "").replace(/^.*?;\s*(?:from the [a-z-]+,\s*)?/, "")}).`
+                : `This one, from the ${m.compass}, is an open approach on land: nobody reported ${side} there, so it is dashed.`,
+            seaSides.length ? `None from the ${seaSides.join(", ")}: open sea.` : null,
+            held.length ? `None from the ${held.join(", ")}: held by the other side.` : null,
+            s.terrain_note ? `Topography: ${s.terrain_note}.` : null,
+            "Our reading of where the ring lies, not reported positions.",
+        ].filter(Boolean).join(" ")
+    }
     return [
-        `${m?.actor || m?.side_name || "Unnamed side"} · ${ACT_WORD[m?.act] || String(m?.act || "").replace("_", " ")} → ${place}.`,
-        m?.unit_known ? `Unit: ${m.unit_label || m.unit_type}.` : `Unit not stated (symbol: ${m?.unit_label || "generic unit"}).`,
+        `${who} · ${ACT_WORD[m?.act] || String(m?.act || "").replace("_", " ")} → ${place}.`,
+        unit,
         m?.from ? `Arrow drawn ${m.from_basis || "from the actor's side"} — our reading, not the source's.` : "No approach direction known; only the symbol is drawn.",
-    ].join(" ")
+        m?.path_legs > 0 ? `The first step of a path ${side} took over the following days (${m.path_legs} leg${m.path_legs > 1 ? "s" : ""}).` : null,
+    ].filter(Boolean).join(" ")
+}
+
+/**
+ * A small rounded label as an SVG data URI — a path's joint ("2 · 13 Oct")
+ * or a siege's name on the phone map, where a line takes one marker image.
+ * System sans, never a typewriter face (owner).
+ */
+export function pillUri(text, colour = SIDE_COLOURS.unknown, { size = 11 } = {}) {
+    const t = String(text || "")
+    const w = Math.round(t.length * size * 0.58 + 12), h = Math.round(size + 9)
+    const esc = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
+        + `<rect x="0.75" y="0.75" width="${w - 1.5}" height="${h - 1.5}" rx="${(h - 1.5) / 2}" fill="#0b1220" fill-opacity="0.82" stroke="${colour}" stroke-width="1.5"/>`
+        + `<text x="${w / 2}" y="${h / 2}" dy="0.35em" text-anchor="middle" fill="#f2f4f8" `
+        + `font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="${size}" font-weight="600">${esc}</text></svg>`
+    return { uri: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, width: w, height: h, anchor: [Math.round(w / 2), Math.round(h / 2)] }
 }
 
 // ── APP-6 symbols ───────────────────────────────────────────────────────
@@ -233,7 +370,7 @@ export const FRONTLINE_LAYERS = [
     { key: "frontlineClaims", label: "Frontline claims",
       hint: "Ground a report says was taken, drawn on top of the official line · hatched: CLAIMED, unverified · solid: confirmed by DeepStateMap · grey: expired after 7 days or contradicted" },
     { key: "movements", label: "Movements",
-      hint: "Arrows from the actor's side of the front to the place, with the unit's NATO APP-6 symbol · the start is our reading, said on the card" },
+      hint: "Ground forces followed over the days: numbered legs from place to place (later legs brighter), converging arrows round a besieged place, a single arrow where nothing earlier is known · NATO APP-6 symbols · every arrow is our reading, said on the card" },
     { key: "trajectories", label: "Trajectories",
       hint: "Drones and missiles from the launch origin (the report's, or an assumed one, always said so) to the target · ballistic high arc, cruise low arc · a click replays the flight" },
 ]

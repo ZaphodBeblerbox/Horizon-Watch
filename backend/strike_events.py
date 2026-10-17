@@ -146,6 +146,12 @@ _SHELL = re.compile(r"\bshell(?:s|ed|ing)?\b|artillery|mortars?\b|howitzers?|\bm
 _ASSAULT = re.compile(r"assault|offensive|ground (?:attack|operation|incursion)|\bstorm(?:ed|s|ing)\b|clash(?:es|ed)?\b"
                       r"|\braid(?:s|ed)?\b|incursion|\bbattles?\b|fighting|ambush|firefight|gunfight"
                       r"|attack(?:ed|s)? (?:on |against )?(?:\w+ )?(?:positions?|troops|soldiers|forces|infantry)", _I)
+# A siege is ground force round a place (owner, 2026-10-17: "when we say
+# they are currently besieging a certain city, then we know they're
+# attacking from all directions"). "Houthi forces besiege Ta'izz city" named
+# no act and was dropped; as an assault it reaches the movements layer,
+# which draws it converging (frontline_claims.siege_state).
+_SIEGE = re.compile(r"besieg\w*|\bsieges?\b|under siege|encircl\w*", _I)
 _GENERIC = re.compile(r"\bstrikes?\b|\bstruck\b|\battack(?:s|ed)?\b|\bhits?\b|\btarget(?:s|ed|ing)?\b|explosions?|blasts?", _I)
 # A statement about force is not force: a warning, a threat, a plan, a drill.
 _STATEMENT = re.compile(r"\b(?:warns?|threat(?:en)?s?|vows?|condemn\w*|denies|deny|plans?|could|would|might|calls? for"
@@ -182,7 +188,7 @@ def classify_act(text: str, hint: str | None = None) -> tuple[str | None, bool]:
     if _CONTROL.search(t) or _CONTROL_NAMED.search(t):
         return "control", True
     for act, rx in (("missile", _MISSILE), ("drone", _DRONE), ("airstrike", _AIR), ("shelling", _SHELL),
-                    ("assault", _ASSAULT)):
+                    ("assault", _ASSAULT), ("assault", _SIEGE)):
         if rx.search(t):
             return act, True
     h = str(hint or "").strip().lower()
@@ -482,6 +488,14 @@ def to_report(raw: dict) -> dict | None:
         act, stated = classify_act(text, raw.get("hint"))
     if act is None:
         return None
+    # Telegram "movement" and "unrest" posts are read for ground fighting
+    # only: a drone "heading towards Fastiv" is not a strike, a protest not
+    # a battle — but "Houthi forces besiege Ta'izz city" came as unrest.
+    g = raw.get("ground_only")
+    if g == "movement" and act not in ("control", "assault"):
+        return None
+    if g == "unrest" and not _SIEGE.search(text):
+        return None
     try:
         lat, lon = float(raw["lat"]), float(raw["lon"])
     except (KeyError, TypeError, ValueError):
@@ -671,6 +685,7 @@ def _collect_geoconfirmed(con, since: datetime) -> list[dict]:
 
 
 _TG_TYPES = ("attack", "strike", "interception", "explosion", "clash", "seizure", "infrastructure_damage", "maritime")
+_TG_GROUND_TYPES = ("movement", "unrest")        # ground fighting only (to_report)
 
 
 def _graphic(r) -> bool:
@@ -685,12 +700,13 @@ def _collect_telegram(con, since: datetime) -> list[dict]:
     out = []
     q = ("SELECT channel, msg_id, channel_title, posted_at, headline, summary_en, event_type, place, precision, "
          "lat, lon, media, thumb, graphic FROM telegram_posts WHERE posted_at >= ? AND lat IS NOT NULL AND event_type IN (%s)"
-         % ",".join("?" * len(_TG_TYPES)))
-    for r in con.execute(q, (since.strftime("%Y-%m-%dT%H:%M:%S"), *_TG_TYPES)).fetchall():
+         % ",".join("?" * (len(_TG_TYPES) + len(_TG_GROUND_TYPES))))
+    for r in con.execute(q, (since.strftime("%Y-%m-%dT%H:%M:%S"), *_TG_TYPES, *_TG_GROUND_TYPES)).fetchall():
         out.append({"rid": f"tg:{r['channel']}:{r['msg_id']}", "source": f"Telegram · {r['channel_title'] or r['channel']}",
                     "title": r["headline"] or "", "text": (r["summary_en"] or "")[:400], "lat": r["lat"], "lon": r["lon"],
                     "time": r["posted_at"], "place": r["place"] or "", "precision": precision_from(r["precision"]),
                     "hint": r["event_type"], "url": f"https://t.me/{r['channel']}/{r['msg_id']}",
+                    "ground_only": r["event_type"] if r["event_type"] in _TG_GROUND_TYPES else None,
                     # what TelegramMedia.jsx needs to play the post's own video or photo
                     "post": {"id": f"tg-{r['channel']}-{r['msg_id']}", "channel": r["channel"], "msg_id": r["msg_id"],
                              "channel_title": r["channel_title"], "media": r["media"],
