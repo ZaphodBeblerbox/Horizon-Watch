@@ -95,3 +95,13 @@ export const attachCase = (id, { case_id, can_edit, body }) =>
         { method: "POST", body: JSON.stringify({ case_id, can_edit, body }) })
 
 export const sendableCases = () => req("/api/chat/sendable-cases")
+
+/* ── typing (2026-10-17) ───────────────────────────────────────────────
+   "I am typing" pings, throttled by the caller (lib/chatTyping.js), and the
+   small poll an open thread makes for who else is typing and how far they
+   have read. The server forgets a ping after a few seconds on its own. */
+
+export const setTyping = (id, typing = true) =>
+    req(`/api/chat/conversations/${enc(id)}/typing`, { method: "POST", body: JSON.stringify({ typing }) })
+
+export const getTyping = (id) => req(`/api/chat/conversations/${enc(id)}/typing`)

@@ -19,8 +19,9 @@ import {
     listConversations, startConversation, updateConversation, addMembers,
     removeMember, listMessages, sendMessage, deleteMessage, markRead, chatPeople,
     uploadToChat, attachCaseNode, attachmentUrl, attachableFiles,
-    attachCase, sendableCases,
+    attachCase, sendableCases, setTyping, getTyping,
 } from "../lib/chatApi.js"
+import { createTypingPinger, typingLabel } from "../lib/chatTyping.js"
 import { getCurrentUser } from "../state/authStore.js"
 import PersonCard, { Face } from "./PersonCard.jsx"
 import { toast } from "../ui/toast.js"
@@ -28,6 +29,11 @@ import Loading from "../ui/Loading.jsx"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 
 const POLL_MS = 5000
+// Who is typing is asked for more often than the messages (owner,
+// 2026-10-17: "if people type in the DMs, it should show a typing
+// indicator"): it is an in-memory read on the server, and dots that arrive
+// five seconds late arrive after the message they announced.
+const TYPING_POLL_MS = 2000
 
 const EYE = {
     font: "500 10px var(--mono)", letterSpacing: ".14em",
@@ -81,12 +87,16 @@ export default function Chat() {
     const [picking, setPicking] = useState(false)  // the Parallax file picker
     const [sendingCase, setSendingCase] = useState(false)
     const [dropping, setDropping] = useState(false)
+    const [typing, setTypingNow] = useState([])        // who else is typing in the open chat
 
     const scroller = useRef(null)
     const fileRef = useRef(null)
     const atBottom = useRef(true)
 
     const open = useMemo(() => (convs || []).find((c) => c.id === openId) || null, [convs, openId])
+    // At most one "typing" ping every 3 s, and "stopped" once on send or clear.
+    const pinger = useMemo(() => (openId ? createTypingPinger((on) => setTyping(openId, on)) : null), [openId])
+    useEffect(() => () => { pinger?.stop() }, [pinger])
 
     /* ── loading ─────────────────────────────────────────────────────── */
 
@@ -104,12 +114,14 @@ export default function Chat() {
         try {
             const d = await listMessages(id, { limit: 80 })
             setMsgs(d.messages || [])
+            setTypingNow(d.typing || [])
         } catch (e) {
             if (!quiet) toast(e.message || "Could not open that chat", { icon: "i-alert" })
         } finally { if (!quiet) setLoadingMsgs(false) }
     }, [])
 
     useEffect(() => {
+        setTypingNow([])
         if (!openId) { setMsgs([]); return }
         setInfo(false)
         loadMessages(openId)
@@ -130,13 +142,23 @@ export default function Chat() {
         return () => { alive = false; clearInterval(t); document.removeEventListener("visibilitychange", onVisible) }
     }, [refresh, loadMessages, openId])
 
+    // The dots: a small poll of its own while a chat is open and the tab shown.
+    useEffect(() => {
+        if (!openId) return undefined
+        const t = setInterval(() => {
+            if (document.hidden) return
+            getTyping(openId).then((d) => setTypingNow(d?.typing || [])).catch(() => {})
+        }, TYPING_POLL_MS)
+        return () => clearInterval(t)
+    }, [openId])
+
     // Follow the conversation down, but only if you were already at the
     // bottom — yanking somebody back from the history they are reading
     // because a message arrived is the rudest thing a chat can do.
     useEffect(() => {
         const el = scroller.current
         if (el && atBottom.current) el.scrollTop = el.scrollHeight
-    }, [msgs])
+    }, [msgs, typing.length])
 
     /* ── acting ──────────────────────────────────────────────────────── */
 
@@ -144,6 +166,7 @@ export default function Chat() {
         const text = draft.trim()
         if (!text || !openId) return
         setDraft("")
+        pinger?.stop()
         atBottom.current = true
         try {
             const m = await sendMessage(openId, { body: text })
@@ -366,8 +389,9 @@ export default function Chat() {
                                          ? setInfo(!info)
                                          : setCard((open.members || []).find((p) => p.id !== me?.id))}>
                                     <div style={{ font: "600 13px var(--font)", color: "var(--txt)" }}>{open.title}</div>
-                                    <div style={{ font: "400 10.5px var(--mono)", color: "var(--txt-3)" }}>
-                                        {open.kind === "group"
+                                    <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-3)" }}>
+                                        {typing.length ? `${typingLabel(typing)}…`
+                                            : open.kind === "group"
                                             ? `${open.member_count} people · tap for the group`
                                             : "tap for their profile"}
                                     </div>
@@ -427,6 +451,8 @@ export default function Chat() {
                                             </div>
                                         )
                                     })}
+                                    {typing.length > 0 && <TypingBubble typing={typing} group={open.kind === "group"}
+                                        face={(open.members || []).find((p) => p.id === typing[0].id) || typing[0]} />}
                                 </div>
 
                                 {info && open.kind === "group" && (
@@ -469,7 +495,7 @@ export default function Chat() {
                                     onChange={(e) => { sendFiles(e.target.files); e.target.value = "" }}
                                 />
                                 <textarea
-                                    value={draft} onChange={(e) => setDraft(e.target.value)}
+                                    value={draft} onChange={(e) => { setDraft(e.target.value); pinger?.changed(e.target.value) }}
                                     onKeyDown={(e) => {
                                         // Enter sends; Shift+Enter is a new line. The
                                         // other way round is a chat people write essays in.
@@ -529,6 +555,37 @@ export default function Chat() {
                     onMessage={startWith}
                 />
             )}
+        </div>
+    )
+}
+
+/**
+ * Somebody else is typing: three dots in a bubble of theirs, popping in as
+ * a message does (2026-10-17). The keyframes are written here because this
+ * screen styles inline and has no stylesheet of its own.
+ */
+const TYPING_CSS = `
+@keyframes plx-chat-dot { 0%, 60%, 100% { opacity: .35; transform: none } 30% { opacity: 1; transform: translateY(-3px) } }
+@keyframes plx-chat-pop { 0% { opacity: 0; transform: translateY(8px) scale(.85) } 60% { opacity: 1; transform: scale(1.03) } 100% { opacity: 1; transform: none } }
+@media (prefers-reduced-motion: reduce) { .plx-chat-typing, .plx-chat-typing i { animation: none !important } }`
+
+function TypingBubble({ typing, group, face }) {
+    return (
+        <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "flex-end" }} aria-label={typingLabel(typing)}>
+            <style>{TYPING_CSS}</style>
+            <div style={{ width: 26, flexShrink: 0 }}>{group && <Face person={face} size={26} />}</div>
+            <span className="plx-chat-typing" style={{
+                display: "inline-flex", gap: 4, alignItems: "center", padding: "10px 12px",
+                background: "var(--glass2)", border: "1px solid var(--gline)",
+                transformOrigin: "0 100%", animation: "plx-chat-pop .42s cubic-bezier(.22,1,.36,1) both",
+            }}>
+                {[0, 1, 2].map((i) => (
+                    <i key={i} style={{
+                        width: 6, height: 6, borderRadius: "50%", background: "var(--txt-2)", opacity: .4,
+                        animation: `plx-chat-dot 1.2s ease-in-out ${i * 0.16}s infinite`,
+                    }} />
+                ))}
+            </span>
         </div>
     )
 }
