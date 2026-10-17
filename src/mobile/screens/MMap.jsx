@@ -89,7 +89,7 @@ const scaled = (f, dw = 16) => {
 // close together on screen are drawn as one count until zoom 11; what is
 // yours (assets, people, safe houses), places with their own grouping and
 // anything critical are never folded away.
-const CLUSTER_LAYERS = new Set(["geoConfirmed", "telegram", "unrest", "strikes", "imagerySignals", "fires", "derivedAlerts",
+const CLUSTER_LAYERS = new Set(["geoConfirmed", "telegram", "unrest", "demonstrations", "strikes", "imagerySignals", "fires", "derivedAlerts",
                                 "ports", "airports", "facMilitary", "facMedical", "facSecurity", "power:sites"])
 const CLUSTER_PX = 46
 const CLUSTER_UNTIL = 11

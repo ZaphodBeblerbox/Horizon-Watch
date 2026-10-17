@@ -37,7 +37,7 @@ import {
 } from "../globe/strikes.js"
 import {
     claimRing, claimStyle, claimSummary, milSymbol, movementArrow, movementLabel, movementStyle, movementSummary,
-    movementSymbolPoint, overlayUrl, pillUri, sideColour, trajectoryPath, trajectorySummary, FRONTLINE_LAYERS,
+    movementSymbolPoint, overlayUrl, sideColour, trajectoryPath, trajectorySummary, FRONTLINE_LAYERS,
 } from "../globe/frontlineClaims.js"
 import {
     DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, demoSub, demoTitle, trackSegments,
@@ -1199,7 +1199,21 @@ async function loadClaims({ bounds }) {
     return cullAreas(out, normBounds(bounds))
 }
 
-async function loadMovements({ bounds }) {
+// ON THE PHONE A LABEL IS TEXT, NOT A BOX (owner's monochrome rule, 2026-10-17):
+// white words with a dark halo so they read over any ground, small; the pill
+// with a coloured border (globe/frontlineClaims.js pillUri) stays the desktop's
+function textLabelUri(text, { size = 11, weight = 600 } = {}) {
+    const t = String(text || "")
+    const w = Math.round(t.length * size * 0.6 + 8), h = Math.round(size + 8)
+    const esc = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w * 3}" height="${h * 3}" viewBox="0 0 ${w} ${h}">`
+        + `<text x="${w / 2}" y="${h / 2}" dy="0.35em" text-anchor="middle" fill="#f2f4f8" stroke="#05070c" stroke-width="3" stroke-opacity=".85" paint-order="stroke" stroke-linejoin="round" `
+        + `font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="${size}" font-weight="${weight}">${esc}</text></svg>`
+    return { uri: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, width: w, height: h, anchor: [Math.round(w / 2), Math.round(h / 2)] }
+}
+const JOINT_LABEL_ZOOM = 10          // a path's dates only once zoomed in; a siege's name always
+
+async function loadMovements({ bounds, zoom = 0 }) {
     const d = await getJson(overlayUrl(API_BASE), { ttlMs: OVERLAY_TTL })
     const out = []
     for (const m of arr(d?.movements)) {
@@ -1211,8 +1225,11 @@ async function loadMovements({ bounds }) {
         // the map draws every line at one opacity: a path's earlier legs read
         // as earlier by being thinner and dashed, the newest solid and wide
         const early = m.kind === "leg" ? !m.tip : m.kind === "approach" && m.path_legs > 0
-        const at = movementSymbolPoint(m)
-        const sym = at ? milSymbol(m.sidc, { colour, size: 18 }) : null
+        // the unit's symbol where the evidence is: not on an open approach
+        // (dashed, a direction left open, not a force seen there), and small
+        // so eight of them round a siege do not bury the place
+        const at = st.dash ? null : movementSymbolPoint(m)
+        const sym = at ? milSymbol(m.sidc, { colour, size: m.kind === "approach" ? 12 : 15 }) : null
         const raw = { ...m, kind: "troop_movement", lat: m.to?.lat, lon: m.to?.lon, detail: movementSummary(m),
                       url: m.sources?.find((s) => s?.url)?.url || null, source: m.sources?.[0]?.source || null, published_at: m.time }
         out.push({
@@ -1228,8 +1245,8 @@ async function loadMovements({ bounds }) {
         // a path's joint ("2 · 13 Oct") or a siege's name, as its own marker:
         // a line carries one image, and the symbol already has it
         const l = movementLabel(m)
-        if (l && finite(l.at.lat, l.at.lon)) {
-            const pill = pillUri(l.text, colour)
+        if (l && finite(l.at.lat, l.at.lon) && (l.siege || zoom >= JOINT_LABEL_ZOOM)) {
+            const pill = textLabelUri(l.text, { size: l.siege ? 11.5 : 10.5 })
             out.push({
                 id: `fmove-label-${m.id}`, color: colour, weight: 0, coords: [[toLL(l.at), toLL(l.at)]],
                 marker: { lat: +l.at.lat, lon: +l.at.lon, iconUri: pill.uri, iconWidth: pill.width, iconHeight: pill.height,
