@@ -133,6 +133,14 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const [on, setOn] = useState(() => ({ ...builtIn(), ...(savedView()?.layers || {}) }))
     const touched = useRef(false)
     const [savedAt, setSavedAt] = useState(null)
+    // OTHER SCREENS TURN LAYERS ON (the route tray's "Demonstrations on the
+    // map"): {key: bool} by event, and what is on is said back
+    useEffect(() => {
+        const h = (e) => { touched.current = true; setOn((o) => ({ ...o, ...(e.detail || {}) })) }
+        window.addEventListener("m2:layers", h)
+        return () => window.removeEventListener("m2:layers", h)
+    }, [])
+    useEffect(() => { window.__m2LayersOn = on; window.dispatchEvent(new CustomEvent("m2:layers-on", { detail: on })) }, [on])
     const [feats, setFeats] = useState({})        // layer key → its features in view
     const [bounds, setBounds] = useState(null)
     const [ships, setShips] = useState([])
@@ -237,7 +245,9 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             }
         }
         const first = setTimeout(run, 250)
-        const t = setInterval(run, active ? 2 * 60_000 : 10 * 60_000)
+        // the quickest layer that is on sets the pace (live demonstrations: a minute)
+        const fastest = Math.min(2 * 60_000, ...PHONE_LAYERS.filter((l) => on[l.key] && l.refreshMs).map((l) => l.refreshMs))
+        const t = setInterval(run, active ? fastest : 10 * 60_000)
         return () => { live = false; clearTimeout(first); clearInterval(t) }
     }, [bounds, zoom, hours, on, active, epCountries, epActive, strikeSet])
 

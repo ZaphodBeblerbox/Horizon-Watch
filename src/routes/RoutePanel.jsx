@@ -94,6 +94,7 @@ function Panel({ panel, variant }) {
                 </div>
             </div>
             <div className="plx-route-body">
+                {phone && <DemoToggle />}
                 {Custom ? <>
                     <ModeChips mode={panel.request?.mode} />
                     <Custom panel={panel} request={panel.request} variant={variant} onClose={closeRoutePanel} />
@@ -222,5 +223,24 @@ function Output({ r, sel, setSel, panel }) {
             </div>}
             {panel.request?.purpose && <div className="plx-dim" style={{ fontSize: 11 }}>Plan {plan?.id || "…"}</div>}
         </div>
+    )
+}
+
+/** THE DEMONSTRATIONS ON THE MAP (owner, 2026-10-17: "what Get me out
+ *  weighs, the current demonstrations, as a layer I can follow in real
+ *  time"): the phone map's live layer and the marches pieced together from
+ *  Telegram (mobile/mapLayers.js), turned on from here. */
+function DemoToggle() {
+    const [on, setOn] = useState(() => !!(typeof window !== "undefined" && window.__m2LayersOn?.demonstrations))
+    useEffect(() => {
+        const h = (e) => setOn(!!e.detail?.demonstrations)
+        window.addEventListener("m2:layers-on", h)
+        return () => window.removeEventListener("m2:layers-on", h)
+    }, [])
+    const flip = () => window.dispatchEvent(new CustomEvent("m2:layers", { detail: { demonstrations: !on, "demonstrations:movement": !on } }))
+    return (
+        <button className="plx-chip" aria-pressed={on} onClick={flip} data-testid="route-demos-toggle" style={{ alignSelf: "flex-start" }}>
+            {on ? "Demonstrations shown on the map" : "Show demonstrations on the map, live"}
+        </button>
     )
 }
