@@ -26,6 +26,7 @@ import GlobeDerivedAlertsLayer  from "../globe/GlobeDerivedAlertsLayer.jsx"
 import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeTelegramLayer        from "../globe/GlobeTelegramLayer.jsx"
+import GlobeDemonstrationsLayer  from "../globe/GlobeDemonstrationsLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
 import GlobeEndangeredPlacesLayer from "../globe/GlobeEndangeredPlacesLayer.jsx"
 import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
@@ -159,6 +160,9 @@ export default function GlobeView({
     gdeltEnabled = false,
     telegramEnabled = false,
     unrestEnabled   = false,
+    // What "Get me out" avoids, and the crowd's movement reconstructed from
+    // Telegram reports (GlobeDemonstrationsLayer).
+    demonstrationsEnabled = false,
     // Strikes & control (GlobeStrikesLayer), and the frontline claims,
     // movements and trajectories drawn from the same events.
     strikesEnabled  = false,
@@ -1244,6 +1248,7 @@ export default function GlobeView({
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} limit={1500} />
                 <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={Math.max(48, signalWindowHours || 48)} />
+                <GlobeDemonstrationsLayer enabled={demonstrationsEnabled} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
                 <GlobeEndangeredPlacesLayer enabled={endangeredEnabled} />
                 {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}

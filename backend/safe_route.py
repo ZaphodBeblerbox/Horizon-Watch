@@ -59,6 +59,7 @@ API CONTRACT (other planners plug in here — maritime, air, convoy, medevac …
     "strikes"           strike pickets
     "roadblocks"        called roadblocks / slow-drive convoys / blockades, road closures, checkpoints
     hazards_near(lat, lon, km, now, providers=None) — all registered, or the named ones.
+    hazards_in_box(south, north, west, east, now, providers=None) — the same, over a box (the map layer).
 
   Modes — register_mode(name, label, valhalla=costing, osrm=profile, speed_mps, providers,
                         kind_weight={kind: ×}, hard={kinds never crossed}, dest_m=(min, max), maps="walking"|"driving"):
@@ -543,7 +544,22 @@ def hazards_near(lat: float, lon: float, km: float = HAZARD_SEARCH_KM, now: _dt.
     default), heaviest first, each tagged with its provider. Blocking
     (SQLite and a JSON file): call it from a thread."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
-    box = _box(lat, lon, km)
+    near = lambda h: metres(lat, lon, h["lat"], h["lon"]) <= km * 1000  # noqa: E731
+    out = _gather(_box(lat, lon, km), now, providers, near)
+    for h in out:
+        h["distance_m"] = round(metres(lat, lon, h["lat"], h["lon"]))
+    return out
+
+
+def hazards_in_box(south: float, north: float, west: float, east: float, now: _dt.datetime | None = None,
+                   providers: list[str] | None = None) -> list[dict]:
+    """Every live hazard in a box (the whole world by default on the map's
+    "Demonstrations, live" layer, demonstrations.py) from the same providers
+    the planner reads, deduplicated the same way, heaviest first. Blocking."""
+    return _gather((south, north, west, east), now or _dt.datetime.now(_dt.timezone.utc), providers, None)
+
+
+def _gather(box, now, providers, keep) -> list[dict]:
     s, n, w, e = box
     inside = lambda la, lo: la is not None and lo is not None and s <= la <= n and w <= lo <= e  # noqa: E731
     out: list[dict] = []
@@ -553,7 +569,7 @@ def hazards_near(lat: float, lon: float, km: float = HAZARD_SEARCH_KM, now: _dt.
             continue
         try:
             for h in prov["fn"](box, inside, now) or []:
-                if h and metres(lat, lon, h["lat"], h["lon"]) <= km * 1000:
+                if h and (keep is None or keep(h)):
                     out.append({**h, "provider": name})
         except Exception as ex:                             # noqa: BLE001
             print(f"[safe-route] error: provider {name}: {type(ex).__name__}: {ex}", flush=True)
@@ -563,8 +579,6 @@ def hazards_near(lat: float, lon: float, km: float = HAZARD_SEARCH_KM, now: _dt.
         k = (h["kind"], round(h["lat"], 3), round(h["lon"], 3))
         if k not in best or h["weight"] > best[k]["weight"]:
             best[k] = h
-    for h in best.values():
-        h["distance_m"] = round(metres(lat, lon, h["lat"], h["lon"]))
     return sorted(best.values(), key=lambda h: -h["weight"])
 
 

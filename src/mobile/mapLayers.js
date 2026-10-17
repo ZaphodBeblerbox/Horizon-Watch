@@ -39,6 +39,9 @@ import {
     claimRing, claimStyle, claimSummary, milSymbol, movementArrow, movementSummary, overlayUrl, sideColour,
     trajectoryPath, trajectorySummary, FRONTLINE_LAYERS,
 } from "../globe/frontlineClaims.js"
+import {
+    DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, demoSub, demoTitle, trackSegments,
+} from "../globe/demonstrations.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -565,6 +568,29 @@ async function loadUnrest({ bounds, hours }) {
         })
     }
     return cullPoints(feats, normBounds(bounds))
+}
+
+// ── Demonstrations, live (globe/GlobeDemonstrationsLayer.jsx, globe/demonstrations.js) ──
+// What "Get me out" avoids, the world over, and the crowd's movement
+// reconstructed from Telegram reports: one answer for both rows.
+const demosJson = () => getJson(`${API_BASE}${DEMOS_PATH}`, { ttlMs: DEMOS_REFRESH_MS / 2 })
+
+async function loadDemonstrations({ bounds }) {
+    const d = await demosJson()
+    const now = Date.now()
+    return cullPoints(arr(d?.demonstrations).map((h) => ({
+        id: `demo-${h.id}`, lat: num(h.lat), lon: num(h.lon),
+        iconUri: demoIconUri(h, now), size: DEMO_SIZE,
+        title: demoTitle(h), sub: demoSub(h, now),
+        severity: null, raw: demoRaw(h, now),
+    })), normBounds(bounds))
+}
+
+async function loadDemoMovement({ bounds }) {
+    const d = await demosJson()
+    const now = Date.now()
+    return cullLines(arr(d?.tracks).flatMap((t) => trackSegments(t, now)).map((f) => ({ ...f, id: `demo-move-${f.id}` })),
+                     normBounds(bounds))
 }
 
 async function loadImagerySignals({ bounds }) {
@@ -1308,6 +1334,18 @@ export const PHONE_LAYERS = [
     {
         key: "unrest", label: "Unrest & protests", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
         legendIcon: tgUnrestIcon(), load: loadUnrest,
+    },
+    // What the route planner ("Get me out") avoids, as a layer, and the
+    // crowd's movement reconstructed from Telegram reports beside it; off by
+    // default. refreshMs: read again each minute while on.
+    {
+        key: "demonstrations", label: "Demonstrations, live", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
+        refreshMs: DEMOS_REFRESH_MS, legendIcon: demoIconUri({ kind: "march" }), load: loadDemonstrations,
+    },
+    {
+        key: "demonstrations:movement", label: "Protester movement (reconstructed from reports)", group: G.news,
+        defaultOn: false, kind: "lines", minZoom: 0, refreshMs: DEMOS_REFRESH_MS,
+        legendIcon: lineSwatch(TRACK_COLOUR), load: loadDemoMovement,
     },
     {
         key: "strikes", label: "Strikes & control", group: G.news, defaultOn: true, kind: "points", minZoom: 0,

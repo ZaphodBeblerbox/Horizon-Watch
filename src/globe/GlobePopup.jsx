@@ -62,6 +62,9 @@ export const INSPECTOR_TYPES = new Set([
     "strike_event",
     // Frontline claims, movements and trajectories (GlobeFrontlineClaimsLayer).
     "frontline_claim", "troop_movement", "trajectory",
+    // Demonstrations, live: the planner's hazards and the reconstructed
+    // crowd movement (GlobeDemonstrationsLayer).
+    "demonstration", "protest_track",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────
