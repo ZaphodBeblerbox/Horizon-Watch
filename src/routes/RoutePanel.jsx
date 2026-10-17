@@ -2,9 +2,11 @@
  * RoutePanel.jsx — THE route planner, one sidebar for every kind of route
  * (owner, 2026-10-12: route planning "as a sidebar UI that appears in
  * certain situations"). Desktop: a panel on the right of the globe, like
- * the inspector (the route drawn by routeLayer.cesium.jsx). Phone: a
- * full-height sheet with its own map (routeLayer.leaflet.js), the phone
- * map's tiles and their fallback chain.
+ * the inspector (the route drawn by routeLayer.cesium.jsx). Phone: a glass
+ * tray over THE map (owner, 2026-10-17: "don't open a new map, just have
+ * the Get Me Out UI in the normal map") — the plan is published and the
+ * phone map draws it (mobile/screens/MMap.jsx, routeLayer.leaflet.js); the
+ * tray is dragged down to its title and up again.
  *
  *   in   from · to (a place, or the nearest safe point) · mode (registry.js) ·
  *        depart time · which dangers to avoid (provider chips)
@@ -16,16 +18,13 @@
  * asset's "Safest route", or a context card (contexts.js).
  */
 import { useEffect, useRef, useState } from "react"
-import L from "leaflet"
-import "leaflet/dist/leaflet.css"
 import PlacePicker from "../search/PlacePicker.jsx"
-import { addBaseTiles } from "../mobile/tileSources.js"
+import { attachDrag, flingMs } from "../mobile/gesture.js"
 import { closeRoutePanel, updateRequest, publishPlan } from "./store.js"
 import { useRoutePanel, usePlan } from "./usePlan.js"
 import { sendPlan } from "./api.js"
 import { listModes, listProviders, defaultAvoid, getMode, registerMode } from "./registry.js"
 import maritime from "./modes/maritime.js"
-import { drawPlan } from "./routeLayer.leaflet.js"
 import {
     viewState, STATE_TEXT, summary, exposureLabel, hazardLine, fromLabel, toLabel, toLocalInput, fromLocalInput,
 } from "./view.js"
@@ -55,9 +54,36 @@ function Panel({ panel, variant }) {
     // AN EVACUATION (evacuation.py): multi-leg itineraries to a safe house, its own body
     const evac = isEvacuation(r.plan)
     const title = evac ? "Evacuation" : panel.title || (panel.request?.purpose === "access" ? "Deliveries / access route" : panel.request?.to ? "Route" : "Safest way out")
+    // THE PHONE'S TRAY: dragged down to its title (the route on the map),
+    // up again for the details; the finger moves it, the release finishes it
+    const tray = useRef(null)
+    const [min, setMin] = useState(false)
+    const minRef = useRef(min)
+    minRef.current = min
+    useEffect(() => {
+        const node = tray.current
+        if (!phone || !node) return undefined
+        const head = node.querySelector(".plx-route-head")
+        return attachDrag(head, {
+            start: (t) => !t.closest?.("button, input, a"),
+            move: ({ dy, axis }) => {
+                if (axis !== "y") return false
+                node.style.transition = "none"
+                node.style.transform = `translateY(${Math.max(minRef.current ? -node.offsetHeight + 90 : 0, dy) + (minRef.current ? node.offsetHeight - 90 : 0)}px)`
+                return true
+            },
+            end: ({ dy, vy, moved }) => {
+                if (!moved) return
+                const goMin = minRef.current ? !(dy < -40 || vy < -0.4) : (dy > 60 || vy > 0.45)
+                node.style.transition = `transform ${flingMs(node.offsetHeight / 2, vy)}ms cubic-bezier(.22,1,.36,1)`
+                node.style.transform = ""
+                setMin(goMin)
+            },
+        })
+    }, [phone])
     return (
-        <div className={`plx-route-panel ${phone ? "phone" : "desktop"}`} data-testid="route-panel" role="dialog" aria-label={title}>
-            {phone && <PhoneMap plan={r.plan} sel={sel} />}
+        <div ref={tray} className={`plx-route-panel ${phone ? "phone" : "desktop"}${phone && min ? " min" : ""}`} data-testid="route-panel" role="dialog" aria-label={title}>
+            {phone && <div className="plx-route-grip" onClick={() => setMin((m) => !m)} aria-label={min ? "Show the route's details" : "Show the map"} role="button" />}
             <div className="plx-route-head">
                 <button className="plx-route-close" onClick={closeRoutePanel} aria-label="Close">×</button>
                 <div style={{ minWidth: 0 }}>
@@ -197,30 +223,4 @@ function Output({ r, sel, setSel, panel }) {
             {panel.request?.purpose && <div className="plx-dim" style={{ fontSize: 11 }}>Plan {plan?.id || "…"}</div>}
         </div>
     )
-}
-
-function PhoneMap({ plan, sel }) {
-    const el = useRef(null)
-    const map = useRef(null)
-    const group = useRef(null)
-    const fitted = useRef(null)
-    useEffect(() => {
-        if (!el.current || map.current) return undefined
-        map.current = L.map(el.current, { zoomControl: false, attributionControl: true }).setView([48.8566, 2.3522], 13)
-        el.current._m2route = map.current             // reachable for browser checks
-        const off = addBaseTiles(L, map.current, "dark")
-        group.current = L.layerGroup().addTo(map.current)
-        setTimeout(() => map.current?.invalidateSize(), 60)
-        return () => { off(); map.current?.remove(); map.current = null }
-    }, [])
-    useEffect(() => {
-        if (!map.current || !group.current) return
-        const b = drawPlan(L, group.current, plan, sel)
-        const key = plan ? `${plan.origin?.lat},${plan.origin?.lon},${plan.safest?.key || ""}` : null
-        if (b && b.isValid() && fitted.current !== key) {
-            fitted.current = key
-            map.current.fitBounds(b, { padding: [24, 24], maxZoom: 17 })
-        }
-    }, [plan, sel])
-    return <div ref={el} className="plx-route-map" />
 }

@@ -1,7 +1,8 @@
 /**
  * routeLayer.leaflet.js — a route plan drawn on a Leaflet map: each hazard
  * as a red ring (its outer radius) around a darker core, labelled; the
- * fastest route grey and dashed; the safest green over it; the start and
+ * fastest route grey and dashed; the safest blue over it (it was green,
+ * which the owner found did not fit the phone, 2026-10-17); the start and
  * the safe point. Returns the bounds to fit.
  */
 import { ringStyle } from "./view.js"
@@ -52,8 +53,8 @@ export function drawPlan(L, group, plan, sel = null) {
         f.coords.forEach((c) => pts.push(c))
     }
     if (s) {
-        L.polyline(s.coords, { color: "#0b3d1f", weight: 9, opacity: 0.55, interactive: false }).addTo(group)
-        L.polyline(s.coords, { color: "#3ddc84", weight: 5.5, opacity: 1, interactive: false, className: "plx-route-safest" }).addTo(group)
+        L.polyline(s.coords, { color: "#0b1d3a", weight: 9, opacity: 0.55, interactive: false }).addTo(group)
+        L.polyline(s.coords, { color: "#5b9bff", weight: 5.5, opacity: 1, interactive: false, className: "plx-route-safest" }).addTo(group)
         s.coords.forEach((c) => pts.push(c))
         const d = s.coords[s.coords.length - 1]
         L.marker(d, { icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="plx-route-dest" title="Safe point">✓</div>' }), keyboard: false })

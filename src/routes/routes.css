@@ -3,15 +3,33 @@
     font-size: 13.5px; line-height: 1.45; display: flex; flex-direction: column; }
 .plx-route-panel.desktop { position: absolute; right: 16px; top: 70px; bottom: 60px; width: 400px; z-index: 45; border-radius: 12px;
     border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.5); background: rgba(12,16,24,.95); overflow: hidden; }
-.plx-route-panel.phone { position: fixed; inset: 0; z-index: 4000; }
+/* THE PHONE: a glass tray over the one map (2026-10-17), monochrome like the
+   rest of the phone; the route itself is drawn on that map (MMap.jsx) */
+.plx-route-panel.phone { position: fixed; left: 0; right: 0; bottom: 0; max-height: 62vh; z-index: 890; border-radius: 26px 26px 0 0;
+    background: rgba(16, 19, 25, .84); backdrop-filter: blur(28px) saturate(1.35); -webkit-backdrop-filter: blur(28px) saturate(1.35);
+    border: 1px solid rgba(255,255,255,.14); border-bottom: 0; box-shadow: 0 -10px 40px rgba(0,0,0,.4);
+    transition: transform .42s cubic-bezier(.22,1,.36,1); animation: plx-tray-in .42s cubic-bezier(.22,1,.36,1); }
+.plx-route-panel.phone.min { transform: translateY(calc(100% - 90px - env(safe-area-inset-bottom, 0px))); }
+@keyframes plx-tray-in { from { transform: translateY(100%) } to { transform: none } }
+.plx-route-grip { width: 38px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.25); margin: 8px auto 0; flex: none; cursor: pointer; }
+.plx-route-panel.phone .plx-route-head { position: static; background: none; border: 0; border-radius: 0; border-bottom: 1px solid rgba(255,255,255,.08);
+    touch-action: none; padding: 8px 16px 12px; }
+.plx-route-panel.phone .plx-chip.small[aria-pressed="true"] { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.45); }
+.plx-route-panel.phone .plx-route-eyebrow { color: rgba(255,255,255,.55); letter-spacing: 0; text-transform: none; font-size: 12.5px; }
+.plx-route-panel.phone .plx-route-body { flex: 1 1 auto; border-top: 0; }
+.plx-route-panel.phone .plx-chip[aria-pressed="true"] { background: #f4f5f7; color: #0a0b0d; border-color: #f4f5f7; }
+.plx-route-panel.phone .plx-cand[aria-pressed="true"] { border-color: rgba(255,255,255,.55); background: rgba(255,255,255,.07); }
+.plx-route-panel.phone .plx-btn { border-radius: 999px; }
+.plx-route-panel.phone .plx-btn.go { background: #f4f5f7; color: #0a0b0d; border-color: #f4f5f7; font-weight: 650; }
+.plx-route-panel.phone .plx-link { color: #fff; text-decoration: underline; }
+.plx-route-panel.phone .plx-h { letter-spacing: 0; text-transform: none; font-size: 12.5px; font-weight: 600; }
+.plx-route-panel.phone .plx-swatch.safest { background: #5b9bff; }
+.plx-route-panel.phone .plx-route-close { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.06); }
 .plx-route-map { flex: 1 1 46%; min-height: 220px; }
 .plx-route-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.1); }
-.plx-route-panel.phone .plx-route-head { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 10px); left: 10px; right: 10px; z-index: 1000;
-    background: rgba(12,16,24,.9); border-radius: 12px; border: 1px solid rgba(255,255,255,.1); }
 .plx-route-body { overflow-y: auto; padding: 12px 14px calc(env(safe-area-inset-bottom, 0px) + 14px); display: flex; flex-direction: column; gap: 12px;
     -webkit-overflow-scrolling: touch; }
 .plx-route-panel.desktop .plx-route-body { flex: 1; }
-.plx-route-panel.phone .plx-route-body { flex: 0 1 54%; border-top: 1px solid rgba(255,255,255,.1); }
 .plx-route-close { width: 34px; height: 34px; border-radius: 17px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #fff;
     font-size: 20px; line-height: 1; cursor: pointer; flex: none; }
 .plx-route-eyebrow { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #3ddc84; }
@@ -48,3 +66,4 @@
 .m2-track-end { width: 22px; height: 22px; border-radius: 11px; background: #3b8cff; border: 3px solid #fff; box-shadow: 0 0 0 5px rgba(59,140,255,.3); }
 .m2-track-now { width: 22px; height: 22px; border-radius: 11px; background: #fff; border: 4px solid #3b8cff; box-shadow: 0 0 0 5px rgba(59,140,255,.35); }
 .plx-getout { background: #b3261e !important; color: #fff !important; }
+.m2 .plx-route-dest { background: #f4f5f7; color: #0a0b0d; }

@@ -446,3 +446,54 @@
 .m2 [data-testid="location-prompt"] button { border-radius: 999px !important; height: 38px !important; padding: 0 14px !important; font-family: inherit !important;
     background: rgba(255, 255, 255, .06) !important; border: 1px solid var(--gline2) !important; color: var(--txt) !important; }
 .m2 [data-testid="location-prompt"] [data-testid="location-use"] { background: var(--acc) !important; color: var(--ink) !important; border-color: var(--acc) !important; font-weight: 650 !important; }
+
+/* ── PHONE v4.1 (2026-10-17, the owner's second pass) ─────────────────────── */
+/* the alert count is red, the one colour the chrome keeps */
+.m2 .m2-badge { background: #ff3b30; color: #fff; }
+/* the wordmark's two strokes keep their blue */
+.m2 .m2-brand { --acchi: #5b9bff; }
+/* where you are: the blue dot, glowing, as on the map */
+.m2-here-dot { width: 9px; height: 9px; border-radius: 50%; background: #2f7cf6; flex: none;
+               box-shadow: 0 0 0 3px rgba(59, 140, 255, .25), 0 0 10px 2px rgba(59, 140, 255, .65); animation: m2-here-glow 2.4s ease-in-out infinite; }
+@keyframes m2-here-glow { 50% { box-shadow: 0 0 0 5px rgba(59, 140, 255, .12), 0 0 14px 4px rgba(59, 140, 255, .8); } }
+/* no zoom when a field is tapped: iOS zooms into any input under 16 px */
+.m2 input, .m2 textarea, .m2 select { font-size: 16px !important; }
+@media (prefers-reduced-motion: reduce) { .m2-here-dot { animation: none; } }
+.m2-me-btn svg { color: #5b9bff; }
+/* pull to refresh (gesture.js attachPullToRefresh) */
+.m2-ptr { position: absolute; left: 50%; top: calc(var(--m2-top-h) + 6px); z-index: 4; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+          color: var(--txt); background: rgba(16, 19, 25, .8); border: 1px solid var(--gline2); opacity: 0; pointer-events: none;
+          transform: translate(-50%, -30px); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.m2-ptr.spin svg { animation: m2-ptr-spin .8s linear infinite; }
+@keyframes m2-ptr-spin { to { transform: rotate(360deg) } }
+/* From the ground: one video centred and larger, its neighbours peeking */
+.m2-hscroll.m2-center { scroll-snap-type: x mandatory; padding: 0 7%; scroll-padding: 0 7%; }
+.m2-hscroll.m2-center > * { width: 86%; scroll-snap-align: center; }
+.m2-why { margin: 4px 0 14px; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--gline2); background: rgba(255, 255, 255, .05);
+          font-size: 14px; line-height: 1.5; color: var(--txt2); }
+.m2-why-h { font-size: 12.5px; font-weight: 600; color: var(--txt3); margin-bottom: 4px; }
+/* urgent toasts (MNotifCards): glass, compact, in and then away */
+.m2-banner { border-radius: 20px; background: rgba(20, 23, 29, .82); backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4);
+             animation: m2-toast-in .5s var(--m2-ease); transition: transform .2s ease, opacity .3s ease; }
+.m2-banner.leaving { opacity: 0; transform: translateY(-24px) scale(.97) !important; }
+.m2-banner-body small { color: #ff6159; font-weight: 600; }
+@keyframes m2-toast-in { from { transform: translateY(-110%) scale(.96); opacity: 0 } 60% { opacity: 1 } to { transform: none } }
+/* the mood (screens/MMood.jsx): one country large on top, the rest as rows */
+.m2-mood-top { padding: 4px 2px 6px; animation: m2-pane-from-r .4s var(--m2-ease); }
+.m2-mood-name { font-size: 28px; font-weight: 750; letter-spacing: -.02em; margin: 2px 0 6px; }
+.m2-mood-index { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.m2-mood-index b { font-size: 54px; font-weight: 700; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.m2-mood-index span { font-size: 13px; color: var(--txt3); line-height: 1.4; }
+.m2-mood-alert { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 13.5px; color: var(--txt); }
+.m2-mood-alert i, .m2-mood-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; display: inline-block; flex: none; }
+.m2-mood-dot { margin-left: 7px; vertical-align: 1px; }
+.m2-mood-call { padding: 10px 0; border-top: 1px solid var(--gline); font-size: 14px; line-height: 1.45; }
+.m2-mood-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px 52px; gap: 12px; align-items: center; width: 100%; padding: 12px 14px; border: 0;
+               border-top: 1px solid var(--gline); background: none; text-align: left; cursor: pointer; }
+.m2-mood-row:first-child { border-top: 0; }
+.m2-mood-row:active { background: rgba(255, 255, 255, .05); }
+.m2-mood-row-name { font-size: 15px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m2-mood-bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.m2-mood-bar span { display: block; height: 100%; background: var(--txt); border-radius: 2px; }
+.m2-mood-num { text-align: right; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.m2-mood-num small { font-size: 11.5px; color: var(--txt3); font-weight: 500; }

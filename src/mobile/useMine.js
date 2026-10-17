@@ -21,7 +21,9 @@ export function usePoll(path, everyMs, pick = (d) => d) {
         const load = () => getJSON(path).then((d) => { if (live && d != null) setV(pick(d)) })
         load()
         const t = everyMs ? setInterval(load, everyMs) : null
-        return () => { live = false; if (t) clearInterval(t) }
+        // a pull to refresh asks every list on screen for its newest (gesture.js)
+        window.addEventListener("m2:refresh", load)
+        return () => { live = false; if (t) clearInterval(t); window.removeEventListener("m2:refresh", load) }
     }, [path, everyMs]) // eslint-disable-line react-hooks/exhaustive-deps
     return v
 }

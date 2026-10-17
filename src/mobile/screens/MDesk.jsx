@@ -12,7 +12,7 @@ import TelegramMedia from "../../components/TelegramMedia.jsx"
 import API_BASE from "../../apiBase.js"
 import { createPost, listPosts, listReplies, toggleAck, uploadDeskFile } from "../../lib/deskApi.js"
 import { Icon, when, ago } from "./common.jsx"
-import { attachDrag, swallowClickAfterDrag } from "../gesture.js"
+import { attachDrag, attachPullToRefresh, swallowClickAfterDrag } from "../gesture.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { audienceLabel } from "../../desk/Desk.jsx"
 
@@ -260,8 +260,17 @@ export default function MDesk({ active, onShowOnMap }) {
         return () => { off(); offClick() }
     }, [tab])                      // the body is a new node for each tab (its key)
     const pick = (t) => { if (t === tab) return; setFrom(t === "general" ? "r" : "l"); setTab(t) }
+    // PULL DOWN TO SEE THE NEWEST (owner: "like on Twitter"): the team's
+    // posts fetched again, or the General feed started afresh
+    const scroller = useRef(null)
+    const [fresh, setFresh] = useState(0)
+    const loadRef = useRef(load)
+    loadRef.current = load
+    useEffect(() => attachPullToRefresh(scroller.current, {
+        onRefresh: () => (tabRef.current === "team" ? loadRef.current() : new Promise((r) => { setFresh((n) => n + 1); setTimeout(r, 600) })),
+    }), [])
     return (
-        <div className="m2-scroll m2-scroll-seg" data-screen-label="Phone desk">
+        <div ref={scroller} className="m2-scroll m2-scroll-seg" data-screen-label="Phone desk">
             <div className="m2-seg" role="tablist">
                 <button role="tab" aria-selected={tab === "team"} onClick={() => pick("team")}>Team</button>
                 <button role="tab" aria-selected={tab === "general"} onClick={() => pick("general")}>General</button>
@@ -275,7 +284,7 @@ export default function MDesk({ active, onShowOnMap }) {
                     : posts.map((p) => <PostCard key={p.id} p={p} onChanged={load} />)}
             </>) : tab === "general" ? (
                 // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
-                <GeneralFeed compact onMap={(it) => onShowOnMap?.(it)} />
+                <GeneralFeed key={fresh} compact onMap={(it) => onShowOnMap?.(it)} />
             ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
             </div>
         </div>

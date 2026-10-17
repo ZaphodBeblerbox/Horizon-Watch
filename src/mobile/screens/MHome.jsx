@@ -19,7 +19,9 @@ import { slotOf, useFrozen } from "../../home/dayPart.js"
 import { getCurrentUser, subscribeAuth } from "../../state/authStore.js"
 import { greetingFor } from "../../data/greetings.js"
 import { useMine, usePoll, arr } from "../useMine.js"
-import { Row, SignalSheet, sevColor, when, ago, Icon } from "./common.jsx"
+import { Row, Sheet, SignalSheet, sevColor, when, ago, Icon } from "./common.jsx"
+import OutlookExplain from "../../insight/OutlookExplain.jsx"
+import { attachPullToRefresh } from "../gesture.js"
 import { relevance } from "../../state/interests.js"
 import { hmZone } from "../../utils/clock.js"
 import { getSettings, subscribeSettings } from "../../state/settingsStore.js"
@@ -51,6 +53,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const posts = usePoll("/api/telegram/posts?hours=48", 10 * 60_000, (d) => arr(d?.posts))
     const outlook = usePoll("/api/enrich/outlook", 20 * 60_000)
     const [open, setOpen] = useState(null)
+    const [why, setWhy] = useState(null)               // a line of the outlook, opened on its reasoning
     const slot = slotOf(new Date())
     const split = useMemo(() => mine.split(surface || []), [surface, mine.w]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -109,10 +112,28 @@ export default function MHome({ onShowOnMap, onOpen }) {
         const asked = devicePosition()          // inside the tap, before any await (location/geo.js)
         try { const p = await asked; await saveHere(p.lat, p.lon, p.label || null) } catch (e) { window.alert(e.message) }
     }
+    // PULLED DOWN FROM THE TOP: a short pull refreshes; thrown down hard,
+    // Home slides away to the bottom and the map behind it is the screen
+    // (owner, 2026-10-17: "swipe down very strongly … the map becomes visible")
+    const scroller = useRef(null)
+    useEffect(() => attachPullToRefresh(scroller.current, {
+        onRefresh: () => new Promise((r) => { window.dispatchEvent(new CustomEvent("m2:refresh")); setTimeout(r, 700) }),
+        onPull: ({ dy, vy }) => {
+            if (!(dy > 190 || (dy > 90 && vy > 1.1))) return false
+            const pane = scroller.current?.closest(".m2-pane")
+            if (pane) {
+                pane.style.transition = "transform .42s cubic-bezier(.3,.7,.3,1), opacity .42s ease"
+                pane.style.transform = "translateY(100%)"
+                pane.style.opacity = "0.4"
+            }
+            setTimeout(() => { if (pane) { pane.style.transition = ""; pane.style.transform = ""; pane.style.opacity = "" } onOpen?.("map") }, 400)
+            return true
+        },
+    }), []) // eslint-disable-line react-hooks/exhaustive-deps
     const first = String(user?.name || user?.display_name || "").split(" ")[0]
     const greet = greetingFor(first, { seed })
     return (
-        <div className="m2-scroll" data-screen-label="Phone home">
+        <div ref={scroller} className="m2-scroll" data-screen-label="Phone home">
             {/* WHO AND WHERE YOU ARE, then what is yours — the first thing you see */}
             <div className="m2-hero">
                 {user?.avatar
@@ -122,7 +143,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
                 <h1 style={{ alignSelf: "start" }}>{greet.lead}</h1>
                 <span className="m2-sub">{new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })} · {hmZone(new Date())}</span>
                 <button className="m2-here" onClick={() => (here ? onShowOnMap?.({ lat: here.lat, lon: here.lon }) : askHere())}>
-                    <span style={{ width: 8, height: 8, borderRadius: 4, background: "#f4f5f7" }} />
+                    <span className="m2-here-dot" />
                     {here ? (String(here.label || "Your location").split(",").slice(-2).join(",").trim()) : "Use my location"}
                 </button>
                 <AlertsOffer />
@@ -138,7 +159,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
             <div className="m2-h" style={{ marginTop: 4 }}>{forYou.length ? "For you" : mine.has || here ? "Nothing near you — the most severe worldwide" : "Most severe right now"}</div>
             <div className="m2-foryou" data-testid="m2-foryou">
                 {(forYou.length ? forYou : worldwide).map((u) => (
-                    <button key={u.id ?? u.title} className="m2-fy" onClick={() => (u._asset && u.asset_id ? onOpen?.("assets", { asset: u.asset_id }) : setOpen(u))}>
+                    <button key={u.id ?? u.title} className="m2-fy" onClick={() => setOpen({ ...u, _whyMine: u._why || u.reason || null })}>
                         <span style={{ minWidth: 0 }}>
                             <b>{u.headline || u.title}</b>
                             <small>{u._why || [String(u.location || u.place || "").split(",").slice(0, 2).join(","), u.source].filter(Boolean).join(" · ")}</small>
@@ -162,10 +183,10 @@ export default function MHome({ onShowOnMap, onOpen }) {
             {videos.length > 0 && (
                 <section className="m2-section" data-screen-label="Phone ground">
                     <header><span className="m2-eyebrow">From the ground</span><span className="m2-when">{mine.has ? "for you" : "worldwide"} · renewed {slot.part === "night" ? "tonight" : `this ${slot.part}`}</span></header>
-                    <div className="m2-hscroll">
+                    <div className="m2-hscroll m2-center">
                         {videos.map((v) => (
                             <div key={v.id} className="m2-card" style={{ display: "flex", flexDirection: "column" }}>
-                                <TelegramMedia post={v} maxHeight="230px" radius="0" />
+                                <TelegramMedia post={v} maxHeight="300px" radius="0" />
                                 <button className="m2-tap" onClick={() => setOpen(v)} style={{ textAlign: "left", border: 0, background: "transparent", padding: "10px 12px", cursor: "pointer" }}>
                                     <span className="m2-eyebrow">{when(v.posted_at)} · {v.channel_title || v.channel}{v._mine ? " · yours" : ""}</span>
                                     <span className="m2-t" style={{ marginTop: 4 }}>{v.headline}</span>
@@ -191,7 +212,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
                 <div className="m2-card">
                     {ahead.length === 0 ? <div className="m2-empty">{outlook === null ? "Loading…" : "Nothing specific enough to forecast right now."}</div>
                         : ahead.map((o, i) => (
-                            <button key={i} className="m2-ahead" onClick={() => o.lat != null && onShowOnMap?.({ lat: o.lat, lon: o.lon, headline: o.statement })}>
+                            <button key={i} className="m2-ahead" onClick={() => setWhy(o)}>
                                 <b style={{ fontVariantNumeric: "tabular-nums" }}>{o.probability}%</b>
                                 <span style={{ minWidth: 0 }}>
                                     <span className="m2-t">{[o.place, o.statement].filter(Boolean).join(" · ")}</span>
@@ -203,6 +224,11 @@ export default function MHome({ onShowOnMap, onOpen }) {
             </section>
 
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
+            {why && (
+                <Sheet onClose={() => setWhy(null)}>
+                    <OutlookExplain o={why} onShowPlace={(c) => { setWhy(null); onShowOnMap?.({ lat: c.lat, lon: c.lon, headline: c.headline, title: c.headline, location: c.location, source: c.source, url: c.url }) }} />
+                </Sheet>
+            )}
         </div>
     )
 }

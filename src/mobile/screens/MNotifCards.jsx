@@ -13,12 +13,23 @@ import { subscribeNotifications, getNotifications, dismissCard, useDnd, KIND } f
 
 const SEV = { critical: "#E5484D", high: "#F5A524", moderate: "#8FB4E8", low: "#9AA9BC" }
 
+const URGENT_KINDS = new Set(["warning", "live"])
+export const isUrgent = (n) => n?.sev === "critical" || URGENT_KINDS.has(n?.kind)
+const TOAST_MS = 6000
+
 function Banner({ n, onOpen }) {
     const y0 = useRef(null)
     const [dy, setDy] = useState(0)
-    const close = () => dismissCard(n.id)
+    const [leaving, setLeaving] = useState(false)
+    const close = () => { setLeaving(true); setTimeout(() => dismissCard(n.id), 320) }
+    // it fades away by itself unless a finger is on it
+    useEffect(() => {
+        if (dy) return undefined
+        const t = setTimeout(close, TOAST_MS)
+        return () => clearTimeout(t)
+    }, [dy]) // eslint-disable-line react-hooks/exhaustive-deps
     return (
-        <div className="m2-banner" role="alert" data-testid="m2-banner" style={{ transform: dy < 0 ? `translateY(${dy}px)` : undefined }}
+        <div className={`m2-banner${leaving ? " leaving" : ""}`} role="alert" data-testid="m2-banner" style={{ transform: dy < 0 ? `translateY(${dy}px)` : undefined }}
              onTouchStart={(e) => { y0.current = e.touches[0].clientY }}
              onTouchMove={(e) => { if (y0.current != null) setDy(Math.min(0, e.touches[0].clientY - y0.current)) }}
              onTouchEnd={() => { if (dy < -40) close(); setDy(0); y0.current = null }}>
@@ -39,10 +50,13 @@ export default function MNotifCards({ onOpen }) {
     const [cards, setCards] = useState(() => getNotifications().cards)
     useDnd()                                      // DND mutes cards in the store
     useEffect(() => subscribeNotifications((s) => setCards(s.cards)), [])
-    if (!cards.length) return null
+    const urgent = cards.filter(isUrgent)
+    // what is not urgent leaves the screen at once (it is in Alerts)
+    useEffect(() => { for (const n of cards) if (!isUrgent(n)) dismissCard(n.id) }, [cards])
+    if (!urgent.length) return null
     return (
         <div className="m2-banners">
-            {cards.slice(-2).reverse().map((n) => <Banner key={n.id} n={n} onOpen={onOpen} />)}
+            {urgent.slice(-2).reverse().map((n) => <Banner key={n.id} n={n} onOpen={onOpen} />)}
         </div>
     )
 }

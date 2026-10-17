@@ -19,7 +19,7 @@ import MDesk from "./screens/MDesk.jsx"
 import MMessages from "./screens/MMessages.jsx"
 import { MAssets, MAlerts, MReports, MProfile, MSettings } from "./screens/MMore.jsx"
 import ConflictContext from "../conflicts/ConflictContext.jsx"
-import TelegramMood from "../insight/TelegramMood.jsx"
+import MMood from "./screens/MMood.jsx"
 import { Icon, Sheet } from "./screens/common.jsx"
 import API_BASE from "../apiBase.js"
 import { usePoll, arr } from "./useMine.js"
@@ -60,6 +60,9 @@ export default function MobileApp() {
     useOnlineUsers("phone")
     const go = (t, opts) => { setMenu(false); if (opts?.asset) setAssetOpen(opts.asset); setTab(t) }
     useEffect(() => { const h = (e) => go(e.detail); window.addEventListener("m2:go", h); return () => window.removeEventListener("m2:go", h) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    // the route planner opens on THE map (its tray over it), never a second one
+    useEffect(() => { const h = () => go("map"); window.addEventListener("plx:route-panel", h); return () => window.removeEventListener("plx:route-panel", h) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { const h = (e) => go("assets", { asset: e.detail }); window.addEventListener("m2:go-asset", h); return () => window.removeEventListener("m2:go-asset", h) }, []) // eslint-disable-line react-hooks/exhaustive-deps
     const plainShowOnMap = (s) => { if (!s || !Number.isFinite(+s.lat)) return; setFocus({ ...s, _t: Date.now() }); setTab("map") }
     // a vessel of concern (from Alerts, the General feed, Home …) opens on
     // the vessel, as its notification does; everything else as before
@@ -162,16 +165,20 @@ export default function MobileApp() {
             else if (prev - y > 6) setChromeHidden(false)
         }
         document.addEventListener("scroll", h, true)
-        return () => document.removeEventListener("scroll", h, true)
+        // a screen may ask for the whole screen (a conversation while typing)
+        const ask = (e) => setChromeForced(!!e.detail?.hidden)
+        window.addEventListener("m2:chrome", ask)
+        return () => { document.removeEventListener("scroll", h, true); window.removeEventListener("m2:chrome", ask) }
     }, [])
+    const [chromeForced, setChromeForced] = useState(false)
     // A SCREEN ARRIVES FROM THE SIDE ITS TAB IS ON
     const navIndex = (t) => { const i = NAV.findIndex(([k]) => k === t); return i >= 0 ? i : NAV.length - 1 }
     const prevTab = useRef(tab)
     const dir = navIndex(tab) < navIndex(prevTab.current) ? "left" : "right"
-    useEffect(() => { prevTab.current = tab; setChromeHidden(false) }, [tab])
+    useEffect(() => { prevTab.current = tab; setChromeHidden(false); setChromeForced(false) }, [tab])
     const markAt = menu ? NAV.length - 1 : navIndex(tab)
     return (
-        <div className="m2" data-screen-label="Phone" data-chrome={chromeHidden && tab !== "map" ? "hidden" : "shown"} data-dir={dir}>
+        <div className="m2" data-screen-label="Phone" data-chrome={(chromeHidden || chromeForced) && tab !== "map" ? "hidden" : "shown"} data-dir={dir}>
             <PlxIcons />
             <LocationPrompt afterTour={false} live />
             {/* the route planner, full height (a "Leave now" notification, Get me out, an asset's Safest route, a context card) */}
@@ -205,7 +212,7 @@ export default function MobileApp() {
                 {tab === "alerts" && <Pane on><MAlerts onShowOnMap={showOnMap} onOpen={go} focus={alertFocus} /></Pane>}
                 {/* The wars and the mood, as on the desktop (conflicts/, insight/). */}
                 {tab === "conflicts" && <Pane on><div className="m2-scroll"><ConflictContext all label="Current wars" max={30} /></div></Pane>}
-                {tab === "mood" && <Pane on><div className="m2-scroll"><TelegramMood /></div></Pane>}
+                {tab === "mood" && <Pane on><MMood /></Pane>}
                 {tab === "reports" && <Pane on><MReports /></Pane>}
                 {tab === "general" && <Pane on><div className="m2-scroll"><GeneralFeed compact onMap={(it) => showOnMap(it)} /></div></Pane>}
                 {tab === "admin" && me?.is_super_admin && <Pane on><MAdmin /></Pane>}

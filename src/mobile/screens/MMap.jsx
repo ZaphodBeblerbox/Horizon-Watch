@@ -42,7 +42,8 @@ import { trackCountry } from "../../lib/icaoCountry.js"
 import { BASES, FALLBACKS } from "../tileSources.js"
 import TrackPanel, { useTrackState } from "../../location/TrackPanel.jsx"
 import { drawTrack } from "../trackLeaflet.js"
-import { openRoutePanel } from "../../routes/store.js"
+import { openRoutePanel, subscribeRoutePanel, getRoutePanel } from "../../routes/store.js"
+import { drawPlan } from "../../routes/routeLayer.leaflet.js"
 import { confirmAction } from "../../ui/confirm.js"
 const WINDOWS = [24, 48, 72]
 const FLOORS = [["all", "All"], ["high", "High +"], ["critical", "Critical"]]
@@ -107,6 +108,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const pts = useRef([])                 // the point signals drawn, for the card's swipe
     const picked = useRef(null)
     const [detail, setDetail] = useState(null)
+    const returning = useRef(false)        // the card coming back out of its sheet: no entrance of its own
     const base = useRef(null)
     const group = useRef(null)
     const meExtras = useRef(null)          // the accuracy ring and the way you came
@@ -440,6 +442,33 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         pts.current = points.map((p) => ({ key: p.key, lat: p.lat, lon: p.lon, open: tap(p.f, p.l, p.key) })).sort((x, y) => x.lon - y.lon || y.lat - x.lat)
     }, [feats, on, floor, liveKey, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
 
+    // A ROUTE, ON THIS MAP (owner, 2026-10-17: "don't open a new map"): the
+    // route planner's tray publishes its plan; drawn here and framed in the
+    // map left above the tray
+    const routeG = useRef(null)
+    const routeFit = useRef(null)
+    useEffect(() => {
+        const m = map.current
+        if (!m) return undefined
+        routeG.current = L.layerGroup().addTo(m)
+        const draw = (st) => {
+            const g = routeG.current
+            if (!g) return
+            if (!st.open || !st.plan) { g.clearLayers(); if (!st.open) routeFit.current = null; return }
+            setOpen(null)
+            const b = drawPlan(L, g, st.plan, st.plan.selected || null)
+            const key = `${st.plan.origin?.lat},${st.plan.origin?.lon},${st.plan.safest?.key || ""}`
+            if (b && b.isValid() && routeFit.current !== key) {
+                routeFit.current = key
+                prog.current = true
+                m.fitBounds(b, { paddingTopLeft: [24, 80], paddingBottomRight: [24, Math.round(window.innerHeight * 0.6)], maxZoom: 17 })
+            }
+        }
+        draw(getRoutePanel())
+        const off = subscribeRoutePanel(draw)
+        return () => { off(); routeG.current?.remove(); routeG.current = null }
+    }, [])
+
     // THE CARD'S POINT, ringed on the map
     useEffect(() => {
         const m = map.current
@@ -698,6 +727,10 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     </button>
                     <button className="m2-round" aria-label="Whole world" onClick={() => goTheater("global")}><Icon id="g-globe" /></button>
                     {mine.theaters.length > 0 && <button className="m2-round" aria-label="My theaters" onClick={() => setSheet("theaters")}><Icon id="g-tabs" /></button>}
+                    {/* BACK TO ME (owner, 2026-10-17): the map centred on where this phone is */}
+                    <button className="m2-round m2-me-btn" aria-label="Centre on me" data-testid="m2-recenter" onClick={() => { prog.current = true; nearMe() }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden><path d="M12 2.5 19.5 20 12 16.2 4.5 20Z" transform="rotate(45 12 12)" fill="currentColor" /></svg>
+                    </button>
                 </div>}
                 {/* what is in view, or how to see more */}
                 {(on.ships || on.aircraft) && (
@@ -808,9 +841,9 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         : <LiveNow compact />}
                 </Sheet>
             )}
-            {open && chrome && !detail && <MPeek s={open} onClose={() => setOpen(null)} onDetails={() => openDetail(open)}
+            {open && chrome && !detail && <MPeek s={open} onClose={() => setOpen(null)} onDetails={() => openDetail(open)} returning={returning.current}
                                                  onStep={peekList.length > 1 ? stepPeek : null} index={peekIndex >= 0 ? peekIndex : null} count={peekList.length} />}
-            {detail && <SignalSheet s={detail} onClose={() => setDetail(null)} onShowOnMap={(s) => {
+            {detail && <SignalSheet s={detail} fromPeek={!!open} onClose={() => { returning.current = true; setDetail(null); setTimeout(() => { returning.current = false }, 600) }} onShowOnMap={(s) => {
                 if (s?.vesselThreat && map.current) {
                     if (!threat.current) threat.current = L.layerGroup().addTo(map.current)
                     const b = drawVesselThreat(L, threat.current, s.vesselThreat)

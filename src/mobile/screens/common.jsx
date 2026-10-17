@@ -8,6 +8,7 @@ import { ShowTrackButton } from "../../location/TrackPanel.jsx"
 import { openRoutePanel } from "../../routes/store.js"
 import SourceLink from "../../components/SourceLink.jsx"
 import { useEffect, useRef, useState } from "react"
+import API_BASE from "../../apiBase.js"
 import { attachDrag, flingMs, swallowClickAfterDrag } from "../gesture.js"
 import { createPortal } from "react-dom"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
@@ -43,7 +44,19 @@ export function Icon({ id, size = 20 }) {
  *  Rendered at the top of the phone app (the .m2 root), above the map and
  *  the tab bar — a sheet opened from the map used to sit inside the map's
  *  layer, under the tab bar, and could not be scrolled to its end. */
-export function Sheet({ onClose, children, half = false }) {
+// THE CARD'S RECT (MPeek writes it): a sheet opened from the card grows out
+// of it and, swiped down, shrinks back into it — one surface changing size,
+// never a sheet vanishing and a card appearing (owner, 2026-10-17).
+const peekRect = () => (typeof window !== "undefined" ? window.__m2PeekRect || null : null)
+function intoPeek(node) {
+    // from where the sheet rests (fixed to the bottom), whatever a drag has done to it
+    const r = peekRect(), w = node.offsetWidth, h = node.offsetHeight
+    if (!r || !h) return null
+    const top = window.innerHeight - h, left = (window.innerWidth - w) / 2
+    return `translate(${r.left - left}px, ${r.top - top}px) scale(${r.width / w}, ${r.height / h})`
+}
+
+export function Sheet({ onClose, children, half = false, fromPeek = false }) {
     const [closing, setClosing] = useState(false)
     const [full, setFull] = useState(false)
     const el = useRef(null)
@@ -51,12 +64,42 @@ export function Sheet({ onClose, children, half = false }) {
     fullRef.current = full
     const closeRef = useRef(onClose)
     closeRef.current = onClose
-    const close = () => { if (closing) return; setClosing(true); setTimeout(() => onClose?.(), 210) }
+    const close = () => {
+        if (closing) return
+        const node = el.current
+        const to = fromPeek && node ? intoPeek(node) : null
+        if (to) {
+            setClosing("peek")
+            node.style.transformOrigin = "0 0"
+            node.style.transition = "transform .36s cubic-bezier(.22,1,.36,1), opacity .3s ease"
+            node.style.transform = to
+            node.style.opacity = "0.55"
+            setTimeout(() => onClose?.(), 320)
+            return
+        }
+        setClosing(true); setTimeout(() => onClose?.(), 210)
+    }
     const host = (typeof document !== "undefined" && document.querySelector(".m2")) || (typeof document !== "undefined" ? document.body : null)
     // THE SHEET FOLLOWS THE FINGER (../gesture.js): dragged by its grip, or
     // anywhere while its content is at the top. Down past a third of its
     // height, or flicked, it is thrown away at the speed of the flick; else
     // it springs back. A half sheet (a notification on the map) goes to full.
+    useEffect(() => {
+        const node = el.current
+        if (!fromPeek || !node) return
+        const to = intoPeek(node)
+        if (!to) return
+        node.style.animation = "none"
+        node.style.transformOrigin = "0 0"
+        node.style.transform = to
+        node.style.opacity = "0.6"
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            node.style.transition = "transform .42s cubic-bezier(.22,1,.36,1), opacity .25s ease"
+            node.style.transform = ""
+            node.style.opacity = ""
+            setTimeout(() => { node.style.transition = "" }, 440)
+        }))
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         const node = el.current
         if (!node) return undefined
@@ -87,6 +130,18 @@ export function Sheet({ onClose, children, half = false }) {
                 if (half && !fullRef.current && (dy < -30 || vy < -0.5)) { back(); setFull(true); return }
                 if (dy > h / 3 || vy > 0.6) {
                     if (half && fullRef.current && dy < h / 2 && vy < 1.2) { back(); setFull(false); return }
+                    // opened from the card: back into the card, at the speed of the throw
+                    const to = fromPeek ? intoPeek(node) : null
+                    if (to) {
+                        const ms = flingMs(h - dy, vy) + 80
+                        node.style.transformOrigin = "0 0"
+                        node.style.transition = `transform ${ms}ms cubic-bezier(.22,1,.36,1), opacity ${ms}ms ease`
+                        node.style.transform = to
+                        node.style.opacity = "0.55"
+                        document.querySelector(".m2-sheet-back")?.classList.add("closing")
+                        setTimeout(() => closeRef.current?.(), ms - 40)
+                        return
+                    }
                     const ms = flingMs(h - dy, vy)
                     node.style.transition = `transform ${ms}ms cubic-bezier(.2,.7,.3,1)`
                     node.style.transform = `translateY(${h + 40}px)`
@@ -101,7 +156,7 @@ export function Sheet({ onClose, children, half = false }) {
     }, [half])
     const sheet = <>
         {!half && <div className={`m2-sheet-back${closing ? " closing" : ""}`} onClick={close} />}
-        <div ref={el} className={`m2-sheet${half ? " half" : ""}${half && full ? " full" : ""}${closing ? " closing" : ""}`} role="dialog" data-sheet={half ? (full ? "full" : "half") : "modal"}>
+        <div ref={el} className={`m2-sheet${half ? " half" : ""}${half && full ? " full" : ""}${closing === true ? " closing" : ""}`} role="dialog" data-sheet={half ? (full ? "full" : "half") : "modal"}>
             <div className="m2-grip" role="button" aria-label={half ? (full ? "Drag down to see the map" : "Drag up for the full details") : "Close"}
                  onClick={() => (half ? setFull((f) => !f) : close())} />
             {half && <button className="m2-iconbtn" aria-label="Close" data-testid="sheet-close" onClick={close}
@@ -125,9 +180,23 @@ export function attachmentFor(s) {
 
 const URLS = /https?:\/\/[^\s,]+/g
 
-export function SignalSheet({ s, onClose, onShowOnMap, half = false }) {
+export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, fromPeek = false }) {
     const [note, setNote] = useState("")
     const [shared, setShared] = useState(null)
+    // MORE THAN THE HEADLINE: an alert's own record is read as the sheet opens
+    // (its message, place, sources), kept under what the caller already knew
+    const [full, setFull] = useState(null)
+    const alertId = given?.alert_id || (/^(ALT|SIG)-/i.test(String(given?.id || "")) ? given.id : null)
+    useEffect(() => {
+        setFull(null)
+        if (!alertId) return undefined
+        let live = true
+        fetch(`${API_BASE}/api/alerts/${encodeURIComponent(alertId)}`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null)).then((a) => { if (live && a && (a.title || a.headline)) setFull(a) }).catch(() => {})
+        return () => { live = false }
+    }, [alertId])
+    const s = full ? { ...full, ...Object.fromEntries(Object.entries(given || {}).filter(([, v]) => v != null && v !== "")),
+                       summary: given?.summary || full.message || full.description, severity_tier: given?.severity_tier || full.severity } : given
     if (!s) return null
     const title = s.headline || s.title || "Signal"
     const finding = isFindingAlert(s) ? findingZoneOf(s) : null
@@ -138,7 +207,7 @@ export function SignalSheet({ s, onClose, onShowOnMap, half = false }) {
         catch (e) { setShared(e.message || "Could not post") }
     }
     return (
-        <Sheet onClose={onClose} half={half}>
+        <Sheet onClose={onClose} half={half} fromPeek={fromPeek}>
             <div className="m2-eyebrow" style={{ paddingRight: half ? 36 : 0, display: "flex", alignItems: "center", gap: 7 }}>
                 {(s.severity_tier || s.sev) && <i className="m2-sev" style={{ background: sevColor(s.severity_tier || s.sev), width: 7, height: 7, transform: "rotate(45deg)", display: "inline-block", flex: "none" }} />}
                 {[s.severity_tier || s.sev, when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
@@ -148,6 +217,16 @@ export function SignalSheet({ s, onClose, onShowOnMap, half = false }) {
             )}
             <h2 style={{ margin: "6px 0 4px", fontSize: 19, lineHeight: 1.3 }}>{title}</h2>
             {where && <div className="m2-sub" style={{ marginBottom: 10 }}>{where}</div>}
+            {/* WHY IT IS FOR YOU (owner, 2026-10-17): a For-you signal opens on
+                itself, saying what of yours it concerns — not on the asset */}
+            {(s._whyMine || (s._asset && s.reason)) && (
+                <div className="m2-why" data-testid="m2-why">
+                    <div className="m2-why-h">Why this is for you</div>
+                    <div>{s._whyMine || s.reason}</div>
+                    {s.asset_id && <button className="m2-btn ghost" style={{ height: 32, marginTop: 10 }}
+                        onClick={() => { window.dispatchEvent(new CustomEvent("m2:go-asset", { detail: s.asset_id })); onClose() }}>Open the asset</button>}
+                </div>
+            )}
             {/* AN ENDANGERED PLACE: its model turning slowly (never on the map; three.js loads only here) */}
             {s.kind === "endangered_place" && <div style={{ marginBottom: 12 }}><PlaceModel key={s.id} place={s} height={210} /></div>}
             {(s.media === "video" || s.thumb_url) && s.channel && <div style={{ margin: "0 -14px 10px" }}><TelegramMedia post={s} maxHeight="46vh" radius="0" /></div>}

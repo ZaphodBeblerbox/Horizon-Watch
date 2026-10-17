@@ -22,9 +22,9 @@ import { ago, sevColor } from "./common.jsx"
 
 const kindOf = (s) => s?.source || s?.channel_title || s?.layerLabel || s?.alert_type || s?.kind_label || "Signal"
 
-export default function MPeek({ s, onClose, onDetails, onStep, index = null, count = null }) {
+export default function MPeek({ s, onClose, onDetails, onStep, index = null, count = null, returning = false }) {
     const el = useRef(null)
-    const [enter, setEnter] = useState("up")          // "up" (from below) | "from-r" | "from-l" | "rest"
+    const [enter, setEnter] = useState(returning ? "rest" : "up")   // "up" (from below) | "from-r" | "from-l" | "rest"
     const cb = useRef({})
     cb.current = { onClose, onDetails, onStep }
     useEffect(() => {
@@ -76,6 +76,15 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
         const t = setTimeout(() => setEnter("rest"), 450)
         return () => clearTimeout(t)
     }, [enter, s?._key])
+    // where the card is, for a sheet to grow out of and shrink back into (common.jsx Sheet)
+    useEffect(() => {
+        const node = el.current
+        if (!node) return undefined
+        const save = () => { const r = node.getBoundingClientRect(); if (r.height) window.__m2PeekRect = { left: r.left, top: r.top, width: r.width, height: r.height } }
+        const t = setTimeout(save, 460)
+        save()
+        return () => clearTimeout(t)
+    })
     if (!s) return null
     const sev = s.severity_tier || s.sev || s.severity
     const place = s.location || s.place || s.region || s.location_name || null

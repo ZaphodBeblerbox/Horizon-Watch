@@ -42,6 +42,8 @@ import { slotOf, useFrozen } from "../home/dayPart.js"
 import GroundReel from "../home/GroundReel.jsx"
 import { announceNew } from "../home/homeNews.js"
 import { hmZone } from "../utils/clock.js"
+import { createPortal } from "react-dom"
+import OutlookExplain from "../insight/OutlookExplain.jsx"
 export { slotOf }
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -384,6 +386,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
        later be marked. The base rates are still computed and still
        available in Insight — they are context, not a forecast. */
     const [outlook, setOutlook] = useState(null)
+    const [explain, setExplain] = useState(null)       // a line of the outlook, opened on its reasoning
     useEffect(() => {
         let live = true
         const load = (first) => fetch(`${API_BASE}/api/enrich/outlook`, { credentials: "include" })
@@ -484,7 +487,8 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                     t: [o.place, o.statement].filter(Boolean).join(" · "),
                     sub: [o.because, o.resolves_by ? `by ${o.resolves_by}` : null]
                         .filter(Boolean).join(" · "),
-                    go: () => onOpenModule("forecast"),
+                    // WHY WE THINK SO (owner, 2026-10-17), not the forecasts page
+                    go: () => setExplain(o),
                 }))
                 // Only if the outlook could not be produced. Showing the
                 // base rates as a fallback is honest; showing them as the
@@ -1056,6 +1060,28 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                     </div>
                 </div>
             </div>
+            {explain && createPortal(
+                <div className="plx-explain-back" onClick={() => setExplain(null)} data-testid="outlook-dialog"
+                     style={{ position: "fixed", inset: 0, zIndex: 3000, display: "grid", placeItems: "center", background: "rgba(0,0,0,.35)", animation: "plx-explain-fade .25s ease" }}>
+                    <style>{"@keyframes plx-explain-fade{from{opacity:0}}@keyframes plx-explain-in{from{opacity:0;transform:translateY(14px) scale(.97)}}@media (prefers-reduced-motion:reduce){.plx-explain,.plx-explain-back{animation:none!important}}"}</style>
+                    <div role="dialog" aria-label="Why we think so" className="plx-explain" onClick={(e) => e.stopPropagation()}
+                         style={{ width: "min(560px, calc(100vw - 48px))", maxHeight: "80vh", overflowY: "auto", padding: "22px 24px", borderRadius: 18,
+                                  background: "var(--panel, rgba(14,17,23,.9))", color: "var(--txt)", border: "1px solid var(--gline2, rgba(255,255,255,.14))",
+                                  backdropFilter: "blur(26px) saturate(1.3)", WebkitBackdropFilter: "blur(26px) saturate(1.3)", boxShadow: "0 24px 60px rgba(0,0,0,.45)",
+                                  animation: "plx-explain-in .34s cubic-bezier(.22,1,.36,1)" }}>
+                        <OutlookExplain o={explain} onShowPlace={(c) => {
+                            setExplain(null)
+                            onOpenModule("map")
+                            window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: c.lat, lon: c.lon, altitude: 120000 } }))
+                        }} />
+                        <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+                            <button type="button" onClick={() => { setExplain(null); onOpenModule("forecast") }}
+                                    style={{ height: 34, padding: "0 14px", borderRadius: 17, border: "1px solid var(--gline2)", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer" }}>All forecasts</button>
+                            <button type="button" onClick={() => setExplain(null)}
+                                    style={{ height: 34, padding: "0 14px", borderRadius: 17, border: 0, background: "var(--txt)", color: "var(--bg-0, #0a0d12)", font: "inherit", fontWeight: 600, cursor: "pointer" }}>Close</button>
+                        </div>
+                    </div>
+                </div>, document.body)}
         </section>
     )
 }
