@@ -16,7 +16,8 @@ import TopBar from "./components/TopBar.jsx"
 import PlxIcons from "./plx6/PlxIcons.jsx"
 import PlxTabBar from "./plx6/PlxTabBar.jsx"
 import PlxMenuBar from "./plx6/PlxMenuBar.jsx"
-import PlxRail from "./plx6/PlxRail.jsx"
+import PlxRail, { RAIL_MODES } from "./plx6/PlxRail.jsx"
+import { installTravelMarks } from "./ui/travelMark.js"
 import { PlxMenu, PlxToast, PlxAlerts } from "./plx6/PlxOverlays.jsx"
 import { useChrome } from "./state/useChrome.js"
 import { openOverlay, closeOverlay, subscribeOverlay } from "./state/overlayManager.js"
@@ -111,8 +112,11 @@ const modeLayer = (on) => ({
     position: "absolute", inset: 0, zIndex: 22,
     minWidth: 0,
     display: on ? "flex" : "none",
-    // every screen arrives with a short fade, never a cut (index.css plx-fade-in)
-    animation: on ? "plx-fade-in .22s cubic-bezier(.2,.8,.2,1)" : undefined,
+    // every screen arrives with a short fade, never a cut — and, since the
+    // phone's v4 (2026-10-17), from the side of the rail it was chosen on:
+    // further down the rail rises from below, further up drops from above
+    // (--plx-mode-dy on the root, desktopV4.css plx-mode-in)
+    animation: on ? "plx-mode-in .34s cubic-bezier(.22,1,.36,1)" : undefined,
 })
 const canvasLayer = (on, chrome) => ({
     position: "absolute",
@@ -575,6 +579,21 @@ export default function App() {
         }
     }, [])
 
+    /* THE DESKTOP SPEAKS THE PHONE'S v4 LANGUAGE (owner, 2026-10-17:
+       "Implement our new design language into the desktop version. We also
+       need those smooth transitions, animations and so on"). The look lives
+       in styles/desktopV4.css under :root[data-shell="desk"], so it is on
+       for the console only — the phone (.m2) is its own shell with its own
+       sheet — and covers what the console portals to <body> as well. The
+       travelling tab marks are ui/travelMark.js. */
+    useEffect(() => {
+        if (phoneMode) return undefined
+        const html = document.documentElement
+        html.setAttribute("data-shell", "desk")
+        const stop = installTravelMarks()
+        return () => { stop(); html.removeAttribute("data-shell") }
+    }, [phoneMode])
+
     // ── Mission profile ───────────────────────────────────────────────────────
     // Which section the account screen opens on — the rail's shield opens
     // it on Administration, everything else on the profile itself.
@@ -863,6 +882,22 @@ export default function App() {
     // Derived — used throughout instead of `page`
     const activeTab     = tabs.find(t => t.id === activeTabId) || tabs[0]
     const activeTabType = activeTab?.type || "situation"
+
+    /* Which way the new screen comes in (2026-10-17): from below when the
+       mode chosen sits further down the rail than the one left, from above
+       when it sits higher, a plain fade when either is not on the rail.
+       Decided while rendering so the very frame the screen appears on
+       already knows its direction. */
+    const railIndex = (type) => {
+        const m = TAB_TYPE_TO_MODULE[type] || type
+        const i = RAIL_MODES.findIndex(([k]) => k === m)
+        return i >= 0 ? i : (m === "settings" ? RAIL_MODES.length + 1 : -1)
+    }
+    const [modeMove, setModeMove] = useState({ at: activeTabType, dy: 0 })
+    if (modeMove.at !== activeTabType) {
+        const a = railIndex(modeMove.at), b = railIndex(activeTabType)
+        setModeMove({ at: activeTabType, dy: a < 0 || b < 0 || a === b ? 0 : (b > a ? 18 : -18) })
+    }
 
     // Full UI rebuild: which of the 5 fixed destinations (if any) is active —
     // null when on the Globe/Maritime home screen ("map") or a real
@@ -2121,6 +2156,7 @@ export default function App() {
             fontFamily:    "var(--mz-font-body)",
             font:          "13px/1.45 var(--mz-font-body)",
             WebkitFontSmoothing: "antialiased",
+            "--plx-mode-dy": `${modeMove.dy}px`,
         }}>
             {/* Cited posts, read beside the record (sourceEmbed.js). */}
             <SourceViewer />

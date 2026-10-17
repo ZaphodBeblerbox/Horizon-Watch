@@ -77,8 +77,8 @@ export function SceneScrubber({ scenes, selectedScanId, onSelect, currentInstrum
                             opacity: mismatched ? 0.5 : 1,
                         }}
                     >
-                        <span style={{ font: "400 10.5px var(--mono)", color: active ? "#fff" : "var(--txt-2)" }}>{fmtDate(s.image_timestamp_utc)}</span>
-                        <span style={{ font: "400 9px var(--font)", color: active ? "#fff" : "var(--txt-4)", textTransform: "uppercase" }}>{s.instrument || "OPTICAL"}</span>
+                        <span style={{ font: "400 10.5px var(--mono)", color: active ? "var(--mz-cream, #fff)" : "var(--txt-2)" }}>{fmtDate(s.image_timestamp_utc)}</span>
+                        <span style={{ font: "400 9px var(--font)", color: active ? "var(--mz-cream, #fff)" : "var(--txt-4)", textTransform: "uppercase" }}>{s.instrument || "OPTICAL"}</span>
                     </button>
                 )
             })}

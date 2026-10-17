@@ -16,6 +16,7 @@
  * unused branch is a branch nobody has checked.)
  */
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
+import useSwap from "../ui/useSwap.js"
 
 const EYE = {
     fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em",
@@ -186,6 +187,8 @@ export default function ModuleShell({
     icon, title, label = title, tabs = [], tab, onTab = () => {},
     meta = "", actions = [], blocks = [], onClose = null, children = null,
 }) {
+    // the body slides in from the side of the tab chosen (ui/useSwap.js)
+    const swap = useSwap(tab, tabs.map(([, v]) => v))
     return (
         <section data-screen-label={label} style={MODE_SURFACE}>
             <div style={{
@@ -198,9 +201,11 @@ export default function ModuleShell({
                     whiteSpace: "nowrap", alignSelf: "center",
                 }}>{title}</h3>
 
-                <nav style={{ display: "flex", overflow: "auto", minWidth: 0 }}>
+                {/* the underline slides to the chosen tab (2026-10-17,
+                    ui/travelMark.js) rather than jumping */}
+                <nav data-travel="line" style={{ display: "flex", overflow: "auto", minWidth: 0 }}>
                     {tabs.map(([k, v]) => (
-                        <button key={v} onClick={() => onTab(v)} style={{
+                        <button key={v} onClick={() => onTab(v)} data-travel-on={tab === v} style={{
                             padding: "0 12px", border: 0,
                             borderBottom: `2px solid ${tab === v ? "var(--acchi)" : "transparent"}`,
                             background: "transparent",
@@ -236,7 +241,7 @@ export default function ModuleShell({
                 )}
             </div>
 
-            <div style={{
+            <div {...swap} style={{
                 flex: 1, minHeight: 0, overflow: "auto", display: "grid",
                 gridTemplateColumns: "repeat(12,minmax(0,1fr))", gap: 12,
                 padding: 14, alignContent: "start",
