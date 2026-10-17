@@ -13,6 +13,7 @@ import API_BASE from "../../apiBase.js"
 import { createPost, listPosts, listReplies, toggleAck, uploadDeskFile } from "../../lib/deskApi.js"
 import { Icon, when, ago } from "./common.jsx"
 import { attachDrag, swallowClickAfterDrag } from "../gesture.js"
+import { captureMedia } from "../MediaViewer.jsx"
 import { getCurrentUser } from "../../state/authStore.js"
 import { audienceLabel } from "../../desk/Desk.jsx"
 
@@ -115,7 +116,7 @@ function PostCard({ p, onChanged }) {
                 )}
                 {p.deleted ? <div className="m2-sub" style={{ fontStyle: "italic" }}>This post was deleted.</div> : <>
                     {p.body && <div className="m2-post-body">{p.body}</div>}
-                    {p.attachment && <div style={{ marginTop: 8 }}><Attachment att={p.attachment} postId={p.id} /></div>}
+                    {p.attachment && <div style={{ marginTop: 8 }} onClickCapture={captureMedia}><Attachment att={p.attachment} postId={p.id} /></div>}
                 </>}
                 <div className="m2-post-acts">
                     <button onClick={open} aria-label="Comments"><Icon id="g-comment" size={16} />{p.replies || ""}</button>
@@ -164,7 +165,7 @@ function TelegramCard({ t, onShowOnMap }) {
                 {t.headline && <div className="m2-post-body" style={{ fontWeight: 600 }}>{t.headline}</div>}
                 {body && body !== t.headline && <div className="m2-post-body" style={{ color: "var(--txt2, #c3c7cf)", fontSize: 14 }}>{body.length > 420 ? body.slice(0, 420) + "…" : body}</div>}
                 {orig && t.text && t.lang && t.lang !== "en" && <div className="m2-post-body" dir="auto" style={{ fontSize: 13.5, color: "var(--txt3, #8a909b)" }}>{t.text}</div>}
-                {(t.media === "video" || t.media === "photo") && <div style={{ marginTop: 8 }}><TelegramMedia post={t} maxHeight="320px" radius="0" /></div>}
+                {(t.media === "video" || t.media === "photo") && <div style={{ marginTop: 8 }} onClickCapture={captureMedia}><TelegramMedia post={t} maxHeight="320px" radius="0" /></div>}
                 <div className="m2-post-acts">
                     {t.on_map && <button onClick={() => onShowOnMap?.(t)}><Icon id="g-pin" size={15} />{String(t.place || "").split(",")[0]}</button>}
                     {t.text && t.lang && t.lang !== "en" && <button onClick={() => setOrig(!orig)}>{orig ? "hide original" : "original"}</button>}
@@ -275,7 +276,7 @@ export default function MDesk({ active, onShowOnMap }) {
                     : posts.map((p) => <PostCard key={p.id} p={p} onChanged={load} />)}
             </>) : tab === "general" ? (
                 // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
-                <GeneralFeed compact onMap={(it) => onShowOnMap?.(it)} />
+                <div style={{ display: "contents" }} onClickCapture={captureMedia}><GeneralFeed compact onMap={(it) => onShowOnMap?.(it)} /></div>
             ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
             </div>
         </div>

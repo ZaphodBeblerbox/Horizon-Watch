@@ -15,6 +15,7 @@
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { useEffect, useMemo, useRef, useState } from "react"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
+import { captureMedia } from "../MediaViewer.jsx"
 import { slotOf, useFrozen } from "../../home/dayPart.js"
 import { getCurrentUser, subscribeAuth } from "../../state/authStore.js"
 import { greetingFor } from "../../data/greetings.js"
@@ -165,7 +166,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
                     <div className="m2-hscroll">
                         {videos.map((v) => (
                             <div key={v.id} className="m2-card" style={{ display: "flex", flexDirection: "column" }}>
-                                <TelegramMedia post={v} maxHeight="230px" radius="0" />
+                                <div onClickCapture={captureMedia}><TelegramMedia post={v} maxHeight="230px" radius="0" /></div>
                                 <button className="m2-tap" onClick={() => setOpen(v)} style={{ textAlign: "left", border: 0, background: "transparent", padding: "10px 12px", cursor: "pointer" }}>
                                     <span className="m2-eyebrow">{when(v.posted_at)} · {v.channel_title || v.channel}{v._mine ? " · yours" : ""}</span>
                                     <span className="m2-t" style={{ marginTop: 4 }}>{v.headline}</span>
@@ -270,7 +271,7 @@ function TelegramStory({ posts, onOpen, onAll }) {
                  onTouchStart={() => setHold(true)} onTouchEnd={() => setHold(false)}>
                 <button className={`m2-story-media${t.media === "video" || t.thumb_url ? "" : " bare"}`} onClick={() => onOpen(t)} aria-label="Open this post">
                     {t.media === "video"
-                        ? <span onClick={(e) => e.stopPropagation()} style={{ display: "block" }}><TelegramMedia key={t.id} post={t} maxHeight="220px" radius="0" active={shown} /></span>
+                        ? <span onClick={(e) => e.stopPropagation()} onClickCapture={captureMedia} style={{ display: "block" }}><TelegramMedia key={t.id} post={t} maxHeight="220px" radius="0" active={shown} /></span>
                         : t.thumb_url
                         ? <img src={`${API_BASE}${t.thumb_url}`} alt="" />
                         : <span className="m2-story-place">{String(t.place || t.channel_title || "Telegram").split(",")[0]}</span>}
