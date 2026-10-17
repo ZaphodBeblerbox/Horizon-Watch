@@ -1,0 +1,68 @@
+/* media.css — the phone's full-screen picture and video (MediaViewer.jsx).
+   Monochrome like the rest of the phone v4: white glyphs on glass, black
+   behind the media, no colour anywhere. Times in the system sans with
+   tabular figures — never a monospace. */
+.m2-mv { position: fixed; inset: 0; z-index: 9500; overflow: hidden; touch-action: none; overscroll-behavior: contain;
+         user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; color: #fff;
+         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif; }
+.m2-mv-back { position: absolute; inset: 0; background: #000; opacity: 0; }
+.m2-mv-box { position: absolute; transform-origin: 0 0; will-change: transform; }
+.m2-mv-zoom { position: absolute; inset: 0; transform-origin: 0 0; will-change: transform; }
+.m2-mv-zoom > img, .m2-mv-zoom > video, .m2-mv-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; background: transparent; }
+.m2-mv-frame { pointer-events: none; transition: opacity .2s ease; }
+.m2-mv-stage { position: absolute; inset: 0; touch-action: none; cursor: pointer; }
+
+/* the chrome: glass round buttons at the top, the bar at the bottom; both
+   fade and slide a little when they step aside */
+.m2-mv-top, .m2-mv-bar { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 10px;
+                         transition: opacity .28s ease, transform .38s cubic-bezier(.22, 1, .36, 1); }
+.m2-mv-top { top: 0; padding: calc(env(safe-area-inset-top, 0px) + 10px) 14px 10px; }
+.m2-mv-bar { bottom: 0; padding: 22px 16px calc(env(safe-area-inset-bottom, 0px) + 14px);
+             background: linear-gradient(to top, rgba(0, 0, 0, .55), rgba(0, 0, 0, 0)); }
+.m2-mv[data-ui="hidden"] .m2-mv-top { opacity: 0; transform: translateY(-10px); pointer-events: none; }
+.m2-mv[data-ui="hidden"] .m2-mv-bar { opacity: 0; transform: translateY(10px); pointer-events: none; }
+
+.m2-mv-btn { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 50%; padding: 0; cursor: pointer;
+             color: #fff; text-decoration: none; border: 1px solid rgba(255, 255, 255, .14); background: rgba(22, 24, 30, .5);
+             backdrop-filter: blur(20px) saturate(1.3); -webkit-backdrop-filter: blur(20px) saturate(1.3);
+             transition: transform .18s cubic-bezier(.22, 1, .36, 1); }
+.m2-mv-btn:active, .m2-mv-big:active { transform: scale(.92); }
+.m2-mv-btn.bare { border: 0; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; width: 34px; }
+
+.m2-mv-big { position: absolute; left: 50%; top: 50%; width: 68px; height: 68px; margin: -34px 0 0 -34px; border-radius: 50%;
+             display: grid; place-items: center; padding: 0 0 0 4px; cursor: pointer; color: #fff;
+             border: 1px solid rgba(255, 255, 255, .16); background: rgba(22, 24, 30, .48);
+             backdrop-filter: blur(22px) saturate(1.3); -webkit-backdrop-filter: blur(22px) saturate(1.3);
+             animation: m2-mv-pop .32s cubic-bezier(.22, 1, .36, 1); transition: transform .18s cubic-bezier(.22, 1, .36, 1); }
+@keyframes m2-mv-pop { from { opacity: 0; transform: scale(.8) } to { opacity: 1; transform: none } }
+
+.m2-mv-time { font-size: 12.5px; font-weight: 550; font-variant-numeric: tabular-nums; letter-spacing: 0; color: rgba(255, 255, 255, .86);
+              min-width: 34px; text-align: center; flex: none; }
+
+/* the scrubber: a thin rail that thickens under the finger; the whole bar
+   height is the target, not just the line */
+.m2-mv-scrub { position: relative; flex: 1; height: 32px; display: flex; align-items: center; cursor: pointer; touch-action: none; }
+.m2-mv-rail { position: relative; display: block; width: 100%; height: 3px; border-radius: 2px; overflow: hidden;
+              background: rgba(255, 255, 255, .26); transition: height .2s cubic-bezier(.22, 1, .36, 1); }
+.m2-mv-fill { position: absolute; inset: 0; background: #fff; transform-origin: 0 50%; }
+.m2-mv-knob { position: absolute; top: 50%; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border-radius: 50%; background: #fff;
+              box-shadow: 0 1px 6px rgba(0, 0, 0, .4); transition: transform .2s cubic-bezier(.22, 1, .36, 1); }
+.m2-mv-scrub.on .m2-mv-rail { height: 6px; border-radius: 3px; }
+.m2-mv-scrub.on .m2-mv-knob { transform: scale(1.35); }
+
+/* the double tap: a soft half-circle on that side, the seconds in it */
+.m2-mv-ripple { position: absolute; top: 0; bottom: 0; width: 42%; display: flex; align-items: center; pointer-events: none;
+                background: rgba(255, 255, 255, .1); animation: m2-mv-ripple .65s ease-out forwards; }
+.m2-mv-ripple.left { left: 0; justify-content: center; border-radius: 0 50% 50% 0 / 0 50% 50% 0; }
+.m2-mv-ripple.right { right: 0; justify-content: center; border-radius: 50% 0 0 50% / 50% 0 0 50%; }
+.m2-mv-ripple span { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 13px; font-weight: 600;
+                     font-variant-numeric: tabular-nums; animation: m2-mv-label .65s cubic-bezier(.22, 1, .36, 1) forwards; }
+@keyframes m2-mv-ripple { 0% { opacity: 0 } 15% { opacity: 1 } 70% { opacity: 1 } 100% { opacity: 0 } }
+@keyframes m2-mv-label { from { transform: scale(.85) } to { transform: none } }
+
+@media (prefers-reduced-motion: reduce) {
+  .m2-mv-top, .m2-mv-bar, .m2-mv-btn, .m2-mv-big, .m2-mv-rail, .m2-mv-knob, .m2-mv-frame { transition: opacity .15s ease !important; }
+  .m2-mv[data-ui="hidden"] .m2-mv-top, .m2-mv[data-ui="hidden"] .m2-mv-bar { transform: none; }
+  .m2-mv-big, .m2-mv-ripple span { animation: none; }
+  .m2-mv-ripple { animation: m2-mv-ripple .65s linear forwards; }
+}
