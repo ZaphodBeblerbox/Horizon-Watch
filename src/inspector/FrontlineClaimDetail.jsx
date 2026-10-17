@@ -8,8 +8,9 @@
  */
 import { useEffect } from "react"
 import {
-    claimStyle, claimSummary, milSymbol, movementSummary, sideColour, trajectorySummary,
+    claimStyle, claimSummary, factionCountry, milSymbol, movementSummary, sideColour, trajectorySummary,
 } from "../globe/frontlineClaims.js"
+import CountryFlag from "../components/CountryFlag.jsx"
 import { actorColor, strikeIconUri } from "../globe/strikes.js"
 
 const replay = (t) => window.dispatchEvent(new CustomEvent("akili:trajectory-replay", { detail: { id: t.id, trajectory: t } }))
@@ -22,11 +23,14 @@ export default function FrontlineClaimDetail({ type, data }) {
     const text = type === "frontline_claim" ? claimSummary(d) : type === "troop_movement" ? movementSummary(d) : trajectorySummary(d)
     const colour = type === "frontline_claim" ? claimStyle(d).color : sideColour(d.side, d.colour)
     const sym = type === "troop_movement" && d.sidc ? milSymbol(d.sidc, { colour, size: 26 }) : null
+    // the faction's flag, for ground taken and troop movements
+    const faction = type !== "trajectory" ? factionCountry(d) : null
     const glyph = type === "trajectory" ? strikeIconUri({ act: d.kind === "drone" ? "drone" : "missile", color: actorColor(d.actor), size: 34 }) : null
     return (
         <div data-testid="frontline-detail" data-type={type}
              style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: "var(--space-4, 16px)" }}>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                {faction && <CountryFlag iso2={faction.iso2} name={faction.name} size={24} />}
                 {sym?.uri && <img src={sym.uri} width={sym.width} height={sym.height} alt={d.unit_label || "unit symbol"} />}
                 {glyph && <img src={glyph} width={34} height={40} alt={d.kind_label || "flight"} />}
                 {type === "frontline_claim" && (

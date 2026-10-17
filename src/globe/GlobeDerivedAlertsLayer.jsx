@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { safeDegreesArray } from "./trackPoints.js"
 import { Entity, useCesium } from "resium"
 import {
-    Cartesian3, Color, CallbackProperty, HeightReference,
+    Cartesian3, Color, HeightReference,
     DistanceDisplayCondition, LabelStyle, VerticalOrigin,
     CustomDataSource, PolylineDashMaterialProperty,
 } from "cesium"
@@ -31,11 +31,7 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 import { getShapeMarkerDataUri, MARK_SIZE , MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 import { SurgeTip, FusionTip } from "./DerivedTips.jsx"
 import { CAT } from "../components/timeStripMath.js"
-import {
-    SURGE_HALO_M, SURGE_INNER_M, FUSION_RING_M, FUSION_OUTER_M,
-    TICK_OUTER_M, TICK_INNER_M, LABEL_MAX_DISTANCE_M,
-    tickBearings, offset, pulseAlpha, prefersReducedMotion,
-} from "./derivedMarkGeometry.js"
+import { LABEL_MAX_DISTANCE_M, tickBearings } from "./derivedMarkGeometry.js"
 
 const AMBER = Color.fromCssColorString("#f5d98f")   // --sev-high
 const RED = Color.fromCssColorString("#f46043")     // --sev-critical
@@ -44,21 +40,37 @@ const BG0 = Color.fromCssColorString("#14161f")     // --bg-0
 const labelCond = new DistanceDisplayCondition(0, LABEL_MAX_DISTANCE_M)
 
 /**
- * The region rings are honest and they are large, and both facts matter.
+ * THE RINGS ARE A FIXED SIZE ON THE SCREEN, NEVER ON THE GROUND.
  *
- * A surge halo is §A4's 2.5° cell — ~278km across — and a fusion point sits
- * at a cell CENTROID, which is nowhere in particular. Shrinking the rings to
- * look tidier would claim a precision the finding does not have, so they
- * keep their real ground radius.
- *
- * What they cannot do is stay on screen at street zoom, where an 85km circle
- * stops reading as "about this region" and becomes a wall across the map with
- * the mark it describes lost inside it. Reported as the marks being "too big",
- * and that is what it looks like. Beyond this camera distance the ring is
- * information; closer in, the shape marker alone carries the finding.
+ * They were ellipses with a real 85 km / 278 km radius, so they swelled as
+ * the camera came down and sat across the map as a wall, with the mark they
+ * describe lost inside — reported again and again as the alert icons
+ * "blowing up". An alert's ring is now a pixel-sized image on the mark, the
+ * same small size at every zoom; the region it stands for is in its tip.
  */
-const REGION_RING_MIN_CAMERA_M = 120_000
-const regionRingCond = new DistanceDisplayCondition(REGION_RING_MIN_CAMERA_M, Number.MAX_VALUE)
+const RING_PX = { surge: 30, fusion: 34 }
+const _ringCache = new Map()
+function ringUri(color, kind, ticks = 0) {
+    const key = `${kind}:${color}:${ticks}`
+    if (_ringCache.has(key)) return _ringCache.get(key)
+    const px = RING_PX[kind], S = 3, c = (px * S) / 2, r = c - 3 * S
+    const tickLines = tickBearings(ticks).map((b) => {
+        const t = (b * Math.PI) / 180
+        const x = (rad) => c + Math.sin(t) * rad, y = (rad) => c - Math.cos(t) * rad
+        return `<line x1="${x(r)}" y1="${y(r)}" x2="${x(r - 4 * S)}" y2="${y(r - 4 * S)}" stroke="${color}" stroke-width="${1.6 * S}" stroke-linecap="round"/>`
+    }).join("")
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px * S}" height="${px * S}">`
+        + `<circle cx="${c}" cy="${c}" r="${r}" fill="${color}" fill-opacity=".10" stroke="${color}" stroke-opacity=".8" stroke-width="${1.2 * S}"/>`
+        + `<circle cx="${c}" cy="${c}" r="${r * 0.62}" fill="none" stroke="${color}" stroke-opacity=".45" stroke-width="${S}"/>`
+        + tickLines + `</svg>`
+    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+    _ringCache.set(key, uri)
+    return uri
+}
+const ringBillboard = (color, kind, ticks) => ({
+    image: ringUri(color, kind, ticks), width: RING_PX[kind], height: RING_PX[kind],
+    heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M,
+})
 
 /**
  * The mark itself: a triangle, the universal caution form, matching
@@ -76,12 +88,6 @@ function markBillboard(color, size = MARK_SIZE.alert) {
         heightReference: HeightReference.CLAMP_TO_GROUND,
         disableDepthTestDistance: MARKER_DEPTH_TEST_M,
     }
-}
-
-/** §A8's pulse, on outlineColor alpha — never on `material`; see geometry. */
-function pulsingOutline(base, periodMs, min, max) {
-    if (prefersReducedMotion()) return base.withAlpha(max)
-    return new CallbackProperty(() => base.withAlpha(pulseAlpha(Date.now(), periodMs, min, max)), false)
 }
 
 /** What surged, and by how much against its own baseline. */
@@ -309,15 +315,6 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                     position={Cartesian3.fromDegrees(s.lon, s.lat, 0)}
                     onMouseMove={(_m, mv) => tipAt(<SurgeTip surge={s} nowMs={nowMs} />, mv)}
                     onMouseLeave={hideTip}
-                    ellipse={{
-                        semiMajorAxis: SURGE_HALO_M, semiMinorAxis: SURGE_HALO_M,
-                        material: AMBER.withAlpha(0.10),
-                        outline: true,
-                        outlineColor: pulsingOutline(AMBER, 3400, 0.45, 0.9),
-                        outlineWidth: 1.2,
-                        heightReference: HeightReference.CLAMP_TO_GROUND,
-                        distanceDisplayCondition: regionRingCond,
-                    }}
                     billboard={markBillboard("#b7822c")}
                     /* "SURGE · 5" named neither the subject nor the size,
                        which is the whole finding. The payload already
@@ -327,20 +324,9 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                     label={labelOpts(surgeLabel(s), AMBER)}
                 />
             ))}
-            {/* The inner ring is its own entity: one Cesium entity carries at
-                most one ellipse, and §A8's mark is two concentric rings. */}
             {surges.map((s) => (
-                <Entity
-                    key={`${s.id}-inner`}
-                    position={Cartesian3.fromDegrees(s.lon, s.lat, 0)}
-                    ellipse={{
-                        semiMajorAxis: SURGE_INNER_M, semiMinorAxis: SURGE_INNER_M,
-                        material: Color.TRANSPARENT,
-                        outline: true, outlineColor: AMBER.withAlpha(0.5), outlineWidth: 1,
-                        heightReference: HeightReference.CLAMP_TO_GROUND,
-                        distanceDisplayCondition: regionRingCond,
-                    }}
-                />
+                <Entity key={`${s.id}-ring`} position={Cartesian3.fromDegrees(s.lon, s.lat, 0)}
+                        billboard={ringBillboard("#f5d98f", "surge", 0)} />
             ))}
 
             {fusions.map((f) => (
@@ -350,13 +336,6 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                     position={Cartesian3.fromDegrees(f.lon, f.lat, 0)}
                     onMouseMove={(_m, mv) => { drawThreads(f); tipAt(<FusionTip fusion={f} nowMs={nowMs} />, mv) }}
                     onMouseLeave={() => { clearThreads(); hideTip() }}
-                    ellipse={{
-                        semiMajorAxis: FUSION_RING_M, semiMinorAxis: FUSION_RING_M,
-                        material: RED.withAlpha(0.12),
-                        outline: true, outlineColor: RED.withAlpha(0.9), outlineWidth: 1.6,
-                        heightReference: HeightReference.CLAMP_TO_GROUND,
-                        distanceDisplayCondition: regionRingCond,
-                    }}
                     billboard={markBillboard("#c4453c")}
                     /* The count of INDEPENDENT ways of looking is the
                        finding, so name them rather than counting them:
@@ -364,44 +343,12 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                     label={labelOpts(fusionLabel(f), RED)}
                 />
             ))}
+            {/* §A8 — ONE RADIAL TICK PER MODALITY, drawn in the ring. "The
+                tick count is the finding, rendered." */}
             {fusions.map((f) => (
-                <Entity
-                    key={`${f.id}-outer`}
-                    position={Cartesian3.fromDegrees(f.lon, f.lat, 0)}
-                    ellipse={{
-                        semiMajorAxis: FUSION_OUTER_M, semiMinorAxis: FUSION_OUTER_M,
-                        material: Color.TRANSPARENT,
-                        outline: true,
-                        outlineColor: pulsingOutline(RED, 2800, 0.3, 0.6),
-                        outlineWidth: 1,
-                        heightReference: HeightReference.CLAMP_TO_GROUND,
-                        distanceDisplayCondition: regionRingCond,
-                    }}
-                />
+                <Entity key={`${f.id}-ring`} position={Cartesian3.fromDegrees(f.lon, f.lat, 0)}
+                        billboard={ringBillboard("#f46043", "fusion", (f.mods || []).length)} />
             ))}
-            {/* §A8 — ONE RADIAL TICK PER MODALITY. "The tick count is the
-                finding, rendered." */}
-            {fusions.flatMap((f) =>
-                tickBearings(f.mods.length).map((b, i) => {
-                    const a = offset(f.lat, f.lon, b, TICK_OUTER_M)
-                    const z = offset(f.lat, f.lon, b, TICK_INNER_M)
-                    const tick = safeDegreesArray([[a.lon, a.lat], [z.lon, z.lat]])
-                    if (!tick) return null
-                    return (
-                        <Entity
-                            key={`${f.id}-tick-${i}`}
-                            polyline={{
-                                positions: Cartesian3.fromDegreesArray(tick),
-                                width: 2, material: RED, clampToGround: true,
-                                // The ticks are drawn on the region ring, so
-                                // they vanish with it rather than hanging in
-                                // space around a mark at street zoom.
-                                distanceDisplayCondition: regionRingCond,
-                            }}
-                        />
-                    )
-                }),
-            )}
         </>
     )
 }

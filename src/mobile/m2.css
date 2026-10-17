@@ -305,11 +305,6 @@
 @media (prefers-reduced-motion: reduce) { .m2-team.live > i { animation: none; } }
 
 /* THE SIGNAL A NOTIFICATION OPENED, on the map (mobile/findingsLeaflet.js attachSignalPin) */
-.m2-signal-pin-wrap { background: none; border: 0; }
-.m2-signal-pin { position: relative; display: block; width: 44px; height: 44px; }
-.m2-signal-pin b { position: absolute; left: 14px; top: 14px; width: 16px; height: 16px; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.45); box-sizing: border-box; }
-.m2-signal-pin i { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--c); animation: m2-pin-pulse 1.8s ease-out infinite; }
-@keyframes m2-pin-pulse { from { transform: scale(.35); opacity: 1 } to { transform: scale(1); opacity: 0 } }
 
 /* A HALF SHEET: the signal's details with the map visible above it, dragged up to full */
 .m2-sheet.half { height: 46vh; max-height: 46vh; transition: height .22s ease, max-height .22s ease; }

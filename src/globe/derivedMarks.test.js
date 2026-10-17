@@ -27,17 +27,13 @@ describe("§A7 — detection is evaluated at the playhead", () => {
     })
 })
 
-describe("§A8 — the pulse never touches `material`", () => {
-    it("routes the CallbackProperty through outlineColor", () => {
-        // A CallbackProperty on .material has no getType(); Cesium's per-frame
-        // visualizer calls it and stops rendering the whole viewer. The
-        // threat-heatmap layer documented this at length before removal.
-        expect(layer).toMatch(/outlineColor: pulsingOutline/)
+describe("§A8 — the marks and their rings are screen-sized", () => {
+    it("draws its rings as pixel billboards, never ground ellipses", () => {
+        // 85 km / 278 km ground ellipses swelled as the camera came down
+        // and were reported as the alert icons "blowing up" (2026-10-14).
+        expect(layer).not.toMatch(/ellipse=\{/)
+        expect(layer).toMatch(/billboard=\{ringBillboard\(/)
         expect(layer).not.toMatch(/material:\s*new CallbackProperty/)
-    })
-
-    it("honours prefers-reduced-motion", () => {
-        expect(layer).toMatch(/prefersReducedMotion\(\)/)
     })
 
     it("keeps labels pixel-sized, not ground-sized", () => {
@@ -56,7 +52,8 @@ describe("§A8 — the pulse never touches `material`", () => {
     })
 
     it("draws one radial tick per modality", () => {
-        expect(layer).toMatch(/tickBearings\(f\.mods\.length\)/)
+        expect(layer).toMatch(/ringBillboard\("#f46043", "fusion", \(f\.mods \|\| \[\]\)\.length\)/)
+        expect(layer).toMatch(/tickBearings\(ticks\)/)
     })
 })
 

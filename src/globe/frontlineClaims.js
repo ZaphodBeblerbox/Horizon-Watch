@@ -29,6 +29,42 @@ import { bearingDeg, buildFlightPath, destination, greatCircleAt, haversineKm } 
 export const SIDE_COLOURS = { blue: "#3d8bff", red: "#e5484d", unknown: "#9aa9bc" }
 export const sideColour = (side, given = null) => given || SIDE_COLOURS[side] || SIDE_COLOURS.unknown
 
+// A theatre side's name (frontline_claims.py THEATRES) that is not itself a
+// country name, but is one state's forces. Non-state sides (Houthis, RSF,
+// Hezbollah) have no national flag and get none.
+const FACTION_ISO2 = {
+    "saudi-led coalition": "SA", "sudanese armed forces": "SD", "iran and allies": "IR",
+    "russian federation": "RU", "afu": "UA", "idf": "IL",
+}
+let _byName = null
+function countryIso2ByName(name) {
+    if (!_byName) {
+        _byName = new Map()
+        try {
+            const dn = new Intl.DisplayNames(["en"], { type: "region" })
+            for (let a = 65; a <= 90; a++) for (let b = 65; b <= 90; b++) {
+                const code = String.fromCharCode(a, b)
+                const n = dn.of(code)
+                // first code wins: retired ones (SU) also answer to "Russia"
+                if (n && n !== code && n !== "Unknown Region" && !_byName.has(n.toLowerCase())) _byName.set(n.toLowerCase(), code)
+            }
+        } catch { /* no Intl names: the alias table alone */ }
+    }
+    return _byName.get(name) || null
+}
+
+/** The faction's country, {iso2, name}, for its flag — or null (a non-state side, or none named). */
+export function factionCountry(d) {
+    for (const raw of [d?.actor, d?.side_name]) {
+        const name = String(raw || "").trim()
+        if (!name) continue
+        const k = name.toLowerCase()
+        const iso2 = FACTION_ISO2[k] || countryIso2ByName(k)
+        if (iso2) return { iso2, name }
+    }
+    return null
+}
+
 /** One fetch for all three layers; the backend caches it for a minute. */
 export function overlayUrl(base, hours = 168) {
     return `${base}/api/frontlines/overlay?hours=${Math.max(1, Math.min(720, Math.round(Number(hours) || 168)))}`

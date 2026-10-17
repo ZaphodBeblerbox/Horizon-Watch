@@ -19,11 +19,12 @@ import { altitudeFor, findingsBounds, getShownFindings, labelRanks, mapCaption, 
 import { cesiumRectDegrees, loadOverlayRadar, overlayUrl, retryOverlay, setOverlayOpacity, setOverlayView, subscribeOverlay, viewsFor } from "../lib/findingOverlay.js"
 import { subscribeSignalPin } from "../lib/signalPin.js"
 import { renderDuringFlight } from "./flightRender.js"
+import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
 
-const SEV_COL = { critical: "#e5484d", high: "#f5a623", significant: "#f5a623", elevated: "#f5a623", moderate: "#7aa7ff", medium: "#7aa7ff" }
-const ring = (col) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><circle cx="24" cy="24" r="21" fill="none" stroke="${col}" stroke-width="3" opacity=".9"/>`
-    + `<circle cx="24" cy="24" r="14" fill="none" stroke="${col}" stroke-width="2" opacity=".55"/><circle cx="24" cy="24" r="7" fill="${col}" stroke="#fff" stroke-width="2.5"/></svg>`)
+// The opened signal is a fusion signal: drawn as the map's own fusion mark
+// (GlobeDerivedAlertsLayer's triangle), never a ringed dot with its headline
+// left standing on the map — the headline is in the sheet that opened it.
+const FUSION_MARK = () => getShapeMarkerDataUri({ shape: "triangle", color: "#c4453c", size: MARK_SIZE.alert, strokeWidth: 1.5 })
 
 export default function GlobeFindingsLayer() {
     const { viewer } = useCesium()
@@ -150,7 +151,7 @@ function useSceneImage(viewer, ov) {
     }, [ov?.opacity]) // eslint-disable-line react-hooks/exhaustive-deps
 }
 
-/** The signal a notification opened (lib/signalPin.js): a ring on the ground, with its title. */
+/** The signal a notification opened (lib/signalPin.js): the fusion mark, no headline on the map. */
 function useSignalPin(viewer) {
     useEffect(() => {
         if (!viewer || viewer.isDestroyed()) return undefined
@@ -159,18 +160,12 @@ function useSignalPin(viewer) {
             if (viewer.isDestroyed()) return
             if (ent) { try { viewer.entities.remove(ent) } catch { /* gone */ } ent = null }
             if (p) {
-                const col = SEV_COL[String(p.sev || "").toLowerCase()] || "#ff5a36"
                 ent = viewer.entities.add({
                     id: `signal-pin-${Math.random().toString(36).slice(2, 8)}`,
                     position: Cartesian3.fromDegrees(p.lon, p.lat),
-                    billboard: { image: ring(col), width: 48, height: 48, heightReference: HeightReference.CLAMP_TO_GROUND,
+                    billboard: { image: FUSION_MARK(), width: MARK_SIZE.alert, height: MARK_SIZE.alert,
+                                 heightReference: HeightReference.CLAMP_TO_GROUND,
                                  disableDepthTestDistance: Number.POSITIVE_INFINITY },
-                    label: p.title ? {
-                        text: String(p.title).slice(0, 80), font: "600 13px -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, sans-serif",
-                        fillColor: Color.WHITE, outlineColor: Color.BLACK.withAlpha(0.9), outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
-                        verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -28),
-                        heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                    } : undefined,
                     properties: { signalPin: p },
                 })
             }

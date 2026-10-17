@@ -8,6 +8,7 @@
 import { getShownFindings, subscribeFindings, clearFindings, labelRanks, mapCaption, MAP_LABELS, TONE } from "../lib/findings.js"
 import { leafletImageBounds, loadOverlayRadar, overlayUrl, retryOverlay, setOverlayOpacity, setOverlayView, subscribeOverlay, viewsFor } from "../lib/findingOverlay.js"
 import { subscribeSignalPin } from "../lib/signalPin.js"
+import { getShapeMarkerDataUri, MARK_SIZE } from "../globe/entityIcons.js"
 
 /** Leaflet bounds [[s, w], [n, e]] for a box [w, s, e, n]. Pure. */
 export const leafletBounds = (b) => [[b[1], b[0]], [b[3], b[2]]]
@@ -72,7 +73,6 @@ export function attachFindings(L, map) {
 }
 
 const FONT = "500 12px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif"
-const SEV_COL = { critical: "#e5484d", high: "#f5a623", significant: "#f5a623", elevated: "#f5a623", moderate: "#7aa7ff", medium: "#7aa7ff" }
 
 /**
  * THE IMAGE THE FINDING WAS NOTICED IN, under its boxes (lib/findingOverlay.js):
@@ -146,19 +146,19 @@ export function attachFindingImage(L, map) {
     return () => { off(); remove(); if (box) box.remove() }
 }
 
-/** The signal a notification opened (lib/signalPin.js), as its own highlighted marker. */
+/** The signal a notification opened (lib/signalPin.js), as the fusion mark. */
 export function attachSignalPin(L, map) {
     let m = null
     const off = subscribeSignalPin((p) => {
         if (m) { m.remove(); m = null }
         if (!p) return
-        const col = SEV_COL[String(p.sev || "").toLowerCase()] || "#ff5a36"
-        const html = `<span class="m2-signal-pin" style="--c:${col}"><i></i><b></b></span>`
+        // the map's own fusion mark, as on the desktop globe — no standing headline
+        const px = MARK_SIZE.alert
         m = L.marker([p.lat, p.lon], {
-            icon: L.divIcon({ className: "m2-signal-pin-wrap", html, iconSize: [44, 44], iconAnchor: [22, 22] }),
+            icon: L.icon({ iconUrl: getShapeMarkerDataUri({ shape: "triangle", color: "#c4453c", size: px, strokeWidth: 1.5 }),
+                           iconSize: [px, px], iconAnchor: [px / 2, px / 2] }),
             keyboard: false, zIndexOffset: 2000, interactive: false,
         })
-        if (p.title) m.bindTooltip(String(p.title).slice(0, 90), { permanent: true, direction: "top", offset: [0, -18], className: "m2-finding-label", opacity: 0.95 })
         m.addTo(map)
     })
     return () => { off(); if (m) m.remove() }

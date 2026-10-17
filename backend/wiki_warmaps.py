@@ -96,7 +96,7 @@ THEATRES: dict[str, dict] = {
                    "orange": "contested / mixed control",
                    "purple": "contested / mixed control"},
     },
-    # These four publish no legend in their module /doc and none in their
+    # These three publish no legend in their module /doc and none in their
     # article. They are OFFERED ANYWAY, because who holds which town is
     # useful on its own: the shape of the war — how fragmented it is,
     # where the boundaries run, which side is consolidating — is legible
@@ -112,9 +112,14 @@ THEATRES: dict[str, dict] = {
     "somalia": {"label": "Somalia",
                 "module": "Module:Somali Civil War detailed map",
                 "legend": {}},
+    # The owner's key (2026-10-13). IS-GS and JNIM share grey on this map,
+    # so a grey town is named as either — the map does not tell them apart.
     "mali": {"label": "Mali / Sahel",
              "module": "Module:Mali War detailed map",
-             "legend": {}},
+             "legend": {"green": "Azawad (Tuareg rebels)",
+                        "red": "Malian Army and allies",
+                        "yellow": "Plateforme",
+                        "grey": "Islamic State in the Greater Sahara or JNIM"}},
     "lebanon": {
         "label": "Lebanon",
         "module": "Module:Lebanese insurgency detailed map",

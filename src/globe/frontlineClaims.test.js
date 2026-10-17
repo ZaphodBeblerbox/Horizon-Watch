@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
     arrowHead, claimMapLabel, claimRing, claimStyle, claimSummary, milSymbol, movementArrow, overlayUrl,
-    trajectoryPath, trajectorySummary, replaySeconds, FRONTLINE_LAYERS, SIDE_COLOURS,
+    trajectoryPath, trajectorySummary, replaySeconds, FRONTLINE_LAYERS, SIDE_COLOURS, factionCountry,
 } from "./frontlineClaims.js"
 import { haversineKm, positionAlong, pathLengthKm } from "./vesselThreat.js"
 import { SUB_LAYERS } from "../components/layerRailConfig.js"
@@ -89,5 +89,18 @@ describe("wiring", () => {
     it("asks the overlay with a bounded window", () => {
         expect(overlayUrl("", 9999)).toBe("/api/frontlines/overlay?hours=720")
         expect(overlayUrl("http://x")).toBe("http://x/api/frontlines/overlay?hours=168")
+    })
+})
+
+describe("factionCountry — the flag beside ground taken and movements", () => {
+    it("names a country by the actor, then the side", () => {
+        expect(factionCountry({ actor: "Russia" })?.iso2).toBe("RU")
+        expect(factionCountry({ actor: null, side_name: "Ukraine" })?.iso2).toBe("UA")
+        expect(factionCountry({ side_name: "Saudi-led coalition" })?.iso2).toBe("SA")
+    })
+    it("gives a non-state side no flag", () => {
+        expect(factionCountry({ side_name: "Houthis" })).toBe(null)
+        expect(factionCountry({ side_name: "Rapid Support Forces" })).toBe(null)
+        expect(factionCountry({})).toBe(null)
     })
 })

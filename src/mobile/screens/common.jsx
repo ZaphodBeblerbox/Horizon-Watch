@@ -18,6 +18,8 @@ import { isVesselThreatAlert } from "../../globe/vesselThreat.js"
 import FindingPreview from "../../components/FindingPreview.jsx"
 import { findingZoneOf, isFindingAlert, showFindings } from "../../lib/findings.js"
 import PlaceModel from "../../assets/PlaceModel.jsx"
+import CountryFlag from "../../components/CountryFlag.jsx"
+import { factionCountry } from "../../globe/frontlineClaims.js"
 
 export const SEV = { critical: "var(--red, #e5484d)", significant: "var(--amber, #f5a623)", high: "var(--amber, #f5a623)",
     elevated: "var(--amber, #f5a623)", moderate: "#7aa7ff", medium: "#7aa7ff", low: "var(--txt4, #6b7280)" }
@@ -101,6 +103,9 @@ export function SignalSheet({ s, onClose, onShowOnMap, half = false }) {
             <div className="m2-eyebrow" style={{ color: sevColor(s.severity_tier || s.sev), paddingRight: half ? 36 : 0 }}>
                 {[s.severity_tier || s.sev, when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
             </div>
+            {(s.kind === "troop_movement" || s.kind === "frontline_claim") && factionCountry(s) && (
+                <div style={{ marginTop: 6 }}><CountryFlag iso2={factionCountry(s).iso2} name={factionCountry(s).name} size={22} /></div>
+            )}
             <h2 style={{ margin: "6px 0 4px", fontSize: 19, lineHeight: 1.3 }}>{title}</h2>
             {where && <div className="m2-sub" style={{ marginBottom: 10 }}>{where}</div>}
             {/* AN ENDANGERED PLACE: its model turning slowly (never on the map; three.js loads only here) */}

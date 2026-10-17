@@ -265,7 +265,7 @@ function TrajectoryReplay({ trajectories }) {
                         return Transforms.headingPitchRollQuaternion(Cartesian3.fromDegrees(p.lon, p.lat, p.alt),
                             new HeadingPitchRoll(modelHeadingRad(p.heading), 0, 0))
                     }, false),
-                    model: { uri: shahedModelUri(), minimumPixelSize: 72, maximumScale: 80000, color: css("#d9cdb8"),
+                    model: { uri: shahedModelUri(), minimumPixelSize: 54, maximumScale: 60000, color: css("#d9cdb8"),
                              colorBlendMode: ColorBlendMode.MIX, colorBlendAmount: 0.25,
                              heightReference: HeightReference.RELATIVE_TO_GROUND },
                     label,

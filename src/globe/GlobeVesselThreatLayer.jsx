@@ -167,7 +167,7 @@ export default function GlobeVesselThreatLayer() {
           const p = positionAlong(path, kmNow())
           return Transforms.headingPitchRollQuaternion(deg2(p, p.alt), new HeadingPitchRoll(modelHeadingRad(p.heading), 0, 0))
         }, false),
-        model: { uri: shahedModelUri(), minimumPixelSize: 96, maximumScale: 80000, color: Color.fromCssColorString("#d9cdb8"), colorBlendMode: ColorBlendMode.MIX, colorBlendAmount: 0.25 },
+        model: { uri: shahedModelUri(), minimumPixelSize: 72, maximumScale: 60000, color: Color.fromCssColorString("#d9cdb8"), colorBlendMode: ColorBlendMode.MIX, colorBlendAmount: 0.25 },
         label: {
           text: new CallbackProperty(() => {
             const left = flightMinutes(total - kmNow(), cruise)
