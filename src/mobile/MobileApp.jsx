@@ -20,7 +20,7 @@ import MMessages from "./screens/MMessages.jsx"
 import { MAssets, MAlerts, MReports, MProfile, MSettings } from "./screens/MMore.jsx"
 import ConflictContext from "../conflicts/ConflictContext.jsx"
 import TelegramMood from "../insight/TelegramMood.jsx"
-import { Icon, Sheet, SignalSheet } from "./screens/common.jsx"
+import { Icon, Sheet } from "./screens/common.jsx"
 import API_BASE from "../apiBase.js"
 import { usePoll, arr } from "./useMine.js"
 import useOnlineUsers from "../state/useOnlineUsers.js"
@@ -66,34 +66,29 @@ export default function MobileApp() {
     // "Show on the map": a vessel of concern opens its live view (rings, trail, targets); anything else is centred
     const showOnMap = (s) => (s && !s.vesselThreat && routeFor(s)?.action === "vessel" ? sigMap.current?.(routeFor(s)) : plainShowOnMap(s))
 
-    /* THE MAP AT THE SIGNAL, THE SIGNAL DRAWN, ITS DETAILS BELOW (owner,
-       2026-10-12): a tapped notification (push, banner, Alerts) opens the map
-       where it happened with the signal itself on it — the live vessel with
-       its rings and targets, the finding's boxes over the image they were
-       seen in, or the signal's own marker — and its sheet at half height
-       (the map visible above, dragged up to full). No place: the sheet alone.
-       How each kind is shown: presentationFor() in notify/openSignal.js. */
-    const [sig, setSig] = useState(null)
+    /* THE MAP AT THE SIGNAL, THE SIGNAL DRAWN (owner, 2026-10-12): a tapped
+       notification (push, banner, Alerts) opens the map where it happened with
+       the signal itself on it — the live vessel with its rings and targets,
+       the finding's boxes over the image they were seen in, or the signal's
+       own marker — and a small card over the map (2026-10-17; it was a half
+       sheet). How each kind is shown: presentationFor() in notify/openSignal.js. */
     const sigMap = useRef(null)
+    const [alertFocus, setAlertFocus] = useState(null)
     useEffect(() => {
+        // WHERE A NOTIFICATION LEADS (owner, 2026-10-17: "it doesn't lead me
+        // directly to the actual signal"): a signal with a place opens on the
+        // map, at it, drawn, with a small card over the map (MPeek); one
+        // without a place opens in Alerts, found, scrolled to and opened there.
         const open = async (r) => {
             if (!r) return
             setMenu(false)
             if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
             if (r.action === "asset") { go("assets", { asset: r.assetId }); return }
             const p = presentationFor(r, "phone")
-            const base = { id: r.alertId || r.id, alert_id: r.alertId || r.id, headline: r.title || "Signal", title: r.title, summary: r.sub,
-                           severity_tier: r.sev, lat: r.lat, lon: r.lon, mmsi: r.mmsi, entity_id: r.mmsi || r.entityId || undefined, alert_type: r.alertType,
-                           entity_type: r.entityType || undefined, zone_id: r.zoneId || undefined, _route: r, _half: p?.sheet === "half" }
             closeOpenedSignal()            // what the last one drew
-            setSig(base)
-            if (p?.map) sigMap.current?.(r, { sheet: false })
-            if (r.alertId || r.id) {
-                fetch(`${API_BASE}/api/alerts/${encodeURIComponent(r.alertId || r.id)}`, { credentials: "include" })
-                    .then((x) => (x.ok ? x.json() : null))
-                    .then((a) => { if (a && (a.title || a.headline)) setSig((cur) => (cur && cur.id === base.id ? { ...a, ...Object.fromEntries(Object.entries(base).filter(([, v]) => v != null && v !== "")), headline: a.title || a.headline || base.headline, summary: a.message || a.description || base.summary, severity_tier: a.severity || base.severity_tier } : cur)) })
-                    .catch(() => {})
-            }
+            if (p?.map) { sigMap.current?.(r); return }
+            setAlertFocus({ id: r.alertId || r.id, title: r.title, _t: Date.now() })
+            go("alerts")
         }
         // `sheet: false`: the signal's own sheet is already open (MobileApp's),
         // so the map must not open a second one for the same thing
@@ -115,7 +110,7 @@ export default function MobileApp() {
                     }
                 } catch { /* the sheet says why */ }
                 if (r.lat != null && r.lon != null) setFocus({ ...base, ...quiet, lat: r.lat, lon: r.lon, _t: Date.now() })
-                else if (sheet) go("alerts")
+                else if (sheet) { setAlertFocus({ id: r.alertId || r.id, title: r.title, _t: Date.now() }); go("alerts") }
                 return
             }
             // an imagery finding: its pass's image, its boxes, the one it is about in
@@ -126,14 +121,18 @@ export default function MobileApp() {
                 if (show.findings.length) {
                     setTab("map")
                     showFindings({ ...show, title: r.title || alert.title, fit: true, alertId: r.alertId || r.id })
+                    // the card with it, the boxes framing the view
+                    if (sheet) setFocus({ ...alert, id: r.alertId || r.id, alert_id: r.alertId || r.id, headline: r.title || alert.title, title: r.title || alert.title,
+                                          severity_tier: r.sev || alert.severity, _peekOnly: true, _t: Date.now() })
                     return
                 }
             }
             // the signal's own marker, highlighted (lib/signalPin.js → findingsLeaflet.js)
             const pin = pinFor(r.action === "finding" ? { ...r, action: "signal" } : r)
             if (pin) showSignalPin(pin)
-            if (r.lat != null && r.lon != null) plainShowOnMap({ lat: r.lat, lon: r.lon, headline: r.title, id: r.alertId || r.id, severity_tier: r.sev, ...quiet })
-            else if (sheet) go("alerts")
+            if (r.lat != null && r.lon != null) plainShowOnMap({ lat: r.lat, lon: r.lon, headline: r.title, title: r.title, summary: r.sub, id: r.alertId || r.id, alert_id: r.alertId || r.id,
+                                                             severity_tier: r.sev, alert_type: r.alertType, entity_type: r.entityType || undefined, ...quiet })
+            else if (sheet) { setAlertFocus({ id: r.alertId || r.id, title: r.title, _t: Date.now() }); go("alerts") }
         }
         const off = setSignalSurface(open)
         // opened cold from a notification (main.jsx): no globe to wait for
@@ -148,8 +147,31 @@ export default function MobileApp() {
     useEffect(() => subscribeAuth(setMe), [])
     const more = me?.is_super_admin ? [...MORE, ["admin", "Admin", "g-gear"]] : MORE
     const inMore = more.some(([k]) => k === tab)
+    // THE CHROME GETS OUT OF THE WAY: reading down a screen slides the header
+    // up and the tab bar down; the first scroll back up, or the top, returns them
+    const [chromeHidden, setChromeHidden] = useState(false)
+    useEffect(() => {
+        const last = new WeakMap()
+        const h = (e) => {
+            const t = e.target
+            if (!(t instanceof Element) || !t.closest(".m2-body") || t.closest(".m2-sheet, .m2-hscroll, .m2-chips")) return
+            const y = t.scrollTop, prev = last.has(t) ? last.get(t) : y
+            last.set(t, y)
+            if (y < 40) setChromeHidden(false)
+            else if (y - prev > 6) setChromeHidden(true)
+            else if (prev - y > 6) setChromeHidden(false)
+        }
+        document.addEventListener("scroll", h, true)
+        return () => document.removeEventListener("scroll", h, true)
+    }, [])
+    // A SCREEN ARRIVES FROM THE SIDE ITS TAB IS ON
+    const navIndex = (t) => { const i = NAV.findIndex(([k]) => k === t); return i >= 0 ? i : NAV.length - 1 }
+    const prevTab = useRef(tab)
+    const dir = navIndex(tab) < navIndex(prevTab.current) ? "left" : "right"
+    useEffect(() => { prevTab.current = tab; setChromeHidden(false) }, [tab])
+    const markAt = menu ? NAV.length - 1 : navIndex(tab)
     return (
-        <div className="m2" data-screen-label="Phone">
+        <div className="m2" data-screen-label="Phone" data-chrome={chromeHidden && tab !== "map" ? "hidden" : "shown"} data-dir={dir}>
             <PlxIcons />
             <LocationPrompt afterTour={false} live />
             {/* the route planner, full height (a "Leave now" notification, Get me out, an asset's Safest route, a context card) */}
@@ -163,9 +185,6 @@ export default function MobileApp() {
             </div>
             <LivePlayerHost />
             <MNotifCards onOpen={(n) => openSignal(n)} />
-            {sig && <SignalSheet s={sig} half={!!sig._half} onClose={() => { closeOpenedSignal(sig.id); setSig(null) }}
-                                 onShowOnMap={(x) => { const r = sig._route || {}; setSig(null)
-                                     sigMap.current?.(r.action === "vessel" ? r : { ...r, action: "signal", lat: x?.lat ?? r.lat, lon: x?.lon ?? r.lon }) }} />}
             <SourceViewer />
             {/* The map runs edge to edge (its own round controls carry the bell). */}
             {tab !== "map" && <header className="m2-top">
@@ -183,7 +202,7 @@ export default function MobileApp() {
                 <Pane on={tab === "desk"}><MDesk active={tab === "desk"} onShowOnMap={showOnMap} /></Pane>
                 <Pane on={tab === "messages"}><MMessages active={tab === "messages"} /></Pane>
                 {tab === "assets" && <Pane on><MAssets onShowOnMap={showOnMap} initial={assetOpen} /></Pane>}
-                {tab === "alerts" && <Pane on><MAlerts onShowOnMap={showOnMap} onOpen={go} /></Pane>}
+                {tab === "alerts" && <Pane on><MAlerts onShowOnMap={showOnMap} onOpen={go} focus={alertFocus} /></Pane>}
                 {/* The wars and the mood, as on the desktop (conflicts/, insight/). */}
                 {tab === "conflicts" && <Pane on><div className="m2-scroll"><ConflictContext all label="Current wars" max={30} /></div></Pane>}
                 {tab === "mood" && <Pane on><div className="m2-scroll"><TelegramMood /></div></Pane>}
@@ -194,6 +213,7 @@ export default function MobileApp() {
                 {tab === "settings" && <Pane on><MSettings /></Pane>}
             </main>
             <nav className="m2-nav">
+                <span className="m2-nav-mark" aria-hidden style={{ transform: `translateX(${markAt * 100}%)` }} />
                 {NAV.map(([k, label, icon]) => (
                     <button key={k} aria-current={k === "more" ? (menu || inMore) : tab === k} onClick={() => (k === "more" ? setMenu(true) : go(k))}>
                         <Icon id={icon} size={22} />

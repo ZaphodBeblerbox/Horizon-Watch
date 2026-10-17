@@ -7,7 +7,8 @@ import StrikeSourceMedia from "../../inspector/StrikeSourceMedia.jsx"
 import { ShowTrackButton } from "../../location/TrackPanel.jsx"
 import { openRoutePanel } from "../../routes/store.js"
 import SourceLink from "../../components/SourceLink.jsx"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { attachDrag, flingMs, swallowClickAfterDrag } from "../gesture.js"
 import { createPortal } from "react-dom"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
 import XPost, { xPostId } from "../../components/XPost.jsx"
@@ -21,9 +22,11 @@ import PlaceModel from "../../assets/PlaceModel.jsx"
 import CountryFlag from "../../components/CountryFlag.jsx"
 import { factionCountry } from "../../globe/frontlineClaims.js"
 
-export const SEV = { critical: "var(--red, #e5484d)", significant: "var(--amber, #f5a623)", high: "var(--amber, #f5a623)",
-    elevated: "var(--amber, #f5a623)", moderate: "#7aa7ff", medium: "#7aa7ff", low: "var(--txt4, #6b7280)" }
-export const sevColor = (s) => SEV[String(s || "").toLowerCase()] || "var(--txt4, #6b7280)"
+// Severity is an ICON's colour (a diamond, a dot), never a word's: the phone's
+// text is monochrome (m2.css v4), so these are fixed values, not the theme's.
+export const SEV = { critical: "#ff5a4f", significant: "#f5a623", high: "#f5a623",
+    elevated: "#f5a623", moderate: "#8fb4e8", medium: "#8fb4e8", low: "#6f7888" }
+export const sevColor = (s) => SEV[String(s || "").toLowerCase()] || "#6f7888"
 export const when = (ts) => (ts ? whenLabel(ts) : "")
 /** A feed's time: "2 d", "14 min" — the relative part only. */
 export const ago = (ts) => {
@@ -43,28 +46,64 @@ export function Icon({ id, size = 20 }) {
 export function Sheet({ onClose, children, half = false }) {
     const [closing, setClosing] = useState(false)
     const [full, setFull] = useState(false)
-    const drag = useRef(null)
+    const el = useRef(null)
+    const fullRef = useRef(full)
+    fullRef.current = full
+    const closeRef = useRef(onClose)
+    closeRef.current = onClose
     const close = () => { if (closing) return; setClosing(true); setTimeout(() => onClose?.(), 210) }
     const host = (typeof document !== "undefined" && document.querySelector(".m2")) || (typeof document !== "undefined" ? document.body : null)
-    // HALF (a notification opened on the map): no shade, the map stays live
-    // above; the grip is dragged up to full height, down to half, then away
-    // (a tap toggles half / full).
-    const grip = half ? {
-        onPointerDown: (e) => { drag.current = e.clientY; try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* old browser */ } },
-        onPointerUp: (e) => {
-            if (drag.current == null) return
-            const dy = e.clientY - drag.current
-            drag.current = null
-            if (dy < -24) setFull(true)
-            else if (dy > 24) { if (full) setFull(false); else close() }
-            else setFull((f) => !f)
-        },
-        onPointerCancel: () => { drag.current = null },
-    } : { onClick: close }
+    // THE SHEET FOLLOWS THE FINGER (../gesture.js): dragged by its grip, or
+    // anywhere while its content is at the top. Down past a third of its
+    // height, or flicked, it is thrown away at the speed of the flick; else
+    // it springs back. A half sheet (a notification on the map) goes to full.
+    useEffect(() => {
+        const node = el.current
+        if (!node) return undefined
+        let fromGrip = false
+        const off = attachDrag(node, {
+            start: (t) => {
+                if (t.closest?.("input, textarea, select, video, [data-nodrag]")) return false
+                fromGrip = !!t.closest?.(".m2-grip")
+                return true
+            },
+            move: ({ dy, axis }) => {
+                if (axis !== "y") return false
+                if (!fromGrip && (node.scrollTop > 0 || dy < 0)) return false     // the content's own scroll
+                node.classList.add("dragging")
+                node.style.transform = `translateY(${dy > 0 ? dy : dy * 0.25}px)`
+                node.__dragged = true
+                return true
+            },
+            end: ({ dy, vy, moved }) => {
+                node.classList.remove("dragging")
+                if (!moved) return
+                const h = node.getBoundingClientRect().height
+                const back = () => {
+                    node.style.transition = "transform .34s cubic-bezier(.22,1,.36,1)"
+                    node.style.transform = ""
+                    setTimeout(() => { node.style.transition = "" }, 360)
+                }
+                if (half && !fullRef.current && (dy < -30 || vy < -0.5)) { back(); setFull(true); return }
+                if (dy > h / 3 || vy > 0.6) {
+                    if (half && fullRef.current && dy < h / 2 && vy < 1.2) { back(); setFull(false); return }
+                    const ms = flingMs(h - dy, vy)
+                    node.style.transition = `transform ${ms}ms cubic-bezier(.2,.7,.3,1)`
+                    node.style.transform = `translateY(${h + 40}px)`
+                    setTimeout(() => closeRef.current?.(), ms)
+                    return
+                }
+                back()
+            },
+        })
+        const offClick = swallowClickAfterDrag(node)
+        return () => { off(); offClick() }
+    }, [half])
     const sheet = <>
         {!half && <div className={`m2-sheet-back${closing ? " closing" : ""}`} onClick={close} />}
-        <div className={`m2-sheet${half ? " half" : ""}${half && full ? " full" : ""}${closing ? " closing" : ""}`} role="dialog" data-sheet={half ? (full ? "full" : "half") : "modal"}>
-            <div className="m2-grip" role="button" aria-label={half ? (full ? "Drag down to see the map" : "Drag up for the full details") : "Close"} {...grip} />
+        <div ref={el} className={`m2-sheet${half ? " half" : ""}${half && full ? " full" : ""}${closing ? " closing" : ""}`} role="dialog" data-sheet={half ? (full ? "full" : "half") : "modal"}>
+            <div className="m2-grip" role="button" aria-label={half ? (full ? "Drag down to see the map" : "Drag up for the full details") : "Close"}
+                 onClick={() => (half ? setFull((f) => !f) : close())} />
             {half && <button className="m2-iconbtn" aria-label="Close" data-testid="sheet-close" onClick={close}
                              style={{ position: "absolute", right: 8, top: 6, width: 32, height: 32, fontSize: 18, lineHeight: 1 }}>×</button>}
             {children}
@@ -100,7 +139,8 @@ export function SignalSheet({ s, onClose, onShowOnMap, half = false }) {
     }
     return (
         <Sheet onClose={onClose} half={half}>
-            <div className="m2-eyebrow" style={{ color: sevColor(s.severity_tier || s.sev), paddingRight: half ? 36 : 0 }}>
+            <div className="m2-eyebrow" style={{ paddingRight: half ? 36 : 0, display: "flex", alignItems: "center", gap: 7 }}>
+                {(s.severity_tier || s.sev) && <i className="m2-sev" style={{ background: sevColor(s.severity_tier || s.sev), width: 7, height: 7, transform: "rotate(45deg)", display: "inline-block", flex: "none" }} />}
                 {[s.severity_tier || s.sev, when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
             </div>
             {(s.kind === "troop_movement" || s.kind === "frontline_claim") && factionCountry(s) && (

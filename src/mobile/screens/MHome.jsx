@@ -117,12 +117,12 @@ export default function MHome({ onShowOnMap, onOpen }) {
             <div className="m2-hero">
                 {user?.avatar
                     ? <img className="m2-avatar" src={user.avatar} alt="" style={{ objectPosition: user.avatar_pos || "50% 50%" }} />
-                    : <span className="m2-avatar" style={{ background: user?.color || "#334" }}>{user?.initials || "?"}</span>}
+                    : <span className="m2-avatar" style={{ background: "#2a2e36", color: "var(--txt2)" }}>{user?.initials || "?"}</span>}
                 <div style={{ alignSelf: "end" }} className="m2-eyebrow">{greet.kicker}</div>
                 <h1 style={{ alignSelf: "start" }}>{greet.lead}</h1>
                 <span className="m2-sub">{new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })} · {hmZone(new Date())}</span>
                 <button className="m2-here" onClick={() => (here ? onShowOnMap?.({ lat: here.lat, lon: here.lon }) : askHere())}>
-                    <span style={{ width: 8, height: 8, borderRadius: 4, background: "#3b8cff", boxShadow: "0 0 8px #3b8cff" }} />
+                    <span style={{ width: 8, height: 8, borderRadius: 4, background: "#f4f5f7" }} />
                     {here ? (String(here.label || "Your location").split(",").slice(-2).join(",").trim()) : "Use my location"}
                 </button>
                 <AlertsOffer />
@@ -167,7 +167,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
                             <div key={v.id} className="m2-card" style={{ display: "flex", flexDirection: "column" }}>
                                 <TelegramMedia post={v} maxHeight="230px" radius="0" />
                                 <button className="m2-tap" onClick={() => setOpen(v)} style={{ textAlign: "left", border: 0, background: "transparent", padding: "10px 12px", cursor: "pointer" }}>
-                                    <span className="m2-eyebrow" style={{ color: sevColor(v.severity_tier) }}>{when(v.posted_at)} · {v.channel_title || v.channel}{v._mine ? " · yours" : ""}</span>
+                                    <span className="m2-eyebrow">{when(v.posted_at)} · {v.channel_title || v.channel}{v._mine ? " · yours" : ""}</span>
                                     <span className="m2-t" style={{ marginTop: 4 }}>{v.headline}</span>
                                     <span className="m2-sub">{String(v.place || "").split(",").slice(0, 2).join(",")}</span>
                                 </button>
@@ -192,7 +192,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
                     {ahead.length === 0 ? <div className="m2-empty">{outlook === null ? "Loading…" : "Nothing specific enough to forecast right now."}</div>
                         : ahead.map((o, i) => (
                             <button key={i} className="m2-ahead" onClick={() => o.lat != null && onShowOnMap?.({ lat: o.lat, lon: o.lon, headline: o.statement })}>
-                                <b style={{ color: o.probability >= 60 ? "var(--red, #e5484d)" : "var(--amber, #f5a623)", fontVariantNumeric: "tabular-nums" }}>{o.probability}%</b>
+                                <b style={{ fontVariantNumeric: "tabular-nums" }}>{o.probability}%</b>
                                 <span style={{ minWidth: 0 }}>
                                     <span className="m2-t">{[o.place, o.statement].filter(Boolean).join(" · ")}</span>
                                     <span className="m2-sub">{[o.because, o.resolves_by && `by ${o.resolves_by}`].filter(Boolean).join(" · ")}</span>

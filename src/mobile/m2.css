@@ -310,3 +310,139 @@
 .m2-sheet.half { height: 46vh; max-height: 46vh; transition: height .22s ease, max-height .22s ease; }
 .m2-sheet.half.full { height: 86vh; max-height: 86vh; }
 .m2-sheet.half .m2-grip { width: 56px; height: 5px; margin: -4px auto 10px; padding: 8px 0; background-clip: content-box; cursor: grab; touch-action: none; }
+
+/* ── PHONE v4 (2026-10-17): monochrome, after Benji Taylor's rules ──────────
+   The owner: simple, monochrome, "the only big colour differences should be
+   in the icons" — never in titles, times, buttons or tabs. Dark, like X, and
+   the glass kept so the map shows through. Colour lives in map marks and the
+   small severity diamonds; every word is white or a grey. */
+.m2 {
+  --acc: #f4f5f7; --acchi: #ffffff; --acc-hi: #ffffff; --accdim: rgba(255, 255, 255, .12);
+  --red: #f4f5f7; --amber: #f4f5f7; --green: #f4f5f7;
+  --ink: #0a0b0d;
+  --m2-top-h: calc(env(safe-area-inset-top, 0px) + 56px);
+  --m2-nav-h: calc(env(safe-area-inset-bottom, 0px) + 58px);
+  --m2-ease: cubic-bezier(.22, 1, .36, 1);           /* a spring's tail: fast out, long settle */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
+  letter-spacing: -.005em;
+}
+/* severity keeps its colour where it is an icon: the diamonds and dots */
+.m2 .m2-sev, .m2 .m2-dot, .m2 .m2-banner-body i { filter: none; }
+
+/* primary actions: white on ink, like X's; secondary: glass */
+.m2 .m2-btn { background: var(--acc); color: var(--ink); border-radius: 999px; font-weight: 650; }
+.m2 .m2-btn.ghost { background: rgba(255, 255, 255, .06); color: var(--txt); border: 1px solid var(--gline2); }
+.m2 .m2-cta { background: rgba(255, 255, 255, .92); color: var(--ink); box-shadow: none; }
+.m2-cta svg { color: var(--ink); }
+.m2 .m2-chip[aria-pressed="true"], .m2 .m2-segs button[aria-pressed="true"] { background: var(--acc); color: var(--ink); border-color: var(--acc); }
+.m2-tile[aria-pressed="true"] { border-color: rgba(255, 255, 255, .5); background: rgba(255, 255, 255, .08); }
+.m2 .m2-round[aria-pressed="true"], .m2 .m2-widget[aria-pressed="true"] > span:first-child { background: var(--acc); color: var(--ink); border-color: var(--acc); }
+.m2-basemaps button[aria-pressed="true"] { border-color: #fff; }
+.m2 .m2-badge { background: #f4f5f7; color: var(--ink); }
+.m2-bubble.me > div { background: rgba(255, 255, 255, .14); }
+.m2-ios { background: rgba(255, 255, 255, .05); border-color: var(--gline2); }
+.m2-story-when b { background: rgba(255, 255, 255, .1); color: var(--txt); }
+.m2-story-place { background: rgba(255, 255, 255, .04); }
+.m2-post-acts button[aria-pressed="true"] { color: var(--txt); }
+.m2 .m2-widget .plx-getout { background: var(--glass) !important; color: #ff6159 !important; }
+/* words: white, or a grey — never a colour */
+.m2-eyebrow { text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 500; color: var(--txt3); }
+.m2-h { color: var(--txt3); font-weight: 600; }
+.m2-sub, .m2-when { color: var(--txt3); }
+
+/* THE TAB BAR: one white mark that travels to the chosen tab ("we fly
+   instead of teleport"), icons white when chosen, grey otherwise */
+.m2-nav { overflow: hidden; }
+.m2-nav button[aria-current="true"]::before { display: none; }
+.m2-nav button[aria-current="true"] svg { color: var(--txt); }
+.m2-nav-mark { position: absolute; top: 0; left: 0; height: 2px; width: 20%; display: flex; justify-content: center; pointer-events: none;
+               transition: transform .42s var(--m2-ease); }
+.m2-nav-mark::after { content: ""; width: 28px; height: 2px; border-radius: 1px; background: var(--txt); }
+.m2-seg button[aria-selected="true"]::after { background: var(--txt); left: 38%; right: 38%; }
+
+/* GLASS CHROME THAT GETS OUT OF THE WAY: the header and the tab bar float
+   over the content and slide away while you read down, back as you scroll up */
+.m2-top { position: absolute !important; left: 0; right: 0; top: 0;
+          background: rgba(10, 13, 18, .58) !important; backdrop-filter: blur(24px) saturate(1.3) !important; -webkit-backdrop-filter: blur(24px) saturate(1.3) !important;
+          transition: transform .38s var(--m2-ease), opacity .3s ease; }
+.m2-nav { position: absolute !important; left: 0; right: 0; bottom: 0; background: rgba(10, 13, 18, .62);
+          transition: transform .38s var(--m2-ease); }
+.m2-body { position: absolute; inset: 0; }
+.m2[data-chrome="hidden"] .m2-top { transform: translateY(calc(-100% - env(safe-area-inset-top, 0px))); }
+.m2[data-chrome="hidden"] .m2-nav { transform: translateY(100%); }
+.m2-pane .m2-scroll { padding-top: calc(var(--m2-top-h) + 12px); padding-bottom: calc(var(--m2-nav-h) + 28px); }
+/* sticky is measured inside the scroller's padding (already the header's height) */
+.m2-pane .m2-seg { top: 0; transition: top .38s var(--m2-ease); }
+.m2[data-chrome="hidden"] .m2-pane .m2-seg { top: calc(env(safe-area-inset-top, 0px) - var(--m2-top-h)); }
+
+/* screens slide in from the side of the tab they come from */
+.m2-pane { background: rgba(8, 10, 14, .62); animation: m2-pane-from-r .34s var(--m2-ease); }
+.m2[data-dir="left"] .m2-pane { animation-name: m2-pane-from-l; }
+@keyframes m2-pane-from-r { from { opacity: 0; transform: translateX(28px) } to { opacity: 1; transform: none } }
+@keyframes m2-pane-from-l { from { opacity: 0; transform: translateX(-28px) } to { opacity: 1; transform: none } }
+
+/* SHEETS follow the finger and are flung away (Sheet in screens/common.jsx) */
+.m2-sheet { border-radius: 26px 26px 0 0; background: rgba(16, 19, 25, .9); backdrop-filter: blur(28px) saturate(1.3); -webkit-backdrop-filter: blur(28px) saturate(1.3); }
+.m2-sheet.dragging { transition: none !important; animation: none !important; }
+.m2-sheet-back { background: rgba(0, 0, 0, .32); }
+
+/* THE PEEK (screens/MPeek.jsx): a small glass card over the map, never a wall
+   across it. Swiped left and right through what is in view, up for the
+   details, down to put away; the map moving puts it away too. */
+.m2-peek { position: fixed; left: 10px; right: 10px; bottom: calc(var(--m2-nav-h) + 10px); z-index: 880; touch-action: none; user-select: none; -webkit-user-select: none;
+           border-radius: 24px; padding: 14px 16px 12px; background: rgba(16, 19, 25, .74); border: 1px solid var(--gline2);
+           backdrop-filter: blur(26px) saturate(1.4); -webkit-backdrop-filter: blur(26px) saturate(1.4); box-shadow: 0 14px 40px rgba(0, 0, 0, .45);
+           animation: m2-peek-in .42s var(--m2-ease); will-change: transform; }
+.m2-peek.from-r { animation-name: m2-peek-from-r; }
+.m2-peek.from-l { animation-name: m2-peek-from-l; }
+@keyframes m2-peek-in { from { transform: translateY(120%) } to { transform: none } }
+@keyframes m2-peek-from-r { from { transform: translateX(110%) } to { transform: none } }
+@keyframes m2-peek-from-l { from { transform: translateX(-110%) } to { transform: none } }
+.m2-peek-grip { width: 34px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .22); margin: -4px auto 10px; }
+.m2-peek-meta { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--txt3); min-width: 0; }
+.m2-peek-meta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.m2-peek-meta i { width: 7px; height: 7px; transform: rotate(45deg); flex: none; }
+.m2-peek h3 { margin: 6px 0 2px; font-size: 16.5px; font-weight: 650; line-height: 1.28; letter-spacing: -.01em; color: var(--txt);
+              display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.m2-peek-place { font-size: 13px; color: var(--txt3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m2-peek-acts { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.m2-peek-acts .m2-btn { height: 36px; padding: 0 16px; font-size: 13.5px; }
+.m2-peek-count { margin-left: auto; font-size: 12px; color: var(--txt4); font-variant-numeric: tabular-nums; }
+.m2-bg[data-peek="true"] .m2-widgets, .m2-bg[data-peek="true"] .m2-pill { opacity: 0; pointer-events: none; }
+.m2-widgets, .m2-pill { transition: opacity .25s ease; }
+/* the point the card is about, ringed on the map */
+.m2-picked { width: 40px; height: 40px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 4px rgba(0, 0, 0, .35), 0 0 18px rgba(255, 255, 255, .35);
+             animation: m2-picked-in .4s var(--m2-ease); }
+@keyframes m2-picked-in { from { transform: scale(1.6); opacity: 0 } to { transform: none; opacity: 1 } }
+/* a group of points, before you zoom in (MMap clustering) */
+.m2-cluster { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; color: #fff; font-size: 12.5px; font-weight: 650;
+              font-variant-numeric: tabular-nums; background: rgba(16, 19, 25, .78); border: 1.5px solid rgba(255, 255, 255, .55);
+              box-shadow: 0 4px 14px rgba(0, 0, 0, .4); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+/* an alert opened from its notification, found in the list */
+.m2-row.found { background: rgba(255, 255, 255, .08); }
+.m2-found-detail { padding: 0 12px 12px 32px; font-size: 13.5px; line-height: 1.5; color: var(--txt2); }
+@media (prefers-reduced-motion: reduce) {
+  .m2-pane, .m2-peek, .m2-picked { animation: none !important; }
+  .m2-top, .m2-nav, .m2-nav-mark { transition: none !important; }
+}
+.m2-peek.rest { animation: none; }
+/* the Desk's Team / General: a sticky segment under the floating header,
+   one mark that slides between the two */
+.m2-pane .m2-scroll-seg { padding-top: var(--m2-top-h); }
+.m2-pane .m2-seg { position: sticky; margin-top: 0; }
+.m2-seg { background: rgba(10, 13, 18, .5); position: sticky; }
+.m2-seg button[aria-selected="true"]::after { display: none; }
+.m2-seg-mark { position: absolute; left: 0; bottom: 0; width: 50%; height: 2px; display: flex; justify-content: center; pointer-events: none; transition: transform .38s var(--m2-ease); }
+.m2-seg-mark::after { content: ""; width: 44px; height: 2px; border-radius: 1px; background: var(--txt); }
+.m2-desk-body { touch-action: pan-y; min-height: 60vh; }
+/* a screen with its own fixed layout (a thread and its composer, a report)
+   sits between the header and the tab bar rather than under them */
+.m2-fit { position: absolute; left: 0; right: 0; top: var(--m2-top-h); bottom: var(--m2-nav-h); }
+/* the location question (components/LocationPrompt.jsx, shared with the
+   desktop and styled inline): in the phone's own shapes, from here only */
+.m2 [data-testid="location-prompt"] { border-radius: 24px !important; background: rgba(16, 19, 25, .86) !important;
+    backdrop-filter: blur(26px) saturate(1.3); -webkit-backdrop-filter: blur(26px) saturate(1.3); }
+.m2 [data-testid="location-prompt"] > div:first-child { text-transform: none !important; letter-spacing: 0 !important; font-size: 12.5px !important; color: var(--txt3) !important; }
+.m2 [data-testid="location-prompt"] button { border-radius: 999px !important; height: 38px !important; padding: 0 14px !important; font-family: inherit !important;
+    background: rgba(255, 255, 255, .06) !important; border: 1px solid var(--gline2) !important; color: var(--txt) !important; }
+.m2 [data-testid="location-prompt"] [data-testid="location-use"] { background: var(--acc) !important; color: var(--ink) !important; border-color: var(--acc) !important; font-weight: 650 !important; }

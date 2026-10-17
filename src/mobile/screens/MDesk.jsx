@@ -12,6 +12,7 @@ import TelegramMedia from "../../components/TelegramMedia.jsx"
 import API_BASE from "../../apiBase.js"
 import { createPost, listPosts, listReplies, toggleAck, uploadDeskFile } from "../../lib/deskApi.js"
 import { Icon, when, ago } from "./common.jsx"
+import { attachDrag, swallowClickAfterDrag } from "../gesture.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { audienceLabel } from "../../desk/Desk.jsx"
 
@@ -82,7 +83,7 @@ const handle = (who) => (who?.email ? `@${String(who.email).split("@")[0]}` : ""
 function Face({ who, size = 40 }) {
     return who?.avatar
         ? <img src={who.avatar} alt="" style={{ width: size, height: size, borderRadius: size / 2, objectFit: "cover", objectPosition: who.avatar_pos || "50% 50%", flex: "none" }} />
-        : <span style={{ width: size, height: size, borderRadius: size / 2, display: "grid", placeItems: "center", background: who?.color || "#334", fontSize: size * 0.36, fontWeight: 700, flex: "none" }}>{who?.initials || "?"}</span>
+        : <span style={{ width: size, height: size, borderRadius: size / 2, display: "grid", placeItems: "center", background: "#2a2e36", color: "var(--txt2)", fontSize: size * 0.36, fontWeight: 650, flex: "none" }}>{who?.initials || "?"}</span>
 }
 
 /* ONE POST, AS A FEED READS IT: the face in its own column, name, handle
@@ -153,7 +154,7 @@ function TelegramCard({ t, onShowOnMap }) {
     return (
         <article className="m2-post" data-testid="m2-tg">
             <span style={{ width: 40, height: 40, borderRadius: 20, display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700,
-                           background: t.role === "official" ? "#5b4a1f" : t.role === "partisan" ? "#4a2a2a" : "#1f3a4a", flex: "none" }}>{initials}</span>
+                           background: "#2a2e36", color: "var(--txt2)", flex: "none" }}>{initials}</span>
             <div style={{ minWidth: 0 }}>
                 <div className="m2-post-head">
                     <b>{t.channel_title || t.channel}</b>
@@ -227,12 +228,46 @@ export default function MDesk({ active, onShowOnMap }) {
         const t = setInterval(load, 30_000)
         return () => clearInterval(t)
     }, [active, tab])
+    // TEAM ⇄ GENERAL BY A SWIPE, the content following the finger and the
+    // next arriving from the side it was pulled from
+    const body = useRef(null)
+    const [from, setFrom] = useState(null)
+    const tabRef = useRef(tab)
+    tabRef.current = tab
+    useEffect(() => {
+        const node = body.current
+        if (!node) return undefined
+        const off = attachDrag(node, {
+            start: (t) => !t.closest?.("input, textarea, video, .m2-hscroll, .m2-chips, [data-nodrag]"),
+            move: ({ dx, axis }) => {
+                if (axis !== "x") return false
+                const edge = (tabRef.current === "team" && dx > 0) || (tabRef.current === "general" && dx < 0)
+                node.style.transition = ""
+                node.style.transform = `translateX(${edge ? dx * 0.15 : dx * 0.5}px)`
+                node.__dragged = true
+                return true
+            },
+            end: ({ dx, vx, axis, moved }) => {
+                node.style.transition = "transform .3s cubic-bezier(.22,1,.36,1)"
+                node.style.transform = ""
+                if (!moved || axis !== "x") return
+                const go = Math.abs(dx) > 70 || Math.abs(vx) > 0.45
+                if (go && dx < 0 && tabRef.current === "team") { setFrom("r"); setTab("general") }
+                else if (go && dx > 0 && tabRef.current === "general") { setFrom("l"); setTab("team") }
+            },
+        })
+        const offClick = swallowClickAfterDrag(node)
+        return () => { off(); offClick() }
+    }, [tab])                      // the body is a new node for each tab (its key)
+    const pick = (t) => { if (t === tab) return; setFrom(t === "general" ? "r" : "l"); setTab(t) }
     return (
-        <div className="m2-scroll" data-screen-label="Phone desk" style={{ paddingTop: 0 }}>
+        <div className="m2-scroll m2-scroll-seg" data-screen-label="Phone desk">
             <div className="m2-seg" role="tablist">
-                <button role="tab" aria-selected={tab === "team"} onClick={() => setTab("team")}>Team</button>
-                <button role="tab" aria-selected={tab === "general"} onClick={() => setTab("general")}>General</button>
+                <button role="tab" aria-selected={tab === "team"} onClick={() => pick("team")}>Team</button>
+                <button role="tab" aria-selected={tab === "general"} onClick={() => pick("general")}>General</button>
+                <span className="m2-seg-mark" aria-hidden style={{ transform: `translateX(${tab === "general" ? 100 : 0}%)` }} />
             </div>
+            <div ref={body} key={tab} className="m2-desk-body" style={from ? { animation: `m2-pane-from-${from} .34s cubic-bezier(.22,1,.36,1)` } : undefined}>
             {tab === "team" ? (<>
                 <Composer onPosted={load} />
                 {posts === null ? <div className="m2-empty">Loading the desk…</div>
@@ -240,8 +275,9 @@ export default function MDesk({ active, onShowOnMap }) {
                     : posts.map((p) => <PostCard key={p.id} p={p} onChanged={load} />)}
             </>) : tab === "general" ? (
                 // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
-                <div key="general" style={{ animation: "m2-pane-in .25s ease" }}><GeneralFeed compact onMap={(it) => onShowOnMap?.(it)} /></div>
+                <GeneralFeed compact onMap={(it) => onShowOnMap?.(it)} />
             ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
+            </div>
         </div>
     )
 }

@@ -11,7 +11,7 @@ import { Icon, Sheet, when } from "./common.jsx"
 
 function Face({ p, size = 36 }) {
     if (p?.avatar) return <img src={p.avatar} alt="" style={{ width: size, height: size, borderRadius: size / 2, objectFit: "cover", flex: "none" }} />
-    return <span style={{ width: size, height: size, borderRadius: size / 2, display: "grid", placeItems: "center", background: p?.color || "#334", fontSize: size / 3, fontWeight: 700, flex: "none" }}>
+    return <span style={{ width: size, height: size, borderRadius: size / 2, display: "grid", placeItems: "center", background: "#2a2e36", color: "var(--txt2)", fontSize: size / 3, fontWeight: 650, flex: "none" }}>
         {p?.initials || String(p?.name || p?.title || "?").slice(0, 2).toUpperCase()}</span>
 }
 
@@ -30,7 +30,7 @@ function Thread({ conv, onBack }) {
         try { await sendMessage(conv.id, { kind: "text", body }); load() } catch { setText(body) }
     }
     return (
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column" }} data-screen-label="Phone thread">
+        <div className="m2-fit" style={{ display: "flex", flexDirection: "column" }} data-screen-label="Phone thread">
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderBottom: "1px solid var(--gline, rgba(255,255,255,.08))" }}>
                 <button className="m2-iconbtn" onClick={onBack} aria-label="Back">‹</button>
                 <Face p={conv.kind === "group" ? { name: conv.title, avatar: conv.avatar } : conv.members?.find((m) => m.id !== me?.id)} size={30} />

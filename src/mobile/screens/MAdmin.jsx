@@ -11,7 +11,7 @@ import { agoLabel } from "../../utils/formatTime.js"
 function Face({ u }) {
     return u.avatar
         ? <img src={u.avatar} alt="" style={{ width: 40, height: 40, borderRadius: 20, objectFit: "cover", flex: "none" }} />
-        : <span style={{ width: 40, height: 40, borderRadius: 20, display: "grid", placeItems: "center", background: u.color || "#334", fontWeight: 700, flex: "none" }}>
+        : <span style={{ width: 40, height: 40, borderRadius: 20, display: "grid", placeItems: "center", background: "#2a2e36", color: "var(--txt2)", fontWeight: 650, flex: "none" }}>
             {(u.initials || (u.name || u.email || "?").slice(0, 2)).toUpperCase()}
           </span>
 }

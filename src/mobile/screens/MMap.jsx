@@ -16,7 +16,8 @@ import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { useMine, usePoll, arr } from "../useMine.js"
 import API_BASE from "../../apiBase.js"
-import { Icon, Sheet, SignalSheet, sevColor } from "./common.jsx"
+import { Icon, Sheet, SignalSheet } from "./common.jsx"
+import MPeek from "./MPeek.jsx"
 import { drawVesselThreat } from "./MVesselThreat.jsx"
 import { myPosition, myTrail, subscribeMyPosition } from "../../location/liveShare.js"
 import { devicePosition, saveHere, connectionPosition } from "../../components/LocationPrompt.jsx"
@@ -33,6 +34,7 @@ import { getSettings, subscribeSettings, updateSetting } from "../../state/setti
 import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
+import { closeOpenedSignal } from "../../lib/signalPin.js"
 import CountryFlag from "../../components/CountryFlag.jsx"
 import { trackCountry } from "../../lib/icaoCountry.js"
 
@@ -73,10 +75,38 @@ const teamIcon = (name, live, coarse) => L.divIcon({ className: "", iconSize: [2
 const meIcon = (live) => L.divIcon({ className: "", iconSize: [18, 18],
     html: `<div class="m2-me${live ? " live" : ""}" title="You" data-testid="me-dot" data-live="${live ? 1 : 0}"></div>` })
 const coarseFix = (p) => p?.source === "ip" || (p?.accuracy_m ?? 0) >= 1000
+// SHARPER, LARGER MARKS ON THE PHONE (owner, 2026-10-17: "a much greater
+// resolution for all the icons"): every mark is vector, drawn here a fifth
+// larger than the desktop's so its detail reads at arm's length.
+const PHONE_ICON_SCALE = 1.2
+const scaled = (f, dw = 16) => {
+    const w = Math.round((f.iconWidth || f.size || dw) * PHONE_ICON_SCALE), h = Math.round((f.iconHeight || f.size || dw) * PHONE_ICON_SCALE)
+    const a = f.iconAnchor ? [Math.round(f.iconAnchor[0] * PHONE_ICON_SCALE), Math.round(f.iconAnchor[1] * PHONE_ICON_SCALE)] : [w / 2, h / 2]
+    return { w, h, a }
+}
+// A STEADY MAP (owner: "it lags when you zoom in and out"): event points
+// close together on screen are drawn as one count until zoom 11; what is
+// yours (assets, people, safe houses), places with their own grouping and
+// anything critical are never folded away.
+const CLUSTER_LAYERS = new Set(["geoConfirmed", "telegram", "unrest", "strikes", "imagerySignals", "fires", "derivedAlerts",
+                                "ports", "airports", "facMilitary", "facMedical", "facSecurity", "power:sites"])
+const CLUSTER_PX = 46
+const CLUSTER_UNTIL = 11
+const CLUSTER_MIN = 3
+const clusterIcon = (n) => {
+    const d = n >= 100 ? 44 : n >= 20 ? 38 : 32
+    return L.divIcon({ className: "", iconSize: [d, d], iconAnchor: [d / 2, d / 2], html: `<div class="m2-cluster">${n > 999 ? "999+" : n}</div>` })
+}
+const pickedIcon = L.divIcon({ className: "", iconSize: [40, 40], iconAnchor: [20, 20], html: '<div class="m2-picked"></div>' })
 
 export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true }) {
     const el = useRef(null)
     const map = useRef(null)
+    const prog = useRef(false)             // a move the app made (not a finger): the card stays
+    const drawn = useRef(new Map())        // key → { layer, sig }: marks kept between draws, changed only where changed
+    const pts = useRef([])                 // the point signals drawn, for the card's swipe
+    const picked = useRef(null)
+    const [detail, setDetail] = useState(null)
     const base = useRef(null)
     const group = useRef(null)
     const meExtras = useRef(null)          // the accuracy ring and the way you came
@@ -126,7 +156,11 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         labels.style.zIndex = 350
         labels.style.pointerEvents = "none"
         map.current.on("zoomend", () => setZoom(map.current.getZoom()))
-        map.current.on("moveend", () => setBounds(map.current.getBounds()))
+        map.current.on("moveend", () => { setBounds(map.current.getBounds()); setTimeout(() => { prog.current = false }, 60) })
+        // the map moved by a finger puts the card away (MPeek; MobileApp's listens too)
+        const gesture = () => { setOpen(null); window.dispatchEvent(new CustomEvent("m2:map-gesture")) }
+        map.current.on("dragstart", gesture)
+        map.current.on("zoomstart", () => { if (!prog.current) gesture() })
         el.current._m2map = map.current            // reachable for browser checks
         group.current = L.layerGroup().addTo(map.current)
         tracks.current = L.layerGroup().addTo(map.current)
@@ -295,67 +329,172 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         return () => { live = false }
     }, [me?.live, Math.round((me?.at || 0) / 30_000)]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // DRAW: areas under lines under points, each with the desktop's own image
+    // DRAW: areas under lines under points, each with the desktop's own image.
+    // KEPT, NOT REBUILT: every mark has a key and a signature; a draw removes
+    // what went, adds what came and leaves the rest alone (it used to clear
+    // and recreate every marker for each layer's answer — several thousand
+    // DOM nodes per pan, which is what made zooming stutter on a phone).
     useEffect(() => {
-        const g = group.current
-        if (!g) return
-        g.clearLayers()
+        const g = group.current, m = map.current
+        if (!g || !m) return
         const maxRank = floor === "critical" ? 0 : floor === "high" ? 1 : 9
-        const tap = (f, l) => () => setOpen({ ...(f.raw || {}), headline: f.title || l.label, title: f.title || l.label, location: f.sub,
-                                               severity_tier: f.severity || f.raw?.severity_tier, lat: f.lat ?? f.raw?.lat, lon: f.lon ?? f.raw?.lon })
-        const order = { areas: 0, lines: 1, points: 2 }
+        const tap = (f, l, key) => () => setOpen({ ...(f.raw || {}), headline: f.title || l.label, title: f.title || l.label, location: f.sub, layerLabel: l.label,
+                                                    severity_tier: f.severity || f.raw?.severity_tier, lat: f.lat ?? f.raw?.lat, lon: f.lon ?? f.raw?.lon, _key: key })
+        const want = new Map()
+        const points = []
         // Telegram posts and GeoConfirmed placemarks a strike pin stands for
         // are drawn as that pin (globe/strikes.js covers)
         const covered = new Set(on.strikes ? (feats.strikes || []).flatMap((f) => f.raw?.covers || []) : [])
-        for (const l of [...PHONE_LAYERS].sort((a, c) => order[a.kind] - order[c.kind])) {
+        for (const l of PHONE_LAYERS) {
             if (!on[l.key] || l.key === "people") continue                // the team: live markers
-            for (const f of feats[l.key] || []) {
-                if (l.key === "assets" && liveAssets.has(f.raw?.id)) continue    // moved by a phone: a live marker
-                if ((l.key === "telegram" || l.key === "geoConfirmed") && covered.has(f.id)) continue
+            ;(feats[l.key] || []).forEach((f, i) => {
+                const key = `${l.key}:${f.id ?? i}`
+                if (l.key === "assets" && liveAssets.has(f.raw?.id)) return    // moved by a phone: a live marker
+                if ((l.key === "telegram" || l.key === "geoConfirmed") && covered.has(f.id)) return
                 // A PERSON'S OWN "(live)" ASSET is that person: drawn once, as the
                 // person (the blue dot for you, the team marker for others), never twice
-                if (l.key === "assets" && f.raw?.kind === "person" && f.raw?.identifiers?.user_id && on.people) continue
+                if (l.key === "assets" && f.raw?.kind === "person" && f.raw?.identifiers?.user_id && on.people) return
                 if (l.kind === "areas") {
-                    if (!f.rings) continue
-                    const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, dashArray: f.dash || undefined, interactive: !!f.title, className: f.className })
-                    if (f.title) a.on("click", tap(f, l))
-                    a.addTo(g)
-                    // A count on the area (a zone with a fresh finding).
-                    if (f.badge && Number.isFinite(+f.badge.lat) && Number.isFinite(+f.badge.lon)) {
-                        const b = L.marker([+f.badge.lat, +f.badge.lon], {
-                            icon: L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11],
-                                              html: `<div class="m2-aoi-badge">${String(f.badge.text).slice(0, 3).replace(/[<>&"]/g, "")}</div>` }),
-                            keyboard: false, zIndexOffset: 400,
-                        })
-                        if (f.title) b.on("click", tap(f, l))
-                        b.addTo(g)
-                    }
+                    if (!f.rings) return
+                    want.set(`a:${key}`, { sig: `${f.color}|${f.strokeColor}|${f.fillOpacity}|${f.weight}|${f.dash}|${f.rings.length}|${JSON.stringify(f.rings[0]?.[0])}|${f.badge?.text || ""}`, make: () => {
+                        const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, dashArray: f.dash || undefined, interactive: !!f.title, className: f.className })
+                        if (f.title) a.on("click", tap(f, l, key))
+                        // A count on the area (a zone with a fresh finding).
+                        if (f.badge && Number.isFinite(+f.badge.lat) && Number.isFinite(+f.badge.lon)) {
+                            const fg = L.featureGroup([a])
+                            const bm = L.marker([+f.badge.lat, +f.badge.lon], {
+                                icon: L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11],
+                                                  html: `<div class="m2-aoi-badge">${String(f.badge.text).slice(0, 3).replace(/[<>&"]/g, "")}</div>` }),
+                                keyboard: false, zIndexOffset: 400,
+                            })
+                            if (f.title) bm.on("click", tap(f, l, key))
+                            fg.addLayer(bm)
+                            return fg
+                        }
+                        return a
+                    } })
                 } else if (l.kind === "lines") {
-                    if (!f.coords) continue
-                    const ln = L.polyline(f.coords, { color: f.color, weight: f.weight || 2, dashArray: f.dash || undefined, opacity: 0.85, interactive: !!f.title })
-                    if (f.title) ln.on("click", tap(f, l))
-                    ln.addTo(g)
-                    // a symbol on the line (a movement's unit, a flight's weapon)
-                    const mk = f.marker
-                    if (mk?.iconUri && Number.isFinite(+mk.lat) && Number.isFinite(+mk.lon)) {
-                        const w = mk.iconWidth || 18, h = mk.iconHeight || 18
-                        L.marker([+mk.lat, +mk.lon], {
-                            icon: L.icon({ iconUrl: mk.iconUri, iconSize: [w, h], iconAnchor: mk.iconAnchor || [w / 2, h / 2] }),
-                            keyboard: false,
-                        }).on("click", tap(f, l)).addTo(g)
-                    }
+                    if (!f.coords) return
+                    want.set(`l:${key}`, { sig: `${f.color}|${f.weight}|${f.dash}|${f.coords.length}|${JSON.stringify(f.coords[0]?.[0])}|${f.marker?.iconUri?.length || 0}`, make: () => {
+                        const ln = L.polyline(f.coords, { color: f.color, weight: f.weight || 2, dashArray: f.dash || undefined, opacity: 0.85, interactive: !!f.title })
+                        if (f.title) ln.on("click", tap(f, l, key))
+                        // a symbol on the line (a movement's unit, a flight's weapon)
+                        const mk = f.marker
+                        if (mk?.iconUri && Number.isFinite(+mk.lat) && Number.isFinite(+mk.lon)) {
+                            const { w, h, a } = scaled({ iconWidth: mk.iconWidth || 18, iconHeight: mk.iconHeight || 18, iconAnchor: mk.iconAnchor })
+                            return L.featureGroup([ln, L.marker([+mk.lat, +mk.lon], { icon: L.icon({ iconUrl: mk.iconUri, iconSize: [w, h], iconAnchor: a }), keyboard: false }).on("click", tap(f, l, key))])
+                        }
+                        return ln
+                    } })
                 } else {
-                    if (!Number.isFinite(+f.lat) || !Number.isFinite(+f.lon) || !f.iconUri) continue
-                    if (f.severity && (RANK[String(f.severity).toLowerCase()] ?? 3) > maxRank) continue
-                    const w = f.iconWidth || f.size || 16, h = f.iconHeight || f.size || 16
-                    L.marker([+f.lat, +f.lon], {
-                        icon: L.icon({ iconUrl: f.iconUri, iconSize: [w, h], iconAnchor: f.iconAnchor || [w / 2, h / 2] }),
-                        keyboard: false, zIndexOffset: f.severity === "critical" ? 500 : 0,
-                    }).on("click", tap(f, l)).addTo(g)
+                    if (!Number.isFinite(+f.lat) || !Number.isFinite(+f.lon) || !f.iconUri) return
+                    const rank = RANK[String(f.severity || "").toLowerCase()] ?? 3
+                    if (f.severity && rank > maxRank) return
+                    points.push({ key, f, l, lat: +f.lat, lon: +f.lon, fold: CLUSTER_LAYERS.has(l.key) && rank > 0 })
                 }
-            }
+            })
         }
-    }, [feats, on, floor, liveKey]) // eslint-disable-line react-hooks/exhaustive-deps
+        // GROUP what crowds the screen, in a grid of the screen at this zoom
+        // (stable as the map pans, so a pan never reshuffles the groups)
+        const z = m.getZoom()
+        const loose = []
+        if (z < CLUSTER_UNTIL) {
+            const cells = new Map()
+            for (const p of points) {
+                if (!p.fold) { loose.push(p); continue }
+                const q = m.project([p.lat, p.lon], z)
+                const c = `${Math.floor(q.x / CLUSTER_PX)}:${Math.floor(q.y / CLUSTER_PX)}`
+                if (!cells.has(c)) cells.set(c, [])
+                cells.get(c).push(p)
+            }
+            for (const [c, list] of cells) {
+                if (list.length < CLUSTER_MIN) { loose.push(...list); continue }
+                const lat = list.reduce((x, p) => x + p.lat, 0) / list.length, lon = list.reduce((x, p) => x + p.lon, 0) / list.length
+                want.set(`c:${z}:${c}`, { sig: `${list.length}|${lat.toFixed(4)}|${lon.toFixed(4)}`, make: () => L.marker([lat, lon], { icon: clusterIcon(list.length), keyboard: false, zIndexOffset: 200 })
+                    .on("click", () => {
+                        prog.current = true
+                        m.flyToBounds(L.latLngBounds(list.map((p) => [p.lat, p.lon])), { padding: [70, 70], maxZoom: Math.min(z + 4, 15), duration: 0.6 })
+                    }) })
+            }
+        } else loose.push(...points)
+        for (const p of loose) {
+            const { w, h, a } = scaled(p.f)
+            want.set(`p:${p.key}`, { sig: `${p.f.iconUri}|${w}|${h}|${p.lat}|${p.lon}`, make: () => L.marker([p.lat, p.lon], {
+                icon: L.icon({ iconUrl: p.f.iconUri, iconSize: [w, h], iconAnchor: a }),
+                keyboard: false, zIndexOffset: p.f.severity === "critical" ? 500 : 0,
+            }).on("click", tap(p.f, p.l, p.key)) })
+        }
+        const kept = drawn.current
+        for (const [k, d] of kept) {
+            const w = want.get(k)
+            if (!w || w.sig !== d.sig) { g.removeLayer(d.layer); kept.delete(k) }
+        }
+        for (const [k, w] of want) {
+            if (kept.has(k)) continue
+            const layer = w.make()
+            if (!layer) continue
+            layer.addTo(g)
+            kept.set(k, { layer, sig: w.sig })
+        }
+        // what the card swipes through: every point signal, west to east
+        pts.current = points.map((p) => ({ key: p.key, lat: p.lat, lon: p.lon, open: tap(p.f, p.l, p.key) })).sort((x, y) => x.lon - y.lon || y.lat - x.lat)
+    }, [feats, on, floor, liveKey, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // THE CARD'S POINT, ringed on the map
+    useEffect(() => {
+        const m = map.current
+        if (!m) return
+        if (picked.current) { picked.current.remove(); picked.current = null }
+        if (open && Number.isFinite(+open.lat) && Number.isFinite(+open.lon)) {
+            picked.current = L.marker([+open.lat, +open.lon], { icon: pickedIcon, interactive: false, keyboard: false, zIndexOffset: -100 }).addTo(m)
+        }
+    }, [open?.lat, open?.lon, open?._key]) // eslint-disable-line react-hooks/exhaustive-deps
+    // THE CARD SWIPES THROUGH WHAT IS IN VIEW, west to east, and the map
+    // glides (never jumps) to each, the point kept above the card
+    const inView = () => {
+        const b = map.current?.getBounds()
+        return b ? pts.current.filter((p) => b.contains([p.lat, p.lon])) : []
+    }
+    const stepPeek = (dir, probe = false) => {
+        const list = inView()
+        if (!list.length || !open) return false
+        let i = list.findIndex((p) => p.key === open._key)
+        if (i < 0) {                       // not one of them (a notification's): from the nearest
+            const c = map.current.getCenter()
+            i = list.reduce((best, p, j) => (Math.hypot(p.lat - c.lat, p.lon - c.lng) < Math.hypot(list[best].lat - c.lat, list[best].lon - c.lng) ? j : best), 0) - (dir > 0 ? 1 : -1)
+        }
+        const next = list[i + dir]
+        if (!next) return false
+        if (probe) return true
+        next.open()
+        const m = map.current
+        prog.current = true
+        const zz = m.getZoom()
+        m.panTo(m.unproject(m.project([next.lat, next.lon], zz).add([0, 70]), zz), { animate: true, duration: 0.45 })
+        return true
+    }
+    // the card put away: what a notification drew for it goes too (lib/signalPin.js)
+    // (a finding's boxes stay: the map is moved to look at them)
+    const hadOpen = useRef(null)
+    useEffect(() => {
+        if (open) { hadOpen.current = open; return }
+        const was = hadOpen.current
+        hadOpen.current = null
+        if (was && !was._peekOnly) closeOpenedSignal(was.id)
+    }, [open])
+    // THE DETAILS: an alert's own record, fetched as the card opens into them
+    const openDetail = (x) => {
+        setDetail(x)
+        const id = x?.alert_id || (/^(ALT|SIG)-/i.test(String(x?.id || "")) ? x.id : null)
+        if (!id) return
+        fetch(`${API_BASE}/api/alerts/${encodeURIComponent(id)}`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((a) => { if (a && (a.title || a.headline)) setDetail((cur) => (cur && cur._key === x._key ? { ...a, ...Object.fromEntries(Object.entries(x).filter(([, v]) => v != null && v !== "")),
+                summary: a.message || a.description || x.summary, severity_tier: a.severity || x.severity_tier } : cur)) })
+            .catch(() => {})
+    }
+    const peekList = open?._key ? inView() : []
+    const peekIndex = open?._key ? peekList.findIndex((p) => p.key === open._key) : -1
 
     // live tracks in view: after a pan (debounced) and every 15 s
     useEffect(() => {
@@ -375,24 +514,42 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const t = setInterval(load, 15_000)
         return () => { live = false; clearTimeout(first); clearInterval(t) }
     }, [active, bounds, zoom >= TRACK_ZOOM, on.ships, on.aircraft]) // eslint-disable-line react-hooks/exhaustive-deps
+    // SHIPS AND AIRCRAFT, MOVED NOT REDRAWN: each keeps its marker; a new
+    // position moves it, a new heading turns it, and only the gone are removed
+    const trackMarks = useRef(new Map())
     useEffect(() => {
         const g = tracks.current
         if (!g) return
-        g.clearLayers()
+        const seen = new Set()
+        const put = (key, lat, lon, iconKey, icon, onTap) => {
+            seen.add(key)
+            const have = trackMarks.current.get(key)
+            if (have) {
+                have.m.setLatLng([lat, lon])
+                if (have.iconKey !== iconKey) { have.m.setIcon(icon()); have.iconKey = iconKey }
+                have.m.off("click").on("click", onTap)
+                return
+            }
+            const m = L.marker([lat, lon], { icon: icon(), keyboard: false }).on("click", onTap).addTo(g)
+            trackMarks.current.set(key, { m, iconKey })
+        }
         for (const v of ships) {
             if (!Number.isFinite(+v.lat) || !Number.isFinite(+v.lon)) continue
-            L.marker([+v.lat, +v.lon], { icon: shipIcon(headingOf(v), v.sanctioned || v.watchlisted), keyboard: false })
-                .on("click", () => setTrack({ kind: "ship", ...v })).addTo(g)
+            const deg = Math.round(headingOf(v) / 5) * 5, warn = !!(v.sanctioned || v.watchlisted)
+            put(`s:${v.mmsi ?? `${v.lat},${v.lon}`}`, +v.lat, +v.lon, `${deg}|${warn}`, () => shipIcon(deg, warn), () => setTrack({ kind: "ship", ...v }))
         }
         for (const a of planes) {
             if (!Number.isFinite(+a.lat) || !Number.isFinite(+a.lon)) continue
-            L.marker([+a.lat, +a.lon], { icon: planeIcon(headingOf(a), a.military), keyboard: false })
-                .on("click", () => setTrack({ kind: "aircraft", ...a })).addTo(g)
+            const deg = Math.round(headingOf(a) / 5) * 5, mil = !!a.military
+            put(`a:${a.icao ?? a.hex ?? `${a.lat},${a.lon}`}`, +a.lat, +a.lon, `${deg}|${mil}`, () => planeIcon(deg, mil), () => setTrack({ kind: "aircraft", ...a }))
         }
+        for (const [k, x] of trackMarks.current) if (!seen.has(k)) { g.removeLayer(x.m); trackMarks.current.delete(k) }
     }, [ships, planes])
 
     // something elsewhere asked to be shown here
     useEffect(() => {
+        // the card alone: what it is about frames the view itself (a finding's boxes)
+        if (focus?._peekOnly) { setOpen({ ...focus, _key: `focus:${focus.id || focus._t}` }); return }
         if (!focus || !map.current || !Number.isFinite(+focus.lat)) return
         // a vessel of concern, live: rings, trail, targets, line to the top one
         if (focus.vesselThreat) {
@@ -401,25 +558,32 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             setThreatOn(true)
             // a pan still running (centred early, MobileApp) would swallow the fit
             // under a half sheet (opened from a notification): framed in the map left above it
-            if (b) { map.current.stop(); map.current.fitBounds(b, { animate: true, ...(focus._noSheet ? { paddingTopLeft: [20, 70], paddingBottomRight: [20, Math.round(window.innerHeight * 0.46) + 10] } : {}) }) }
+            if (b) { prog.current = true; map.current.stop(); map.current.fitBounds(b, { animate: true, ...(focus._noSheet ? { paddingTopLeft: [20, 70], paddingBottomRight: [20, Math.round(window.innerHeight * 0.46) + 10] } : {}) }) }
             // opened from its notification: the vessel's sheet with it
             // (_noSheet: the phone shell has opened the signal's sheet itself)
-            if ((focus.headline || focus.title) && !focus._noSheet) setOpen(focus)
+            if ((focus.headline || focus.title) && !focus._noSheet) setOpen({ ...focus, _key: `focus:${focus.id || focus._t}` })
             return
         }
         if (focus._noSheet) {
             // the signal in the middle of the map left above the half sheet
             const z = Math.max(map.current.getZoom(), 11)
             const c = map.current.unproject(map.current.project([+focus.lat, +focus.lon], z).add([0, Math.round(window.innerHeight * 0.21)]), z)
+            prog.current = true
             map.current.setView(c, z, { animate: true })
-        } else map.current.setView([+focus.lat, +focus.lon], Math.max(map.current.getZoom(), 9), { animate: true })
-        if ((focus.headline || focus.title) && !focus._noSheet) setOpen(focus)
+        } else {
+            // the point above the card that opens with it
+            const z = Math.max(map.current.getZoom(), 9)
+            prog.current = true
+            map.current.setView(map.current.unproject(map.current.project([+focus.lat, +focus.lon], z).add([0, 70]), z), z, { animate: true })
+        }
+        if ((focus.headline || focus.title) && !focus._noSheet) setOpen({ ...focus, _key: focus._key || `focus:${focus.id || focus._t}` })
     }, [focus])
     const clearThreat = () => { threat.current?.clearLayers(); setThreatOn(false) }
 
     const goTheater = (id) => {
         setTheater(id)
         if (!map.current) return
+        prog.current = true
         if (id === "global") { map.current.setView([25, 20], 2, { animate: true }); return }
         const t = mine.theaters.find((x) => x.id === id)
         if (t?.view) map.current.setView([t.view.lat, t.view.lon], zoomFor(t.view.height), { animate: true })
@@ -500,7 +664,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 <div className="m2-pill" role="alert" style={{ bottom: "auto", top: "calc(env(safe-area-inset-top, 0px) + 66px)" }}>
                     Map tiles could not load ·{" "}
                     <button onClick={() => { try { localStorage.removeItem("m2-tile-source") } catch { /* */ } setTilesFailed(false); setTileSource(0) }}
-                            style={{ border: 0, background: "none", color: "var(--acchi, #8fb4e8)", font: "inherit", cursor: "pointer", padding: 0 }}>Retry</button>
+                            style={{ border: 0, background: "none", color: "var(--txt)", textDecoration: "underline", font: "inherit", cursor: "pointer", padding: 0 }}>Retry</button>
                 </div>
             )}
             {chrome && <div className="m2-mapui">
@@ -537,7 +701,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 </div>}
                 {/* what is in view, or how to see more */}
                 {(on.ships || on.aircraft) && (
-                    <div className="m2-pill" data-testid="track-count">
+                    <div className="m2-pill" data-testid="track-count" style={open ? { opacity: 0 } : undefined}>
                         {zoom < TRACK_ZOOM ? "Zoom in for ships and aircraft"
                             : [on.ships && `${ships.length} ships`, on.aircraft && `${planes.length} aircraft`].filter(Boolean).join(" · ")}
                     </div>
@@ -557,7 +721,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     </div>
                 )}
                 {/* the widgets, round and labelled, along the bottom */}
-                <div className="m2-widgets" style={tr.target ? { display: "none" } : undefined}>{/* the track panel takes their place */}
+                <div className="m2-widgets" style={tr.target ? { display: "none" } : open ? { opacity: 0, pointerEvents: "none" } : undefined}>{/* the track panel takes their place */}
                     <button className="m2-widget" onClick={() => setSheet("filters")} data-testid="w-filters"><span><Icon id="g-tune" size={22} /></span>Filters</button>
                     <button className="m2-widget" onClick={() => setSheet("time")}><span><Icon id="g-event" size={22} /></span>{timeLabel}</button>
                     <button className="m2-widget" onClick={nearMe}><span><Icon id="g-pin" size={22} /></span>Near me</button>
@@ -619,7 +783,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     <div className="m2-tiles">
                         {mine.theaters.map((t) => (
                             <button key={t.id} className="m2-tile" aria-pressed={theater === t.id} onClick={() => { goTheater(t.id); setSheet(null) }}>
-                                <i style={{ background: "var(--accdim)", border: "2px solid var(--acchi)" }} /><b>{t.name}</b>
+                                <i style={{ background: "rgba(255,255,255,.1)", border: "1.5px solid rgba(255,255,255,.5)" }} /><b>{t.name}</b>
                                 {/* DELETE A THEATER here too (owner, 2026-10-11) */}
                                 <small role="button" tabIndex={0} aria-label={`Delete ${t.name}`} data-testid="m2-theater-delete"
                                        style={{ fontSize: 20, lineHeight: 1, padding: "2px 4px", color: "var(--txt3)" }}
@@ -644,14 +808,18 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         : <LiveNow compact />}
                 </Sheet>
             )}
-            {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={(s) => {
+            {open && chrome && !detail && <MPeek s={open} onClose={() => setOpen(null)} onDetails={() => openDetail(open)}
+                                                 onStep={peekList.length > 1 ? stepPeek : null} index={peekIndex >= 0 ? peekIndex : null} count={peekList.length} />}
+            {detail && <SignalSheet s={detail} onClose={() => setDetail(null)} onShowOnMap={(s) => {
                 if (s?.vesselThreat && map.current) {
                     if (!threat.current) threat.current = L.layerGroup().addTo(map.current)
                     const b = drawVesselThreat(L, threat.current, s.vesselThreat)
                     setThreatOn(true)
+                    prog.current = true
                     if (b) map.current.fitBounds(b, { animate: true })
                     return
                 }
+                prog.current = true
                 map.current?.setView([+s.lat, +s.lon], 11, { animate: true })
             }} />}
             {track && <TrackSheet t={track} onClose={() => setTrack(null)} />}

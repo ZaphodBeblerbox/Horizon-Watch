@@ -8,7 +8,7 @@
  *   Reports     their situation reports: read them, or take the PDF
  *   Profile     who they are, sign out
  */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import API_BASE from "../../apiBase.js"
 import { getCurrentUser, logout, subscribeAuth, updateCurrentUser } from "../../state/authStore.js"
 import { Positionable, toPictureDataUrl, toCoverDataUrl } from "../../destinations/Profile.jsx"
@@ -195,7 +195,7 @@ export function MAssets({ onShowOnMap, initial }) {
             </div>
             {/* SAFE HOUSES, easy to find */}
             <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                <button className="m2-chip" aria-pressed={only === "all"} onClick={() => setOnly("all")} style={only === "all" ? { borderColor: "var(--acchi, #7aa7ff)" } : undefined}>All{assets ? ` · ${assets.length}` : ""}</button>
+                <button className="m2-chip" aria-pressed={only === "all"} onClick={() => setOnly("all")} >All{assets ? ` · ${assets.length}` : ""}</button>
                 <button className="m2-chip" aria-pressed={only === "safe"} data-testid="m-assets-filter-safe" onClick={() => setOnly("safe")}
                         style={only === "safe" ? { borderColor: "#2E9E5B", background: "rgba(46,158,91,.2)" } : undefined}>Safe houses{assets ? ` · ${assets.filter(isSafeHouse).length}` : ""}</button>
             </div>
@@ -214,18 +214,42 @@ export function MAssets({ onShowOnMap, initial }) {
     )
 }
 
-export function MAlerts({ onShowOnMap, onOpen }) {
+export function MAlerts({ onShowOnMap, onOpen, focus = null }) {
     const items = usePoll("/api/notifications?limit=60", 30_000, (d) => arr(d?.items ?? d))
     const [open, setOpen] = useState(null)
+    // OPENED FROM ITS NOTIFICATION (a signal with no place on a map): found
+    // in the list, scrolled to, opened in place with its details under it
+    const bare = (x) => String(x ?? "").replace(/^sig[:-]/, "")
+    const found = focus ? arr(items).find((n) => bare(n.id) === bare(focus.id) || (n.alert_id && bare(n.alert_id) === bare(focus.id))) : null
+    const foundRef = useRef(null)
+    useEffect(() => { if (found && foundRef.current) foundRef.current.scrollIntoView({ block: "center", behavior: "smooth" }) }, [found?.id, focus?._t]) // eslint-disable-line react-hooks/exhaustive-deps
+    const tap = (n) => (n.kind === "asset" && n.asset_id ? onOpen("assets", { asset: n.asset_id })
+        // as its notification opens: the map at it, drawn, with its card (notify/openSignal.js)
+        : openSignal({ ...n, headline: n.title, sev: n.sev }))
     return (
         <div className="m2-scroll" data-screen-label="Phone alerts">
             <div className="m2-eyebrow" style={{ marginBottom: 10 }}>For you, newest first</div>
+            {focus && !found && items !== null && (
+                <div className="m2-card" style={{ marginBottom: 12 }}>
+                    <div className="m2-row found" style={{ cursor: "default" }}><span /><span style={{ minWidth: 0 }}><span className="m2-t">{focus.title || "Signal"}</span>
+                        <span className="m2-sub">No longer in your list; it has no place to show on the map.</span></span><span /></div>
+                </div>
+            )}
             <div className="m2-card">
                 {items === null ? <div className="m2-empty">Loading…</div> : items.length === 0 ? <div className="m2-empty">Nothing has earned an interruption.</div>
-                    : items.map((n) => <Row key={n.id} color={sevColor(n.sev)} title={n.title} sub={n.reason} when={when(n.created_at)}
-                        onClick={() => (n.kind === "asset" && n.asset_id ? onOpen("assets", { asset: n.asset_id })
-                            // as its notification opens: the map at it, drawn, with its sheet (notify/openSignal.js)
-                            : openSignal({ ...n, headline: n.title, sev: n.sev }))} />)}
+                    : items.map((n) => (n === found ? (
+                        <div key={n.id} ref={foundRef} data-testid="alert-found">
+                            <div className="m2-row found" style={{ cursor: "default" }}>
+                                <span className="m2-dot" style={{ background: sevColor(n.sev) }} />
+                                <span style={{ minWidth: 0 }}><span className="m2-t">{n.title}</span></span>
+                                <span className="m2-when">{when(n.created_at)}</span>
+                            </div>
+                            <div className="m2-found-detail">
+                                {n.reason && <div style={{ marginBottom: 10 }}>{n.reason}</div>}
+                                <button className="m2-btn" style={{ height: 34 }} onClick={() => setOpen({ ...n, headline: n.title, severity_tier: n.sev })}>Details</button>
+                            </div>
+                        </div>
+                    ) : <Row key={n.id} color={sevColor(n.sev)} title={n.title} sub={n.reason} when={when(n.created_at)} onClick={() => tap(n)} />))}
             </div>
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
         </div>
@@ -236,7 +260,7 @@ export function MReports() {
     const runs = usePoll("/api/briefings2/runs", 60_000, (d) => arr(d))
     const [reading, setReading] = useState(null)
     if (reading) return (
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column" }}>
+        <div className="m2-fit" style={{ display: "flex", flexDirection: "column" }}>
             <IssueReader runId={reading} onClose={() => setReading(null)} />
         </div>
     )
@@ -277,10 +301,10 @@ function PhoneToggle({ value, onChange }) {
     return (
         <button aria-pressed={value} onClick={() => onChange(!value)} style={{
             width: 51, height: 31, minWidth: 51, borderRadius: 16, border: 0, padding: 0, position: "relative", cursor: "pointer",
-            background: value ? "var(--acchi, #7f9cc8)" : "rgba(255,255,255,.16)",
+            background: value ? "#f4f5f7" : "rgba(255,255,255,.16)",
         }}>
             <span style={{ position: "absolute", top: 2, left: value ? 22 : 2, width: 27, height: 27, borderRadius: 14,
-                           background: "#fff", transition: "left .15s ease" }} />
+                           background: value ? "#0a0b0d" : "#fff", transition: "left .25s cubic-bezier(.22,1,.36,1), background .2s ease" }} />
         </button>
     )
 }
@@ -341,7 +365,7 @@ export function MProfile() {
                     {posing === "cover" && <div className="m2-sub" style={{ position: "absolute", left: 10, top: 8, color: "#fff", textShadow: "0 1px 3px #000" }}>Drag to choose what shows</div>}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 14 }}>
-                    <div style={{ width: 64, height: 64, borderRadius: 32, overflow: "hidden", flex: "none", background: u.color || "#334", display: "grid", placeItems: "center", fontWeight: 700 }}>
+                    <div style={{ width: 64, height: 64, borderRadius: 32, overflow: "hidden", flex: "none", background: "#2a2e36", color: "var(--txt2)", display: "grid", placeItems: "center", fontWeight: 650 }}>
                         {v.avatar ? <Positionable src={v.avatar} pos={v.avatar_pos} editing={posing === "avatar"} radius="50%"
                                                   onPos={(p) => edit({ avatar_pos: p })} style={{ width: 64, height: 64 }} />
                             : u.initials}
