@@ -6,6 +6,8 @@
     POST /api/routes/{id}/send             {asset_id?, user_id?} — to a person, as a notification that opens it
     GET  /api/routes/context               ?lat&lon&asset_id — is a route plan relevant here, and why
     GET  /api/routes/hazards               ?lat&lon&km&providers — the live hazards near a point
+    GET  /api/routes/demonstrations        every current demonstration the planner knows about, the world over,
+                                           and protester movement reconstructed from Telegram (demonstrations.py)
     GET  /api/routes/status                the last calls to the routing services
 
 POST /api/routes/plan
@@ -259,6 +261,15 @@ async def hazards(request: Request, lat: float, lon: float, km: float = 3.0, pro
     provs = [p for p in providers.split(",") if p] if providers else None
     return {"hazards": await asyncio.to_thread(sr.hazards_near, lat, lon, max(0.2, min(20.0, km)), None, provs),
             "attribution": sr.ATTRIBUTION}
+
+
+@router.get("/demonstrations")
+async def demonstrations(request: Request):
+    """The map's "Demonstrations, live" layer: the planner's own hazards
+    (military kinds left out) and the crowd tracks linked from reports."""
+    _me(request)
+    import demonstrations as dm
+    return await asyncio.to_thread(dm.snapshot)
 
 
 @router.get("/status")

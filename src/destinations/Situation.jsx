@@ -414,6 +414,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // Riots, protests and civil unrest, and the gatherings announced for
     // the coming days — kept apart from the fighting by their own toggle.
     const [unrestOn, setUnrestOn] = useState(true)
+    // What the route planner ("Get me out") avoids, and the crowd's movement
+    // reconstructed from Telegram reports (GlobeDemonstrationsLayer): off
+    // until asked for — it is for following one city.
+    const [demonstrationsOn, setDemonstrationsOn] = useState(false)
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
@@ -483,6 +487,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         gdelt: [gdeltOn, setGdeltOn],
         telegram: [telegramOn, setTelegramOn],
         unrest: [unrestOn, setUnrestOn],
+        demonstrations: [demonstrationsOn, setDemonstrationsOn],
         strikes: [strikesOn, setStrikesOn],
         frontlineClaims: [claimsOn, setClaimsOn],
         movements: [movementsOn, setMovementsOn],
@@ -1262,6 +1267,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         gdelt: [gdeltOn, setGdeltOn, "news"],
         telegram: [telegramOn, setTelegramOn, "news"],
         unrest: [unrestOn, setUnrestOn, "news"],
+        demonstrations: [demonstrationsOn, setDemonstrationsOn, "news"],
         strikes: [strikesOn, setStrikesOn, "news"],
         geoconfirmed: [geoConfirmedOn, setGeoConfirmedOn, "news"],
         gps_interference: [gpsInterferenceOn, setGpsInterferenceOn, "air"],
@@ -1519,6 +1525,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                     hint="Riots, protests and clashes with police filmed and posted on Telegram, and the gatherings announced for the coming days (hollow pins) · unverified"
                                     on={unrestOn} parentOn={groupsOn.news}
                                     onToggle={() => setUnrestOn((v) => !v)} />
+                            )}
+                            {g.key === "news" && (
+                                <SubLayerRow
+                                    label="Demonstrations, live"
+                                    hint="Every demonstration and happening the route planner (Get me out) avoids right now, and the crowd's movement reconstructed from Telegram reports: a line through the places it was reported, older hops fainter, the arrow on the latest and when it was last reported · reconstructed, not tracked · read every minute"
+                                    on={demonstrationsOn} parentOn={groupsOn.news}
+                                    onToggle={() => setDemonstrationsOn((v) => !v)} />
                             )}
                             {g.key === "news" && (
                                 <SubLayerRow
@@ -2081,6 +2094,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         gdeltEnabled={groupsOnV.news && gdeltOn}
                         telegramEnabled={groupsOnV.news && telegramOn}
                         unrestEnabled={groupsOnV.news && unrestOn}
+                        demonstrationsEnabled={groupsOnV.news && demonstrationsOn}
                         strikesEnabled={groupsOnV.news && strikesOn}
                         frontlineClaimsEnabled={groupsOnV.news && claimsOn}
                         movementsEnabled={groupsOnV.news && movementsOn}

@@ -165,6 +165,9 @@ export const SUB_LAYERS = [
     { key: "geoConfirmed",    label: "Confirmed",                parent: "news" },
     { key: "telegram",        label: "Telegram",                 parent: "news" },
     { key: "unrest",          label: "Unrest & protests",        parent: "news" },
+    // What the route planner ("Get me out") avoids, and the crowd's movement
+    // reconstructed from Telegram reports (globe/GlobeDemonstrationsLayer.jsx).
+    { key: "demonstrations",  label: "Demonstrations, live",     parent: "news" },
     // Strikes, bombings, assaults and ground taken, read out of the same
     // reporting (globe/GlobeStrikesLayer.jsx) — so it lives, and switches
     // off, with News rather than as a group of its own.

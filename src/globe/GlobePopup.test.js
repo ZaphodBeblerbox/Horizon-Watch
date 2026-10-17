@@ -29,6 +29,8 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "strike_event",
             // Frontline claims, movements and trajectories (GlobeFrontlineClaimsLayer).
             "frontline_claim", "troop_movement", "trajectory",
+            // Demonstrations, live (GlobeDemonstrationsLayer).
+            "demonstration", "protest_track",
         ].sort())
     })
 

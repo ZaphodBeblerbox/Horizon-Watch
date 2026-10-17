@@ -1428,6 +1428,51 @@ export function adaptTrajectory(data = {}) {
     }
 }
 
+/** A demonstration or happening the route planner avoids (GlobeDemonstrationsLayer, globe/demonstrations.js). */
+export function adaptDemonstration(data = {}) {
+    const point = pointOf(data)
+    return {
+        identity: { title: data.title || data.label || "Demonstration", subtitle: ["Demonstrations, live", data.sub].filter(Boolean).join(" · "),
+                    entityType: "demonstration", subtype: data.hazard_kind || null, sanctionsStatus: null },
+        description: data.detail || null,
+        attributes: compact([
+            attr("What", data.what || null),
+            attr("Place", data.place || null),
+            attr("Reported", _when(data.at)),
+            attr("Starts", _when(data.starts_utc)),
+            attr("Crowd", data.crowd ? `about ${Number(data.crowd).toLocaleString("en-GB")}, as reported` : null),
+            attr("Planner weight", data.weight != null ? String(data.weight) : null),
+            attr("Avoided within", data.radius_m ? `${data.radius_m} m` : null),
+            attr("Source", data.source || null),
+            attr("Original post", data.url || null),
+            attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
+        ]),
+        provenance: { feed: data.source || "Route planner hazards", ingestedAt: data.at || null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
+/** One hop of a crowd's movement, reconstructed from Telegram reports (demonstrations.js trackSegments). */
+export function adaptProtestTrack(data = {}) {
+    const srcs = (Array.isArray(data.sources) ? data.sources : []).map((s) => ({ source: s.source || "Telegram", url: s.url, time: s.published_at }))
+    return {
+        identity: { title: data.title || "Crowd movement, reconstructed", subtitle: ["Reconstructed from reports, not tracked", data.sub].filter(Boolean).join(" · "),
+                    entityType: "protest_track", subtype: null, sanctionsStatus: null },
+        description: data.detail || null,
+        attributes: compact([
+            attr("From", data.from?.place || null),
+            attr("To", data.to?.place || null),
+            attr("Reported there", _when(data.at)),
+            attr("Last reported", data.label || null),
+            attr("Linked because", (data.why || []).join("; ") || null),
+            attr("Reports on this track", data.n_reports != null ? String(data.n_reports) : null),
+            ..._srcAttrs(srcs),
+        ]),
+        provenance: { feed: _feed(srcs) || "Telegram", ingestedAt: data.at || null },
+        actions: { canJumpToLocation: isFiniteNum(data.lat) && isFiniteNum(data.lon) },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -1462,6 +1507,8 @@ const ADAPTERS = {
     frontline_claim: adaptFrontlineClaim,
     troop_movement: adaptTroopMovement,
     trajectory: adaptTrajectory,
+    demonstration: adaptDemonstration,
+    protest_track: adaptProtestTrack,
 }
 
 /**
