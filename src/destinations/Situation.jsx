@@ -1416,7 +1416,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                 already lives. */}
             {!asCanvas && mapEmpty && leftMin && (
                 <button type="button" className="pane-glass" data-testid="layers-empty-hint" onClick={() => setLeftMin(false)}
-                        style={{ position: "absolute", left: 10, top: 10, zIndex: 24, maxWidth: 300, textAlign: "left",
+                        style={{ position: "absolute", left: 10, top: 58, zIndex: 24, maxWidth: 300, textAlign: "left",
                                  border: "1px solid var(--gline)", borderRadius: 6,
                                  padding: "7px 10px", font: "400 12px/1.45 var(--font)", color: "var(--txt-2)", cursor: "pointer" }}>
                     Nothing on yet — open Layers, pick what you want, then “save default” to keep it.
