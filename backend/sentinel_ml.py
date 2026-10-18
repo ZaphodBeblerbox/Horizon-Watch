@@ -206,8 +206,8 @@ def _find_blobs(mask: np.ndarray, min_pixels: int = 10):
                     queue.append((nr, nc))
         if len(comp_r) >= min_pixels:
             blobs.append((np.array(comp_r), np.array(comp_c)))
-        if len(blobs) >= 200:
-            break
+        # It stopped at 200 blobs (2026-10-17: removed — no caps on what
+        # is recognised; this fallback only runs without scipy).
     return blobs
 
 
@@ -914,6 +914,21 @@ PLAUSIBLE_LENGTH_M = {
 }
 
 
+# The coarsest NATIVE ground resolution at which a class can be told at
+# all — about three pixels across. A car is 4.5 m: at Sentinel-2's 10 m it
+# is half a pixel, and a "small vehicle" there is texture the model named
+# (2026-10-17). Upsampling for the model adds no detail, so the native
+# resolution decides. Classes not listed are resolvable at 10 m.
+RESOLVABLE_AT_M = {"small-vehicle": 1.5, "large-vehicle": 4.0, "helicopter": 5.0}
+
+
+def unresolvable(yolo_class: str, native_m_per_px: float) -> str | None:
+    lim = RESOLVABLE_AT_M.get(yolo_class)
+    if lim is not None and native_m_per_px > lim:
+        return f"{yolo_class} at {native_m_per_px:.1f} m/px — needs {lim:g} m/px or finer to be told apart"
+    return None
+
+
 def implausible_size(object_type: str, length_m) -> str | None:
     """Why this object cannot be what it is labelled, or None.
 
@@ -1016,6 +1031,10 @@ def run_object_detection(images: dict, bbox: dict, *,
         if obj_type is None:
             continue
         if obj_type in LOW_VALUE_TYPES and not include_low_value:
+            continue
+        why_not = unresolvable(cls, res_m)
+        if why_not:
+            dropped.append(why_not)
             continue
 
         corners = r.get("corners") or []

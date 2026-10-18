@@ -1203,7 +1203,9 @@ def evaluate_sweep_result(out: dict) -> dict:
                    + " not counted — seasonal or mapped land)") if skipped else ""
 
     if len(findings) > WIDESPREAD_CLUSTERS:
-        return {"result": "inconclusive", "keep": False, "findings": findings[:5], "metrics": metrics,
+        # Not kept — widespread change is season or moisture — but every
+        # cluster is recorded, not the first 5 (2026-10-17, no caps).
+        return {"result": "inconclusive", "keep": False, "findings": findings, "metrics": metrics,
                 "summary": (f"{len(findings)} change clusters across the tile — widespread change reads as "
                             "season or moisture, not one build-up; not kept")}
     if not findings:
@@ -1911,7 +1913,7 @@ def record_tile(db, sweep, tile: dict, verdict: dict, zone_id: str | None, now: 
              owner=sweep.owner if sweep is not None else None, tile_id=tile["tile_id"], band=tile.get("band"),
              min_lon=b[0], min_lat=b[1], max_lon=b[2], max_lat=b[3], scanned_at=now or _dt.datetime.utcnow(),
              result=verdict["result"], zone_id=zone_id,
-             summary=json.dumps({"summary": verdict.get("summary"), "findings": verdict.get("findings", [])[:5],
+             summary=json.dumps({"summary": verdict.get("summary"), "findings": verdict.get("findings", []),
                                  "metrics": verdict.get("metrics"), "title": verdict.get("title")})))
     db.commit()
 
@@ -1938,8 +1940,10 @@ def sweep_status(db, sweep, log: list[dict] | None = None) -> dict:
         "updated_at": sweep.updated_at.isoformat(timespec="seconds") if sweep.updated_at else None,
         "found_items": [{"tile_id": r["tile_id"], "zone_id": r["zone_id"], "scanned_at": r["scanned_at"],
                          "title": (r["summary"] or {}).get("title"), "summary": (r["summary"] or {}).get("summary")}
-                        for r in found[:20]],
-        "recent": log[:40],
+                        for r in found],
+        # Every find and every tile of the sweep — they were cut at 20 and
+        # 40; no cap (owner, 2026-10-17: "no cap on how many things we can actually recognise on the map")
+        "recent": log,
     }
 
 

@@ -131,6 +131,50 @@ function cullPoints(features, bounds) {
     return out
 }
 
+const SIG_RANK = { critical: 0, high: 1, medium: 2, low: 3, info: 4 }
+
+/**
+ * Points in view, none dropped: when there are more than the phone draws
+ * well (MAX_FEATURES), nearby points fold into one disc with their count,
+ * the grid coarsening until they fit — the worst severity inside colours
+ * it, a tap names what is in it and zooming in splits it. For layers whose
+ * every point is a finding (owner, 2026-10-17: "no cap on how many things
+ * we can actually recognise on the map"); cullPoints stops at the cap.
+ */
+export function cullOrCluster(features, bounds, zoom, { noun = "points", prefix = "pt", cellPx = 48 } = {}) {
+    const inView = features.filter((f) => f && finite(f.lat, f.lon) && inBounds(f.lat, f.lon, bounds))
+    if (inView.length <= MAX_FEATURES) return inView
+    const z = Number.isFinite(zoom) ? zoom : 5
+    for (let px = cellPx; ; px *= 2) {
+        const deg = (360 / 2 ** Math.max(0, z)) * (px / 256)
+        const cells = new Map()
+        for (const f of inView) {
+            const k = `${Math.floor(num(f.lat) / deg)}:${Math.floor(num(f.lon) / deg)}`
+            if (!cells.has(k)) cells.set(k, [])
+            cells.get(k).push(f)
+        }
+        if (cells.size > MAX_FEATURES && deg < 90) continue
+        const out = []
+        for (const [k, list] of cells) {
+            if (list.length === 1) { out.push(list[0]); continue }
+            const lat = list.reduce((a, f) => a + num(f.lat), 0) / list.length
+            const lon = list.reduce((a, f) => a + num(f.lon), 0) / list.length
+            const sev = list.map((f) => f.severity).filter(Boolean)
+                .sort((a, b) => (SIG_RANK[a] ?? 9) - (SIG_RANK[b] ?? 9))[0] || null
+            const alarm = sev === "critical" || sev === "high" ? "red" : sev === "medium" ? "amber" : "grey"
+            const size = list.length >= 50 ? 36 : list.length >= 10 ? 32 : 28
+            const named = list.slice(0, 8).map((f) => f.title).filter(Boolean)
+            out.push({
+                id: `${prefix}-cl-${z}-${px}-${k}`, lat, lon, iconUri: clusterIconUri({ count: list.length, alarm, size }), size,
+                title: `${list.length} ${noun} here`, sub: "Zoom in to see each one", severity: sev,
+                raw: { kind: `${prefix}_cluster`, detail: `${named.join("; ")}${list.length > 8 ? `; and ${list.length - 8} more` : ""}.`,
+                       lat, lon, count: list.length },
+            })
+        }
+        return out
+    }
+}
+
 function cullLines(features, bounds) {
     const out = []
     for (const f of features) {
@@ -593,12 +637,13 @@ async function loadDemoMovement({ bounds }) {
                      normBounds(bounds))
 }
 
-async function loadImagerySignals({ bounds }) {
-    const d = await getJson(`${API_BASE}/api/alerts?source=SAT-TASK&limit=200`)
+async function loadImagerySignals({ bounds, zoom }) {
+    // Every signal of the week, not the newest 200 (owner, 2026-10-17: no caps).
+    const d = await getJson(`${API_BASE}/api/alerts?source=SAT-TASK&since_hours=168&limit=0`)
     const cutoff = Date.now() - 7 * 86_400_000
     const rows = arr(Array.isArray(d) ? d : d?.alerts)
         .filter((a) => finite(a.lat, a.lon) && utcMs(a.created_at) >= cutoff)
-    return cullPoints(rows.map((a) => ({
+    return cullOrCluster(rows.map((a) => ({
         id: `imgsig-${a.alert_id}`,
         lat: num(a.lat), lon: num(a.lon),
         iconUri: imagerySignalIcon(a.severity), size: 22,
@@ -606,7 +651,7 @@ async function loadImagerySignals({ bounds }) {
         sub: a.region || null,
         severity: a.severity || null,
         raw: { ...a, id: a.alert_id, source: "SAT-TASK" },
-    })), normBounds(bounds))
+    })), normBounds(bounds), zoom, { noun: "imagery signals", prefix: "imgsig" })
 }
 
 async function loadFires({ bounds }) {

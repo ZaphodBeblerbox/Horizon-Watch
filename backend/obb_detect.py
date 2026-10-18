@@ -148,9 +148,33 @@ def _run_view(img: np.ndarray, sess, window: int, conf: float):
             keep = best >= conf
             for (cx, cy, bw, bh), s, c, a in zip(pred[keep, :4], best[keep], cls[keep], pred[keep, -1]):
                 pts = [(float((x - px) / sc + tx), float((y - py) / sc + ty)) for x, y in _corners(float(cx), float(cy), float(bw), float(bh), float(a))]
-                # Skip boxes cut by a tile edge that the overlap will see whole.
+                # Skip boxes cut by a tile edge that the overlap will see
+                # whole (the comment promised it; the code never did, so a
+                # ship across a seam came back as a half-box beside the
+                # whole one, which the NMS cannot merge when they overlap
+                # less than its IoU — 2026-10-17).
+                if _cut_by_seam(pts, tx, ty, tw, th, w, h, overlap):
+                    continue
                 out.append((int(c), float(s), pts))
     return out
+
+
+def _cut_by_seam(pts, tx, ty, tw, th, w, h, overlap, margin: float = 2.0) -> bool:
+    """Is this box (image px) touching an inner edge of its tile while lying
+    wholly inside the overlap the neighbouring tile also sees? Then that
+    tile has it whole and this one only a cut. A box larger than the
+    overlap is kept — no other tile sees it whole either."""
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    if tx > 0 and x0 <= tx + margin and x1 <= tx + overlap - margin:
+        return True
+    if tx + tw < w and x1 >= tx + tw - margin and x0 >= tx + tw - overlap + margin:
+        return True
+    if ty > 0 and y0 <= ty + margin and y1 <= ty + overlap - margin:
+        return True
+    if ty + th < h and y1 >= ty + th - margin and y0 >= ty + th - overlap + margin:
+        return True
+    return False
 
 
 def _nms(dets, iou: float):
@@ -284,6 +308,21 @@ def _overlap(a: dict, b: dict) -> bool:
     return inter > 0 and inter / min(pa.area, pb.area) >= 0.3
 
 
+# A one-model ("probable") detection must clear its class's own bar; one
+# both models agree on keeps the common floor. The bars follow what was
+# measured at Jebel Ali and Khor Fakkan (2026-10-06): the medium model
+# invented 19 "planes" in a port with no airfield, while one-model ships
+# and tanks were mostly real. Classes not named keep `conf`.
+PROBABLE_MIN_CONF = {"plane": 0.45, "helicopter": 0.5, "small vehicle": 0.5, "large vehicle": 0.45,
+                     "baseball diamond": 0.4, "tennis court": 0.4, "basketball court": 0.4,
+                     "ground track field": 0.4, "soccer ball field": 0.4, "swimming pool": 0.4,
+                     "roundabout": 0.4}
+
+
+def class_floor(cls: str, conf: float) -> float:
+    return max(conf, PROBABLE_MIN_CONF.get(cls, conf))
+
+
 def ensemble(image, m_per_px: float, *, bounds: dict | None = None, conf: float = 0.25,
              models: tuple = ENSEMBLE) -> list[dict]:
     runs = []
@@ -295,7 +334,8 @@ def ensemble(image, m_per_px: float, *, bounds: dict | None = None, conf: float 
     if not runs:
         return []
     if len(runs) == 1:
-        return [{**d, "tier": "probable", "models": [runs[0][0]]} for d in runs[0][1]]
+        return [{**d, "tier": "probable", "models": [runs[0][0]]} for d in runs[0][1]
+                if d["conf"] >= class_floor(d["cls"], conf)]
     (ma, a), (mb, b) = runs[0], runs[1]
     out, used = [], set()
     for d in a:
@@ -305,7 +345,8 @@ def ensemble(image, m_per_px: float, *, bounds: dict | None = None, conf: float 
             e = b[partner]
             # The more precise model's outline, the higher confidence.
             out.append({**e, "conf": max(d["conf"], e["conf"]), "tier": "confirmed", "models": [ma, mb]})
-        else:
+        elif d["conf"] >= class_floor(d["cls"], conf):
             out.append({**d, "tier": "probable", "models": [ma]})
-    out += [{**e, "tier": "probable", "models": [mb]} for j, e in enumerate(b) if j not in used]
+    out += [{**e, "tier": "probable", "models": [mb]} for j, e in enumerate(b)
+            if j not in used and e["conf"] >= class_floor(e["cls"], conf)]
     return out

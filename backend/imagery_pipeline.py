@@ -145,7 +145,17 @@ def _real_detections(db, scan_id, exclude_rejected=True):
     q = db.query(SentinelDetection).filter(SentinelDetection.scan_id == scan_id)
     if exclude_rejected:
         q = q.filter(SentinelDetection.reviewed_status != "rejected")
-    return q.all()
+    rows = q.all()
+    # Smoke, burn scars and fires today's rules withdraw are not drawn on
+    # the scene (owner, 2026-10-17: clouds still shown as smoke) — derived
+    # on read by imagery_verdict, nothing is rewritten.
+    try:
+        import imagery_verdict
+        v = imagery_verdict.verdicts(db, rows)
+        rows = [d for d in rows if imagery_verdict.shown(v.get(d.detection_id))]
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[imagery-pipeline] error: smoke/fire verdicts unavailable, all shown: {type(e).__name__}: {e}", flush=True)
+    return rows
 
 
 def _detection_interpretation(d) -> str:
