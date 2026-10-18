@@ -7,8 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const src = readFileSync(path.join(__dirname, "RiskIndexPanel.jsx"), "utf8")
 
 describe("§15 — the index is falsifiable", () => {
-    it("exposes all four components as weights", () => {
-        for (const k of ["vol", "tone", "gold", "conf"]) {
+    it("exposes the four source families as weights", () => {
+        for (const k of ["gdelt", "rss", "telegram", "geoconfirmed"]) {
             expect(src.includes(`key: "${k}"`), `${k} must be an adjustable weight`).toBe(true)
         }
     })
@@ -32,14 +32,14 @@ describe("§15 — never a number where there is no data", () => {
         expect(src).toMatch(/STATUS_TEXT/)
         expect(src).toMatch(/insufficient_history/)
         expect(src).toMatch(/no_real_tone_data/)
-        expect(src).toMatch(/m\.score == null/)
+        expect(src).toMatch(/m\?\.score == null/)
     })
 
     it("shows an em dash, not 0, for a country with no score", () => {
         expect(src).toMatch(/c\.score == null \? "—"/)
     })
 
-    it("warns when a score used fewer than four components", () => {
+    it("warns when a score used fewer than four source families", () => {
         // Re-normalised weights make such a score incomparable to a full one.
         expect(src).toMatch(/weights_used/)
         expect(src).toMatch(/not comparable/)
@@ -66,5 +66,12 @@ describe("§15 — the delta is not invented", () => {
 describe("§15 — the index ranks, it does not score sites", () => {
     it("states the separation from exposure scoring", () => {
         expect(src).toMatch(/exposure scoring never reads it/i)
+    })
+})
+
+describe("cross-reference — every family visible", () => {
+    it("renders the per-family breakdown for a cross-referenced country", () => {
+        expect(src).toMatch(/RiskFamilyBreakdown country=\{c\}/)
+        expect(src).toMatch(/one family alone cannot lift a country/)
     })
 })

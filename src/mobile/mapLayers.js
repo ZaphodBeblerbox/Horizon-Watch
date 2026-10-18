@@ -984,7 +984,9 @@ async function loadRisk({ bounds }) {
             strokeColor: RISK_STROKE,
             title: `${p.n || row.iso_code} — country risk`,
             raw: { iso3: p.a3, country: p.n, score: row.score, band: row.band,
-                   components: row.components, contributions: row.contributions },
+                   components: row.components, contributions: row.contributions,
+                   families: row.families, corroborating: row.corroborating,
+                   confidence: row.confidence, explanation: row.explanation },
         })
     }
     return cullAreas(out, normBounds(bounds))

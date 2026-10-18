@@ -14,6 +14,8 @@
  * stories is a prompt to look, not a finding.
  */
 
+import { familyRows, isCrossRef, totalEvidence } from "../lib/riskFamilies.js"
+
 const COMPONENT = {
     tone: (c) => c?.mean_tone != null ? `coverage tone ${Number(c.mean_tone).toFixed(1)}` : "hostile coverage",
     gold: (c) => c?.share_below_threshold != null ? `${Math.round(c.share_below_threshold * 100)}% of events conflictual` : "conflictual events",
@@ -23,6 +25,16 @@ const COMPONENT = {
 
 /** The plain-language reason for one country's score. */
 export function why(country) {
+    // The cross-referenced index (risk_crossref.py): the families that carry
+    // it, strongest first, each with its own reading; agreeing ones marked.
+    if (isCrossRef(country)) {
+        const top = familyRows(country)
+            .filter((r) => r.score != null && (r.contribution ?? 0) > 0)
+            .sort((a, b) => (b.contribution ?? 0) - (a.contribution ?? 0))
+            .slice(0, 3)
+            .map((r) => `${r.label} ${Math.round(r.score)}${r.corroborates ? " ✓" : ""}`)
+        return top.join(" · ") || "no source family observed it"
+    }
     const contrib = country?.contributions || {}
     const comps = country?.components || {}
     const top = Object.entries(contrib)
@@ -35,6 +47,8 @@ export function why(country) {
 
 /** Events the score rests on — the largest count any component reports. */
 export function evidence(country) {
+    // Cross-referenced: every observation any family counted.
+    if (isCrossRef(country)) return totalEvidence(country)
     const counts = Object.values(country?.components || {})
         .map((c) => c && (c.n_events ?? c.recent_count ?? c.count))
         .filter((n) => typeof n === "number")
@@ -60,6 +74,8 @@ export function rankCountries(countries = [], names = new Map(), signals = []) {
             return {
                 iso3: c.iso_code, name, score: c.score, band: c.band,
                 why: why(c), evidence: n, thin: n != null && n < 10,
+                agree: Array.isArray(c.corroborating) ? c.corroborating.length : null,
+                confidence: c.confidence || null,
                 signals: onSurface.get(name) || 0,
                 raw: c,
             }

@@ -37,6 +37,7 @@ import ConflictContext from "../conflicts/ConflictContext.jsx"
 import { useTrackPhoto, TrackPhotoView } from "./TrackPhoto.jsx"
 import CountryFlag from "./CountryFlag.jsx"
 import { trackCountry } from "../lib/icaoCountry.js"
+import RiskFamilyBreakdown from "./RiskFamilyBreakdown.jsx"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -696,12 +697,30 @@ export default function InspectorPanel({
                     Blending them would imply the news justified the number. */}
                 {countryDetail && (
                     <div style={{ marginBottom: "var(--space-4)" }}>
+                        {/* The four source families of the cross-referenced
+                            index, each with what it counted and how much of
+                            the score it carried (risk_crossref.py). */}
+                        {countryDetail.risk?.families && (
+                            <div style={{ marginBottom: "var(--space-3)" }}>
+                                <div style={{ font: "600 10px var(--mono)", color: "var(--text-secondary)",
+                                              textTransform: "uppercase", letterSpacing: ".05em",
+                                              marginBottom: 4 }}>
+                                    Sources behind this score
+                                    {countryDetail.risk.score != null && (
+                                        <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                                            {" "}· {countryDetail.risk.score.toFixed(1)}, band {countryDetail.risk.band}
+                                        </span>
+                                    )}
+                                </div>
+                                <RiskFamilyBreakdown country={countryDetail.risk} />
+                            </div>
+                        )}
                         {countryDetail.drivers?.length > 0 && (
                             <>
                                 <div style={{ font: "600 10px var(--mono)", color: "var(--text-secondary)",
                                               textTransform: "uppercase", letterSpacing: ".05em",
                                               marginBottom: 6 }}>
-                                    What drove this score
+                                    GDELT events behind it
                                     <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
                                         {" "}· {countryDetail.events_in_window} event(s) in{" "}
                                         {countryDetail.window_days}d
@@ -749,7 +768,7 @@ export default function InspectorPanel({
                                               marginBottom: 6 }}>
                                     Latest news
                                     <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                                        {" "}· RSS, did not affect the score
+                                        {" "}· security articles the news family counted
                                     </span>
                                 </div>
                                 {countryDetail.news.map((n, i) => (

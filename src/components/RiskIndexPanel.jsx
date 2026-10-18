@@ -36,12 +36,16 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { fetchWithTimeout } from "../utils/fetchWithTimeout.js"
+import RiskFamilyBreakdown from "./RiskFamilyBreakdown.jsx"
 
+// Since 2026-10-18 the weights are the four SOURCE FAMILIES of the
+// cross-referenced index (risk_crossref.py); GDELT's own parts (volume,
+// tone, Goldstein) keep fixed internal weights and show in its row.
 const COMPONENTS = [
-    { key: "vol",  label: "Event volume",   note: "vs the country's own 24-month median" },
-    { key: "tone", label: "Article tone",   note: "inverted — GDELT tone is negative for bad news" },
-    { key: "gold", label: "Conflict share", note: "Goldstein below threshold" },
-    { key: "conf", label: "Confirmations",  note: "GeoConfirmed density — an independent check on volume" },
+    { key: "gdelt",        label: "GDELT",        note: "event coding: tone, conflictual share, volume — incl. translingual press" },
+    { key: "rss",          label: "News (RSS)",   note: "national and regional outlets: share and volume of violence/unrest articles" },
+    { key: "telegram",     label: "Telegram",     note: "event posts, mood, demonstrations likely, calls to violence, intents" },
+    { key: "geoconfirmed", label: "GeoConfirmed", note: "geolocated, verified footage" },
 ]
 
 const BAND_COLOR = ["", "var(--sev-low)", "var(--sev-low)", "var(--sev-moderate)", "var(--sev-high)", "var(--sev-critical)"]
@@ -118,7 +122,7 @@ export default function RiskIndexPanel() {
     return (
         <div className="group riskidx">
             <div className="grouphead">
-                <h4>Risk index · GDELT</h4>
+                <h4>Risk index · four sources</h4>
                 <span className={`srctag${live ? "" : " warn"}`} title={
                     live ? "Live GDELT corpus" : `Thin corpus — ${data?.real_total_gdelt_events ?? 0} events over ${Math.round(data?.real_gdelt_history_days ?? 0)} days`
                 }>{error ? "unavailable" : live ? "GDELT live" : "seeded"}</span>
@@ -144,7 +148,8 @@ export default function RiskIndexPanel() {
             </div>
 
             <p className="risknote">
-                Four components, weight-normalised. The index sets sort order only —
+                Four source families, cross-referenced: one family alone cannot lift a country
+                past band 3, two not past band 4. The index sets sort order only —
                 exposure scoring never reads it, because an index that both ranks the
                 world and scores your sites launders press volume into your site scores.
             </p>
@@ -177,36 +182,34 @@ export default function RiskIndexPanel() {
 
                                 {open === c.iso_code && (
                                     <div className="riskbd">
-                                        {/* Contributions are weight-normalised by the
-                                            backend so they sum to the index — a band
-                                            change always traces to the component that
-                                            moved. */}
-                                        {COMPONENTS.map((comp) => {
-                                            const m = c.components?.[comp.key] || {}
-                                            const contrib = c.contributions?.[comp.key]
-                                            const missing = m.score == null
-                                            return (
-                                                <div key={comp.key} className={`riskbdrow${missing ? " missing" : ""}`}>
-                                                    <span className="n">{comp.label}</span>
-                                                    <span className="v">
-                                                        {missing
-                                                            ? (STATUS_TEXT[m.status] || m.status || "no data")
-                                                            : `${m.score.toFixed(1)} → ${(contrib ?? 0).toFixed(2)}`}
-                                                    </span>
-                                                </div>
-                                            )
-                                        })}
+                                        {c.families ? (
+                                            <RiskFamilyBreakdown country={c} />
+                                        ) : (
+                                            /* An older payload (GDELT components): said as
+                                               it is, never shown as a zero. */
+                                            Object.entries(c.components || {}).map(([k, m]) => {
+                                                const missing = m?.score == null
+                                                return (
+                                                    <div key={k} className={`riskbdrow${missing ? " missing" : ""}`}>
+                                                        <span className="n">{k}</span>
+                                                        <span className="v">{missing ? (STATUS_TEXT[m?.status] || m?.status || "no data") : m.score.toFixed(1)}</span>
+                                                    </div>
+                                                )
+                                            })
+                                        )}
                                         <div className="riskbdrow total">
                                             <span className="n">index</span>
                                             <span className="v">{c.score == null ? "—" : c.score.toFixed(2)}</span>
                                         </div>
-                                        {Object.keys(c.weights_used || {}).length < COMPONENTS.length && (
+                                        {Object.keys(c.weights_used || {}).filter((k) => k !== "baseline").length < COMPONENTS.length && (
                                             <p className="risknote sm">
-                                                Scored on {Object.keys(c.weights_used || {}).length} of {COMPONENTS.length} components;
-                                                the weights were re-normalised over what was available, so this score is
+                                                Scored on {Object.keys(c.weights_used || {}).length} of {COMPONENTS.length} source families;
+                                                the weights were re-normalised over what was observed, so this score is
                                                 not comparable to one computed from all four.
                                             </p>
                                         )}
+                                    </div>
+                                )}
                                     </div>
                                 )}
                             </div>

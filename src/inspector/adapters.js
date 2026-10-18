@@ -31,6 +31,7 @@ import { extentOf } from "../utils/extent.js"
 import { fmtWhen, whenLabel } from "../utils/formatTime.js"
 import { callLines, listedNote, nearbyLine, KIND_LABEL as ENDANGERED_KIND } from "../globe/endangeredPlaces.js"
 import { modelLabelOf } from "../globe/placeModels.js"
+import { isCrossRef, totalEvidence, agreementText } from "../lib/riskFamilies.js"
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -922,6 +923,12 @@ const RISK_COMPONENT_LABEL = {
     tone: "Media tone",
     gold: "Conflictual coding (Goldstein)",
     conf: "Confirmed incidents",
+    // the cross-referenced index's source families (risk_crossref.py)
+    gdelt: "GDELT",
+    rss: "News (RSS)",
+    telegram: "Telegram",
+    geoconfirmed: "GeoConfirmed",
+    baseline: "Calm baseline (thin evidence)",
 }
 
 export function adaptCountryRisk(data = {}) {
@@ -940,17 +947,20 @@ export function adaptCountryRisk(data = {}) {
     const counts = Object.values(comps)
         .map(c => c && (c.n_events ?? c.recent_count ?? c.count))
         .filter(n => typeof n === "number")
-    const evidence = counts.length ? counts.reduce((m, c) => (c > m ? c : m), -Infinity) : null
+    const evidence = isCrossRef(data) ? totalEvidence(data)
+        : counts.length ? counts.reduce((m, c) => (c > m ? c : m), -Infinity) : null
 
     const attributes = compact([
         attr("Risk score", data.score != null
             ? `${data.score} (band ${data.band ?? "—"} of 5)` : null),
         attr("Window", data.window_days ? `${data.window_days} days` : null),
+        isCrossRef(data) ? attr("Sources agreeing",
+            `${agreementText(data)}${data.confidence ? ` (${data.confidence} confidence)` : ""}`) : null,
         ...ranked.map(([k, v]) =>
             attr(RISK_COMPONENT_LABEL[k] || humanizeKey(k),
                  `${v} of ${data.score ?? "?"} points`)),
         attr("Observations behind it", evidence != null
-            ? `${evidence} event(s) in the window` : null),
+            ? `${evidence} ${isCrossRef(data) ? "observation(s) across the four sources" : "event(s) in the window"}` : null),
         // Said plainly rather than left for the reader to work out from a
         // count they would have to go looking for.
         evidence != null && evidence < 10
@@ -968,7 +978,9 @@ export function adaptCountryRisk(data = {}) {
             sanctionsStatus: null,
         },
         attributes,
-        provenance: { feed: "Parallax risk index (wire reports + confirmed incidents)",
+        provenance: { feed: isCrossRef(data)
+                        ? "Risk index (GDELT × news × Telegram × GeoConfirmed)"
+                        : "Parallax risk index (wire reports + confirmed incidents)",
                       ingestedAt: null },
         actions: { canJumpToLocation: !!point },
     }
