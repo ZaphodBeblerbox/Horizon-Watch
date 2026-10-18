@@ -333,3 +333,13 @@ def test_a_crowd_heading_somewhere_makes_it_a_target():
     m = ds.city_model("paris", crowds, [], [], {}, {}, NOW)
     assert m["convergence"][0]["name"] == "Place de la Bastille"
     assert "heading there" in m["convergence"][0]["explanation"] and m["routes"][0]["coords"][0] == [REP[0], REP[1]]
+
+
+def test_reads_telegram_intents_table_shape():
+    """telegram_signals.py writes immediate/starts_utc, not "when" (2026-10-18)."""
+    import demo_situation as ds
+    now = "2026-10-17T16:05:00Z"
+    row = {"intents": [{"kind": "intent", "act": "attack", "target": "Palais de l'Élysée", "lat": 48.8704, "lon": 2.3167,
+                        "immediate": 1, "starts_utc": now, "confidence": 0.9}]}
+    out = ds.structured_intents(row, posted_at=now, city="paris")
+    assert out and out[0]["when"] == "now"

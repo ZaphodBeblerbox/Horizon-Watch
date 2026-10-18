@@ -458,7 +458,10 @@ def structured_intents(row: dict, posted_at=None, zone=None, city=None, near=Non
                 pl = resolve_place(name, city, near, learned) if name else None
             if not pl:
                 continue
-            when, start = norm_when(it.get("when") or it.get("when_at"), posted, zone)
+            # telegram_signals' table (telegram_intents) says it as immediate /
+            # starts_utc rather than "when": read both shapes
+            raw_when = it.get("when") or it.get("when_at") or ("now" if it.get("immediate") in (1, True, "1") else None) or it.get("starts_utc")
+            when, start = norm_when(raw_when, posted, zone)
             conf = _num(it.get("confidence"))
             out.append({"act": str(it.get("act") or "gather").lower(), "target": name or pl["name"], "place": pl,
                         "when": when, "start_at": start.strftime("%Y-%m-%dT%H:%M:%SZ") if start else None,
