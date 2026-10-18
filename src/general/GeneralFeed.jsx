@@ -126,7 +126,7 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
 const ACT = { border: 0, background: "none", padding: 0, minHeight: 30, color: "var(--txt3)", font: "inherit", fontSize: 13, cursor: "pointer",
               display: "inline-flex", alignItems: "center", lineHeight: 1 }
 
-export default function GeneralFeed({ onMap, onShare, compact = false }) {
+export default function GeneralFeed({ onMap, onShare, compact = false, keep = null }) {
     const [kind, setKind] = useState("all")
     const [items, setItems] = useState(null)
     const [next, setNext] = useState(null)
@@ -201,7 +201,7 @@ export default function GeneralFeed({ onMap, onShare, compact = false }) {
             )}
             {items === null ? <div style={{ padding: "20px 0", color: "var(--txt3)", fontSize: 13 }}>Reading what is happening…</div>
                 : !items.length ? <div style={{ padding: "20px 0", color: "var(--txt3)", fontSize: 13 }}>Nothing in this window.</div>
-                : items.map((it) => <GeneralItem key={it.id} it={it} onMap={onMap} onShare={onShare} compact={compact} />)}
+                : (keep ? items.filter(keep) : items).map((it) => <GeneralItem key={it.id} it={it} onMap={onMap} onShare={onShare} compact={compact} />)}
             <div ref={sentinel} style={{ height: 1 }} />
             {loading && <div style={{ padding: 14, textAlign: "center", color: "var(--txt4)", fontSize: 12.5 }}>Loading more…</div>}
         </div>

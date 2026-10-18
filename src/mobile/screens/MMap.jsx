@@ -35,6 +35,7 @@ import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
 import { closeOpenedSignal } from "../../lib/signalPin.js"
+import { setTheaterScope } from "../theaterScope.js"
 import CountryFlag from "../../components/CountryFlag.jsx"
 import { trackCountry } from "../../lib/icaoCountry.js"
 
@@ -621,6 +622,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
 
     const goTheater = (id) => {
         setTheater(id)
+        setTheaterScope(id)                // the lists follow the theater you look at (mobile/theaterScope.js)
         if (!map.current) return
         prog.current = true
         if (id === "global") { map.current.setView([25, 20], 2, { animate: true }); return }

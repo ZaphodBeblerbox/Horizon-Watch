@@ -6,12 +6,14 @@
  */
 import GeneralFeed from "../../general/GeneralFeed.jsx"
 import SourceLink from "../../components/SourceLink.jsx"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Attachment } from "../../desk/deskAttachments.jsx"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
 import API_BASE from "../../apiBase.js"
 import { createPost, listPosts, listReplies, toggleAck, uploadDeskFile } from "../../lib/deskApi.js"
-import { Icon, when, ago } from "./common.jsx"
+import { Icon, ScopeChips, when, ago } from "./common.jsx"
+import { useMine } from "../useMine.js"
+import { inTheater, setTheaterScope, useTheaterScope } from "../theaterScope.js"
 import { attachDrag, attachPullToRefresh, swallowClickAfterDrag } from "../gesture.js"
 import { captureMedia } from "../MediaViewer.jsx"
 import { getCurrentUser } from "../../state/authStore.js"
@@ -261,6 +263,11 @@ export default function MDesk({ active, onShowOnMap }) {
         return () => { off(); offClick() }
     }, [tab])                      // the body is a new node for each tab (its key)
     const pick = (t) => { if (t === tab) return; setFrom(t === "general" ? "r" : "l"); setTab(t) }
+    // GENERAL, IN THE THEATER YOU ARE LOOKING AT (mobile/theaterScope.js)
+    const mine = useMine()
+    const scope = useTheaterScope()
+    const scopeT = mine.theaters.find((t) => t.id === scope) || null
+    const keep = useMemo(() => (scopeT ? inTheater(scopeT, mine.countries, mine.iso2Name) : null), [scopeT, mine.countries, mine.iso2Name])
     // PULL DOWN TO SEE THE NEWEST (owner: "like on Twitter"): the team's
     // posts fetched again, or the General feed started afresh
     const scroller = useRef(null)
@@ -285,7 +292,7 @@ export default function MDesk({ active, onShowOnMap }) {
                     : posts.map((p) => <PostCard key={p.id} p={p} onChanged={load} />)}
             </>) : tab === "general" ? (
                 // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
-                <div style={{ display: "contents" }} onClickCapture={captureMedia}><GeneralFeed key={fresh} compact onMap={(it) => onShowOnMap?.(it)} /></div>
+                <div style={{ display: "contents" }} onClickCapture={captureMedia}><ScopeChips theaters={mine.theaters} scope={scopeT ? scope : null} onPick={setTheaterScope} /><GeneralFeed key={fresh} compact keep={keep} onMap={(it) => onShowOnMap?.(it)} /></div>
             ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
             </div>
         </div>

@@ -51,5 +51,5 @@ export function useMine() {
     /** Split a list into what is this user's and the rest (Telegram posts carry a country code). */
     const split = (items) => partition(arr(items).map((x) => (x.location_country || !x.country_code ? x
         : { ...x, location_country: iso2Name.get(String(x.country_code).toLowerCase()) })), w)
-    return { theaters: theaters || [], assets: assets || [], w, ready, has, split, iso2Name }
+    return { theaters: theaters || [], assets: assets || [], w, ready, has, split, iso2Name, countries }
 }

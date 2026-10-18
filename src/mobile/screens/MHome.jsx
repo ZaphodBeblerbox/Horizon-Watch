@@ -20,9 +20,10 @@ import { slotOf, useFrozen } from "../../home/dayPart.js"
 import { getCurrentUser, subscribeAuth } from "../../state/authStore.js"
 import { greetingFor } from "../../data/greetings.js"
 import { useMine, usePoll, arr } from "../useMine.js"
-import { Row, Sheet, SignalSheet, sevColor, when, ago, Icon } from "./common.jsx"
+import { Row, ScopeChips, Sheet, SignalSheet, sevColor, when, ago, Icon } from "./common.jsx"
+import { inTheater, setTheaterScope, useTheaterScope } from "../theaterScope.js"
 import OutlookExplain from "../../insight/OutlookExplain.jsx"
-import { attachPullToRefresh } from "../gesture.js"
+import { attachDrag, attachPullToRefresh, flingMs, swallowClickAfterDrag } from "../gesture.js"
 import { relevance } from "../../state/interests.js"
 import { hmZone } from "../../utils/clock.js"
 import { getSettings, subscribeSettings } from "../../state/settingsStore.js"
@@ -58,15 +59,24 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const slot = slotOf(new Date())
     const split = useMemo(() => mine.split(surface || []), [surface, mine.w]) // eslint-disable-line react-hooks/exhaustive-deps
 
+    // FOR YOU, FROM EVERY SOURCE (owner, 2026-10-17: "'for you' is everything
+    // from GDELT; it should be independent of whether it's GDELT, Telegram,
+    // whatever"): what the server judged relevant to you (the notification
+    // feed, every kind — escalations, confirmed events, Telegram, fusion,
+    // your assets), plus Telegram posts and news in your theaters and
+    // interests; one row per headline, assets first, then severity, then time.
+    const tgMine = useMemo(() => mine.split(arr(posts).filter((x) => Number.isFinite(+x.lat)).map((x) => ({
+        ...x, headline: x.headline || String(x.summary_en || x.text || "").slice(0, 140), published_at: x.posted_at,
+        source: `Telegram · ${x.channel_title || x.channel}`, location: x.place }))).mine, [posts, mine.w]) // eslint-disable-line react-hooks/exhaustive-deps
     const urgent = useMemo(() => {
-        const fromAssets = arr(notes).filter((n) => n.kind === "asset").map((n) => ({ ...n, headline: n.title, severity_tier: n.sev, _asset: true }))
+        const fromFeed = arr(notes).map((n) => ({ ...n, headline: n.title, severity_tier: n.sev, published_at: n.created_at, _asset: n.kind === "asset", _why: n.reason }))
         const seen = new Set()
-        return [...fromAssets, ...split.mine]
-            .filter((x) => { const t = x.headline || x.title; if (!t || seen.has(t)) return false; seen.add(t); return true })
+        return [...fromFeed, ...tgMine, ...split.mine]
+            .filter((x) => { const t = String(x.headline || x.title || "").trim().toLowerCase(); if (!t || seen.has(t)) return false; seen.add(t); return true })
             .sort((a, b) => (b._asset ? 1 : 0) - (a._asset ? 1 : 0) || (SEVR[a.severity_tier] ?? 9) - (SEVR[b.severity_tier] ?? 9)
                 || String(b.published_at || b.created_at || "").localeCompare(String(a.published_at || a.created_at || "")))
-            .slice(0, 6)
-    }, [notes, split])
+            .slice(0, 8)
+    }, [notes, split, tgMine])
 
     const pick = useMemo(() => {
         const vids = arr(posts).filter((x) => x.media === "video" && Number.isFinite(+x.lat))
@@ -104,7 +114,11 @@ export default function MHome({ onShowOnMap, onOpen }) {
 
     // FOR YOU: what is near you, your assets and in your theaters, each with why
     const here = useHere()
-    const forYou = useMemo(() => urgent.map((u) => ({ ...u, _why: u._asset ? u.reason : relevance(u, mine.w).reason || u._why })).slice(0, 5), [urgent, mine.w])
+    // the theater you are looking at, when one is chosen (mobile/theaterScope.js)
+    const scope = useTheaterScope()
+    const scopeT = mine.theaters.find((t) => t.id === scope) || null
+    const inScope = useMemo(() => inTheater(scopeT, mine.countries, mine.iso2Name), [scopeT, mine.countries, mine.iso2Name])
+    const forYou = useMemo(() => urgent.filter(inScope).map((u) => ({ ...u, _why: u._why || relevance(u, mine.w).reason || null })).slice(0, 6), [urgent, mine.w, inScope])
     const worldwide = useMemo(() => forYou.length ? [] : [...arr(surface)].sort((a, b) => (SEVR[a.severity_tier] ?? 9) - (SEVR[b.severity_tier] ?? 9)
         || String(b.published_at || "").localeCompare(String(a.published_at || ""))).slice(0, 4), [forYou, surface])
     const iosBrowser = (() => { try { const { platform } = window.__plxClosedNotify || {}; return platform === "ios-browser" } catch { return false } })()
@@ -158,12 +172,13 @@ export default function MHome({ onShowOnMap, onOpen }) {
             </div>
 
             <div className="m2-h" style={{ marginTop: 4 }}>{forYou.length ? "For you" : mine.has || here ? "Nothing near you — the most severe worldwide" : "Most severe right now"}</div>
+            <ScopeChips theaters={mine.theaters} scope={scopeT ? scope : null} onPick={setTheaterScope} />
             <div className="m2-foryou" data-testid="m2-foryou">
                 {(forYou.length ? forYou : worldwide).map((u) => (
                     <button key={u.id ?? u.title} className="m2-fy" onClick={() => setOpen({ ...u, _whyMine: u._why || u.reason || null })}>
                         <span style={{ minWidth: 0 }}>
                             <b>{u.headline || u.title}</b>
-                            <small>{u._why || [String(u.location || u.place || "").split(",").slice(0, 2).join(","), u.source].filter(Boolean).join(" · ")}</small>
+                            <small>{[u._why || String(u.location || u.place || "").split(",").slice(0, 2).join(","), String(u.source || "").replace(/^news_event$/, "News")].filter(Boolean).join(" · ")}</small>
                         </span>
                         <span className="m2-when"><i className="m2-sev" style={{ background: sevColor(u.severity_tier || u.sev) }} />{ago(u.published_at || u.created_at || u.posted_at)}</span>
                     </button>
@@ -279,7 +294,49 @@ function TelegramStory({ posts, onOpen, onAll }) {
     const [i, setI] = useState(0)
     const [shown, setShown] = useState(true)
     const [hold, setHold] = useState(false)
-    const go = (n) => { setShown(false); setTimeout(() => { setI(((n % list.length) + list.length) % list.length); setShown(true) }, 320) }
+    // A SWIPE, NOT ONLY THE DOTS (owner, 2026-10-17): the card follows the
+    // finger, thrown left the next post arrives from the right (and back)
+    const card = useRef(null)
+    const [enter, setEnter] = useState(null)
+    const go = (n, from = null) => {
+        const to = ((n % list.length) + list.length) % list.length
+        if (from) { setI(to); setEnter(from); setShown(true); return }
+        setShown(false); setTimeout(() => { setI(to); setShown(true) }, 320)
+    }
+    const iRef = useRef(i)
+    iRef.current = i
+    useEffect(() => {
+        const node = card.current
+        if (!node || list.length < 2) return undefined
+        const offClick = swallowClickAfterDrag(node)          // a swipe never opens the post
+        const off = attachDrag(node, {
+            start: (t) => !t.closest?.("video, [data-nodrag]"),
+            move: ({ dx, axis }) => {
+                if (axis !== "x") return false
+                setHold(true)
+                node.style.transition = ""
+                node.style.transform = `translateX(${dx}px)`
+                node.__dragged = true
+                return true
+            },
+            end: ({ dx, vx, axis, moved }) => {
+                setHold(false)
+                if (!moved || axis !== "x") return
+                const w = node.getBoundingClientRect().width
+                if (Math.abs(dx) > w * 0.22 || Math.abs(vx) > 0.45) {
+                    const dir = dx < 0 ? 1 : -1
+                    node.style.transition = `transform ${flingMs(w - Math.abs(dx), vx)}ms cubic-bezier(.2,.75,.3,1)`
+                    node.style.transform = `translateX(${dx < 0 ? -w - 30 : w + 30}px)`
+                    setTimeout(() => { node.style.transition = "none"; node.style.transform = ""; go(iRef.current + dir, dir > 0 ? "r" : "l") }, 220)
+                    return
+                }
+                node.style.transition = "transform .32s cubic-bezier(.22,1,.36,1)"
+                node.style.transform = ""
+            },
+        })
+        return () => { off(); offClick() }
+    }, [list.length]) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { if (!enter) return undefined; const t = setTimeout(() => setEnter(null), 420); return () => clearTimeout(t) }, [enter, i])
     useEffect(() => {
         if (hold || list.length < 2) return undefined
         const t = setTimeout(() => go(i + 1), STORY_MS)
@@ -293,7 +350,8 @@ function TelegramStory({ posts, onOpen, onAll }) {
         <section className="m2-section m2-story" data-screen-label="Phone live" data-testid="m2-telegram-story">
             <header><span className="m2-eyebrow">Live from Telegram</span><span style={{ flex: 1 }} />
                 <button className="m2-chip" onClick={onAll}>All posts</button></header>
-            <div className="m2-card m2-story-card" style={{ opacity: shown ? 1 : 0 }}
+            <div ref={card} className="m2-card m2-story-card" style={{ opacity: shown ? 1 : 0, touchAction: "pan-y",
+                 animation: enter ? `m2-pane-from-${enter} .38s cubic-bezier(.22,1,.36,1)` : undefined }}
                  onTouchStart={() => setHold(true)} onTouchEnd={() => setHold(false)}>
                 <button className={`m2-story-media${t.media === "video" || t.thumb_url ? "" : " bare"}`} onClick={() => onOpen(t)} aria-label="Open this post">
                     {t.media === "video"

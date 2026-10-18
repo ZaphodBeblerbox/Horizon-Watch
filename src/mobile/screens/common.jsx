@@ -47,13 +47,29 @@ export function Icon({ id, size = 20 }) {
 // THE CARD'S RECT (MPeek writes it): a sheet opened from the card grows out
 // of it and, swiped down, shrinks back into it — one surface changing size,
 // never a sheet vanishing and a card appearing (owner, 2026-10-17).
+// THE WORDS KEEP THEIR SIZE (owner, 2026-10-17: "when you collapse it, the
+// text collapses with it; the text size can remain the same"): the window is
+// clipped down to the card and moved to it, never scaled.
 const peekRect = () => (typeof window !== "undefined" ? window.__m2PeekRect || null : null)
-function intoPeek(node) {
-    // from where the sheet rests (fixed to the bottom), whatever a drag has done to it
+const FULL_CLIP = "inset(0px 0px 0px 0px round 26px 26px 0px 0px)"
+function peekShape(node) {
+    // from where the sheet rests (fixed to the bottom, full width), whatever a drag has done to it
     const r = peekRect(), w = node.offsetWidth, h = node.offsetHeight
     if (!r || !h) return null
-    const top = window.innerHeight - h, left = (window.innerWidth - w) / 2
-    return `translate(${r.left - left}px, ${r.top - top}px) scale(${r.width / w}, ${r.height / h})`
+    const top = window.innerHeight - h
+    const right = Math.max(0, w - (r.left + r.width)), bottom = Math.max(0, h - r.height)
+    return { transform: `translateY(${Math.round(r.top - top)}px)`, clip: `inset(0px ${right}px ${bottom}px ${r.left}px round 24px)` }
+}
+/** Move the sheet to the card's shape (or back to its own), in `ms`; then `done`. */
+function morph(node, toPeek, ms, done) {
+    const shape = toPeek ? peekShape(node) : null
+    if (toPeek && !shape) return false
+    node.style.animation = "none"
+    node.style.transition = `transform ${ms}ms cubic-bezier(.22,1,.36,1), clip-path ${ms}ms cubic-bezier(.22,1,.36,1)`
+    node.style.transform = toPeek ? shape.transform : ""
+    node.style.clipPath = toPeek ? shape.clip : FULL_CLIP
+    if (done) setTimeout(done, ms)
+    return true
 }
 
 export function Sheet({ onClose, children, half = false, fromPeek = false }) {
@@ -64,20 +80,18 @@ export function Sheet({ onClose, children, half = false, fromPeek = false }) {
     fullRef.current = full
     const closeRef = useRef(onClose)
     closeRef.current = onClose
+    // ONE CLOSE, whatever asks for it (a tap, a throw, a timer racing a tap)
+    const closed = useRef(false)
+    const finish = () => { if (closed.current) return; closed.current = true; closeRef.current?.() }
     const close = () => {
-        if (closing) return
+        if (closing || closed.current) return
         const node = el.current
-        const to = fromPeek && node ? intoPeek(node) : null
-        if (to) {
+        if (fromPeek && node) {
+            node.scrollTop = 0
             setClosing("peek")
-            node.style.transformOrigin = "0 0"
-            node.style.transition = "transform .36s cubic-bezier(.22,1,.36,1), opacity .3s ease"
-            node.style.transform = to
-            node.style.opacity = "0.55"
-            setTimeout(() => onClose?.(), 320)
-            return
+            if (morph(node, true, 360, finish)) return
         }
-        setClosing(true); setTimeout(() => onClose?.(), 210)
+        setClosing(true); setTimeout(finish, 210)
     }
     const host = (typeof document !== "undefined" && document.querySelector(".m2")) || (typeof document !== "undefined" ? document.body : null)
     // THE SHEET FOLLOWS THE FINGER (../gesture.js): dragged by its grip, or
@@ -87,17 +101,16 @@ export function Sheet({ onClose, children, half = false, fromPeek = false }) {
     useEffect(() => {
         const node = el.current
         if (!fromPeek || !node) return
-        const to = intoPeek(node)
-        if (!to) return
+        const shape = peekShape(node)
+        if (!shape) return
+        // start as the card, then open out of it
         node.style.animation = "none"
-        node.style.transformOrigin = "0 0"
-        node.style.transform = to
-        node.style.opacity = "0.6"
+        node.style.transition = "none"
+        node.style.transform = shape.transform
+        node.style.clipPath = shape.clip
         requestAnimationFrame(() => requestAnimationFrame(() => {
-            node.style.transition = "transform .42s cubic-bezier(.22,1,.36,1), opacity .25s ease"
-            node.style.transform = ""
-            node.style.opacity = ""
-            setTimeout(() => { node.style.transition = "" }, 440)
+            if (closed.current) return
+            morph(node, false, 420, () => { if (!closed.current) { node.style.transition = ""; node.style.clipPath = "" } })
         }))
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
@@ -131,21 +144,18 @@ export function Sheet({ onClose, children, half = false, fromPeek = false }) {
                 if (dy > h / 3 || vy > 0.6) {
                     if (half && fullRef.current && dy < h / 2 && vy < 1.2) { back(); setFull(false); return }
                     // opened from the card: back into the card, at the speed of the throw
-                    const to = fromPeek ? intoPeek(node) : null
-                    if (to) {
+                    if (fromPeek) {
                         const ms = flingMs(h - dy, vy) + 80
-                        node.style.transformOrigin = "0 0"
-                        node.style.transition = `transform ${ms}ms cubic-bezier(.22,1,.36,1), opacity ${ms}ms ease`
-                        node.style.transform = to
-                        node.style.opacity = "0.55"
+                        node.scrollTop = 0
+                        node.style.clipPath = FULL_CLIP
                         document.querySelector(".m2-sheet-back")?.classList.add("closing")
-                        setTimeout(() => closeRef.current?.(), ms - 40)
-                        return
+                        setClosing("peek")
+                        if (morph(node, true, ms, finish)) return
                     }
                     const ms = flingMs(h - dy, vy)
                     node.style.transition = `transform ${ms}ms cubic-bezier(.2,.7,.3,1)`
                     node.style.transform = `translateY(${h + 40}px)`
-                    setTimeout(() => closeRef.current?.(), ms)
+                    setTimeout(finish, ms)
                     return
                 }
                 back()
@@ -261,6 +271,18 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
                 {shared && <span className="m2-sub">{shared}</span>}
             </div>
         </Sheet>
+    )
+}
+
+/** WHICH THEATER (mobile/theaterScope.js): "All" and the user's theaters, one
+ *  choice for every list on the phone; nothing when there are no theaters. */
+export function ScopeChips({ theaters = [], scope, onPick, style }) {
+    if (!theaters.length) return null
+    return (
+        <div className="m2-chips" role="group" aria-label="Theater" data-testid="m2-scope" style={{ margin: "0 0 10px", ...style }}>
+            <button className="m2-chip" aria-pressed={!scope} onClick={() => onPick(null)}>All</button>
+            {theaters.map((t) => <button key={t.id} className="m2-chip" aria-pressed={scope === t.id} onClick={() => onPick(t.id)}>{t.name}</button>)}
+        </div>
     )
 }
 

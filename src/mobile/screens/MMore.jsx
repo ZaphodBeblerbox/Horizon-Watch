@@ -14,7 +14,9 @@ import { getCurrentUser, logout, subscribeAuth, updateCurrentUser } from "../../
 import { Positionable, toPictureDataUrl, toCoverDataUrl } from "../../destinations/Profile.jsx"
 import IssueReader from "../../reports/IssueReader.jsx"
 import { usePoll, arr, getJSON } from "../useMine.js"
-import { Icon, Row, Sheet, SignalSheet, sevColor, when } from "./common.jsx"
+import { Icon, Row, ScopeChips, Sheet, SignalSheet, sevColor, when } from "./common.jsx"
+import { useMine } from "../useMine.js"
+import { inTheater, setTheaterScope, useTheaterScope } from "../theaterScope.js"
 import { openSignal } from "../../notify/openSignal.js"
 import { getSettings, subscribeSettings, updateSetting } from "../../state/settingsStore.js"
 import { setDnd } from "../../state/notificationStore.js"
@@ -215,7 +217,13 @@ export function MAssets({ onShowOnMap, initial }) {
 }
 
 export function MAlerts({ onShowOnMap, onOpen, focus = null }) {
-    const items = usePoll("/api/notifications?limit=60", 30_000, (d) => arr(d?.items ?? d))
+    const all = usePoll("/api/notifications?limit=60", 30_000, (d) => arr(d?.items ?? d))
+    // in the theater you are looking at (mobile/theaterScope.js); the one opened from its notification always shows
+    const mineW = useMine()
+    const scope = useTheaterScope()
+    const scopeT = mineW.theaters.find((t) => t.id === scope) || null
+    const keep = scopeT ? inTheater(scopeT, mineW.countries, mineW.iso2Name) : null
+    const items = all === null ? null : keep ? all.filter((n) => keep(n) || (focus && String(n.id) === String(focus.id))) : all
     const [open, setOpen] = useState(null)
     // OPENED FROM ITS NOTIFICATION (a signal with no place on a map): found
     // in the list, scrolled to, opened in place with its details under it
@@ -229,6 +237,7 @@ export function MAlerts({ onShowOnMap, onOpen, focus = null }) {
     return (
         <div className="m2-scroll" data-screen-label="Phone alerts">
             <div className="m2-eyebrow" style={{ marginBottom: 10 }}>For you, newest first</div>
+            <ScopeChips theaters={mineW.theaters} scope={scopeT ? scope : null} onPick={setTheaterScope} />
             {focus && !found && items !== null && (
                 <div className="m2-card" style={{ marginBottom: 12 }}>
                     <div className="m2-row found" style={{ cursor: "default" }}><span /><span style={{ minWidth: 0 }}><span className="m2-t">{focus.title || "Signal"}</span>
