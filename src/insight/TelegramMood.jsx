@@ -9,14 +9,22 @@
  * reading says which kinds of channel it rests on, because a partisan
  * channel speaks for its side and a country read only through such
  * channels is read through their eyes.
+ *
+ * Each country also carries its tension trend (last 24 h and last 6 h
+ * against the two weeks before) and how likely demonstrations are in the
+ * next 48 h, with the reasons, the claim that would prove it wrong, and how
+ * such readings fared in the stored posts (backend/telegram_unrest.py; owner
+ * 2026-10-17: "see tensions rising, likelihood of demonstrations
+ * increasing"). Clean sans throughout — the owner forbids typewriter fonts.
  */
 import SourceLink from "../components/SourceLink.jsx"
 import { useEffect, useMemo, useState } from "react"
 import API_BASE from "../apiBase.js"
 import Columns, { BarList } from "../charts/Columns.jsx"
 import Loading from "../ui/Loading.jsx"
+import { levelColor, levelText, trendArrow, trendColor, trendText, unrestTitle } from "./moodUnrest.js"
 
-const EYEBROW = { fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }
+const EYEBROW = { fontFamily: "var(--font)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }
 const ROLE = { official: "official", local: "local", outlet: "news outlets", aggregator: "OSINT aggregators", partisan: "partisan channels" }
 const fmtDay = (iso) => new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
 const signed = (n) => (n == null ? "" : n > 0 ? `+${n}` : String(n))
@@ -36,6 +44,85 @@ export function ConflictChip({ c, name = null, onClick = null }) {
     const title = `Calls for armed conflict on Telegram: ${c.calls_24h} of ${c.n_24h} posts in the last 24 h (${pct(c.rate_24h)}), against ${pct(c.base_rate)} over the two weeks before · ${c.channels_24h} channels`
     return onClick ? <button data-testid="conflict-chip" onClick={onClick} title={title} style={style}>{label}</button>
                    : <span data-testid="conflict-chip" title={title} style={style}>{label}</span>
+}
+
+/** The small coloured dot and the level in words: "● Demonstrations: High". */
+export function LikelihoodChip({ level }) {
+    if (!level) return null
+    return (
+        <span data-testid="likelihood-chip" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 999,
+                                                     border: "1px solid var(--gline)", font: "600 11.5px/1.3 var(--font)", color: "var(--txt)", whiteSpace: "nowrap" }}>
+            <i style={{ width: 7, height: 7, borderRadius: "50%", background: levelColor(level), display: "inline-block" }} />
+            {levelText(level)}
+        </span>
+    )
+}
+
+/** "↑ Rising 2.4× · 24 h": the arrow coloured, the words not. */
+export function TrendLine({ t, window }) {
+    if (!t) return null
+    const a = trendArrow(t.direction)
+    return (
+        <span title={t.label} style={{ font: "400 12.5px var(--font)", color: "var(--txt2)", whiteSpace: "nowrap" }}>
+            {a && <b style={{ color: trendColor(t.direction), marginRight: 4 }}>{a}</b>}{trendText(t, window)}
+        </span>
+    )
+}
+
+/** Tension trend and demonstration likelihood for one country (the
+ *  `unrest` of /api/telegram/mood?country=). */
+export function UnrestPanel({ u, name }) {
+    if (!u) return null
+    const lk = u.likelihood
+    return (
+        <div data-testid="unrest-panel" style={{ margin: "0 0 18px", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--gline)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                <span style={EYEBROW}>Tension</span>
+                <TrendLine t={u.trend.daily} window="24 h" />
+                <TrendLine t={u.trend.intraday} window="6 h" />
+            </div>
+            {u.trend.daily && <div style={{ font: "400 11.5px/1.5 var(--font)", color: "var(--txt4)", marginBottom: 10 }}>{u.trend.daily.label}</div>}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                <span style={EYEBROW}>Demonstrations, next 48 h</span>
+                <LikelihoodChip level={lk.level} />
+            </div>
+            {lk.reasons.length > 0
+                ? <ul style={{ margin: "0 0 6px", paddingLeft: 18, font: "400 12.5px/1.55 var(--font)", color: "var(--txt)" }}>{lk.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+                : <div style={{ font: "400 12.5px/1.5 var(--font)", color: "var(--txt3)" }}>No call to gather, announced date or protest report about {name} in the last 24 h.</div>}
+            {lk.context?.length > 0 && <div style={{ font: "400 11.5px/1.5 var(--font)", color: "var(--txt3)", marginBottom: 6 }}>Also: {lk.context.join("; ")}.</div>}
+            {lk.capped && <div style={{ font: "400 11.5px/1.5 var(--font)", color: "var(--txt3)", marginBottom: 6 }}>Held at {lk.level}: {lk.capped}.</div>}
+            {lk.forecast && (
+                <div style={{ font: "400 12.5px/1.5 var(--font)", color: "var(--txt2)", margin: "6px 0" }}>
+                    {lk.forecast.statement}. <span style={{ color: "var(--txt3)" }}>{lk.forecast.criterion}.</span>
+                </div>
+            )}
+            {lk.citations?.length > 0 && lk.level !== "Low" && lk.citations.map((c, i) => (
+                <div key={i} style={{ font: "400 12px/1.5 var(--font)", color: "var(--txt2)", padding: "4px 0", borderTop: "1px solid var(--gline)" }}>
+                    {c.text} <span style={{ color: "var(--txt4)", fontSize: 11 }}>· {c.channel}{c.url && <> · <SourceLink url={c.url}>post</SourceLink></>}</span>
+                </div>
+            ))}
+            {u.places?.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                    <div style={{ ...EYEBROW, marginBottom: 4 }}>Where</div>
+                    {u.places.map((p) => (
+                        <div key={p.place} title={[p.trend_label, ...p.reasons].join(" · ")}
+                             style={{ display: "flex", alignItems: "center", gap: 8, font: "400 12.5px/1.6 var(--font)", color: "var(--txt2)" }}>
+                            <i style={{ width: 6, height: 6, borderRadius: "50%", background: levelColor(p.level), display: "inline-block", flex: "none" }} />
+                            <span style={{ color: "var(--txt)" }}>{p.place}</span>
+                            {trendArrow(p.trend) && <b style={{ color: trendColor(p.trend) }}>{trendArrow(p.trend)}</b>}
+                            <span style={{ color: "var(--txt3)" }}>
+                                {p.level} · {p.n_24h} posts, {p.calls_24h} calls in 24 h{p.announced ? ` · ${p.announced} announced` : ""}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            )}
+            <div style={{ font: "400 11px/1.5 var(--font)", color: "var(--txt4)", marginTop: 8 }}>
+                {u.calibration_line || "Not yet checked against the stored posts (the backtest runs in the background every 6 h)."}
+                {" "}Points: broad calls to gather, their rise and recency, dated gatherings announced, rising tension, grievances, protests already reported. Tension or grievance alone never lifts it above Low.
+            </div>
+        </div>
+    )
 }
 
 export default function TelegramMood() {
@@ -60,6 +147,7 @@ export default function TelegramMood() {
     }
     const calls = s ? (day ? s.calls.filter((c) => String(c.posted_at).slice(0, 10) === day) : s.calls) : []
     const rising = list.filter((c) => c.conflict?.rising)
+    const likely = list.filter((c) => c.likelihood?.level === "High")
     const cf = s?.conflict
     const sources = s ? Object.entries(s.sources).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} from ${ROLE[k] || k}`).join(", ") : ""
     return (
@@ -70,10 +158,21 @@ export default function TelegramMood() {
                         {rising.map((c) => <ConflictChip key={c.country} c={c.conflict} name={c.name} onClick={() => setPick(c.country)} />)}
                     </div>
                 )}
+                {likely.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+                        {likely.map((c) => (
+                            <button key={c.country} onClick={() => setPick(c.country)} title={unrestTitle(c.name, c.trend, c.likelihood)}
+                                    style={{ border: 0, background: "none", padding: 0, cursor: "pointer", font: "inherit" }}>
+                                <LikelihoodChip level="High" />
+                                <span style={{ font: "600 11.5px var(--font)", color: "var(--txt)", marginLeft: 6 }}>{c.name}</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
                 <div style={{ ...EYEBROW, marginBottom: 8 }}>Countries · two-week index</div>
-                <BarList rows={list.map((c) => ({ key: c.country, label: `${c.name}${c.change != null ? `  ${signed(c.change)}` : ""}${c.conflict?.rising ? `  ↑ calls for conflict ${times(c.conflict.ratio)}` : ""}`,
+                <BarList rows={list.map((c) => ({ key: c.country, label: `${c.name}${c.change != null ? `  ${signed(c.change)}` : ""}${trendArrow(c.trend?.daily?.direction) ? `  tension ${trendArrow(c.trend.daily.direction)}` : ""}${c.likelihood && c.likelihood.level !== "Low" ? `  · demonstrations ${c.likelihood.level}` : ""}${c.conflict?.rising ? `  ↑ calls for conflict ${times(c.conflict.ratio)}` : ""}`,
                                                   value: c.index_window ?? 0, color: c.conflict?.rising ? "var(--red)" : undefined,
-                                                  title: `${c.name}: two-week index ${c.index_window}${c.index_recent != null ? `, last three days ${c.index_recent}` : ", no posts in the last three days"}${c.change != null ? `, ${signed(c.change)} against the days before` : ""} · ${c.n} posts · ${c.topics.join(", ")}` }))}
+                                                  title: `${unrestTitle(c.name, c.trend, c.likelihood)}${c.likelihood ? " · " : ""}${c.name}: two-week index ${c.index_window}${c.index_recent != null ? `, last three days ${c.index_recent}` : ", no posts in the last three days"}${c.change != null ? `, ${signed(c.change)} against the days before` : ""} · ${c.n} posts · ${c.topics.join(", ")}` }))}
                          selected={pick} onSelect={(k) => k && setPick(k)} max={100} />
                 <p style={{ font: "400 11px/1.5 var(--font)", color: "var(--txt4)", marginTop: 10 }}>
                     Index 0–100: half how tense the posts are, half the share calling people to act. Rated per post by a model; read the posts before acting on a number.
@@ -94,6 +193,8 @@ export default function TelegramMood() {
                             )}
                         </div>
                         <div style={{ font: "400 12px var(--font)", color: "var(--txt3)", margin: "4px 0 14px" }}>{s.n} rated posts · {sources}</div>
+
+                        <UnrestPanel u={s.unrest} name={name} />
 
                         {cf && (cf.rising || cf.series.some((d) => d.calls)) && (
                             <div data-testid="conflict-panel" style={{ margin: "0 0 18px", padding: cf.rising ? "10px 12px" : 0, borderRadius: 10,
@@ -140,7 +241,7 @@ export default function TelegramMood() {
                         {calls.length === 0 ? <div style={{ color: "var(--txt4)" }}>None{day ? " that day" : " in the window"}.</div> : calls.map((c, i) => (
                             <div key={i} style={{ padding: "8px 0", borderBottom: "1px solid var(--gline)" }}>
                                 <div style={{ font: "400 13px/1.5 var(--font)", color: "var(--txt)" }}>{c.text}</div>
-                                <div style={{ font: "400 10.5px var(--mono)", color: c.mobilise >= 3 ? "var(--red)" : "var(--txt4)", marginTop: 3 }}>
+                                <div style={{ font: "400 10.5px var(--font)", color: c.mobilise >= 3 ? "var(--red)" : "var(--txt4)", marginTop: 3 }}>
                                     {c.mobilise >= 3 ? "call to confront · " : "call to gather · "}{c.channel}{c.role ? ` (${ROLE[c.role] || c.role})` : ""} · {String(c.posted_at).slice(0, 16).replace("T", " ")}Z
                                     {c.target ? ` · aimed at ${c.target}` : ""}
                                     {c.url && <> · <SourceLink url={c.url}>post</SourceLink></>}

@@ -12323,7 +12323,11 @@ async def _conflict_context_loop():
 def api_telegram_mood(country: str = "", days: int = Query(14, ge=7, le=60)):
     """The mood on Telegram (telegram_sentiment.py): without a country, every
     country with enough rated posts, sharpest rise first; with one, its daily
-    index, the change, whom it is aimed at, and the posts calling to act."""
+    index, the change, whom it is aimed at, and the posts calling to act.
+    Each list row also carries `trend` (daily/intraday direction, multiple,
+    z) and `likelihood` (Low/Elevated/High with reasons and the falsifiable
+    claim); one country carries `unrest`: both in full, its cities or
+    regions, and the backtest (telegram_unrest.py, owner 2026-10-17)."""
     import telegram_sentiment as _ts
     if country.strip():
         return _ts.series(country.strip().lower()[:2], days)
@@ -13783,6 +13787,25 @@ async def _telegram_mood_alert_loop():
         except Exception as _e:                              # noqa: BLE001
             import traceback as _tb
             print(f"[tg-mood] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}", flush=True)
+        # Demonstrations likely / tension rising sharply (telegram_unrest.py,
+        # owner 2026-10-17: "see tensions rising, likelihood of demonstrations
+        # increasing"), on the same thread; the backtest that calibrates the
+        # likelihood replays weeks of posts, so it runs here every 6 h and
+        # never inside a request.
+        try:
+            if not HEAVY_FEEDS_PAUSED:
+                import telegram_unrest as _tu
+                loop = asyncio.get_running_loop()
+                if _tu.calibration_due():
+                    cal = await loop.run_in_executor(_pool, _tu.refresh_calibration)
+                    print(f"[tg-unrest] calibration: {(cal or {}).get('levels')}", flush=True)
+                alerts = await loop.run_in_executor(_pool, _tu.detect)
+                for a in alerts:
+                    await _write_alert_off_loop(a)
+                    print(f"[tg-unrest] ALERT ({a['severity']}): {a['title']}", flush=True)
+        except Exception as _e:                              # noqa: BLE001
+            import traceback as _tb
+            print(f"[tg-unrest] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}", flush=True)
         await asyncio.sleep(45 * 60)
 
 
