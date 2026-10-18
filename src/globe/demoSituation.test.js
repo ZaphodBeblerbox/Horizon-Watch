@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import {
     ageLabel, convergenceDetail, convergenceIcon, crowdAlpha, crowdDetail, crowdIcon, scoreLabel, situationFeatures,
-    developmentLines, SITUATION_PATH,
+    developmentLines, SITUATION_PATH, groundCircle,
 } from "./demoSituation.js"
 import { PHONE_LAYERS, _clearLayerCache } from "../mobile/mapLayers.js"
 import { normalizeEntity } from "../inspector/adapters.js"
@@ -109,6 +109,61 @@ describe("demo situation — features", () => {
     })
 })
 
+describe("demo situation — where a crowd probably is now", () => {
+    const moving = {
+        ...crowdCon,
+        path_legs: [{ i: 0, coords: [[REP.lat, REP.lon], [48.868, 2.34], [CON.lat, CON.lon]], routed: true, estimated: false }],
+        now_est: { lat: 48.8675, lon: 2.3195, basis: "heading_to", to: "Palais de l'Élysée", routed: true, arrived: false,
+                   advanced_m: 800, trail: [[CON.lat, CON.lon], [48.8675, 2.3195]], kmh: 4 },
+        reach_m: 800,
+    }
+    const one = { generated_at: iso(0), cities: [{ city: "paris", crowds: [moving], convergence: [], routes: [] }] }
+
+    it("a dashed 'probably here now' mark, the way there, and the last-seen words", () => {
+        const fs = situationFeatures(one, NOW)
+        const now = fs.find((f) => f.id === "sit-now-crowd-a")
+        expect(now.type).toBe("demo_crowd")
+        expect(now.marker.lat).toBe(48.8675)
+        const svg = decodeURIComponent(now.marker.iconUri.split(",")[1])
+        expect(svg).toMatch(/stroke-dasharray/)
+        expect(svg).toMatch(/probably here now/)
+        expect(svg).not.toMatch(/mono/i)
+        expect(fs.find((f) => f.id === "sit-trail-crowd-a").dash).toBeTruthy()
+        const seen = fs.find((f) => f.id === "sit-crowd-crowd-a")
+        expect(decodeURIComponent(seen.marker.iconUri)).toMatch(/Place de la Concorde · last seen 15:48 · 12 min ago/)
+        expect(seen.raw.detail).toMatch(/Probably near the dashed mark now \(estimate\): about 800 m on toward Palais de l'Élysée/)
+        expect(seen.raw.detail).toMatch(/could be up to 800 m/)
+        // the routed path hop drawn on its streets, solid
+        const leg = fs.find((f) => f.id === "sit-path-crowd-a-0")
+        expect(leg.coords).toHaveLength(3)
+        expect(leg.dash).toBeNull()
+    })
+
+    it("an unrouted hop is straight, dotted and fainter; a short advance draws no 'now' mark", () => {
+        const g = { ...moving, path_legs: [{ i: 0, coords: [[REP.lat, REP.lon], [CON.lat, CON.lon]], routed: false, estimated: true }],
+                    now_est: { ...moving.now_est, advanced_m: 20 } }
+        const fs = situationFeatures({ cities: [{ city: "paris", crowds: [g] }] }, NOW)
+        const leg = fs.find((f) => f.id === "sit-path-crowd-a-0")
+        expect(leg.dash).toBe("2 7")
+        expect(leg.sub).toMatch(/walking route pending/)
+        expect(fs.find((f) => f.id === "sit-now-crowd-a")).toBeUndefined()
+        expect(decodeURIComponent(fs.find((f) => f.id === "sit-crowd-crowd-a").marker.iconUri)).toMatch(/Place de la Concorde · 12 min ago/)
+    })
+
+    it("the reach is a faint ground circle of its true size, shown from street level only", () => {
+        const ring = situationFeatures(one, NOW).find((f) => f.id === "sit-reach-crowd-a")
+        expect(ring.minZoom).toBe(12)
+        expect(ring.maxCameraM).toBeGreaterThan(0)
+        expect(ring.weight).toBe(1)
+        expect(ring.coords[0]).toEqual(ring.coords[ring.coords.length - 1])
+        // its radius is metres on the ground: ~800 m north of the centre
+        const north = Math.max(...ring.coords.map((p) => p[0]))
+        expect((north - CON.lat) * 111_320).toBeCloseTo(800, -1)
+        const c = groundCircle(0, 0, 1000, 4)
+        expect(c).toHaveLength(5)
+    })
+})
+
 describe("demo situation — the phone's layer", () => {
     afterEach(() => { vi.unstubAllGlobals(); _clearLayerCache() })
     const layer = PHONE_LAYERS.find((l) => l.key === "demonstrations:situation")
@@ -123,6 +178,15 @@ describe("demo situation — the phone's layer", () => {
         expect(out.length).toBe(7)
         expect(out.filter((f) => f.marker).every((f) => f.marker.iconUri.startsWith("data:image/svg+xml"))).toBe(true)
         expect(await layer.load({ bounds: { south: 40, west: -5, north: 41, east: -4 }, zoom: 10 })).toEqual([])
+    })
+
+    it("drops a crowd's reach ring below street level", async () => {
+        const withReach = { ...data, cities: [{ ...data.cities[0], crowds: [{ ...crowdCon, reach_m: 800 }, crowdOld] }] }
+        vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(withReach) })))
+        const b = { south: 48.7, west: 2.1, north: 49.0, east: 2.6 }
+        expect((await layer.load({ bounds: b, zoom: 13 })).some((f) => f.id === "sit-reach-crowd-a")).toBe(true)
+        _clearLayerCache()
+        expect((await layer.load({ bounds: b, zoom: 11 })).some((f) => f.id === "sit-reach-crowd-a")).toBe(false)
     })
 
     it("asks for one city's summary", async () => {
