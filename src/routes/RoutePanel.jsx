@@ -237,10 +237,10 @@ function DemoToggle() {
         window.addEventListener("m2:layers-on", h)
         return () => window.removeEventListener("m2:layers-on", h)
     }, [])
-    const flip = () => window.dispatchEvent(new CustomEvent("m2:layers", { detail: { demonstrations: !on, "demonstrations:movement": !on } }))
+    const flip = () => window.dispatchEvent(new CustomEvent("m2:layers", { detail: { demonstrations: !on, "demonstrations:situation": !on, "demonstrations:movement": false } }))
     return (
         <button className="plx-chip" aria-pressed={on} onClick={flip} data-testid="route-demos-toggle" style={{ alignSelf: "flex-start" }}>
-            {on ? "Demonstrations shown on the map" : "Show demonstrations on the map, live"}
+            {on ? "Demonstrations and crowds shown on the map" : "Show demonstrations and crowds on the map, live"}
         </button>
     )
 }
