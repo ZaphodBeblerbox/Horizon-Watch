@@ -221,7 +221,42 @@ def _telegram(con, before: str, limit: int) -> list[dict]:
                     "place": r["place"], "country_code": r["country_code"], "lat": r["lat"], "lon": r["lon"],
                     "event_type": r["event_type"], "role": r["role"], "graphic": bool(r["graphic"]),
                     "url": f"https://t.me/{chan}/{r['msg_id']}" if not chan.startswith("c/") else None})
-    return out
+    return _with_unified(con, out, before, len(rows) >= limit)
+
+
+def _with_unified(con, out: list[dict], before: str, full: bool) -> list[dict]:
+    """Telegram's UNIFIED SIGNALS (telegram_signals.py, the owner 2026-10-17):
+    the calls and positions read from channels, groups and forum topics,
+    many messages to one card. A post a signal stands for is shown through
+    it. Within this page's span, so the cursor neither repeats nor skips."""
+    try:
+        import telegram_signals
+        sigs = telegram_signals.signals_from(con, telegram_signals.SIGNAL_HOURS)
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[general-feed] error: unified signals: {type(e).__name__}: {e}", flush=True)
+        return out
+    floor = min((o["at"] for o in out), default="") if full else ""
+    items = []
+    for s in sigs:
+        at = _iso(s["last_at"])
+        if not (at < before and at >= floor):
+            continue
+        last = s["sources"][-1]
+        items.append({"id": s["id"], "kind": "telegram", "at": at, "headline": s["headline"], "text": s["summary"],
+                      "channel": last["channel"], "msg_id": last["msg_id"],
+                      "channel_title": ", ".join(s["chats"][:3]), "media": "none", "thumb_url": None,
+                      "place": s["place"], "country_code": s["country_code"], "lat": s["lat"], "lon": s["lon"],
+                      "event_type": "unrest", "role": s.get("role") or "group", "graphic": False, "url": last["url"],
+                      "unified": True, "intent": s["intent"], "severity": s["severity_tier"],
+                      "n_messages": s["n_messages"], "n_channels": s["n_channels"], "sources": s["sources"],
+                      "topic_title": s["topic_title"], "precise": s["lat"] is not None})
+    # Covered posts stay in what the reader returns, marked, so the cursor
+    # counts them as read; feed() leaves them off the page.
+    covered = {f"{x['channel']}/{x['msg_id']}" for s in sigs for x in s["sources"]}
+    for o in out:
+        if o["id"] in covered:
+            o["covered"] = True
+    return out + items
 
 
 # FAIR MIX (owner, 2026-10-12: "I don't see a single GeoConfirmed post in the
@@ -277,10 +312,12 @@ def feed(db_path: str, before: str | None = None, limit: int = 40, kinds: tuple 
         fetched = {}                                   # kind -> (items, was the source's page full?)
         for k, at in pos.items():
             got = _READERS[k](con, at, limit)       # "…~" sorts just above that time
-            fetched[k] = (got, len(got) >= limit)
+            fetched[k] = (got, len([i for i in got if not i.get("unified")]) >= limit)
     finally:
         con.close()
-    items = [i for got, _ in fetched.values() for i in got]
+    # a Telegram post a unified signal stands for is shown through the signal
+    covered = {i["id"] for got, _ in fetched.values() for i in got if i.get("covered")}
+    items = [i for got, _ in fetched.values() for i in got if not i.get("covered")]
     events = event_cluster.cluster(items, source_of=_source_label)
     for e in events:
         if e.get("also"):
@@ -310,7 +347,7 @@ def feed(db_path: str, before: str | None = None, limit: int = 40, kinds: tuple 
     # Where each kind goes on from: just above its newest item not shown
     # (so the next page starts with it), else below the oldest read if the
     # source has more, else that kind is finished.
-    shown = {x["id"] for e in page for x in [e, *(e.get("also") or [])]}
+    shown = {x["id"] for e in page for x in [e, *(e.get("also") or [])]} | covered
     nxt = []
     for k, (got, full) in fetched.items():
         unshown = [i["at"] for i in got if i["id"] not in shown]

@@ -1,5 +1,5 @@
 {
-  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator. ignore = joined but not read (quotes, tributes, no events). Official channels are statements: never map pins; in the Inbox, cited on events, and notified when they claim an attack. read_for: announcements = read mainly for what it says WILL happen (dated gatherings and actions → /api/telegram/upcoming); every channel's posts are read for announcements too. join: true = the server joins this channel itself (two a pass, telegram_ingest._join_registered); checked to exist and post before it was added.",
+  "_doc": "What each joined channel is, and so how strictly its posts are screened (telegram_ingest.py). role: official = a party's own statements, kept as attributed claims; local = fast local reporting; outlet = a news organisation; aggregator = OSINT reposting, kept only with a photo or video; partisan = aligned aggregator, same rule plus a label. A channel not listed is treated as an aggregator. ignore = joined but not read (quotes, tributes, no events). Official channels are statements: never map pins; in the Inbox, cited on events, and notified when they claim an attack. read_for: announcements = read mainly for what it says WILL happen (dated gatherings and actions → /api/telegram/upcoming); every channel's posts are read for announcements too. join: true = the server joins this channel itself (two a pass, telegram_ingest._join_registered); checked to exist and post before it was added. GROUPS (2026-10-17): supergroups and forum supergroups the account has joined are read too (members' messages, role group unless listed); a forum's topic titles are kept as context. country / region: where a chat's places are, for geocoding calls and positions (telegram_signals.py).",
   "YemenWrath": {
     "role": "official",
     "party": "Houthi forces (Ansar Allah)",
@@ -120,7 +120,8 @@
     "party": null,
     "lang": "fr",
     "read_for": "announcements",
-    "note": "gilets jaunes / French protest movement: calls to demonstrate, and footage from them"
+    "note": "gilets jaunes / French protest movement: calls to demonstrate, and footage from them",
+    "country": "fr"
   },
   "Demotermine": {
     "role": "local",
@@ -225,6 +226,76 @@
     "lang": "fr",
     "read_for": "announcements",
     "join": true,
-    "note": "The organisers' own channel (linked from 17octobregiletjaune.net/carte): calls to act at fuel stations, refineries and depots, and rallies, for Sat 17 Oct 2026; checked to exist and post 2026-10-11 (t.me/s preview, ~1.1K subscribers); added for the Endangered places layer (endangered_places.py)"
+    "note": "The organisers' own channel (linked from 17octobregiletjaune.net/carte): calls to act at fuel stations, refineries and depots, and rallies, for Sat 17 Oct 2026; checked to exist and post 2026-10-11 (t.me/s preview, ~1.1K subscribers); added for the Endangered places layer (endangered_places.py)",
+    "country": "fr"
+  },
+  "giletsjaunes2026france": {
+    "role": "group",
+    "party": "Gilets jaunes (2026 movement)",
+    "lang": "fr",
+    "country": "fr",
+    "read_for": "calls to act and positions",
+    "join": true,
+    "note": "gilets jaunes 2026 national discussion group: linked from giletsjaunes2026's 'QG national et régional' post (msg 268, 2026-10-07); public group checked on its t.me page 2026-10-17 (635 members); added for calls to act and positions (telegram_signals.py)"
+  },
+  "GJ2026IDF": {
+    "role": "group",
+    "party": "Gilets jaunes (2026 movement)",
+    "lang": "fr",
+    "country": "fr",
+    "region": "Île-de-France",
+    "read_for": "calls to act and positions",
+    "join": true,
+    "note": "gilets jaunes 2026 Île-de-France group: linked from giletsjaunes2026's 'QG national et régional' post (msg 268, 2026-10-07); public group checked on its t.me page 2026-10-17 (542 members); added for calls to act and positions (telegram_signals.py)"
+  },
+  "GJ2026ARA": {
+    "role": "group",
+    "party": "Gilets jaunes (2026 movement)",
+    "lang": "fr",
+    "country": "fr",
+    "region": "Auvergne-Rhône-Alpes",
+    "read_for": "calls to act and positions",
+    "join": true,
+    "note": "gilets jaunes 2026 Auvergne-Rhône-Alpes group: linked from giletsjaunes2026's 'QG national et régional' post (msg 268, 2026-10-07); public group checked on its t.me page 2026-10-17 (302 members); added for calls to act and positions (telegram_signals.py)"
+  },
+  "GJ2026HDF": {
+    "role": "group",
+    "party": "Gilets jaunes (2026 movement)",
+    "lang": "fr",
+    "country": "fr",
+    "region": "Hauts-de-France",
+    "read_for": "calls to act and positions",
+    "join": true,
+    "note": "gilets jaunes 2026 Hauts-de-France group: linked from giletsjaunes2026's 'QG national et régional' post (msg 268, 2026-10-07); public group checked on its t.me page 2026-10-17 (154 members); added for calls to act and positions (telegram_signals.py)"
+  },
+  "GJ2026NA": {
+    "role": "group",
+    "party": "Gilets jaunes (2026 movement)",
+    "lang": "fr",
+    "country": "fr",
+    "region": "Nouvelle-Aquitaine",
+    "read_for": "calls to act and positions",
+    "join": true,
+    "note": "gilets jaunes 2026 Nouvelle-Aquitaine group: linked from giletsjaunes2026's 'QG national et régional' post (msg 268, 2026-10-07); public group checked on its t.me page 2026-10-17 (146 members); added for calls to act and positions (telegram_signals.py)"
+  },
+  "GJ2026PACA": {
+    "role": "group",
+    "party": "Gilets jaunes (2026 movement)",
+    "lang": "fr",
+    "country": "fr",
+    "region": "Provence-Alpes-Côte d'Azur",
+    "read_for": "calls to act and positions",
+    "join": true,
+    "note": "gilets jaunes 2026 Provence-Alpes-Côte d'Azur group: linked from giletsjaunes2026's 'QG national et régional' post (msg 268, 2026-10-07); public group checked on its t.me page 2026-10-17 (113 members); added for calls to act and positions (telegram_signals.py)"
+  },
+  "GJ2026GE": {
+    "role": "group",
+    "party": "Gilets jaunes (2026 movement)",
+    "lang": "fr",
+    "country": "fr",
+    "region": "Grand Est",
+    "read_for": "calls to act and positions",
+    "join": true,
+    "note": "gilets jaunes 2026 Grand Est group: linked from giletsjaunes2026's 'QG national et régional' post (msg 268, 2026-10-07); public group checked on its t.me page 2026-10-17 (111 members); added for calls to act and positions (telegram_signals.py)"
   }
 }
