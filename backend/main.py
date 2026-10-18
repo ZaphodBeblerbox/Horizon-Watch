@@ -12669,8 +12669,15 @@ async def _telegram_loop():
         except Exception as e:
             _loop_error("telegram", e)
         # As live as Telegram's rate limits comfortably allow: one pass reads
-        # only the newest messages of each joined channel.
-        await asyncio.sleep(60)
+        # only chats whose newest message changed, and only what is newer.
+        # Every 15 s while a chat carries calls or positions, else every
+        # minute (telegram_ingest.next_interval; the owner, 2026-10-17: "all
+        # signals must be ingested in real time").
+        try:
+            _wait = await asyncio.to_thread(_tg.next_interval)
+        except Exception:                                   # noqa: BLE001
+            _wait = 60
+        await asyncio.sleep(_wait)
 
 
 @app.get("/api/vessel-threat/config")
@@ -29579,14 +29586,38 @@ _TG_CARDS_CACHE: dict = {}
 
 def _telegram_report_cards(hours: int, cap: int = 25) -> list:
     """Fresh located Telegram reports as notification cards, the same for
-    everyone, so cached for a minute (the push sweep asks per user)."""
+    everyone, so cached briefly (the push sweep asks per user)."""
     hit = _TG_CARDS_CACHE.get(hours)
-    if hit and time.monotonic() - hit[0] < 60:
+    if hit and time.monotonic() - hit[0] < 15:      # 15 s: a call to act now is news for minutes, not hours
         return [dict(c) for c in hit[1]]
     import telegram_ingest as _tg
     import notification_context as _nc
     cards = []
+    # UNIFIED SIGNALS (telegram_signals.py, the owner 2026-10-17): a call to
+    # act or a crowd's position, many messages in one card. Only the urgent
+    # ones are cards — an immediate call to attack or occupy a named place
+    # is high at least, so it takes the screen and reaches the phone
+    # (event_watch.notifies); a timed call or a lone position waits on the
+    # Desk. Unlocated ones too: "on va à l'Élysée maintenant" needs no pin.
+    try:
+        import telegram_signals as _tsig
+        for p in _tsig.posts(hours):
+            if p.get("signal_severity") not in ("high", "critical"):
+                continue
+            cards.append({
+                "id": p["id"], "kind": "telegram", "sev": p["signal_severity"],
+                "title": _nc.plain(p.get("headline") or "Telegram call to act"),
+                "reason": " · ".join(x for x in (p.get("channel_title"), p.get("topic_title"),
+                                                  f"{p['n_messages']} messages" if p.get("n_messages", 1) > 1 else None) if x),
+                "lat": p.get("lat"), "lon": p.get("lon"), "country_code": p.get("country_code"),
+                "region": p.get("place"), "created_at": p.get("posted_at"), "source": "telegram",
+                "url": p.get("url"), "intent": p.get("intent"),
+            })
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] error: telegram signals: {type(ex).__name__}: {ex}", flush=True)
     for p in _tg.published(hours)[:cap]:
+        if p.get("unified"):
+            continue                                        # carded above, by its own severity
         official = p.get("role") == "official"
         cards.append({
             "id": p["id"], "kind": "telegram",

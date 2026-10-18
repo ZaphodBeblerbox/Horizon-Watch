@@ -1,7 +1,9 @@
 """
 telegram_ingest.py — the channels you joined, as located signals.
 
-Reads every broadcast channel the logged-in account has joined (Telethon,
+Reads every broadcast channel the logged-in account has joined — and, since
+2026-10-17, every group and forum supergroup, each forum topic's title kept
+with its messages (calls to act and positions: telegram_signals.py) — (Telethon,
 TELEGRAM_API_ID / TELEGRAM_API_HASH in backend/.env, session file in
 data/telegram/, gitignored), keeps each post's text, a thumbnail of its
 photo or video, and its t.me link — the original plays in the console
@@ -104,20 +106,27 @@ EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": 
                  "first_hand": "INTEGER", "graphic": "INTEGER", "graphic_score": "REAL",
                  "announce_checked": "INTEGER", "announce_what": "TEXT", "announce_cause": "TEXT",
                  "announce_at": "TEXT", "announce_place": "TEXT", "announce_lat": "REAL", "announce_lon": "REAL",
-                 "announce_country": "TEXT"}
+                 "announce_country": "TEXT",
+                 # GROUPS AND FORUM TOPICS (the owner, 2026-10-17: Le Grand Café's
+                 # subgroups, "some where they explain why they're going to
+                 # demonstrate, different ones separated by region"): what kind of
+                 # chat a post came from, the forum topic it was written in, the
+                 # message it answers, and whether telegram_signals has read it.
+                 "chat_kind": "TEXT", "topic_id": "INTEGER", "topic_title": "TEXT", "reply_to": "INTEGER",
+                 "intent_checked": "INTEGER"}
 
 # What each channel is (telegram_channels.json). Unlisted = aggregator.
 CHANNELS_FILE = os.path.join(HERE, "telegram_channels.json")
 
 
-def channel_info(chan: str) -> dict:
+def channel_info(chan: str, default_role: str = "aggregator") -> dict:
     try:
         with open(CHANNELS_FILE) as fh:
             reg = json.load(fh)
     except Exception:
         reg = {}
     info = reg.get(chan) or {}
-    return {"role": info.get("role") or "aggregator", "party": info.get("party"), "lang": info.get("lang")}
+    return {"role": info.get("role") or default_role, "party": info.get("party"), "lang": info.get("lang")}
 
 
 ROLE_LABEL = {
@@ -126,12 +135,29 @@ ROLE_LABEL = {
     "outlet": "news outlet",
     "aggregator": "OSINT aggregator — unverified",
     "partisan": "partisan aggregator — unverified",
+    "group": "group chat — members' own messages, unverified",
 }
+
+
+CHAT_DDL = [
+    # Per chat: the newest message read (a pass asks only for newer ones and
+    # skips a chat whose newest is unchanged) and when it last carried a
+    # call or a position (it is then polled every HOT_POLL_S, not 60 s).
+    """CREATE TABLE IF NOT EXISTS telegram_chat_state (
+        channel TEXT PRIMARY KEY, kind TEXT, title TEXT, last_msg_id INTEGER, last_new_at TEXT,
+        last_cue_at TEXT, topics_at REAL)""",
+    # A forum supergroup's topics: id -> title ("Pourquoi on manifeste").
+    """CREATE TABLE IF NOT EXISTS telegram_topics (
+        channel TEXT NOT NULL, topic_id INTEGER NOT NULL, title TEXT, updated_at TEXT,
+        PRIMARY KEY (channel, topic_id))""",
+]
 
 
 def _con():
     con = sqlite3.connect(_db_path(), timeout=60)
     con.execute(DDL)
+    for d in CHAT_DDL:
+        con.execute(d)
     have = {r[1] for r in con.execute("PRAGMA table_info(telegram_posts)")}
     for col, typ in EXTRA_COLUMNS.items():
         if col not in have:
@@ -214,11 +240,82 @@ async def _join_registered(client, joined: set) -> list:
     return done
 
 
+PER_GROUP = 300              # a busy group writes more per minute than a channel per hour
+HOT_POLL_S = 15              # a chat with a call or a position in the last HOT_MIN minutes
+COLD_POLL_S = 60
+HOT_MIN = 20
+TOPICS_EVERY_S = 30 * 60
+
+
+def topic_of(m) -> int | None:
+    """The forum topic a message was written in: a topic's id is the id of
+    the service message that created it. A message in General has no
+    forum reply header (topic 1); a reply inside a topic names the topic as
+    its top."""
+    r = getattr(m, "reply_to", None)
+    if r is None or not getattr(r, "forum_topic", False):
+        return 1
+    return getattr(r, "reply_to_top_id", None) or getattr(r, "reply_to_msg_id", None) or 1
+
+
+async def _forum_topics(client, ent) -> dict:
+    """{topic id: title} of a forum supergroup (one request, 100 topics)."""
+    try:
+        from telethon.tl.functions.messages import GetForumTopicsRequest
+        req = GetForumTopicsRequest(peer=ent, offset_date=None, offset_id=0, offset_topic=0, limit=100)
+    except ImportError:                                        # older layers: channels.GetForumTopicsRequest
+        from telethon.tl.functions.channels import GetForumTopicsRequest
+        req = GetForumTopicsRequest(channel=ent, offset_date=None, offset_id=0, offset_topic=0, limit=100)
+    res = await client(req)
+    return {t.id: t.title for t in getattr(res, "topics", []) if getattr(t, "title", None)}
+
+
+def _topics_known(con, chan: str) -> dict:
+    return {tid: title for tid, title in con.execute("SELECT topic_id, title FROM telegram_topics WHERE channel=?", (chan,))}
+
+
+def _save_topics(con, chan: str, topics: dict) -> None:
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    con.executemany("INSERT OR REPLACE INTO telegram_topics (channel, topic_id, title, updated_at) VALUES (?,?,?,?)",
+                    [(chan, tid, title, now) for tid, title in topics.items()])
+
+
+def topic_title_for(topics: dict, tid: int | None) -> str | None:
+    if not tid:
+        return None
+    return topics.get(tid) or ("General" if tid == 1 else None)
+
+
+def next_interval() -> int:
+    """Seconds until the next pass: HOT_POLL_S while any chat carried a call
+    or a position in the last HOT_MIN minutes (the owner, 2026-10-17: "all
+    signals must be ingested in real time and displayed in real time"),
+    else COLD_POLL_S. Telethon's client here connects per pass (no
+    standing update handler), so this is as live as polling gets."""
+    try:
+        con = _con()
+        since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=HOT_MIN)).isoformat()
+        hot = con.execute("SELECT 1 FROM telegram_chat_state WHERE last_cue_at >= ? LIMIT 1", (since,)).fetchone()
+        con.close()
+    except sqlite3.Error:
+        hot = None
+    return HOT_POLL_S if hot else COLD_POLL_S
+
+
 async def _collect(hours: int = LOOKBACK_HOURS) -> int:
     from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
+    try:
+        from telethon.tl.types import MessageActionTopicCreate, MessageActionTopicEdit
+        topic_actions = (MessageActionTopicCreate, MessageActionTopicEdit)
+    except ImportError:                                        # noqa: BLE001
+        topic_actions = ()
+    import telegram_signals
     cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)
     con = _con()
-    have = {(c, m) for c, m in con.execute("SELECT channel, msg_id FROM telegram_posts")}
+    have = {(c, m) for c, m in con.execute("SELECT channel, msg_id FROM telegram_posts WHERE posted_at >= ?",
+                                           ((cutoff - _dt.timedelta(hours=1)).isoformat(),))}
+    state = {r[0]: {"last": r[1], "topics_at": r[2] or 0} for r in
+             con.execute("SELECT channel, last_msg_id, topics_at FROM telegram_chat_state")}
     new = 0
     client = await _connected()
     try:
@@ -231,22 +328,59 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
             # surer than waiting for the "started a live stream" message.
             if d.is_channel and getattr(ent, "call_active", False):
                 live_now.append(ent)
-            if not (d.is_channel and getattr(ent, "broadcast", False)):
+            # GROUPS TOO (the owner, 2026-10-17). Until now only broadcast
+            # channels were read: the gilets jaunes' national and regional
+            # discussion groups (t.me/GJ2026IDF …) and forum supergroups like
+            # Le Grand Café were joined and never read. A supergroup is a
+            # channel with megagroup set; a forum is a supergroup with topics.
+            broadcast = d.is_channel and getattr(ent, "broadcast", False)
+            group = d.is_channel and getattr(ent, "megagroup", False)
+            if not (broadcast or group):
                 continue
             chan = getattr(ent, "username", None) or f"c/{ent.id}"
             joined.add(chan.lower())
-            info = channel_info(chan)
+            info = channel_info(chan, "group" if group else "aggregator")
             if info["role"] == "ignore":
                 continue                      # joined, judged useless (telegram_channels.json)
-            async for m in client.iter_messages(ent, limit=PER_CHANNEL):
+            kind = "forum" if getattr(ent, "forum", False) else "group" if group else "channel"
+            # NOTHING NEW, NOTHING ASKED: the dialog list carries each chat's
+            # newest message, so a quiet chat costs no request — which is
+            # what lets a pass run every HOT_POLL_S.
+            top = getattr(getattr(d, "message", None), "id", None)
+            last = (state.get(chan) or {}).get("last")
+            if top and last and top <= last:
+                continue
+            topics: dict = {}
+            if kind == "forum":
+                topics = _topics_known(con, chan)
+                if time.time() - (state.get(chan) or {}).get("topics_at", 0) > TOPICS_EVERY_S:
+                    try:
+                        topics.update(await _forum_topics(client, ent))
+                        _save_topics(con, chan, topics)
+                        con.execute("INSERT INTO telegram_chat_state (channel, topics_at) VALUES (?,?) ON CONFLICT(channel)"
+                                    " DO UPDATE SET topics_at=excluded.topics_at", (chan, time.time()))
+                    except Exception as e:                     # noqa: BLE001
+                        print(f"[telegram] topics of {chan}: {type(e).__name__}: {e}", flush=True)
+            title = getattr(ent, "title", chan)
+            cue_at = None
+            n_chat = 0
+            async for m in client.iter_messages(ent, limit=PER_GROUP if group else PER_CHANNEL, min_id=last or 0):
                 if m.date < cutoff:
                     break
-                # A channel going live posts a service message, not text:
-                # telegram_live.py records it (start, or end with duration).
-                if getattr(m, "action", None) is not None:
+                action = getattr(m, "action", None)
+                if action is not None:
+                    # a topic created or renamed: its title is the context of
+                    # every message written in it
+                    if topic_actions and isinstance(action, topic_actions):
+                        if getattr(action, "title", None):
+                            topics[m.id] = action.title
+                            _save_topics(con, chan, {m.id: action.title})
+                        continue
+                    # A channel going live posts a service message, not text:
+                    # telegram_live.py records it (start, or end with duration).
                     try:
                         import telegram_live
-                        if telegram_live.note_action(chan, getattr(ent, "title", chan), m, role=info["role"]) == "started":
+                        if telegram_live.note_action(chan, title, m, role=info["role"]) == "started":
                             print(f"[telegram-live] {chan} went live", flush=True)
                     except Exception as e:                     # noqa: BLE001
                         print(f"[telegram-live] {chan}: {type(e).__name__}: {e}", flush=True)
@@ -258,12 +392,17 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                 # from its own channel if it matters, so skip the copy.
                 if m.fwd_from is not None and info["role"] != "official":
                     continue
+                cue = telegram_signals.cues(text)
+                if cue:
+                    cue_at = m.date.isoformat()
                 media, thumb = "none", None
                 if isinstance(m.media, MessageMediaPhoto):
                     media = "photo"
                 elif isinstance(m.media, MessageMediaDocument) and (m.file and (m.file.mime_type or "").startswith("video")):
                     media = "video"
-                if media != "none":
+                # A group's pictures are mostly memes and selfies: a thumbnail
+                # only when the words say something is happening.
+                if media != "none" and (not group or cue):
                     name = f"{chan.replace('/', '_')}_{m.id}.jpg"
                     path = os.path.join(MEDIA_DIR, name)
                     try:
@@ -273,12 +412,27 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                         thumb = name if got else None
                     except Exception:
                         thumb = None
+                tid = topic_of(m) if kind == "forum" else None
+                reply = getattr(getattr(m, "reply_to", None), "reply_to_msg_id", None)
+                if tid and reply == tid:
+                    reply = None                       # written in a topic, not an answer to someone
                 con.execute(
-                    "INSERT OR IGNORE INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, media, thumb, views, role, party)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (chan, m.id, getattr(ent, "title", chan), m.date.isoformat(), text[:4000], media, thumb, m.views,
-                     info["role"], info["party"]))
+                    "INSERT OR IGNORE INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, media, thumb, views,"
+                    " role, party, chat_kind, topic_id, topic_title, reply_to)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (chan, m.id, title, m.date.isoformat(), text[:4000], media, thumb, m.views,
+                     info["role"], info["party"], kind, tid, topic_title_for(topics, tid), reply))
                 new += 1
+                n_chat += 1
+            now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            con.execute(
+                "INSERT INTO telegram_chat_state (channel, kind, title, last_msg_id, last_new_at, last_cue_at)"
+                " VALUES (?,?,?,?,?,?) ON CONFLICT(channel) DO UPDATE SET kind=excluded.kind, title=excluded.title,"
+                " last_msg_id=MAX(COALESCE(telegram_chat_state.last_msg_id, 0), COALESCE(excluded.last_msg_id, 0)),"
+                " last_new_at=COALESCE(excluded.last_new_at, telegram_chat_state.last_new_at),"
+                " last_cue_at=COALESCE(excluded.last_cue_at, telegram_chat_state.last_cue_at)",
+                (chan, kind, title, top or last, now_iso if n_chat else None, cue_at))
+            con.commit()
       # Registered channels not joined yet: joined now, read next pass.
       await _join_registered(client, joined)
       # Streams still on? (a stream's end may come before its service message)
@@ -297,15 +451,19 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
 # ── classify + locate ───────────────────────────────────────────────────
 
 SYSTEM = """You screen Telegram channel posts for an intelligence console.
-Posts may be in Arabic, Hebrew, Russian or English; always answer in English.
-Each post is prefixed [channel | role | party]. role "official" means the post
-is that party's own statement.
+Posts may be in Arabic, Hebrew, Russian, French, German or English; always answer in English.
+Each post is prefixed [channel › topic | role | party]. role "official" means the post
+is that party's own statement; role "group" means a member's message in a group chat,
+and the topic (when given) is the thread it was written in — use it for the region
+and the purpose ("Région Bretagne", "Pourquoi on manifeste").
 For each numbered post return an object in "results" (same order) with:
-  relevant: true only if it reports a specific event that happened or was
+  relevant: true if it reports a specific event that happened or was
     claimed, with security, military, maritime, aviation, energy/infrastructure
     or civil-unrest significance (strikes, attacks, clashes, troop or vessel
     movements, seizures, explosions, interceptions, infrastructure damage,
-    evacuations, protests). FALSE for: commentary, opinion, analysis, speeches
+    evacuations, protests) — or if it CALLS people to act together at a
+    named place (gather, march, block, attack, occupy, strike), or says
+    where a crowd or the writer is right now. FALSE for: commentary, opinion, analysis, speeches
     with no event, ads, fundraising, memes, quizzes, domestic civil news
     (schools, traffic, weather, politics with no security event), tourism,
     economy and trade figures, religious or social disputes, announced
@@ -330,6 +488,14 @@ For each numbered post return an object in "results" (same order) with:
     not name. Empty if none.
   precision: site | street | village | town | city | region | country | none
   country_code: ISO 3166-1 alpha-2 of that place, lowercase, or "".
+  intent: when the post calls people to act together, {"act": one of gather |
+    march | block | attack | occupy | strike | sabotage | other, "target": the
+    place or object named, explicit ("Palais de l'Élysée, Paris, France"),
+    "when": "now" if it says now or immediately (maintenant, tout de suite, on
+    y va, go, jetzt …), else the time as written, or "", "who": who is called
+    or who calls, or ""}; null when there is no call.
+  at: when the writer says where they (or their group) are right now ("on
+    est à Concorde"), that place as "Place, City, Country"; else "".
 Return JSON {"results": [...]}."""
 
 
@@ -339,9 +505,12 @@ def _model_pass(rows):
     if client is None:
         return None
     model = openai_gate.model_for(openai_gate.ENRICH)
-    numbered = "\n\n".join(f"{i+1}. [{r[1]} | {r[4] or 'aggregator'} | {r[5] or '-'}] {r[2][:700]}" for i, r in enumerate(rows))
+    def label(r):
+        topic = r[9] if len(r) > 9 and r[9] else None
+        return f"{r[1]} › {topic}" if topic else f"{r[1]}"
+    numbered = "\n\n".join(f"{i+1}. [{label(r)} | {r[4] or 'aggregator'} | {r[5] or '-'}] {r[2][:700]}" for i, r in enumerate(rows))
     resp = client.chat.completions.create(
-        model=model, temperature=0, max_tokens=2500, response_format={"type": "json_object"},
+        model=model, temperature=0, max_tokens=3200, response_format={"type": "json_object"},
         messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": numbered}])
     u = getattr(resp, "usage", None)
     if u:
@@ -378,10 +547,34 @@ def locate(place: str, precision: str, country_code: str) -> tuple[dict | None, 
     return hits[0], None
 
 
+GROUP_NO_CUE = "group chatter — nothing to read (no call, place or event words)"
+
+
+def group_worth_reading(text: str | None) -> bool:
+    """The cheap pre-filter in front of the model for GROUP messages: a
+    group writes hundreds of "+1", "lol" and links an hour, and every one
+    sent to the model would cost as much as a channel's report. Only what
+    names an act, a position, a live development or an event goes on."""
+    import telegram_signals
+    import telegram_events
+    t = text or ""
+    return (telegram_signals.cues(t) or bool(telegram_events.SITUATION_CUES.search(t))
+            or bool(UNREST_WORDS.search(t)) or bool(ANNOUNCE_CUES.search(t)) and len(t) > 40)
+
+
 def classify(limit: int = 120) -> dict:
     con = _con()
-    rows = con.execute("SELECT channel, channel_title, text, msg_id, role, party, media FROM telegram_posts WHERE classified=0"
-                       " ORDER BY posted_at DESC LIMIT ?", (limit,)).fetchall()
+    cols = "channel, channel_title, text, msg_id, role, party, media, posted_at, topic_id, topic_title, chat_kind"
+    rows = con.execute(f"SELECT {cols} FROM telegram_posts WHERE classified=0"
+                       " ORDER BY posted_at DESC LIMIT ?", (limit * 5,)).fetchall()
+    # Group chatter with nothing to read is screened here, without a model
+    # call; what is left goes to the model, newest first, `limit` a pass.
+    chatter = [r for r in rows if r[10] in ("group", "forum") and not group_worth_reading(r[2])]
+    con.executemany("UPDATE telegram_posts SET classified=1, relevant=0, unpublished_reason=? WHERE channel=? AND msg_id=?",
+                    [(GROUP_NO_CUE, r[0], r[3]) for r in chatter])
+    con.commit()
+    skip = {(r[0], r[3]) for r in chatter}
+    rows = [r for r in rows if (r[0], r[3]) not in skip][:limit]
     done = kept = 0
     # The model calls run four at a time (11 s each, one after another made
     # a backlog crawl); place lookups and writes stay serial — the geocoder
@@ -397,6 +590,7 @@ def classify(limit: int = 120) -> dict:
             return None
     with ThreadPoolExecutor(max_workers=4) as pool:
         answers = list(pool.map(run, chunks))
+    intent_geocodes = [10]                     # the geocoder takes one request a second
     for chunk, res in zip(chunks, answers):
         if res is None:
             continue
@@ -437,11 +631,20 @@ def classify(limit: int = 120) -> dict:
                  (x.get("country_code") or "").lower(), hit and hit["lat"], hit and hit["lon"],
                  hit and hit.get("display_name"), why, x.get("lang"), (x.get("summary_en") or "")[:800],
                  int(bool(x.get("claim"))), int(bool(x.get("first_hand"))), r[0], r[3]))
+            # The same answer's intent and position, merged with the rules'
+            # reading (telegram_signals.merge_model): no second model call.
+            if x.get("intent") or x.get("at"):
+                try:
+                    import telegram_signals
+                    telegram_signals.merge_model(con, r[0], r[3], r[7], x, topic_id=r[8], topic_title=r[9],
+                                                 geocode_budget=intent_geocodes)
+                except Exception as e:                         # noqa: BLE001
+                    print(f"[telegram] error: intent merge {r[0]}/{r[3]}: {type(e).__name__}: {e}", flush=True)
             done += 1
             kept += int(hit is not None)
         con.commit()
     con.close()
-    return {"classified": done, "published": kept}
+    return {"classified": done, "published": kept, "group_chatter_skipped": len(chatter)}
 
 
 HARD = {"strike", "attack", "explosion", "clash", "interception"}
@@ -537,6 +740,21 @@ def as_surface_items(hours: int = 24) -> list[dict]:
             "published_at": st["posted_at"], "confidence": 0.6, "lat": None, "lon": None,
             "severity_tier": "critical" if st["important"] else "moderate",
         })
+    # A call to act that names a place the geocoder could not pin is still
+    # worth the Inbox when it is urgent (telegram_signals.py): without a
+    # position, like a statement.
+    try:
+        import telegram_signals
+        for s in telegram_signals.posts(hours):
+            if s["lat"] is None and s["signal_severity"] in ("high", "critical"):
+                out.append({
+                    **s, "type": "telegram", "source_type": "telegram_signal",
+                    "source": s["channel_title"] or s["channel"], "context": s["summary_en"] or "",
+                    "location": s["place"], "location_country": country_name_from_code(s["country_code"] or "") or None,
+                    "published_at": s["posted_at"], "confidence": 0.5,
+                })
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[telegram] error: signals for the surface: {type(e).__name__}: {e}", flush=True)
     # Announced gatherings are forward signals: at the place, dated by when
     # they were announced, saying when they start.
     for a in upcoming():
@@ -912,7 +1130,30 @@ def published(hours: int = 72) -> list[dict]:
                             + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
         })
         seen[key] = out[-1]
-    return out
+    return with_signals(out, hours, located_only=True)
+
+
+def with_signals(out: list[dict], hours: int, located_only: bool = False, before: str | None = None,
+                 floor: str = "") -> list[dict]:
+    """ONE THING, ONE SIGNAL (the owner, 2026-10-17: "a cleaned-up signal
+    that is readable and easy to take in", not one card per message). The
+    unified signals of telegram_signals.py join the posts, and a post a
+    signal stands for is shown through it, not a second time. Newest first."""
+    try:
+        import telegram_signals
+        sigs = telegram_signals.posts(max(hours, 1))
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[telegram] error: unified signals: {type(e).__name__}: {e}", flush=True)
+        return out
+    if located_only:
+        sigs = [s for s in sigs if s["lat"] is not None]
+    if before:
+        sigs = [s for s in sigs if s["posted_at"] < before]
+    sigs = [s for s in sigs if s["posted_at"] >= floor]
+    covered = {(x["channel"], x["msg_id"]) for s in sigs for x in s["sources"]}
+    merged = [p for p in out if (p.get("channel"), p.get("msg_id")) not in covered] + sigs
+    merged.sort(key=lambda p: p.get("posted_at") or "", reverse=True)
+    return merged
 
 
 def feed(before: str | None = None, limit: int = 40) -> dict:
@@ -945,7 +1186,12 @@ def feed(before: str | None = None, limit: int = 40) -> dict:
         "verification": (f"{r['party']} — " if r["party"] and r["role"] == "official" else "")
                         + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
     } for r in rows]
-    return {"posts": out, "next": out[-1]["posted_at"] if len(out) == limit else None}
+    # Unified signals in the same timeline (groups' calls and positions
+    # included, which the relevance screen alone would leave out), within
+    # this page's span so paging neither repeats nor skips them.
+    full = len(out) == limit
+    out = with_signals(out, 72, before=before, floor=out[-1]["posted_at"] if full else "")[:limit]
+    return {"posts": out, "next": out[-1]["posted_at"] if out and (full or len(out) == limit) else None}
 
 
 # Worth interrupting for: a party claiming it struck, attacked, intercepted
@@ -1037,6 +1283,16 @@ def stats() -> dict:
            "unpublished_reasons": dict(con.execute(
                "SELECT unpublished_reason, COUNT(*) FROM telegram_posts WHERE relevant=1 AND lat IS NULL"
                " GROUP BY unpublished_reason ORDER BY 2 DESC LIMIT 8").fetchall())}
+    # what groups and forum topics add (telegram_signals.py, 2026-10-17)
+    out["chats_by_kind"] = dict(con.execute("SELECT COALESCE(kind,'channel'), COUNT(*) FROM telegram_chat_state GROUP BY 1").fetchall())
+    out["forum_topics"] = q("SELECT COUNT(*) FROM telegram_topics")
+    try:
+        import telegram_signals
+        telegram_signals.ensure(con)
+        out["intents"] = dict(con.execute("SELECT kind, COUNT(*) FROM telegram_intents GROUP BY kind").fetchall())
+    except Exception:                                           # noqa: BLE001
+        pass
+    out["next_poll_s"] = next_interval()
     con.close()
     return out
 
@@ -1049,6 +1305,8 @@ _SESSION_LOCK = threading.Lock()
 
 _LAST_FULL = {"at": 0.0}
 FULL_EVERY_S = 30 * 60
+_LAST_EXTRAS = {"at": 0.0}
+EXTRAS_EVERY_S = 55
 
 
 def run_once(hours: int = 6) -> dict:
@@ -1062,7 +1320,27 @@ def run_once(hours: int = 6) -> dict:
         new = asyncio.run(_collect(LOOKBACK_HOURS if full else hours))
     if full:
         _LAST_FULL["at"] = time.time()
-    out = {"collected": new, "full_pass": full, **classify()}
+    out = {"collected": new, "full_pass": full}
+    # Calls and positions by rule, before any model: an immediate call is a
+    # signal seconds after it is collected (telegram_signals.py).
+    try:
+        import telegram_signals
+        out.update(telegram_signals.read_pending())
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[telegram] error: intent rules: {type(e).__name__}: {e}", flush=True)
+    out.update(classify())
+    # Live developments (a kettle, a charge) are read every pass too: each
+    # post is read once, so a shorter pass means smaller batches, not more.
+    try:
+        import telegram_events
+        out.update(telegram_events.read_situations())
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[telegram] error: situations: {type(e).__name__}: {e}", flush=True)
+    # A hot pass (every HOT_POLL_S) collects, reads and classifies; the
+    # slower readings below keep their minute, as before groups were read.
+    if time.time() - _LAST_EXTRAS["at"] < EXTRAS_EVERY_S:
+        return out
+    _LAST_EXTRAS["at"] = time.time()
     out["republished"] = republish_dropped()
     out["screened"] = screen_graphic()
     # Announced events (one per place, with reminders' times) and live
