@@ -1195,7 +1195,7 @@ def with_signals(out: list[dict], hours: int, located_only: bool = False, before
         sigs = telegram_signals.posts(max(hours, 1))
     except Exception as e:                                      # noqa: BLE001
         print(f"[telegram] error: unified signals: {type(e).__name__}: {e}", flush=True)
-        return out
+        sigs = []           # the street reports below do not depend on them
     # Street reports ("ça gaze à Répu" → "Tear gas used at Place de la
     # République (Paris)"), the same way: one signal for the messages behind it.
     try:

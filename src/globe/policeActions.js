@@ -50,6 +50,7 @@ const arr = (v) => (Array.isArray(v) ? v : [])
 const fin = (p) => p?.lat != null && p?.lon != null && p.lat !== "" && Number.isFinite(+p.lat) && Number.isFinite(+p.lon)
 const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t : NaN }
 const R = 6_371_000
+const STACK_PX = 30
 
 export function rgba(hex, a) {
     const h = String(hex).replace("#", "")
@@ -174,6 +175,7 @@ export function policeDetail(r) {
 export function policeFeatures(data, now = Date.now()) {
     const out = []
     const reports = arr(data?.reports).filter(fin).slice().sort((a, b) => (ms(a.at) || 0) - (ms(b.at) || 0))
+    const stacked = new Map()
     for (const r of reports) {
         const age = Number.isFinite(ms(r.at)) ? (now - ms(r.at)) / 60_000 : Number(r.age_min)
         const alpha = reportAlpha(age, r.valid_min)
@@ -211,9 +213,15 @@ export function policeFeatures(data, now = Date.now()) {
         const label = r.tactic === "kettle" ? (r.label || `Kettled — exits blocked (reported ${r.hhmm || "?"})`)
             : `${(TACTIC[r.tactic] || TACTIC.footage).short} · ${r.hhmm || ageLabel(age)}`
         const ic = tacticIcon(r.tactic, label, Math.max(0.45, alpha))
+        // several reports at one place (gas, a kettle and police arriving at
+        // République): their marks stack downward instead of writing over each other
+        const spot = `${lat.toFixed(4)},${lon.toFixed(4)}`
+        const nth = stacked.get(spot) || 0
+        stacked.set(spot, nth + 1)
         out.push({
             ...base, id: `pol-mark-${r.id}`, type: "police_mark", coords: [[lat, lon], [lat, lon]], color: rgba(colour, 0), weight: 0, dash: null,
-            marker: { lat, lon, iconUri: ic.uri, iconWidth: ic.width, iconHeight: ic.height, iconAnchor: ic.anchor },
+            marker: { lat, lon, iconUri: ic.uri, iconWidth: ic.width, iconHeight: ic.height,
+                      iconAnchor: [ic.anchor[0], ic.anchor[1] - STACK_PX * nth] },
         })
     }
     return out

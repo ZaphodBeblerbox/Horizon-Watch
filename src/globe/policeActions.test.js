@@ -112,6 +112,10 @@ describe("policeFeatures", () => {
         const k = f.find((x) => x.id === "pol-mark-k")
         expect(policeDetail(k.raw)).toContain("Exits drawn closed: Boulevard de Magenta, Boulevard Voltaire, Rue du Temple.")
     })
+    it("marks at one place stack instead of overlapping", () => {
+        const anchors = ["pol-mark-k", "pol-mark-g", "pol-mark-p"].map((id) => f.find((x) => x.id === id).marker.iconAnchor[1])
+        expect(new Set(anchors).size).toBe(3)
+    })
     it("tolerates junk", () => {
         expect(policeFeatures(null)).toEqual([])
         expect(policeFeatures({ reports: [{ lat: "x" }, null].filter(Boolean) })).toEqual([])

@@ -14,6 +14,7 @@ import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReferenc
 import API_BASE from "../apiBase.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { POLICE_PATH, POLICE_REFRESH_MS, policeFeatures } from "./policeActions.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 export default function GlobePoliceActionsLayer({ enabled = false }) {
     const { viewer } = useCesium()
@@ -69,7 +70,7 @@ const PoliceEntity = memo(function PoliceEntity({ f }) {
                                  pixelOffset: new Cartesian2(mk.iconWidth / 2 - mk.iconAnchor[0], mk.iconHeight / 2 - mk.iconAnchor[1]),
                                  heightReference: HeightReference.CLAMP_TO_GROUND,
                                  distanceDisplayCondition: new DistanceDisplayCondition(0, 600_000),
-                                 disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                                 disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
         )
     }
     return (

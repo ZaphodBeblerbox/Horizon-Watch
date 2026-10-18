@@ -305,6 +305,23 @@ def test_mood_reads_spanish():
     assert tu.PROTEST.search("gran marcha en Caracas") and tu.PROTEST.search("ရန်ကုန်တွင် ဆန္ဒပြ")
 
 
+def test_signals_without_any_model_reading(monkeypatch):
+    """Production's model credit can run out: unclassified posts (no
+    summary_en, no place, no live-development rows) still become signals."""
+    import sqlite3
+    monkeypatch.setattr(sr, "chat_contexts", lambda chans: {c: {"city": "Paris", "protest": True} for c in chans})
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE telegram_posts (channel TEXT, msg_id INTEGER, channel_title TEXT, posted_at TEXT, text TEXT,"
+                " media TEXT, thumb TEXT, role TEXT, classified INTEGER DEFAULT 0)")
+    rows = [("GJ2026IDF", 1, "GJ IDF", (NOW - dt.timedelta(minutes=3)).isoformat(), "ça nasse à Répu", "none", None, "group"),
+            ("GJ2026IDF", 2, "GJ IDF", (NOW - dt.timedelta(minutes=2)).isoformat(), "mdr", "none", None, "group")]
+    con.executemany("INSERT INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, media, thumb, role)"
+                    " VALUES (?,?,?,?,?,?,?,?)", rows)
+    sigs = sr.read(con, now=NOW)
+    assert [s["title"] for s in sigs] == ["Kettle at Place de la République (Paris) — exits blocked"]
+    assert sigs[0]["sources"][0]["translated_by"] == "rule"
+
+
 def test_as_post_shape():
     s = sr.build([_post("ça gaze à Répu")], now=NOW, chats=PARIS)[0]
     p = sr.as_post(s)
