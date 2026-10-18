@@ -210,8 +210,6 @@ export default function RiskIndexPanel() {
                                         )}
                                     </div>
                                 )}
-                                    </div>
-                                )}
                             </div>
                         )
                     })}
