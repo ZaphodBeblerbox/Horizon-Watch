@@ -173,6 +173,10 @@ def _fake_database(rows, calls, fail=False, gate=None):
 
 
 def _reset(monkeypatch):
+    # A refresh thread started by an earlier suite may still hold the lock;
+    # it would mark the cache fresh under us, so let it finish first.
+    with vi._LOAD_LOCK:
+        pass
     monkeypatch.setattr(vi, "_LOADED_AT", 0.0)
     vi._CACHE.clear()
     vi._LOADING.clear()
