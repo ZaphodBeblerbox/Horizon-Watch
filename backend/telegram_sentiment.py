@@ -170,11 +170,13 @@ def series(country: str, days: int = WINDOW_DAYS, now: _dt.datetime | None = Non
     base_ix = index_of([r["mood_tension"] for r in before], [r["mood_mobilise"] for r in before])
     allr = recent + before
     calls = sorted((r for r in allr if (r["mood_mobilise"] or 0) >= 2), key=lambda r: r["posted_at"], reverse=True)
-    conflict = None
+    conflict = unrest = None
     if live:                                   # read from the database, not handed rows (tests)
         conflict = _conflict_readings().get(country.lower())
+        unrest = _unrest_reading(country.lower())
     return {
         "conflict": conflict,
+        "unrest": unrest,
         "country": country.lower(), "days": out_days, "n": len(allr),
         "index_recent": now_ix, "index_before": base_ix,
         "index_window": index_of([r["mood_tension"] for r in allr], [r["mood_mobilise"] for r in allr]),
@@ -205,20 +207,60 @@ def countries(days: int = WINDOW_DAYS, now: _dt.datetime | None = None) -> list[
     except Exception:                                          # noqa: BLE001
         country_name_from_code = lambda c: None  # noqa: E731
     conflict = _conflict_readings(None if live else now)
+    unrest = _unrest_readings() if live else {}
     out = []
     for cc, rows in by.items():
-        if len(rows) < MIN_POSTS and not (conflict.get(cc) or {}).get("rising"):
+        lk = ((unrest.get(cc) or {}).get("likelihood") or {}).get("level")
+        if len(rows) < MIN_POSTS and not (conflict.get(cc) or {}).get("rising") and lk in (None, "Low"):
             continue
         s = series(cc, days, now, rows)
+        u = unrest.get(cc)
         out.append({"country": cc, "name": country_name_from_code(cc) or cc.upper(), "n": s["n"],
                     "index_window": s["index_window"], "index_recent": s["index_recent"], "change": s["change"],
-                    "topics": s["topics"][:2], "conflict": conflict.get(cc)})
+                    "topics": s["topics"][:2], "conflict": conflict.get(cc),
+                    # Tension trend and demonstration likelihood (telegram_unrest.py,
+                    # owner 2026-10-17: "see tensions rising, likelihood of
+                    # demonstrations increasing").
+                    **(_compact(u) if u else {"trend": None, "likelihood": None})})
     # Calls for armed conflict rising first (telegram_mood_alert.py), then
     # the sharpest rise; without a comparison (no recent or no earlier
-    # posts), the highest two-week index.
-    out.sort(key=lambda x: (not (x["conflict"] or {}).get("rising"), x["change"] is None,
+    # posts), the highest two-week index — with demonstrations likely
+    # (High, then Elevated; telegram_unrest.py) ahead of the rest.
+    lv = {"High": 0, "Elevated": 1}
+    out.sort(key=lambda x: (not (x["conflict"] or {}).get("rising"),
+                            lv.get((x["likelihood"] or {}).get("level"), 2), x["change"] is None,
                             -(x["change"] or 0), -(x["index_window"] or 0)))
     return out
+
+
+def _compact(rd: dict) -> dict:
+    import telegram_unrest as tu
+    return tu.compact(rd)
+
+
+def _unrest_readings() -> dict:
+    """{country: tension trend and demonstration likelihood} — never fails the mood page."""
+    try:
+        import telegram_unrest as tu
+        return tu.evaluate()
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[tg-mood] error: unrest readings: {type(e).__name__}: {e}", flush=True)
+        return {}
+
+
+def _unrest_reading(cc: str) -> dict | None:
+    """One country's full reading, its places, and how such readings fared
+    in the stored posts (telegram_unrest.calibration)."""
+    try:
+        import telegram_unrest as tu
+        rd = tu.evaluate().get(cc)
+        if rd is None:
+            return None
+        cal = tu.calibration()
+        return rd | {"calibration": cal, "calibration_line": tu.calibration_line(cal, rd["likelihood"]["level"])}
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[tg-mood] error: unrest reading {cc}: {type(e).__name__}: {e}", flush=True)
+        return None
 
 
 def _conflict_readings(now: _dt.datetime | None = None) -> dict:
