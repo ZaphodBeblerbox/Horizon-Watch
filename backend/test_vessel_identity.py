@@ -109,3 +109,117 @@ def test_every_enriched_field_survives_a_string_operation():
         val = v.get(field)
         if val is not None:
             assert isinstance(val, str), f"{field} is {type(val)}"
+
+
+# ── an empty history is an answer, not "not loaded yet" ──────────────────
+#
+# Production 2026-10-18: history held no named vessel, the cache stayed
+# empty, and `if _CACHE and fresh` treated that as "never loaded" — so
+# every vessel in /api/ais/vessels re-ran the whole-table query, 2,500
+# queries per request on the event loop, and the whole API stopped
+# answering for half an hour.
+
+import contextlib  # noqa: E402
+import sys  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+import types  # noqa: E402
+
+
+def _fake_database(rows, calls, fail=False, gate=None):
+    class _Col:
+        def isnot(self, _):
+            return self
+
+        def __ne__(self, _):
+            return self
+
+        def desc(self):
+            return self
+
+    class _VH:
+        mmsi = name = ship_type = ship_type_text = destination = id = _Col()
+
+    class _Q:
+        def filter(self, *a):
+            return self
+
+        def order_by(self, *a):
+            return self
+
+        def limit(self, *a):
+            return self
+
+        def all(self):
+            if gate is not None:
+                gate.wait(5)
+            calls.append(1)
+            if fail:
+                raise RuntimeError("database is locked")
+            return list(rows)
+
+    class _DB:
+        def query(self, *a):
+            return _Q()
+
+    @contextlib.contextmanager
+    def get_db():
+        yield _DB()
+
+    m = types.ModuleType("database")
+    m.VesselHistory = _VH
+    m.get_db = get_db
+    return m
+
+
+def _reset(monkeypatch):
+    monkeypatch.setattr(vi, "_LOADED_AT", 0.0)
+    vi._CACHE.clear()
+    vi._LOADING.clear()
+
+
+def test_an_empty_history_is_loaded_once_not_once_per_vessel(monkeypatch):
+    calls = []
+    monkeypatch.setitem(sys.modules, "database", _fake_database([], calls))
+    _reset(monkeypatch)
+    vi._load_known(block=True)
+    assert calls == [1]
+    out = vi.enrich_all([{"mmsi": str(636000000 + i)} for i in range(500)])
+    for i in range(50):
+        vi.enrich({"mmsi": str(636000000 + i)})
+    assert len(out) == 500
+    assert calls == [1], f"queried {len(calls)} times"
+
+
+def test_a_failed_load_is_retried_after_a_pause_not_per_call(monkeypatch):
+    calls = []
+    monkeypatch.setitem(sys.modules, "database", _fake_database([], calls, fail=True))
+    _reset(monkeypatch)
+    vi._load_known(block=True)
+    for _ in range(50):
+        vi._load_known(block=True)
+        vi.enrich({"mmsi": "636019825"})
+    assert calls == [1]
+
+
+def test_a_request_never_waits_for_the_load(monkeypatch):
+    """The caller gets what is cached now; the refresh runs in its own
+    thread, and only one of them at a time."""
+    gate = threading.Event()
+    calls = []
+    monkeypatch.setitem(sys.modules, "database", _fake_database(
+        [("636019825", "ARGO", 70, "Cargo", "ROTTERDAM")], calls, gate=gate))
+    _reset(monkeypatch)
+    t0 = time.monotonic()
+    v = vi.enrich_all([{"mmsi": "636019825"}])[0]
+    vi.enrich_all([{"mmsi": "636019825"}])
+    assert time.monotonic() - t0 < 1.0
+    assert not v.get("name")
+    assert vi._LOADING.is_set()
+    gate.set()
+    for _ in range(250):
+        if not vi._LOADING.is_set():
+            break
+        time.sleep(0.02)
+    assert calls == [1]
+    assert vi.enrich({"mmsi": "636019825"})["name"] == "ARGO"

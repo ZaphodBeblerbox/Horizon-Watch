@@ -172,3 +172,63 @@ def test_mixed_timestamp_formats_are_all_understood():
 def test_nothing_in_nothing_out():
     assert co.cluster([]) == []
     assert co.corroborated_only([]) == []
+
+
+# ── the banded clustering is the same clustering, only faster ────────────
+
+def _reference_cluster(observations, radius_km=co.DEFAULT_RADIUS_KM,
+                       window_hours=co.DEFAULT_WINDOW_HOURS):
+    """The original all-pairs single-link pass, kept as the oracle."""
+    obs = [o for o in (co.normalise(o) for o in observations) if o]
+    obs.sort(key=lambda o: o["ts"])
+    w = timedelta(hours=window_hours).total_seconds()
+    clusters = []
+    for o in obs:
+        joined = None
+        for c in clusters:
+            if any(abs((o["ts"] - m["ts"]).total_seconds()) <= w
+                   and co.haversine_km(o["lat"], o["lon"], m["lat"], m["lon"]) <= radius_km
+                   for m in c):
+                joined = c
+                break
+        if joined is None:
+            clusters.append([o])
+        else:
+            joined.append(o)
+    return [co.summarise(c) for c in clusters]
+
+
+def _random_obs(n, seed):
+    import random
+    r = random.Random(seed)
+    srcs = ["firms", "gdelt", "geoconfirmed", "imagery", "sar_vessel"]
+    out = []
+    for _ in range(n):
+        # Dense hot spots plus a scatter, the shape the real feeds have.
+        if r.random() < 0.7:
+            lat, lon = r.choice([(48.5, 37.9), (13.05, 44.88), (-0.1, 179.99), (89.9, 10.0)])
+            lat += r.uniform(-0.15, 0.15)
+            lon += r.uniform(-0.15, 0.15)
+        else:
+            lat, lon = r.uniform(-80, 80), r.uniform(-180, 180)
+        out.append({"source": r.choice(srcs), "lat": lat, "lon": lon,
+                    "ts": (T0 + timedelta(hours=r.uniform(-72, 0))).isoformat()})
+    return out
+
+
+def test_banded_clustering_matches_the_all_pairs_pass_exactly():
+    for seed in range(5):
+        obs = _random_obs(600, seed)
+        assert co.cluster(obs) == _reference_cluster(obs)
+        assert co.cluster(obs, radius_km=40, window_hours=6) == \
+            _reference_cluster(obs, radius_km=40, window_hours=6)
+
+
+def test_twelve_thousand_observations_cluster_in_seconds_not_minutes():
+    """Production feeds ~12k observations into this every 15 minutes; the
+    all-pairs pass took 8-27 s there, on the event loop."""
+    import time
+    obs = _random_obs(12000, 7)
+    t0 = time.monotonic()
+    co.cluster(obs)
+    assert time.monotonic() - t0 < 8.0
