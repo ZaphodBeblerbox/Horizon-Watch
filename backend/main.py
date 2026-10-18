@@ -13777,8 +13777,9 @@ async def _coastal_targets_loop():
 
 async def _telegram_mood_alert_loop():
     """Calls for armed conflict rising on Telegram about a country
-    (telegram_mood_alert.py, owner 2026-10-11): read from the posts the mood
-    pass already rated, every 45 minutes, in a thread of its own; each rise
+    (telegram_mood_alert.py, owner 2026-10-11), and each single call to
+    violence (2026-10-18): read from the posts the mood pass already rated,
+    every 10 minutes, in a thread of its own; each rise
     written through write_alert() (fusion feed, entity links, the record)."""
     from concurrent.futures import ThreadPoolExecutor as _TPE
     _pool = _TPE(max_workers=1, thread_name_prefix="tg-mood")
@@ -13788,6 +13789,8 @@ async def _telegram_mood_alert_loop():
             if not HEAVY_FEEDS_PAUSED:
                 import telegram_mood_alert as _tma
                 alerts = await asyncio.get_running_loop().run_in_executor(_pool, _tma.detect)
+                # and every single call to violence, as its own signal (owner, 2026-10-18)
+                alerts += await asyncio.get_running_loop().run_in_executor(_pool, _tma.detect_calls)
                 for a in alerts:
                     await _write_alert_off_loop(a)
                     print(f"[tg-mood] ALERT ({a['severity']}): {a['title']}", flush=True)
@@ -13813,7 +13816,9 @@ async def _telegram_mood_alert_loop():
         except Exception as _e:                              # noqa: BLE001
             import traceback as _tb
             print(f"[tg-unrest] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}", flush=True)
-        await asyncio.sleep(45 * 60)
+        # Ten minutes, not 45 (owner, 2026-10-18: a spike is a signal, now):
+        # it reads posts the mood pass already rated — no model call here.
+        await asyncio.sleep(10 * 60)
 
 
 async def _endangered_places_loop():

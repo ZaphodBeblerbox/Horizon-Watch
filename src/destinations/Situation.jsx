@@ -418,6 +418,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // reconstructed from Telegram reports (GlobeDemonstrationsLayer): off
     // until asked for — it is for following one city.
     const [demonstrationsOn, setDemonstrationsOn] = useState(false)
+    const [telegramMoodOn, setTelegramMoodOn] = useState(true)
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
@@ -488,6 +489,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         telegram: [telegramOn, setTelegramOn],
         unrest: [unrestOn, setUnrestOn],
         demonstrations: [demonstrationsOn, setDemonstrationsOn],
+        telegramMood: [telegramMoodOn, setTelegramMoodOn],
         strikes: [strikesOn, setStrikesOn],
         frontlineClaims: [claimsOn, setClaimsOn],
         movements: [movementsOn, setMovementsOn],
@@ -1268,6 +1270,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         telegram: [telegramOn, setTelegramOn, "news"],
         unrest: [unrestOn, setUnrestOn, "news"],
         demonstrations: [demonstrationsOn, setDemonstrationsOn, "news"],
+        telegram_mood: [telegramMoodOn, setTelegramMoodOn, "news"],
         strikes: [strikesOn, setStrikesOn, "news"],
         geoconfirmed: [geoConfirmedOn, setGeoConfirmedOn, "news"],
         gps_interference: [gpsInterferenceOn, setGpsInterferenceOn, "air"],
@@ -1532,6 +1535,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                                     hint="Every demonstration and happening the route planner (Get me out) avoids right now, and the crowd's movement reconstructed from Telegram reports: a line through the places it was reported, older hops fainter, the arrow on the latest and when it was last reported · reconstructed, not tracked · read every minute"
                                     on={demonstrationsOn} parentOn={groupsOn.news}
                                     onToggle={() => setDemonstrationsOn((v) => !v)} />
+                            )}
+                            {g.key === "news" && (
+                                <SubLayerRow
+                                    label="Mood & calls to violence"
+                                    hint="The mood on Telegram as signals: calls for conflict rising in a country, demonstrations likely, tension rising sharply, and each single post calling to violence, quoted, with its channel and link · solid ring where the post placed it, dashed at the country's centre · unverified, rated by a model · read every minute"
+                                    on={telegramMoodOn} parentOn={groupsOn.news}
+                                    onToggle={() => setTelegramMoodOn((v) => !v)} />
                             )}
                             {g.key === "news" && (
                                 <SubLayerRow
@@ -2095,6 +2105,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         telegramEnabled={groupsOnV.news && telegramOn}
                         unrestEnabled={groupsOnV.news && unrestOn}
                         demonstrationsEnabled={groupsOnV.news && demonstrationsOn}
+                        telegramMoodEnabled={groupsOnV.news && telegramMoodOn}
                         strikesEnabled={groupsOnV.news && strikesOn}
                         frontlineClaimsEnabled={groupsOnV.news && claimsOn}
                         movementsEnabled={groupsOnV.news && movementsOn}

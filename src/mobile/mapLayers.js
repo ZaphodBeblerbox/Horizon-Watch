@@ -42,6 +42,7 @@ import {
 import {
     DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, demoSub, demoTitle, trackSegments,
 } from "../globe/demonstrations.js"
+import { MOOD_PATH, MOOD_REFRESH_MS, moodIconUri, moodPoint } from "../globe/telegramMood.js"
 import { SITUATION_PATH, SITUATION_REFRESH_MS, convergenceIcon, situationFeatures } from "../globe/demoSituation.js"
 
 /** No layer draws more than this many features on the phone. */
@@ -645,6 +646,14 @@ async function loadDemoMovement({ bounds }) {
 async function loadDemoSituation({ bounds }) {
     const d = await getJson(`${API_BASE}${SITUATION_PATH}`, { ttlMs: SITUATION_REFRESH_MS / 2 })
     return cullLines(situationFeatures(d, Date.now()), normBounds(bounds))
+}
+
+// ── The mood on Telegram, as signals (globe/telegramMood.js) ──────────────
+async function loadTelegramMood({ bounds }) {
+    const d = await getJson(`${API_BASE}${MOOD_PATH}`, { ttlMs: MOOD_REFRESH_MS / 2 })
+    return cullPoints(arr(d).map(moodPoint).filter(Boolean).map((m) => ({
+        ...m, iconUri: moodIconUri(m.severity, m.precise), size: 22,
+    })), normBounds(bounds))
 }
 
 async function loadImagerySignals({ bounds, zoom }) {
@@ -1444,6 +1453,11 @@ export const PHONE_LAYERS = [
         key: "demonstrations:situation", label: "Crowds now & likely convergence (estimate)", group: G.news,
         defaultOn: false, kind: "lines", minZoom: 0, refreshMs: SITUATION_REFRESH_MS,
         legendIcon: convergenceIcon("").uri, load: loadDemoSituation,
+    },
+    {
+        // spikes in the mood, and each single call to violence (owner, 2026-10-18)
+        key: "telegramMood", label: "Mood & calls to violence", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
+        legendIcon: moodIconUri("high"), load: loadTelegramMood, refreshMs: MOOD_REFRESH_MS,
     },
     {
         key: "strikes", label: "Strikes & control", group: G.news, defaultOn: true, kind: "points", minZoom: 0,

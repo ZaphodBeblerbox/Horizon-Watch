@@ -530,3 +530,115 @@ def cards_for(c: dict, alerts: list[dict] | None = None) -> list[dict]:
                     "lat": a["lat"], "lon": a["lon"], "region": a["region"], "source": SOURCE,
                     "notify": True, "created_at": a["created_at"]})
     return out
+
+
+# ── one call, one signal (owner, 2026-10-18) ──────────────────────────────
+# "If we notice … calls to action, calls to violence, only one specific
+# call, citations and everything, that has to become a signal: on the desk,
+# a notification, and on the map." The rise above needs eight calls from
+# three channels; this raises the single post that itself calls to confront,
+# attack or take up arms (rated mobilise 3, or rage plus the vocabulary of
+# war), with the words quoted, the channel and the link. Copies of the same
+# post across channels are one signal that names every channel; three or
+# more channels make it critical.
+
+CALL_TYPE = "Telegram mood: call to violence"
+CALL_WINDOW_H = 3
+
+
+# The model's rating alone is not enough for one post: on real data a
+# notice about Kyiv's water supply came back rated "call to confront". A
+# single-post signal also needs the words of violence in the post itself.
+VIOLENT_ACT = re.compile(
+    r"\b(attack|attaqu|storm|assault|kill|tuer|burn|br[uû]l|torch|smash|cass(?:er|ons|ez)|destroy|d[ée]trui|"
+    r"lynch|shoot|tirer sur|fight|combat|bomb|arm(?:e|es|s)\b|weapons?|fusil|molotov|incendi|pend(?:re|ez)|"
+    r"exterminat|annihilat|massacr|égorg|behead|riot|émeute|insurrection|revolt|révolte|prendre d'assaut)", re.IGNORECASE)
+
+
+def is_violence_call(row) -> bool:
+    m = _int(_get(row, "mood_mobilise"))
+    t = _int(_get(row, "mood_tension"))
+    text = f"{_get(row, 'summary_en') or ''} {_get(row, 'text') or ''}"
+    if m >= 3:
+        return bool(VIOLENT_ACT.search(text) or CONFLICT_WORDS.search(text))
+    return t >= 3 and bool(CONFLICT_WORDS.search(text))
+
+
+def _call_rows(since: _dt.datetime) -> list:
+    import sqlite3
+    import telegram_sentiment as ts
+    con = ts._con()
+    con.row_factory = sqlite3.Row
+    try:
+        return con.execute(
+            "SELECT channel, msg_id, channel_title, posted_at, text, summary_en, headline, place, lat, lon,"
+            " mood_country, mood_tension, mood_mobilise, mood_target, mood_topic"
+            " FROM telegram_posts WHERE mood_checked=1 AND (mood_mobilise >= 3 OR mood_tension >= 3) AND posted_at >= ?",
+            (since.strftime("%Y-%m-%dT%H:%M:%S"),)).fetchall()
+    finally:
+        con.close()
+
+
+def _post_url(r) -> str | None:
+    ch = str(r["channel"] or "")
+    return None if ch.startswith("c/") else f"https://t.me/{ch}/{r['msg_id']}"
+
+
+def build_call_alerts(rows, now: _dt.datetime) -> list[dict]:
+    """One alert dict per distinct call (copies merged), newest first. Pure."""
+    groups: dict[str, list] = {}
+    for r in rows:
+        if is_violence_call(r):
+            groups.setdefault(_key(r), []).append(r)
+    out = []
+    for key, rs in groups.items():
+        rs = sorted(rs, key=lambda r: str(r["posted_at"]))
+        first = rs[0]
+        chans = list(dict.fromkeys(str(r["channel_title"] or r["channel"]) for r in rs))
+        cc = str(first["mood_country"] or "").lower()
+        name = country_name(cc) if len(cc) == 2 else (first["place"] or "an unnamed place")
+        lat, lon = first["lat"], first["lon"]
+        precise = lat is not None and lon is not None
+        if not precise and len(cc) == 2:
+            ctr = centroid(cc)
+            lat, lon = (ctr[0], ctr[1]) if ctr else (None, None)
+        said = str(first["summary_en"] or first["headline"] or first["text"] or "").strip().replace("\n", " ")
+        quote = said[:140] + ("…" if len(said) > 140 else "")
+        target = first["mood_target"]
+        title = (f"Call to violence on Telegram{f' against {target}' if target else ''} — {name}: «{quote}» "
+                 f"({chans[0]}{f' and {len(chans) - 1} more' if len(chans) > 1 else ''})")
+        cites = [{"channel": str(r["channel_title"] or r["channel"]), "url": _post_url(r), "posted_at": str(r["posted_at"]),
+                  "text": str(r["text"] or "")[:400]} for r in rs[:8]]
+        out.append({
+            "id": f"TGC-{str(first['channel']).replace('/', '_')}-{first['msg_id']}",
+            "source": SOURCE, "alert_type": CALL_TYPE, "title": title,
+            "severity": "critical" if len(chans) >= 3 else "high",
+            "lat": lat, "lon": lon, "region": first["place"] or name,
+            "country_code": cc.upper() or None,
+            "entity_type": "country" if len(cc) == 2 else None, "entity_id": cc or None, "entity_name": name,
+            "confidence": 0.6,
+            "message": (f"A post {'repeated in ' + str(len(chans)) + ' channels ' if len(chans) > 1 else ''}calls to "
+                        f"confront, attack or take up arms{f' against {target}' if target else ''}: «{said[:400]}». "
+                        f"First posted {str(first['posted_at'])[:16].replace('T', ' ')} UTC by {chans[0]}. Unverified: "
+                        "one channel's words, rated by a model; read the post."),
+            "reason": f"a call to violence about {name} on Telegram",
+            "raw": {"rule": "telegram_call_to_violence", "channels": chans, "citations": cites, "target": target,
+                    "topic": first["mood_topic"], "placed": "post" if precise else "country centre",
+                    "url": cites[0]["url"]},
+        })
+    out.sort(key=lambda a: a["raw"]["citations"][0]["posted_at"], reverse=True)
+    return out
+
+
+def detect_calls(now: _dt.datetime | None = None, rows=None, existing=None) -> list[dict]:
+    """New call-to-violence alerts from the last few hours, not raised before.
+    Synchronous: run it off the event loop."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    rows = rows if rows is not None else _call_rows(now - _dt.timedelta(hours=CALL_WINDOW_H))
+    alerts = build_call_alerts(rows, now)
+    if existing is None:
+        from database import Alert, get_db
+        ids = [a["id"] for a in alerts]
+        with get_db() as db:
+            existing = {x[0] for x in db.query(Alert.alert_id).filter(Alert.alert_id.in_(ids)).all()} if ids else set()
+    return [a for a in alerts if a["id"] not in existing]

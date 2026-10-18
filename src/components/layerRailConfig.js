@@ -168,6 +168,8 @@ export const SUB_LAYERS = [
     // What the route planner ("Get me out") avoids, and the crowd's movement
     // reconstructed from Telegram reports (globe/GlobeDemonstrationsLayer.jsx).
     { key: "demonstrations",  label: "Demonstrations, live",     parent: "news" },
+    // The mood on Telegram as signals: spikes and each call to violence (globe/GlobeTelegramMoodLayer.jsx).
+    { key: "telegramMood",    label: "Mood & calls to violence", parent: "news" },
     // Strikes, bombings, assaults and ground taken, read out of the same
     // reporting (globe/GlobeStrikesLayer.jsx) — so it lives, and switches
     // off, with News rather than as a group of its own.
@@ -188,7 +190,7 @@ export const SUB_LAYERS = [
 export const DEFAULT_SUBS = {
     imagery: ["imagerySignals"],
     // GDELT is not a map signal (owner, 2026-10-13): it feeds the country risk index only
-    news: ["geoConfirmed", "telegram", "unrest", "strikes", "frontlineClaims", "trajectories"],
+    news: ["geoConfirmed", "telegram", "unrest", "telegramMood", "strikes", "frontlineClaims", "trajectories"],
     air: [],
 }
 
