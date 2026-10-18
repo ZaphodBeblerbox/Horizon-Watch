@@ -350,7 +350,11 @@ def _save_bands(b: dict) -> None:
         print(f"[live-notif] risk state save: {type(ex).__name__}: {ex}")
 
 
-BAND_WORD = {1: "low", 2: "elevated", 3: "high", 4: "severe"}
+BAND_WORD = {1: "low", 2: "elevated", 3: "high", 4: "severe", 5: "extreme"}
+
+#: Which composition of the risk index the saved bands came from.
+RISK_FORMULA = "crossref-2026-10-18"
+_FORMULA_KEY = "_formula"
 
 
 def risk_change_items(current: list[dict]) -> list[dict]:
@@ -364,6 +368,16 @@ def risk_change_items(current: list[dict]) -> list[dict]:
     """
     out = []
     prev = _load_bands()
+    # A NEW FORMULA IS NOT A NEW RISK. When the index's composition changes
+    # (2026-10-18: GDELT + GeoConfirmed became a four-family cross-reference)
+    # every band may move at once; announcing that as 120 escalations would
+    # be noise. The state records which formula produced it, and a mismatch
+    # re-baselines silently.
+    if current and prev.get(_FORMULA_KEY) != RISK_FORMULA:
+        nxt = {r.get("iso_code"): r.get("band") for r in current
+               if r.get("iso_code") and r.get("band") is not None}
+        _save_bands({**nxt, _FORMULA_KEY: RISK_FORMULA})
+        return []
     nxt = {}
     for row in current or []:
         iso = row.get("iso_code")
@@ -386,9 +400,10 @@ def risk_change_items(current: list[dict]) -> list[dict]:
             "title": (f"{name}: risk {'up' if rose else 'down'} from {BAND_WORD.get(was, was)} "
                       f"to {BAND_WORD.get(band, band)}"),
             "sev": "high" if band >= 4 and rose else "moderate",
-            "reason": (f"Conflict and unrest reporting about {name} over the last 30 days moved its "
+            "reason": (f"Conflict and unrest reporting about {name} moved its "
                        f"risk score to {float(row.get('score') or 0):.0f} of 100"
-                       + (f" — mostly {', '.join(drivers[:2])}" if drivers else "")),
+                       + (f" — mostly {', '.join(drivers[:2])}" if drivers else "")
+                       + (f". {row['explanation']}" if row.get("explanation") else "")),
             # A move between low and elevated is a feed item, not an
             # interruption: only reaching high or severe, or leaving it,
             # earns a card.
@@ -400,5 +415,5 @@ def risk_change_items(current: list[dict]) -> list[dict]:
             "created_at": _now().isoformat(),
         })
     if nxt:
-        _save_bands({**prev, **nxt})
+        _save_bands({**prev, **nxt, _FORMULA_KEY: RISK_FORMULA})
     return out

@@ -201,15 +201,23 @@ def compute_all_countries(all_events: list, geoconfirmed_counts_by_iso: dict,
     source this round (GDELT events or GeoConfirmed placemarks) — never a
     fabricated score for a country with zero real signal in either."""
     import country_codes as _cc
-    isos = set()
+    # ONE PASS OVER THE EVENTS. Each country used to filter the whole list
+    # three times (4.84M _country_matches calls, 19.4 s for 121 countries);
+    # bucketing first makes every component's own filter run over that
+    # country's events only. The components still apply _country_matches,
+    # so the answer is the same.
+    buckets: dict = {}
     for e in all_events:
-        isos.update(_cc.event_iso3s(e))
+        for iso in _cc.event_iso3s(e):
+            buckets.setdefault(iso, []).append(e)
+    isos = set(buckets)
     # GeoConfirmed counts arrive keyed on ISO alpha-2 from country_registry.
     for k in geoconfirmed_counts_by_iso:
         iso3 = _cc.from_iso2(k) or (k.upper() if len(k) == 3 else None)
         if iso3:
             isos.add(iso3)
     return [
-        compute_country_risk(iso, all_events, geoconfirmed_counts_by_iso, weights, window_days, real_history_days)
+        compute_country_risk(iso, buckets.get(iso, []), geoconfirmed_counts_by_iso, weights, window_days,
+                             real_history_days)
         for iso in sorted(isos)
     ]

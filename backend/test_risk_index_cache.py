@@ -14,6 +14,7 @@ def _fake(monkeypatch, calls):
     monkeypatch.setattr(ri, "get_all_events", lambda: [])
     monkeypatch.setattr(ri, "_real_geoconfirmed_counts_by_iso", lambda _w: {})
     monkeypatch.setattr(ri, "real_history_days", lambda _e: 1.0)
+    monkeypatch.setattr(ri, "_family_inputs", lambda: {"rss": {}, "telegram": {}, "timing_s": {}, "errors": {}})
 
     def compute(*_a, **_k):
         calls.append(1)
