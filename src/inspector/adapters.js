@@ -1482,6 +1482,40 @@ export function adaptProtestTrack(data = {}) {
     }
 }
 
+/**
+ * The city situation (globe/demoSituation.js): a crowd's last known place
+ * (and its path), a walking route toward a probable convergence point, or
+ * the point itself — always shown as what it is, an estimate from reports.
+ */
+export function adaptDemoSituation(data = {}) {
+    const kind = data.kind || "demo_crowd"
+    const srcs = (Array.isArray(data.sources) ? data.sources : Array.isArray(data.calls) ? data.calls : [])
+        .map((s) => ({ source: s.source || "Telegram", url: s.url, time: s.published_at || s.at }))
+    const sub = {
+        demo_crowd: "Crowd, last known place · reconstructed from reports",
+        demo_path: "Crowd's path · reconstructed from reports",
+        demo_route: "Walking route toward a probable convergence point · estimate",
+        demo_convergence: "Probable convergence point · estimate",
+    }[kind] || "Demonstrations, live"
+    const point = pointOf(data)
+    return {
+        identity: { title: data.title || "Demonstrations, live", subtitle: sub, entityType: kind, subtype: null, sanctionsStatus: null },
+        description: data.detail || null,
+        attributes: compact([
+            attr("Place", data.place || data.name || null),
+            attr("Last reported", _when(data.at)),
+            attr("Estimate", data.score != null ? `${Math.round(Number(data.score) * 100)}% (an estimate, not a confirmed prediction)` : null),
+            attr("Why", data.explanation || null),
+            attr("Walking time", data.eta_min != null ? `${Math.round(Number(data.eta_min))} min${data.routed === false ? " (estimated)" : ""}` : null),
+            attr("Reports", data.n_reports != null ? String(data.n_reports) : null),
+            ..._srcAttrs(srcs),
+            attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
+        ]),
+        provenance: { feed: _feed(srcs) || "Telegram", ingestedAt: data.at || data.published_at || null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
 const ADAPTERS = {
     vessel: adaptVessel,
     aircraft: adaptAircraft,
@@ -1518,6 +1552,10 @@ const ADAPTERS = {
     trajectory: adaptTrajectory,
     demonstration: adaptDemonstration,
     protest_track: adaptProtestTrack,
+    demo_crowd: adaptDemoSituation,
+    demo_path: adaptDemoSituation,
+    demo_route: adaptDemoSituation,
+    demo_convergence: adaptDemoSituation,
 }
 
 /**

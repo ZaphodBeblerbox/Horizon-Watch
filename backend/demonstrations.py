@@ -214,10 +214,12 @@ def _ref(r: dict) -> dict:
             "published_at": r.get("at"), "place": r.get("place"), "text": (r.get("text") or "")[:400]}
 
 
-def link_tracks(reports: list[dict], now: _dt.datetime | None = None, zone_of=None) -> list[dict]:
+def link_tracks(reports: list[dict], now: _dt.datetime | None = None, zone_of=None, min_nodes: int = 2) -> list[dict]:
     """reports: {id, lat, lon, at, place, country?, text, title?, url?, source?}
-    → tracks (two places or more), newest first. zone_of(country) → a tzinfo
-    for the "last reported HH:MM" (UTC when None)."""
+    → tracks (min_nodes places or more — two for the movement layer; one for
+    the city situation, demo_situation.py, where a crowd seen once is still a
+    crowd), newest first. zone_of(country) → a tzinfo for the "last reported
+    HH:MM" (UTC when None)."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     rs = sorted((r for r in reports if r.get("lat") is not None and r.get("lon") is not None and _utc(r.get("at"))),
                 key=lambda r: _utc(r["at"]))
@@ -248,7 +250,7 @@ def link_tracks(reports: list[dict], now: _dt.datetime | None = None, zone_of=No
             best[1]["why"].append(best[3])
         else:
             tracks.append({"nodes": [_node(r)], "why": []})
-    out = [_public(t, now, zone_of) for t in tracks if len(t["nodes"]) >= 2]
+    out = [_public(t, now, zone_of) for t in tracks if len(t["nodes"]) >= max(1, min_nodes)]
     return sorted(out, key=lambda t: t["last_at"], reverse=True)
 
 
@@ -292,20 +294,21 @@ def _public(t: dict, now: _dt.datetime, zone_of) -> dict:
         })
     n = sum(len(x["reports"]) for x in nodes)
     city = (last["place"].split(",")[1].strip() if len(last["place"].split(",")) >= 3 else last["place"].split(",")[0].strip()) or last["city"]
-    prev = nodes[-2]
+    prev = nodes[-2] if len(nodes) >= 2 else None
     label = f"last reported {hhmm(last['at'], zone)}"
     return {
         "id": f"pt-{first['reports'][0]['id']}",
         "kind": "protest_track", "reconstructed": True, "note": RECONSTRUCTED,
         "city": city, "country": last["country"],
-        "title": f"Crowd movement in {city}, reconstructed from {n} reports",
+        "title": (f"Crowd movement in {city}, reconstructed from {n} reports" if prev
+                  else f"Crowd reported in {city}, {n} report{'s' if n != 1 else ''}"),
         "points": [{"lat": x["lat"], "lon": x["lon"], "at": x["at"], "first_at": x["first_at"], "place": x["place"],
                     "sources": [_ref(r) for r in x["reports"]]} for x in nodes],
         "segments": segments,
         "started_at": first["first_at"], "last_at": last["at"], "age_min": age(last["at"]),
         "last": {"lat": last["lat"], "lon": last["lon"], "at": last["at"], "place": last["place"],
                  "hhmm": hhmm(last["at"], zone), "label": label},
-        "heading_deg": round(bearing(prev["lat"], prev["lon"], last["lat"], last["lon"]), 1),
+        "heading_deg": round(bearing(prev["lat"], prev["lon"], last["lat"], last["lon"]), 1) if prev else None,
         "n_reports": n,
     }
 

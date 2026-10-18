@@ -17,7 +17,7 @@
 import { hazardLine } from "../routes/view.js"
 
 export const DEMOS_PATH = "/api/routes/demonstrations"
-export const DEMOS_REFRESH_MS = 60_000
+export const DEMOS_REFRESH_MS = 30_000     // "follow the demonstrations in real time" (owner, 2026-10-17); the backend memoises 30 s
 export const DEMO_SIZE = 20
 /** The protest amber of the unrest layer (GlobeTelegramLayer.jsx unrestIcon). */
 export const TRACK_COLOUR = "#F5A524"

@@ -103,14 +103,14 @@ describe("demonstrations — the phone's layers", () => {
     const bounds = { south: 48.7, west: 2.1, north: 49.0, east: 2.6 }
     const layer = (k) => PHONE_LAYERS.find((l) => l.key === k)
 
-    it("sit with unrest, off by default, read every minute", () => {
+    it("sit with unrest, off by default, read every 30 s", () => {
         const keys = PHONE_LAYERS.map((l) => l.key)
         const at = keys.indexOf("unrest")
-        expect(keys.slice(at + 1, at + 3)).toEqual(["demonstrations", "demonstrations:movement"])
-        for (const k of ["demonstrations", "demonstrations:movement"]) {
+        expect(keys.slice(at + 1, at + 4)).toEqual(["demonstrations", "demonstrations:movement", "demonstrations:situation"])
+        for (const k of ["demonstrations", "demonstrations:movement", "demonstrations:situation"]) {
             expect(layer(k).defaultOn).toBe(false)
             expect(layer(k).group).toBe(layer("unrest").group)
-            expect(layer(k).refreshMs).toBe(60_000)
+            expect(layer(k).refreshMs).toBe(30_000)
         }
         expect(layer("demonstrations:movement").label).toMatch(/reconstructed/)
     })

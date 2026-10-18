@@ -12,15 +12,25 @@
  *     hop, fainter with age, an arrowhead on the latest and "last reported
  *     HH:MM" at its head (entity type "protest_track"; each hop carries the
  *     posts behind it).
- * The drawing rules are in demonstrations.js, shared with the phone.
+ *   · the CITY SITUATION (owner, 2026-10-17: "last known locations,
+ *     probable points of convergence … Movements displayed in real time"),
+ *     GET /api/routes/demonstrations/situation every 30 s: crowds' last known
+ *     places fading with age and their paths ("demo_crowd", "demo_path"),
+ *     dashed walking routes toward the probable convergence points
+ *     ("demo_route") and those points, ringed and labelled as an estimate
+ *     ("demo_convergence"). A crowd's path covers the reconstructed tracks
+ *     (and the positions people report themselves), so once the situation
+ *     has answered the track hops are not drawn twice.
+ * The drawing rules are in demonstrations.js and demoSituation.js, shared with the phone.
  */
 import { memo, useEffect, useMemo, useState } from "react"
 import { Entity, useCesium } from "resium"
-import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference } from "cesium"
+import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference, PolylineDashMaterialProperty } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, trackSegments } from "./demonstrations.js"
+import { SITUATION_PATH, SITUATION_REFRESH_MS, situationFeatures } from "./demoSituation.js"
 
 const css = (c, a = 1) => Color.fromCssColorString(c).withAlpha(a)
 
@@ -28,6 +38,7 @@ export default function GlobeDemonstrationsLayer({ enabled = false }) {
     const { viewer } = useCesium()
     const [data, setData] = useState(null)
     const [nowMs, setNowMs] = useState(() => Date.now())
+    const [sit, setSit] = useState(null)
 
     useEffect(() => {
         if (!enabled) { setData(null); return undefined }
@@ -41,11 +52,25 @@ export default function GlobeDemonstrationsLayer({ enabled = false }) {
         return () => { live = false; clearInterval(iv) }
     }, [enabled])
 
+    useEffect(() => {
+        if (!enabled) { setSit(null); return undefined }
+        let live = true
+        const load = () => fetch(`${API_BASE}${SITUATION_PATH}`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (live && d) { setSit(d); setNowMs(Date.now()) } })
+            .catch(() => { /* keep the last situation */ })
+        load()
+        const iv = setInterval(load, SITUATION_REFRESH_MS)
+        return () => { live = false; clearInterval(iv) }
+    }, [enabled])
+
     const points = useMemo(() => safeArray(data?.demonstrations)
         .filter((h) => Number.isFinite(+h?.lat) && Number.isFinite(+h?.lon))
         .map((h) => ({ id: `demo-${h.id}`, h, raw: demoRaw(h, nowMs) })), [data, nowMs])
-    const hops = useMemo(() => safeArray(data?.tracks).flatMap((t) => trackSegments(t, nowMs))
-        .map((s) => ({ ...s, id: `demo-move-${s.id}` })), [data, nowMs])
+    const situation = useMemo(() => situationFeatures(sit, nowMs), [sit, nowMs])
+    const hasPaths = situation.some((f) => f.type === "demo_crowd")
+    const hops = useMemo(() => (hasPaths ? [] : safeArray(data?.tracks).flatMap((t) => trackSegments(t, nowMs))
+        .map((s) => ({ ...s, id: `demo-move-${s.id}` }))), [data, nowMs, hasPaths])
 
     useEffect(() => {
         points.forEach((p) => setEntity(p.id, "demonstration", p.raw))
@@ -53,16 +78,19 @@ export default function GlobeDemonstrationsLayer({ enabled = false }) {
             setEntity(s.id, "protest_track", s.raw)
             if (s.marker) setEntity(`${s.id}-head`, "protest_track", s.raw)
         })
+        situation.forEach((f) => setEntity(f.id, f.type, f.raw))
         viewer?.scene?.requestRender?.()
         return () => {
             points.forEach((p) => deleteEntity(p.id))
             hops.forEach((s) => { deleteEntity(s.id); deleteEntity(`${s.id}-head`) })
+            situation.forEach((f) => deleteEntity(f.id))
         }
-    }, [points, hops, viewer])
+    }, [points, hops, situation, viewer])
 
-    if (!enabled || !data) return null
+    if (!enabled || (!data && !sit)) return null
     return (
         <>
+            {situation.map((f) => <SituationEntity key={f.id} f={f} />)}
             {hops.map((s) => <HopEntity key={s.id} s={s} />)}
             {points.map((p) => (
                 <Entity key={p.id} id={p.id} name={p.raw.title} position={Cartesian3.fromDegrees(+p.h.lon, +p.h.lat, 0)}
@@ -98,4 +126,30 @@ const HopEntity = memo(function HopEntity({ s }) {
             )}
         </>
     )
+})
+
+const dashOf = (dash) => { const n = String(dash || "").split(/\s+/).map(Number); return n[0] && n[1] ? (n[0] + n[1] > 10 ? 0xff00 : 0xf0f0) : 0xff00 }
+
+/** One feature of the city situation: a path or route line (dashed for a
+ *  route), or a crowd / convergence mark with its words. */
+const SituationEntity = memo(function SituationEntity({ f }) {
+    const positions = useMemo(() => (f.marker ? null : f.coords.map(([lat, lon]) => Cartesian3.fromDegrees(lon, lat))), [f])
+    const material = useMemo(() => {
+        if (f.marker) return null
+        const c = Color.fromCssColorString(f.color)
+        return f.dash ? new PolylineDashMaterialProperty({ color: c, dashLength: 14, dashPattern: dashOf(f.dash) }) : c
+    }, [f])
+    if (f.marker) {
+        const mk = f.marker
+        return (
+            <Entity id={f.id} name={f.title} position={Cartesian3.fromDegrees(mk.lon, mk.lat, 0)}
+                    billboard={{ image: mk.iconUri, width: mk.iconWidth, height: mk.iconHeight,
+                                 // the mark's centre on the place, its words beside or below it
+                                 pixelOffset: new Cartesian2(mk.iconWidth / 2 - mk.iconAnchor[0], mk.iconHeight / 2 - mk.iconAnchor[1]),
+                                 heightReference: HeightReference.CLAMP_TO_GROUND,
+                                 distanceDisplayCondition: new DistanceDisplayCondition(0, 600_000),
+                                 disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+        )
+    }
+    return <Entity id={f.id} name={f.title} polyline={{ positions, width: f.weight, clampToGround: true, material }} />
 })
