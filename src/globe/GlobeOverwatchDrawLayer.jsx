@@ -23,6 +23,7 @@ import {
     ColorMaterialProperty,
     ClassificationType,
 } from "cesium"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 export default function GlobeOverwatchDrawLayer({
     active,
@@ -182,7 +183,7 @@ export default function GlobeOverwatchDrawLayer({
                         color: Color.CYAN,
                         outlineColor: Color.WHITE,
                         outlineWidth: 1,
-                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                     },
                 })
                 polyEntitiesRef.current.push(dot)

@@ -12,13 +12,14 @@ import { Cartesian2, Cartesian3, Color, HeightReference, LabelStyle, PolylineDas
 import { useTrackState } from "../location/TrackPanel.jsx"
 import { ageSegments, upTo, positionAt, stopLabel, tsOf, dayHm } from "../location/track.js"
 import { useRenderTick } from "./useGlidingPosition.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 // LINES A FEW METRES UP, NOT CLAMPED: a ground polyline needs GPU support some
 // machines (and headless checks) lack, and then draws nothing; with a
 // depth-fail material the line still shows where terrain rises over it.
 const flat = (coords) => Cartesian3.fromDegreesArrayHeights(coords.flatMap(([lat, lon]) => [lon, lat, 4]))
 const point = (color, size = 12) => ({ pixelSize: size, color, outlineColor: Color.WHITE, outlineWidth: 2,
-                                       heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY })
+                                       heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M })
 
 export default function GlobeAssetTrackLayer() {
     const s = useTrackState()
@@ -61,18 +62,18 @@ export default function GlobeAssetTrackLayer() {
                         position={Cartesian3.fromDegrees(st.lon, st.lat)} point={point(Color.fromCssColorString("#f5a524"), 14)}
                         label={{ text: String(i + 1), font: "700 11px sans-serif", fillColor: Color.BLACK, style: LabelStyle.FILL,
                                  verticalOrigin: VerticalOrigin.CENTER, heightReference: HeightReference.CLAMP_TO_GROUND,
-                                 disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                                 disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             ))}
             <Entity id="track-start" name="Start of the track" description={dayHm(s0.at)} position={Cartesian3.fromDegrees(s0.lon, s0.lat)}
                     point={point(Color.fromCssColorString("#3ddc84"), 13)}
                     label={{ text: "Start", font: "600 12px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                              style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -16), heightReference: HeightReference.CLAMP_TO_GROUND,
-                             disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                             disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             {now ? (
                 <Entity id="track-now" position={Cartesian3.fromDegrees(now.lon, now.lat)} point={point(Color.WHITE, 15)}
                         label={{ text: dayHm(new Date(now.at).toISOString()), font: "600 12px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK,
                                  outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -18),
-                                 heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                                 heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             ) : (
                 <Entity id="track-end" name="Latest position" description={dayHm(e.at)} position={Cartesian3.fromDegrees(e.lon, e.lat)}
                         point={point(Color.fromCssColorString("#3b8cff"), 15)} />

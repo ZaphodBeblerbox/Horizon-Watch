@@ -31,6 +31,7 @@ import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, trackSegments } from "./demonstrations.js"
 import { SITUATION_PATH, SITUATION_REFRESH_MS, situationFeatures } from "./demoSituation.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 const css = (c, a = 1) => Color.fromCssColorString(c).withAlpha(a)
 
@@ -122,7 +123,7 @@ const HopEntity = memo(function HopEntity({ s }) {
                                      pixelOffset: new Cartesian2(mk.iconWidth / 2 - mk.iconAnchor[0], mk.iconHeight / 2 - mk.iconAnchor[1]),
                                      heightReference: HeightReference.CLAMP_TO_GROUND,
                                      distanceDisplayCondition: new DistanceDisplayCondition(0, 400_000),
-                                     disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                                     disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             )}
         </>
     )
@@ -148,7 +149,7 @@ const SituationEntity = memo(function SituationEntity({ f }) {
                                  pixelOffset: new Cartesian2(mk.iconWidth / 2 - mk.iconAnchor[0], mk.iconHeight / 2 - mk.iconAnchor[1]),
                                  heightReference: HeightReference.CLAMP_TO_GROUND,
                                  distanceDisplayCondition: new DistanceDisplayCondition(0, 600_000),
-                                 disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                                 disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
         )
     }
     return <Entity id={f.id} name={f.title} polyline={{ positions, width: f.weight, clampToGround: true, material }} />

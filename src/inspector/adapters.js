@@ -1441,7 +1441,7 @@ export function adaptTrajectory(data = {}) {
 export function adaptDemonstration(data = {}) {
     const point = pointOf(data)
     return {
-        identity: { title: data.title || data.label || "Demonstration", subtitle: ["Demonstrations, live", data.sub].filter(Boolean).join(" · "),
+        identity: { title: data.title || data.label || "Demonstration", subtitle: ["Protests & crowds, live", data.sub].filter(Boolean).join(" · "),
                     entityType: "demonstration", subtype: data.hazard_kind || null, sanctionsStatus: null },
         description: data.detail || null,
         attributes: compact([
@@ -1496,10 +1496,10 @@ export function adaptDemoSituation(data = {}) {
         demo_path: "Crowd's path · reconstructed from reports",
         demo_route: "Walking route toward a probable convergence point · estimate",
         demo_convergence: "Probable convergence point · estimate",
-    }[kind] || "Demonstrations, live"
+    }[kind] || "Protests & crowds, live"
     const point = pointOf(data)
     return {
-        identity: { title: data.title || "Demonstrations, live", subtitle: sub, entityType: kind, subtype: null, sanctionsStatus: null },
+        identity: { title: data.title || "Protests & crowds, live", subtitle: sub, entityType: kind, subtype: null, sanctionsStatus: null },
         description: data.detail || null,
         attributes: compact([
             attr("Place", data.place || data.name || null),

@@ -38,7 +38,7 @@ import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
 import MapMeta from "../components/MapMeta.jsx"
 import MapTip from "../components/MapTip.jsx"
-import { LAYER_GROUPS, SEVERITY_FLOORS, TIME_WINDOWS } from "../components/layerRailConfig.js"
+import { LAYER_GROUPS, CONTEXT_TOGGLES, SEVERITY_FLOORS, TIME_WINDOWS } from "../components/layerRailConfig.js"
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { summarizeHealth } from "../utils/systemHealth.js"
 import { buildWatchQueueRows, sortRowsBySeverity, timeAgoLabel } from "./dashboardLogic.js"
@@ -415,9 +415,11 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // the coming days — kept apart from the fighting by their own toggle.
     const [unrestOn, setUnrestOn] = useState(true)
     // What the route planner ("Get me out") avoids, and the crowd's movement
-    // reconstructed from Telegram reports (GlobeDemonstrationsLayer): off
-    // until asked for — it is for following one city.
-    const [demonstrationsOn, setDemonstrationsOn] = useState(false)
+    // reconstructed from Telegram reports (GlobeDemonstrationsLayer): on,
+    // with News (owner, 2026-10-18: "protest movements have not been added
+    // to desktop" — off by default, nobody found it). Draws only where a
+    // demonstration is current.
+    const [demonstrationsOn, setDemonstrationsOn] = useState(true)
     const [telegramMoodOn, setTelegramMoodOn] = useState(true)
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
@@ -1531,7 +1533,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             )}
                             {g.key === "news" && (
                                 <SubLayerRow
-                                    label="Demonstrations, live"
+                                    label="Protests & crowds, live"
                                     hint="Every demonstration and happening the route planner (Get me out) avoids right now, and the crowd's movement reconstructed from Telegram reports: a line through the places it was reported, older hops fainter, the arrow on the latest and when it was last reported · reconstructed, not tracked · read every minute"
                                     on={demonstrationsOn} parentOn={groupsOn.news}
                                     onToggle={() => setDemonstrationsOn((v) => !v)} />
@@ -1593,11 +1595,18 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         ["graticule", "Graticule 10°"],
                         ["flows", "Trade & energy flows"],
                         ["aois", "Areas of interest"],
-                        ["labels", "Marker labels"],
+                        ["labels", "Place names"],
                     ].map(([key, label]) => (
-                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}
+                             title={CONTEXT_TOGGLES.find((t) => t.key === key)?.hint || undefined}>
                             <span style={{ flex: 1, font: "400 12px var(--font)", color: "var(--txt-2)" }}>
                                 {label}
+                                {/* Said under the name: "Marker labels" was read as names on our markers (owner, 2026-10-18). */}
+                                {key === "labels" && (
+                                    <span style={{ display: "block", font: "400 10px var(--font)", color: "var(--txt-4)" }}>
+                                        {CONTEXT_TOGGLES.find((t) => t.key === "labels")?.hint}
+                                    </span>
+                                )}
                                 {/* A layer called "trade AND energy" that
                                     silently shows only trade is worse than
                                     one that says which half is missing: the

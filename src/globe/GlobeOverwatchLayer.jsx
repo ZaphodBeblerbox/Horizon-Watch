@@ -9,6 +9,7 @@ import {
 } from "cesium"
 import { detectionCorners } from "./detectionShape.js"
 import { CLASS_COLORS, classLabel, isFindingClass } from "../destinations/imageryModel.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 const CATEGORY_COLORS = {
     Aircraft:        "#5856D6",
@@ -238,7 +239,7 @@ export default function GlobeOverwatchLayer({ enabled, detections = [], sentinel
                     outlineWidth: 2.5,
                     style: LabelStyle.FILL_AND_OUTLINE,
                     pixelOffset: new Cartesian2(0, -12),
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                     // Hide when the camera is far out, or a busy scene turns
                     // into a wall of overlapping text.
                     // Only close in: over a port, thirty tags at once are noise.

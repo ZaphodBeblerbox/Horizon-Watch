@@ -59,9 +59,9 @@ const INPUT = {
     font: "400 13px var(--font)", outline: "none", borderRadius: 0,
 }
 
-function Pill({ on, children, onClick }) {
+function Pill({ on, children, onClick, title }) {
     return (
-        <button type="button" onClick={onClick} style={{
+        <button type="button" onClick={onClick} title={title} style={{
             height: 24, padding: "0 9px", cursor: "pointer", borderRadius: 0,
             border: `1px solid ${on ? "var(--acc-line)" : "var(--gline)"}`,
             background: on ? "var(--acc-dim)" : "transparent",
@@ -279,7 +279,7 @@ export default function TheaterEditor({ theater = null, readView = null, readLay
                                         <Pill on={on} onClick={() => toggleGroup(g.key)}>{g.label || g.key}</Pill>
                                         {on && inside.length > 0 && <span style={{ color: "var(--txt-4)", font: "400 11px var(--font)", padding: "0 2px" }}>›</span>}
                                         {on && inside.map((l) => (
-                                            <Pill key={l.key} on={layers.subs.includes(l.key)}
+                                            <Pill key={l.key} on={layers.subs.includes(l.key)} title={l.hint}
                                                   onClick={() => toggle("subs", l.key)}>{l.label}</Pill>
                                         ))}
                                     </div>
@@ -290,7 +290,7 @@ export default function TheaterEditor({ theater = null, readView = null, readLay
                         <div style={{ ...EYE, fontSize: 9.5, margin: "12px 0 4px" }}>Context</div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                             {CONTEXT_TOGGLES.map((t) => (
-                                <Pill key={t.key} on={layers.context.includes(t.key)}
+                                <Pill key={t.key} on={layers.context.includes(t.key)} title={t.hint}
                                       onClick={() => toggle("context", t.key)}>{t.label}</Pill>
                             ))}
                             {SUB_LAYERS.filter((l) => !l.parent && l.key !== "endangered").map((l) => (

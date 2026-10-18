@@ -14,6 +14,7 @@ import {
     NearFarScalar,
 } from "cesium"
 import { getAirRoute, subscribeAirRoute, hazardColor, hazardAlpha, candidateColor, arcDegreesHeights, arcPeak, planView } from "./airRoute.js"
+import { MARKER_DEPTH_TEST_M } from "../../globe/entityIcons.js"
 
 function useAir() {
     const [s, setS] = useState(getAirRoute())
@@ -65,7 +66,7 @@ export default function GlobeAirRouteLayer() {
                     <Entity key={`air-hl-${h.id}`} id={`air-hazard-label-${h.id}`} position={Cartesian3.fromDegrees(lo, la, 2000)}
                             label={{ text: h.name.replace(/ \(.*\)$/, ""), font: "600 13px -apple-system, 'Segoe UI', Roboto, sans-serif", fillColor: Color.WHITE,
                                      outlineColor: Color.fromCssColorString("#3a0a0c"), outlineWidth: 4, style: LabelStyle.FILL_AND_OUTLINE,
-                                     pixelOffset: new Cartesian2(0, 0), disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                                     pixelOffset: new Cartesian2(0, 0), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                                      translucencyByDistance: new NearFarScalar(2e6, 1, 2.5e7, 0.6) }} />
                 )
             })}
@@ -86,9 +87,9 @@ export default function GlobeAirRouteLayer() {
             )}
             {ends.map(([p, name, css], i) => (
                 <Entity key={`air-end-${i}`} id={`air-end-${i}`} name={name} position={Cartesian3.fromDegrees(p[1], p[0], 0)}
-                        point={{ pixelSize: 13, color: Color.fromCssColorString(css), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY }}
+                        point={{ pixelSize: 13, color: Color.fromCssColorString(css), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
                         label={{ text: name, font: "700 13px -apple-system, 'Segoe UI', Roboto, sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
-                                 style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -18), disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                                 style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -18), disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             ))}
         </>
     )
