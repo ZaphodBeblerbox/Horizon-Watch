@@ -21,7 +21,15 @@ looks; the phone and the globe poll every 30 s):
     report themselves ("on est devant l'Élysée", "we're at Concorde"), linked
     with demonstrations.link_tracks — a crowd seen once is still a crowd here
     (min_nodes=1). A crowd: its last place and time, its path, its posts.
-    Older than CROWD_MAX_AGE_MIN: gone from the map.
+    Older than CROWD_MAX_AGE_MIN: gone from the map. Its age is the time
+    since that report was POSTED. A position people reported themselves
+    outranks a second-hand report less than OUTRANK_MIN newer (report_rank).
+    Its path's hops longer than PATH_ROUTE_MIN_M are walked on the street
+    network (path_legs; straight and "estimated" until routed), and where
+    it probably is NOW is estimated (now_estimate: CROWD_KMH for its age
+    along where it said it was heading, or its route to its top convergence
+    point, never past it) with how far it could be by now (reach_m).
+    (Crowd-tracking accuracy, owner 2026-10-18.)
 
   TARGETS — places named in calls to action: "rendez-vous à Concorde",
     "tous à l'Élysée", "on va prendre Beauvau", "march on Parliament",
@@ -73,8 +81,11 @@ FALLBACK EXTRACTION (works today, extract_intents / extract_positions):
 French and English cue words on the post's text, headline and English
 summary (accents folded), the phrase after the cue resolved by resolve_place:
 a small gazetteer of the places crowds go in Paris and a few other cities
-(GAZETTEER), the endangered places' names, and the places located posts in
-the same city were geocoded to. A phrase that resolves to nothing is dropped
+(GAZETTEER), the endangered places' names, the places located posts in
+the same city were geocoded to, and street-level phrases ("rue de Rivoli",
+"pont Alexandre III") geocoded inside the city (street_place: the
+geocoder's cache only; a miss is looked up by one background thread at
+Nominatim's one request a second). A phrase that resolves to nothing is dropped
 — a cue word alone ("tous les jours") never makes a target.
 
 Pure functions first (extraction, resolution, scoring, junctions); the reads
@@ -89,6 +100,7 @@ import json
 import math
 import re
 import sqlite3
+import threading
 import time
 
 import demonstrations as dm
@@ -188,14 +200,161 @@ _LEAD = re.compile(r"^(?:(?:a|au|aux|a la|a l'|l'|la|le|les|du|de la|de l'|des|d
                    r"aux abords de|en bas de|dans|place|the|to|at|in front of|outside|near|around)(?:\s+|(?<=')))+")
 
 
+# ── street-level places (Nominatim; cache hits inline, misses to one thread) ─
+# "On est rue de Rivoli", "le cortège passe pont Alexandre III", "métro
+# Saint-Paul": a street word and a name, geocoded inside the city's box. The
+# geocoder (geocode_utils, Nominatim) allows one request a second and is
+# blocking, so the model only ever reads its cache (memory, and disk for 30
+# days); a phrase not asked yet goes to ONE background thread, and the next
+# pass (≤ 30 s later) has it. A hit counts only within CITY_RADIUS_M of the
+# city's centre.
+STREET_GEOCODE = True
+STREET_WORDS = ("rue", "avenue", "av", "boulevard", "bd", "place", "pont", "quai", "porte", "gare", "metro", "station",
+                "square", "parc", "jardin", "esplanade", "carrefour", "rond-point", "cours", "allee", "passage",
+                "impasse", "parvis", "street", "bridge")
+_SW = "|".join(sorted(STREET_WORDS, key=len, reverse=True))
+_STREET = re.compile(rf"(?<![\w-])(?P<w>{_SW})\.?\s+(?P<n>[\w'-]+(?:\s+[\w'-]+){{0,6}})")
+_STREET_STOP = {
+    "a", "maintenant", "vers", "avec", "et", "ou", "depuis", "pour", "car", "mais", "ca", "on", "nous", "il", "ils",
+    "elle", "elles", "je", "en", "direction", "apres", "puis", "deja", "encore", "toujours", "actuellement", "ici",
+    "la-bas", "cote", "face", "qui", "que", "ce", "cet", "cette", "c'est", "sont", "est", "police", "crs", "flics",
+    "gendarmes", "manifestants", "cortege", "foule", "bloque", "bloquee", "gaz", "lacrymo", "lacrymogene", "contre",
+    "near", "in", "on", "with", "and", "at", "to", "toward", "towards", "now", "after", "before", "where", "is",
+    "are", "was", "has", "have", "police", "protesters", "crowd", "right", "still", "from"}
+GEO_QUEUE_MAX = 200
+STREET_COUNTRY = "fr"                # every city in CITY_CENTRES is French
+_geo_q: dict = {}                    # query → bounds, in arrival order
+_geo_lock = threading.Lock()
+_geo_wake = threading.Event()
+_geo_thread: list = [None]
+_GEO_GEN = [0]                       # a lookup finished: posts that waited for one are read again
+GEO_STATS = {"queued": 0, "looked_up": 0, "hits": 0, "waiting_reads": 0}
+
+
+def street_phrase(f: str) -> str | None:
+    """"le cortege est rue de rivoli maintenant" → "rue de rivoli"; None
+    without a street word followed by a name."""
+    m = _STREET.search(f or "")
+    if not m:
+        return None
+    name = []
+    for w in m.group("n").split():
+        if w in _STREET_STOP or any(ch.isdigit() for ch in w) and not re.fullmatch(r"[ivx]+|\d{1,2}(?:e|er|eme)?", w):
+            break
+        name.append(w)
+    while name and name[-1] in ("de", "du", "des", "la", "le", "les", "l'", "d'", "of", "the"):
+        name.pop()
+    if not name:
+        return None
+    return f"{m.group('w')} {' '.join(name)}"
+
+
+def city_box(city: str) -> tuple[float, float, float, float]:
+    """(min_lon, min_lat, max_lon, max_lat) around a city, CITY_RADIUS_M each way."""
+    lat, lon = CITY_CENTRES[city]
+    dlat = CITY_RADIUS_M / 111_320
+    dlon = dlat / max(0.2, math.cos(math.radians(lat)))
+    return (round(lon - dlon, 4), round(lat - dlat, 4), round(lon + dlon, 4), round(lat + dlat, 4))
+
+
+def _geo_cached(q: str, box) -> list | None:
+    import geocode_utils as gu
+    return gu.geocode_cached(q, [STREET_COUNTRY], None, box)
+
+
+def _geo_lookup(q: str, box) -> list:
+    import geocode_utils as gu
+    return gu.geocode_place(q, [STREET_COUNTRY], None, box)
+
+
+def _geo_enqueue(q: str, box) -> None:
+    with _geo_lock:
+        if q in _geo_q or len(_geo_q) >= GEO_QUEUE_MAX:
+            return
+        _geo_q[q] = box
+        GEO_STATS["queued"] += 1
+    _start_geo_thread()
+    _geo_wake.set()
+
+
+def geo_drain(limit: int | None = None) -> int:
+    """Look up the queued phrases, oldest first (geocode_place keeps to one
+    request a second and caches the answer, misses included). → how many."""
+    n = 0
+    while limit is None or n < limit:
+        with _geo_lock:
+            if not _geo_q:
+                break
+            q, box = next(iter(_geo_q.items()))
+        try:
+            hits = _geo_lookup(q, box)
+        except Exception as ex:                                # noqa: BLE001
+            print(f"[demo-situation] error: geocode {q!r}: {type(ex).__name__}: {ex}", flush=True)
+            hits = []
+        with _geo_lock:
+            _geo_q.pop(q, None)
+        n += 1
+        GEO_STATS["looked_up"] += 1
+        GEO_STATS["hits"] += 1 if hits else 0
+        _GEO_GEN[0] += 1
+    return n
+
+
+def _geo_worker() -> None:
+    while True:
+        _geo_wake.wait()
+        _geo_wake.clear()
+        try:
+            geo_drain()
+        except Exception as ex:                                # noqa: BLE001
+            print(f"[demo-situation] error: geocode worker: {type(ex).__name__}: {ex}", flush=True)
+
+
+def _start_geo_thread() -> None:
+    with _geo_lock:
+        if _geo_thread[0] is not None and _geo_thread[0].is_alive():
+            return
+        _geo_thread[0] = threading.Thread(target=_geo_worker, name="demo-street-geocode", daemon=True)
+        _geo_thread[0].start()
+
+
+def street_place(f: str, city: str | None) -> dict | None:
+    """A street-level phrase (folded) in a known city → a place, from the
+    geocoder's cache only; a phrase not asked yet is queued and None now."""
+    if not STREET_GEOCODE or city not in CITY_CENTRES:
+        return None
+    s = street_phrase(f)
+    if not s:
+        return None
+    q, box = f"{s}, {city.title()}", city_box(city)
+    hits = _geo_cached(q, box)
+    if hits is None:
+        _geo_enqueue(q, box)
+        GEO_STATS["waiting_reads"] += 1
+        return None
+    c = CITY_CENTRES[city]
+    for h in hits or []:
+        lat, lon = _num(h.get("lat")), _num(h.get("lon"))
+        if lat is None or lon is None or dm.metres(lat, lon, *c) > CITY_RADIUS_M:
+            continue
+        first = str(h.get("display_name") or "").split(",")[0].strip()
+        name = first if first and set(re.findall(r"[\w'-]{3,}", dm.fold(first))) & set(s.split()) else s.title()
+        return {"id": f"st:{city}:{round(lat, 4)},{round(lon, 4)}", "name": name, "city": city, "lat": lat, "lon": lon,
+                "precision": "street"}
+    return None
+
+
 def resolve_place(phrase: str | None, city: str | None = None, near: tuple | None = None,
-                  learned: list[dict] | None = None, strict_ok: bool = True) -> dict | None:
+                  learned: list[dict] | None = None, strict_ok: bool = True, streets: bool = True) -> dict | None:
     """A phrase ("l'Élysée maintenant", "Concorde à 15h") → a place
     {id, name, city, lat, lon}, or None. Gazetteer first (the longest alias
     that occurs; one in the asked city or nearest `near` preferred), then the
     learned places (endangered places, geocoded posts) whose distinctive words
-    all occur in the phrase. strict_ok: the phrase directly follows a cue, so
-    the "=" aliases may match it when it starts with them."""
+    all occur in the phrase, then — streets — a street-level phrase ("rue de
+    Rivoli", "pont Alexandre III") geocoded in the city (street_place: cache
+    only, a miss is looked up in the background). strict_ok: the phrase
+    directly follows a cue, so the "=" aliases may match it when it starts
+    with them."""
     f = dm.fold(phrase).strip()
     if not f:
         return None
@@ -230,6 +389,10 @@ def resolve_place(phrase: str | None, city: str | None = None, near: tuple | Non
     if best:
         return {"id": best["id"], "name": best["name"], "city": best.get("city") or city_near(best["lat"], best["lon"]),
                 "lat": best["lat"], "lon": best["lon"]}
+    if streets:
+        c = city if city in CITY_CENTRES else (city_near(*near) if near else None)
+        if c:
+            return street_place(f, c)
     return None
 
 
@@ -251,7 +414,7 @@ _CALL = re.compile(
     r"envahir|envahissons|prendre|prenons|on prend|bloquer|bloquons|encercler|encerclons|assieger|attaquer|attaquons|"
     r"occuper|occupons|appel a (?:se rassembler|manifester|marcher)|"
     r"meet(?:ing)?(?: up)? at|gather(?:ing)? at|rally at|everyone to|all to|let'?s go to|converge on|march on|storm|"
-    r"take|occupy|block|blockade|attack|surround|besiege)\b\s+(?:(?:a|au|aux|a la|a l'|devant|sur|vers|place|le|la|les|l'|"
+    r"take|occupy|block|blockade|attack|surround|besiege)\b\s+(?:(?:a|au|aux|a la|a l'|devant|sur|vers|le|la|les|l'|"
     r"de|du|the|to|at)(?:\s+|(?<=')))*" + _PH)
 _ACT = [(re.compile(r"envahi|attaqu|attack|storm|assieg|besiege|prendre|prenons|on prend|^take|encercl|surround"), "attack"),
         (re.compile(r"bloqu|block"), "block"),
@@ -265,8 +428,10 @@ _POS = re.compile(
     r"\b(?P<cue>on est|on se trouve|nous sommes|nous voila|je suis|actuellement|en ce moment|toujours|deja|"
     r"(?:le cortege|la foule|les manifestants|le rassemblement|la manif) (?:est|sont|arrive\w*|stationne\w*)|"
     r"we are|we're|we re|currently|right now|still|crowd(?:s)? (?:is|are)|protesters (?:are|have reached|reached)|"
-    r"the march (?:is|has reached|reached)|arrived)\s+(?:(?:a|au|aux|a la|a l'|devant|sur|place|pres de|autour de|"
-    r"aux abords de|en bas de|dans|at|outside|in front of|near|around|on|in|gathered at|massing at|the|le|la|les|l')(?:\s+|(?<=')))+" + _PH)
+    r"the march (?:is|has reached|reached)|arrived)\s+(?:(?:(?:a|au|aux|a la|a l'|devant|sur|pres de|autour de|"
+    r"aux abords de|en bas de|dans|at|outside|in front of|near|around|on|in|gathered at|massing at|the|le|la|les|l')(?:\s+|(?<=')))+"
+    # or straight to a street word: "on est rue de Rivoli", "nous sommes place du Tertre"
+    r"|(?=(?:" + _SW + r")\b))" + _PH)
 _MENTION = re.compile(r"\b(?:devant|aux abords de|autour de|pres de|outside|in front of|around|near)\s+"
                       r"(?:(?:la|le|l'|les|the|du|de la)(?:\s+|(?<=')))*" + _PH)
 
@@ -351,7 +516,7 @@ def extract_intents(text: str | None, posted_at=None, zone=None, city: str | Non
             crowd = bool(dm._CROWD.search(f)) if crowd is None else crowd
             if not crowd:
                 continue
-        pl = resolve_place(m.group("p"), city, near, None if generic else learned)
+        pl = resolve_place(m.group("p"), city, near, None if generic else learned, streets=not generic)
         if not pl or pl["id"] in seen:
             continue
         seen.add(pl["id"])
@@ -692,31 +857,74 @@ def _ref(x: dict) -> dict:
             "published_at": x.get("at"), "place": x.get("place"), "text": (x.get("text") or "")[:300]}
 
 
+OUTRANK_MIN = 15                 # a self-reported position outranks a second-hand report this much newer
+PATH_ROUTE_MIN_M = 150           # a hop of a crowd's path longer than this is routed on foot
+MAX_PATH_HOPS = 6                # the newest hops of a path routed, per crowd
+REACH_CAP_M = 3000               # how far a crowd may have walked since it was seen, at most
+
+
+def report_rank(r: dict) -> int:
+    """2: a position people reported themselves ("on est à Concorde");
+    1: a located crowd report (a geocoded post, a live development);
+    0: a place a crowd post only mentions ("foule devant l'Élysée")."""
+    if str(r.get("id", "")).startswith("pos-"):
+        return 2 if (r.get("position_kind") or "at") == "at" else 0
+    return 1
+
+
+POSITION_WORDS = {2: "reported by people there", 1: "reported", 0: "mentioned in a report"}
+
+
 def build_crowds(reports: list[dict], now: _dt.datetime, zone_of=None, learned=None) -> list[dict]:
     """Located crowd reports → crowds (link_tracks with single places kept),
-    fresh ones only, near-duplicates merged, freshest first."""
+    fresh ones only, near-duplicates merged, freshest first. A crowd's place
+    is its newest report's, unless people there said where they were less
+    than OUTRANK_MIN before it and the newer report is second-hand: then
+    theirs (the later one is kept in "outranked"). Its age is the time since
+    that report was posted, never since it was read."""
+    rank_of = {r.get("id"): report_rank(r) for r in reports}
     tracks = dm.link_tracks(reports, now, zone_of, min_nodes=1)
     crowds = []
     for t in tracks:
-        if t["age_min"] > CROWD_MAX_AGE_MIN:
+        pts = t["points"]
+        pr = [max((rank_of.get(s.get("id"), 1) for s in p.get("sources") or []), default=1) for p in pts]
+        li, t_last = len(pts) - 1, dm._utc(pts[-1]["at"])
+        for i in range(len(pts) - 2, -1, -1):
+            if (t_last - dm._utc(pts[i]["at"])).total_seconds() > OUTRANK_MIN * 60:
+                break
+            if pr[i] == 2 and pr[-1] < 2:
+                li = i
+                break
+        lp = pts[li]
+        at = lp["at"]
+        age = round((now - dm._utc(at)).total_seconds() / 60, 1)
+        if age > CROWD_MAX_AGE_MIN:
             continue
-        last = t["last"]
-        srcs = (t["points"][-1].get("sources") or [])[-6:]
+        zone = None
+        if zone_of:
+            try:
+                zone = zone_of(t["country"])
+            except Exception:                                  # noqa: BLE001
+                zone = None
+        srcs = (lp.get("sources") or [])[-6:]
         text = " ".join(s.get("text") or "" for s in srcs[-3:])
-        city = city_near(last["lat"], last["lon"]) or dm.city_of(last["place"]) or t.get("city", "").lower()
+        city = city_near(lp["lat"], lp["lon"]) or dm.city_of(lp["place"]) or t.get("city", "").lower()
         heading_to = None
         for d in dm.destinations(text):
-            pl = resolve_place(d, city, (last["lat"], last["lon"]), learned)
-            if pl and dm.metres(pl["lat"], pl["lon"], last["lat"], last["lon"]) > AT_TARGET_M:
+            pl = resolve_place(d, city, (lp["lat"], lp["lon"]), learned)
+            if pl and dm.metres(pl["lat"], pl["lon"], lp["lat"], lp["lon"]) > AT_TARGET_M:
                 heading_to = pl
                 break
         crowds.append({
             "id": f"crowd-{t['id'][3:]}", "track_id": t["id"], "city": city, "country": t["country"],
-            "lat": last["lat"], "lon": last["lon"], "place": last["place"], "at": last["at"], "hhmm": last["hhmm"],
-            "age_min": t["age_min"], "n_reports": t["n_reports"], "heading_deg": t["heading_deg"],
-            "heading_to": heading_to, "self_reported": any(str(s.get("id", "")).startswith("pos-") for s in srcs),
-            "path": [{"lat": p["lat"], "lon": p["lon"], "at": p["at"], "place": p["place"]} for p in t["points"]],
-            "segments": t["segments"], "sources": srcs,
+            "lat": lp["lat"], "lon": lp["lon"], "place": lp["place"], "at": at, "hhmm": dm.hhmm(at, zone),
+            "age_min": age, "last_report_at": t["last_at"], "n_reports": t["n_reports"],
+            "heading_deg": t["heading_deg"] if li == len(pts) - 1 else None,
+            "heading_to": heading_to, "self_reported": pr[li] == 2, "position": POSITION_WORDS[pr[li]],
+            "path": [{"lat": p["lat"], "lon": p["lon"], "at": p["at"], "place": p["place"]} for p in pts[:li + 1]],
+            "segments": t["segments"][:li], "sources": srcs,
+            "outranked": [{"place": p["place"], "at": p["at"], "position": POSITION_WORDS[pr[li + 1 + k]]}
+                          for k, p in enumerate(pts[li + 1:])],
         })
     crowds.sort(key=lambda g: dm._utc(g["at"]), reverse=True)
     kept: list[dict] = []
@@ -727,11 +935,96 @@ def build_crowds(reports: list[dict], now: _dt.datetime, zone_of=None, learned=N
             twin["n_reports"] += g["n_reports"]
             twin["sources"] = (twin["sources"] + g["sources"])[-8:]
             twin.setdefault("merged", []).append(g["id"])
+            twin["heading_to"] = twin["heading_to"] or g["heading_to"]
+            # people there said where they were, a little before a second-hand report: theirs
+            if g["self_reported"] and not twin["self_reported"] \
+                    and (dm._utc(twin["at"]) - dm._utc(g["at"])).total_seconds() <= OUTRANK_MIN * 60:
+                twin["outranked"] = twin["outranked"] + [{"place": twin["place"], "at": twin["at"], "position": twin["position"]}]
+                for k in ("lat", "lon", "place", "at", "hhmm", "age_min", "self_reported", "position"):
+                    twin[k] = g[k]
             if len(g["path"]) > len(twin["path"]):
                 twin["path"], twin["segments"] = g["path"], g["segments"]
             continue
         kept.append(g)
     return kept
+
+
+def path_legs(path: list[dict], routed_hop) -> list[dict]:
+    """A crowd's path as legs between its reported places: a hop longer than
+    PATH_ROUTE_MIN_M on the walking route (routed_hop(a, b) → [[lat, lon], …]
+    or None while not routed), else a straight line — "estimated" when it is
+    long enough that the streets matter. Only the newest MAX_PATH_HOPS hops
+    are routed."""
+    legs = []
+    n = len(path)
+    for i in range(1, n):
+        a, b = path[i - 1], path[i]
+        d = dm.metres(a["lat"], a["lon"], b["lat"], b["lon"])
+        coords = None
+        if d > PATH_ROUTE_MIN_M and i > n - 1 - MAX_PATH_HOPS:
+            coords = routed_hop(a, b)
+        if coords and len(coords) >= 2:
+            c = [[float(x[0]), float(x[1])] for x in coords]
+            if dm.metres(c[0][0], c[0][1], a["lat"], a["lon"]) > 1:
+                c.insert(0, [a["lat"], a["lon"]])
+            if dm.metres(c[-1][0], c[-1][1], b["lat"], b["lon"]) > 1:
+                c.append([b["lat"], b["lon"]])
+            legs.append({"i": i - 1, "coords": c, "routed": True, "estimated": False, "distance_m": round(_len(c))})
+        else:
+            legs.append({"i": i - 1, "coords": [[a["lat"], a["lon"]], [b["lat"], b["lon"]]], "routed": False,
+                         "estimated": d > PATH_ROUTE_MIN_M, "distance_m": round(d)})
+    return legs
+
+
+def _along(coords: list, s: float) -> tuple[list, list]:
+    """The point s metres along a line, and the line up to it."""
+    trail = [list(coords[0])]
+    for i in range(1, len(coords)):
+        a, b = coords[i - 1], coords[i]
+        d = dm.metres(a[0], a[1], b[0], b[1])
+        if d >= s and d > 0:
+            f = s / d
+            p = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]
+            trail.append(p)
+            return p, trail
+        s -= d
+        trail.append(list(b))
+    return list(coords[-1]), trail
+
+
+def now_estimate(g: dict, now: _dt.datetime, lines: list[dict]) -> tuple[dict | None, int]:
+    """Where a crowd probably is now: from its last reported place, walked at
+    CROWD_KMH for its age (the time since that report) along the way it
+    said it was going (heading_to) or, failing that, its route toward the
+    top convergence point — the walking route when routed, else the straight
+    line (shortened by DETOUR) — and never past the destination. → (now_est
+    {lat, lon, basis: "heading_to"|"convergence", to, routed, arrived,
+    advanced_m, trail, age_min} or None without a direction, reach_m: how
+    far it could be by now in any direction, capped at REACH_CAP_M)."""
+    at = dm._utc(g.get("at"))
+    age = max(0.0, (now - at).total_seconds() / 60) if at else 0.0
+    walk = age * CROWD_KMH * 1000 / 60
+    reach = round(min(REACH_CAP_M, walk))
+    h = g.get("heading_to")
+    mine = [ln for ln in lines if ln["crowd_id"] == g["id"] and len(ln.get("coords") or []) >= 2]
+    if h:
+        ln = next((x for x in mine if x["target_id"] == f"tgt-{h['id']}"), None)
+        basis, to = "heading_to", h.get("name")
+        coords = ln["coords"] if ln else [[g["lat"], g["lon"]], [h["lat"], h["lon"]]]
+        routed = bool(ln and ln.get("routed"))
+    elif mine:
+        ln = mine[0]
+        basis, to, coords, routed = "convergence", ln.get("target_name"), ln["coords"], bool(ln.get("routed"))
+    else:
+        return None, reach
+    total = _len(coords)
+    if total <= 0:
+        return None, reach
+    s = min(total, walk if routed else walk / DETOUR)
+    p, trail = _along(coords, s)
+    return ({"lat": round(p[0], 6), "lon": round(p[1], 6), "basis": basis, "to": to, "routed": routed,
+             "arrived": s >= total - 1, "advanced_m": round(s), "trail": [[round(x[0], 6), round(x[1], 6)] for x in trail],
+             "age_min": round(age, 1), "kmh": CROWD_KMH}, reach)
 
 
 def build_targets(calls: list[dict]) -> list[dict]:
@@ -778,7 +1071,7 @@ def city_model(city: str, crowds: list[dict], calls: list[dict], developments: l
                 continue
             rt = routes.get((g["id"], t["id"]))
             coords = rt["coords"] if rt and rt.get("coords") else [[g["lat"], g["lon"]], [t["lat"], t["lon"]]]
-            lines.append({"id": f"route-{g['id']}-{t['id']}", "crowd_id": g["id"], "target_id": t["id"], "coords": coords,
+            lines.append({"id": f"route-{g['id']}-{t['id']}", "crowd_id": g["id"], "target_id": t["id"], "target_name": t["name"], "coords": coords,
                           "eta_min": r["eta_min"], "distance_m": r["distance_m"], "routed": bool(rt and rt.get("coords")),
                           "label": f"{round(r['eta_min'])} min walk to {t['name']}" + ("" if rt and rt.get("coords") else " (straight line, estimated)"),
                           "steps": (rt or {}).get("steps") or []})
@@ -788,6 +1081,8 @@ def city_model(city: str, crowds: list[dict], calls: list[dict], developments: l
         juncs = junctions(t, rts, places or [], {ln["crowd_id"]: ln["steps"] for ln in rts})
     for ln in lines:
         ln.pop("steps", None)
+    for g in crowds:
+        g["now_est"], g["reach_m"] = now_estimate(g, now, lines)
     convergence = sorted([{**t, "kind": "target"} for t in ranked if t["score"] >= 0.1] + juncs, key=lambda x: -x["score"])[:5]
     for i, c in enumerate(convergence):
         c["rank"] = i + 1
@@ -875,13 +1170,17 @@ def gather(now: _dt.datetime, posts: list[dict], situations_reports: list[dict],
             # only grow, and their count is in the key)
             key = (post, r.get("posted_at"), len(text), len(learned), city)
             hit = _EXTRACTED.get(key)
+            # a reading that waited for a street lookup is read again once one is back
+            if hit is not None and hit[2] is not None and hit[2] != _GEO_GEN[0]:
+                hit = None
             if hit is None:
+                waits, gen = GEO_STATS["waiting_reads"], _GEO_GEN[0]
                 f = dm.fold(text[:TEXT_MAX])
                 fi = extract_intents(f, r.get("posted_at"), zone, city, near, learned, folded=True)
                 fp = extract_positions(f, city, near, learned, exclude={i["place"]["id"] for i in (ints or fi)}, folded=True)
                 if len(_EXTRACTED) > 20_000:
                     _EXTRACTED.clear()
-                hit = _EXTRACTED[key] = (fi, fp)
+                hit = _EXTRACTED[key] = (fi, fp, gen if GEO_STATS["waiting_reads"] != waits else None)
             ints = ints or hit[0]
             poss = poss or hit[1]
         for i, it in enumerate(ints):
@@ -1068,6 +1367,26 @@ async def _walk(g: dict, t: dict):
     return await sr.osrm((g["lat"], g["lon"]), {"lat": t["lat"], "lon": t["lon"], "name": t.get("name")}, "foot")
 
 
+def hops_to_route(path: list[dict]) -> list[tuple[dict, dict]]:
+    """The hops of a crowd's path that path_legs routes: longer than
+    PATH_ROUTE_MIN_M, the newest MAX_PATH_HOPS, newest first."""
+    n = len(path)
+    out = []
+    for i in range(n - 1, max(0, n - 1 - MAX_PATH_HOPS), -1):
+        a, b = path[i - 1], path[i]
+        if dm.metres(a["lat"], a["lon"], b["lat"], b["lon"]) > PATH_ROUTE_MIN_M:
+            out.append((a, b))
+    return out
+
+
+def cached_hop(a: dict, b: dict) -> list | None:
+    """A hop's walking route from the planner's cache (None: not routed yet,
+    or the router found none)."""
+    import safe_route as sr
+    hit = sr._cache_get(_route_key(a, b))
+    return hit[0]["coords"] if hit else None
+
+
 def etas_from_table(crowds, targets, table) -> dict:
     out = {}
     for i, g in enumerate(crowds):
@@ -1161,13 +1480,20 @@ async def _compute(now: _dt.datetime) -> dict:
                     routes[(g["id"], t["id"])] = {"coords": hit[0]["coords"], "steps": hit[0].get("steps")}
                 elif hit is None:
                     pending.append(_spawn(_route_key(g, t), lambda g=g, t=t: _walk(g, t), quota))
+            # then the crowds' own paths, hop by hop, with what the quota has left
+            for g in crowds:
+                for a, b in hops_to_route(g["path"]):
+                    k = _route_key(a, b)
+                    if sr._cache_get(k) is None:
+                        pending.append(_spawn(k, lambda a=a, b=b: _walk(a, {"lat": b["lat"], "lon": b["lon"],
+                                                                              "name": str(b.get("place") or "").split(",")[0]}), quota))
         routes_by_city[name] = routes
         cities.append((name, crowds, calls, devs, etas, model))
     pending = [p for p in pending if p]
     if pending:
         await asyncio.wait(pending, timeout=max(0.05, ROUTING_BUDGET_S + 0.3 - (time.monotonic() - t0)))
     out_cities = []
-    for name, crowds, calls, devs, etas, model in cities:
+    for idx, (name, crowds, calls, devs, etas, model) in enumerate(cities):
         routes = routes_by_city[name]
         for ln in model["routes"]:
             if (ln["crowd_id"], ln["target_id"]) in routes:
@@ -1180,10 +1506,15 @@ async def _compute(now: _dt.datetime) -> dict:
         if routes:
             model = city_model(name, crowds, calls, devs, etas, routes, now, parts["learned"] + [
                 {"name": g["name"], "lat": g["lat"], "lon": g["lon"]} for g in _GAZ if g["city"] == name])
+        routed_city = idx < ROUTED_CITIES and name != "elsewhere"
+        for g in model["crowds"]:
+            g["path_legs"] = path_legs(g["path"], cached_hop if routed_city else (lambda a, b: None))
         model["country"] = next((g.get("country") for g in crowds if g.get("country")), "")
         model["routing"] = {"etas_routed": sum(1 for v in etas.values() if v["routed"]),
                             "lines_routed": sum(1 for ln in model["routes"] if ln["routed"]),
-                            "lines": len(model["routes"])}
+                            "lines": len(model["routes"]),
+                            "path_legs_routed": sum(1 for g in model["crowds"] for x in g["path_legs"] if x["routed"]),
+                            "path_legs_estimated": sum(1 for g in model["crowds"] for x in g["path_legs"] if x["estimated"])}
         out_cities.append(model)
     return {"generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "cities": out_cities,
             "estimate_note": ESTIMATE, "note": dm.RECONSTRUCTED,

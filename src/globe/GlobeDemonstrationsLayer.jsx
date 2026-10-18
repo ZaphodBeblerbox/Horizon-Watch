@@ -148,9 +148,11 @@ const SituationEntity = memo(function SituationEntity({ f }) {
                                  // the mark's centre on the place, its words beside or below it
                                  pixelOffset: new Cartesian2(mk.iconWidth / 2 - mk.iconAnchor[0], mk.iconHeight / 2 - mk.iconAnchor[1]),
                                  heightReference: HeightReference.CLAMP_TO_GROUND,
-                                 distanceDisplayCondition: new DistanceDisplayCondition(0, 600_000),
+                                 distanceDisplayCondition: new DistanceDisplayCondition(0, f.maxCameraM || 600_000),
                                  disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
         )
     }
-    return <Entity id={f.id} name={f.title} polyline={{ positions, width: f.weight, clampToGround: true, material }} />
+    // a reach ring (maxCameraM) only from street level: its size is on the ground, never swelling with zoom
+    const ddc = f.maxCameraM ? new DistanceDisplayCondition(0, f.maxCameraM) : undefined
+    return <Entity id={f.id} name={f.title} polyline={{ positions, width: f.weight, clampToGround: true, material, distanceDisplayCondition: ddc }} />
 })
