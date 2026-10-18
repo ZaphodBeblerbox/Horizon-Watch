@@ -14,13 +14,13 @@ describe("the app can be opened with no server", () => {
 
     it("a transient failure does not by itself block the login screen", () => {
         // The old gate was `if (!authUser && authTransientError) return <dead end>`.
-        // It must now also require that offline login is unavailable.
-        const gate = /if \(!authUser && authTransientError && !offlineLoginAvailable\)/
-        expect(APP).toMatch(gate)
+        // The decision now lives in lib/connectivity.js bootGate (tested
+        // there), which is told whether offline login is available.
+        expect(APP).toMatch(/bootGate\(\{[^}]*offlineLoginAvailable/)
     })
 
-    it("the login screen is told it is running offline", () => {
-        expect(APP).toMatch(/<LoginScreen[^>]*offline=\{authTransientError\}/)
+    it("the login screen is told when it is signing in locally", () => {
+        expect(APP).toMatch(/<LoginScreen[^>]*offline=\{gate === "login-offline"\}/)
     })
 
     it("the boot asks whether this machine can sign in offline", () => {

@@ -10,6 +10,7 @@ import API_BASE from "../apiBase.js"
 import { enrol, offlineLogin, forgetEnrolment, enrolmentFor, OFFLINE_GRACE_MS } from "../lib/offlineAuth.js"
 import { indexedDbStore, memoryStore } from "../lib/offlineCache.js"
 import { storeDesktopToken, clearDesktopToken } from "../lib/desktopAuth.js"
+import { classifyFailure, deviceOffline, probeServer } from "../lib/connectivity.js"
 
 // One store for the enrolment record, created lazily so importing this
 // module in a test environment never touches IndexedDB.
@@ -36,6 +37,10 @@ let _authChecked = false
 // that case so app.jsx can show a real "reconnecting" state instead of
 // silently discarding a session that was never actually invalid.
 let _authTransientError = false
+// WHY the last check failed (connectivity.js): "offline" only when the
+// device has no network; "slow", "server-error" or "unreachable" when the
+// server is the problem. The boot gate words its screen from this.
+let _authTransientReason = null
 // True when the session was granted by offlineAuth rather than the server.
 let _offlineSession = false
 const _listeners = new Set()
@@ -66,6 +71,7 @@ export function updateCurrentUser(next) {
 }
 export function isAuthChecked() { return _authChecked }
 export function isAuthTransientError() { return _authTransientError }
+export function authTransientReason() { return _authTransientReason }
 export function subscribeAuth(fn) {
     _listeners.add(fn)
     return () => _listeners.delete(fn)
@@ -104,30 +110,52 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * stale-build/CDN issue. A real 10s AbortController timeout turns a hung
  * connection into the same "transient" outcome a network error already
  * gets, so the existing retry-then-honest-fallback logic actually runs. */
+/** How long one GET /api/auth/me may take. 10 s was shorter than the
+ *  production server's slow spells (2026-10-18: the loop blocked 30-60 s),
+ *  so a busy server read as "offline" on the phone. */
+export const ME_TIMEOUT_MS = 15_000
+
 async function _tryFetchMe() {
     let r
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 10_000)
+    let timedOut = false
+    const timeoutId = setTimeout(() => { timedOut = true; controller.abort() }, ME_TIMEOUT_MS)
     try {
         r = await fetch(`${API_BASE}/api/auth/me`, {
             headers: { "Content-Type": "application/json" },
             credentials: "include",
             signal: controller.signal,
         })
-    } catch {
-        return { outcome: "transient" }
+    } catch (error) {
+        return { outcome: "transient", reason: classifyFailure({ online: !deviceOffline(), error, timedOut }) }
     } finally {
         clearTimeout(timeoutId)
     }
     if (r.status === 401) return { outcome: "unauthenticated" }
-    if (!r.ok) return { outcome: "transient" }
+    if (!r.ok) return { outcome: "transient", reason: classifyFailure({ online: !deviceOffline(), status: r.status }) }
     try {
         const user = await r.json()
         // the renewed token, for a client that holds its own (desktopAuth)
         if (user?.session_token) { storeDesktopToken(user.session_token); delete user.session_token }
         return { outcome: "ok", user }
     } catch {
-        return { outcome: "transient" }
+        return { outcome: "transient", reason: "server-error" }
+    }
+}
+
+/**
+ * Settle WHY the server could not be asked, once every retry has failed.
+ * The device says it is offline: offline. Otherwise ask whether anything
+ * answers at the API's address at all — if it does, the server is up and
+ * merely slow or erroring, which is not the user's connection.
+ */
+async function _settleReason(last) {
+    if (deviceOffline()) return "offline"
+    if (last === "slow" || last === "server-error") return last
+    try {
+        return (await probeServer({ apiBase: API_BASE })) ? "slow" : "unreachable"
+    } catch {
+        return "unreachable"
     }
 }
 
@@ -153,14 +181,16 @@ export function lastProfile(email) {
  * can show a real "couldn't reach the server" state instead of the login
  * screen. */
 export async function checkSession() {
-    const MAX_ATTEMPTS = 4
+    const MAX_ATTEMPTS = 3
     const BASE_DELAY_MS = 700
+    let lastReason = null
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const result = await _tryFetchMe()
         if (result.outcome === "ok") {
             _currentUser = result.user
             _keepProfile(result.user)
             _authTransientError = false
+            _authTransientReason = null
             _authChecked = true
             _publish()
             return _currentUser
@@ -168,12 +198,18 @@ export async function checkSession() {
         if (result.outcome === "unauthenticated") {
             _currentUser = null
             _authTransientError = false
+            _authTransientReason = null
             _authChecked = true
             _publish()
             return null
         }
+        lastReason = result.reason || lastReason
+        // No network on the device: retrying now cannot help, and the
+        // gate reconnects by itself on the browser's "online" event.
+        if (lastReason === "offline") break
         if (attempt < MAX_ATTEMPTS - 1) await sleep(BASE_DELAY_MS * 2 ** attempt)
     }
+    _authTransientReason = await _settleReason(lastReason)
     _authTransientError = true
     _authChecked = true
     _publish()
@@ -205,11 +241,18 @@ export async function canLoginOffline(now = Date.now()) {
     }
 }
 
-export async function login(email, password) {
+/** A sign-in may wait this long; it had no deadline and could hang forever
+ *  on a server that accepted the connection and never answered. */
+export const LOGIN_TIMEOUT_MS = 30_000
+
+export async function login(email, password, { allowLocal = false } = {}) {
+    const ctl = new AbortController()
+    const t = setTimeout(() => ctl.abort(), LOGIN_TIMEOUT_MS)
     try {
         const user = await req("/api/auth/login", {
-            method: "POST", body: JSON.stringify({ email, password }),
+            method: "POST", body: JSON.stringify({ email, password }), signal: ctl.signal,
         })
+        clearTimeout(t)
         _currentUser = user
         _offlineSession = false
         // The packaged app cannot keep the session cookie — its origin
@@ -231,7 +274,18 @@ export async function login(email, password) {
         // password is wrong, and falling back to a local check would turn
         // a rejection into an acceptance. Only a request that reached
         // nobody may fall back.
+        clearTimeout(t)
         if (!_reachedNobody(e)) throw e
+        // A SLOW SERVER IS NOT NO SERVER. If the device has a network and
+        // something answers at the API's address, the server is up and
+        // busy: say that, rather than signing in "offline" against stale
+        // local data and telling the user they have no connection.
+        // `allowLocal`: the reader chose "use the data on this device".
+        if (!allowLocal && !deviceOffline() && await probeServer({ apiBase: API_BASE }).catch(() => false)) {
+            throw new Error(e?.name === "AbortError"
+                ? "The server is slow to answer right now. Your connection is fine — try again in a moment."
+                : "The server could not complete the sign-in. Your connection is fine — try again in a moment.")
+        }
 
         const r = await offlineLogin({ email, password, store: _enrolStore(), crypto: window.crypto })
         if (!r.ok) throw new Error(r.reason)
