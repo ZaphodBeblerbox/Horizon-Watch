@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { LAYER_GROUPS, isLayerOn, countActive, clampOpacity } from "./layerRailConfig.js"
+import { LAYER_GROUPS, isLayerOn, countActive, clampOpacity, nothingOn } from "./layerRailConfig.js"
 
 describe("LAYER_GROUPS", () => {
     // "threatHeatmap" and "showStrategicZones" are deliberately absent:
@@ -48,8 +48,8 @@ describe("isLayerOn", () => {
         expect(isLayerOn({ aisVessels: false }, { key: "aisVessels" })).toBe(false)
     })
 
-    it("falls back to the layer's own defaultOn when absent from active", () => {
-        expect(isLayerOn({}, { key: "forgeAlerts", defaultOn: true })).toBe(true)
+    it("is off when absent from active — nothing is on by default (owner, 2026-10-18)", () => {
+        expect(isLayerOn({}, { key: "forgeAlerts", defaultOn: true })).toBe(false)
         expect(isLayerOn({}, { key: "aisVessels" })).toBe(false)
         expect(isLayerOn(undefined, { key: "aisVessels" })).toBe(false)
     })
@@ -57,8 +57,21 @@ describe("isLayerOn", () => {
 
 describe("countActive", () => {
     it("counts only the layers actually on within a group", () => {
-        const group = { layers: [{ key: "a" }, { key: "b", defaultOn: true }, { key: "c" }] }
-        expect(countActive({ a: true, c: false }, group)).toBe(2) // a=true, b defaults true
+        const group = { layers: [{ key: "a" }, { key: "b" }, { key: "c" }] }
+        expect(countActive({ a: true, c: false }, group)).toBe(1)
+    })
+})
+
+describe("first run: nothing on (owner, 2026-10-18)", () => {
+    it("no desktop layer definition defaults on", () => {
+        for (const g of LAYER_GROUPS) for (const l of g.layers) {
+            expect(l.defaultOn, l.key).toBeFalsy()
+            expect(isLayerOn({}, l), l.key).toBe(false)
+        }
+    })
+    it("nothingOn reads every map it is given", () => {
+        expect(nothingOn({ a: false }, {}, null)).toBe(true)
+        expect(nothingOn({ a: false }, { b: true })).toBe(false)
     })
 })
 

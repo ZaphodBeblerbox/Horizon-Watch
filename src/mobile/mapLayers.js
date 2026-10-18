@@ -30,7 +30,7 @@ import { infraGlyphUri } from "../globe/infraGlyphs.js"
 import { styleFor as gfwStyleFor, summaryOf as gfwSummaryOf, ageLabel as gfwAgeLabel, KINDS as GFW_KINDS } from "../globe/gfwEvents.js"
 import { riskAlpha, buildA2ToA3, indexByIso3 } from "../globe/riskChoropleth.js"
 import { CAT } from "../components/timeStripMath.js"
-import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, defaultOnNow as endangeredDefaultOn, filterByCountry, placesUrl } from "../globe/endangeredPlaces.js"
+import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, filterByCountry, placesUrl } from "../globe/endangeredPlaces.js"
 import {
     actorColor, filterStrikes, isHollow, strikeIconDims, strikeIconUri, strikeOpacity, strikeSettings, strikeSize,
     strikeSummary, strikeWindowHours, strikesUrl,
@@ -1385,21 +1385,21 @@ const GFW_LABEL = {
 export const PHONE_LAYERS = [
     // Our assets — Situation's first group.
     {
-        key: "assets", label: "Our assets", group: G.assets, defaultOn: true, kind: "points", minZoom: 0,
+        key: "assets", label: "Our assets", group: G.assets, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: assetIcon("Sites", "quiet"), load: loadAssets,
     },
     {
-        key: "people", label: "Team, live location", group: G.assets, defaultOn: true, kind: "points", minZoom: 0,
+        key: "people", label: "Team, live location", group: G.assets, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: personIcon(true, false), load: loadPeople,
     },
     {
-        key: "safeHouses", label: "Safe houses", group: G.assets, defaultOn: true, kind: "points", minZoom: 0,
+        key: "safeHouses", label: "Safe houses", group: G.assets, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: safeHouseIcon(false), load: loadSafeHouses,
     },
 
     // Maritime (LAYER_GROUPS.maritime; live vessels are the phone's own).
     {
-        key: "ports", label: "Ports", group: G.maritime, defaultOn: true, kind: "points", minZoom: 3,
+        key: "ports", label: "Ports", group: G.maritime, defaultOn: false, kind: "points", minZoom: 3,
         legendIcon: infraGlyphUri("port", { state: "nominal", theme: "dark", size: 22 }), load: loadPorts,
     },
     {
@@ -1407,7 +1407,7 @@ export const PHONE_LAYERS = [
         legendIcon: lineSwatch(CABLE_FALLBACK_COLOR), load: loadCables,
     },
     {
-        key: "chokepoints", label: "Chokepoints", group: G.maritime, defaultOn: true, kind: "points", minZoom: 0,
+        key: "chokepoints", label: "Chokepoints", group: G.maritime, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: getEntityMarkerDataUri({ entityType: "zone", size: 26 }), load: loadChokepoints,
     },
     ...GFW_KINDS.map((kind) => {
@@ -1422,7 +1422,7 @@ export const PHONE_LAYERS = [
 
     // Air (LAYER_GROUPS.air; live aircraft are the phone's own).
     {
-        key: "airports", label: "Airports", group: G.air, defaultOn: true, kind: "points", minZoom: 3,
+        key: "airports", label: "Airports", group: G.air, defaultOn: false, kind: "points", minZoom: 3,
         legendIcon: infraGlyphUri("airport", { theme: "dark", size: 22 }), load: loadAirports,
     },
     {
@@ -1436,16 +1436,16 @@ export const PHONE_LAYERS = [
 
     // News.
     {
-        key: "geoConfirmed", label: "Confirmed", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
+        key: "geoConfirmed", label: "Confirmed", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: getGeoConfirmedMarkerDataUri({ color: null, size: GEOCONFIRMED_MARKER_SIZE }), load: loadGeoConfirmed,
     },
     // GDELT is not a map signal (owner, 2026-10-13): the country risk index only
     {
-        key: "telegram", label: "Telegram", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
+        key: "telegram", label: "Telegram", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: tgIcon(), load: loadTelegram,
     },
     {
-        key: "unrest", label: "Unrest & protests", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
+        key: "unrest", label: "Unrest & protests", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: tgUnrestIcon(), load: loadUnrest,
     },
     // What the route planner ("Get me out") avoids, as a layer, and the
@@ -1468,37 +1468,37 @@ export const PHONE_LAYERS = [
         legendIcon: convergenceIcon("").uri, load: loadDemoSituation,
     },
     // Owner, 2026-10-18: "ça gaze à Répu", "ça nasse à Répu" on the map —
-    // on by default, read every 30 s.
+    // read every 30 s while on.
     {
         key: "demonstrations:police", label: "Street reports: tear gas, kettles, police", group: G.news,
-        defaultOn: true, kind: "lines", minZoom: 0, refreshMs: POLICE_REFRESH_MS,
+        defaultOn: false, kind: "lines", minZoom: 0, refreshMs: POLICE_REFRESH_MS,
         legendIcon: tacticIcon("kettle").uri, load: loadPoliceActions,
     },
     {
         // spikes in the mood, and each single call to violence (owner, 2026-10-18)
-        key: "telegramMood", label: "Mood & calls to violence", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
+        key: "telegramMood", label: "Mood & calls to violence", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: moodIconUri("high"), load: loadTelegramMood, refreshMs: MOOD_REFRESH_MS,
     },
     {
-        key: "strikes", label: "Strikes & control", group: G.news, defaultOn: true, kind: "points", minZoom: 0,
+        key: "strikes", label: "Strikes & control", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: strikeIconUri({ act: "airstrike", color: actorColor("Russia"), size: 22 }), load: loadStrikes,
     },
     {
-        key: "frontlineClaims", label: FRONTLINE_LAYERS[0].label, group: G.news, defaultOn: true, kind: "areas", minZoom: 0,
+        key: "frontlineClaims", label: FRONTLINE_LAYERS[0].label, group: G.news, defaultOn: false, kind: "areas", minZoom: 0,
         legendIcon: areaSwatch(sideColour("red"), 0.3), load: loadClaims,
     },
     {
-        key: "movements", label: FRONTLINE_LAYERS[1].label, group: G.news, defaultOn: true, kind: "lines", minZoom: 0,
+        key: "movements", label: FRONTLINE_LAYERS[1].label, group: G.news, defaultOn: false, kind: "lines", minZoom: 0,
         legendIcon: milSymbol("SHGPUCI--------", { colour: sideColour("red"), size: 14 }).uri || lineSwatch(sideColour("red")), load: loadMovements,
     },
     {
-        key: "trajectories", label: FRONTLINE_LAYERS[2].label, group: G.news, defaultOn: true, kind: "lines", minZoom: 0,
+        key: "trajectories", label: FRONTLINE_LAYERS[2].label, group: G.news, defaultOn: false, kind: "lines", minZoom: 0,
         legendIcon: strikeIconUri({ act: "drone", color: actorColor("Russia"), size: 22 }), load: loadTrajectories,
     },
 
     // Imagery.
     {
-        key: "imagerySignals", label: "Imagery signals", group: G.imagery, defaultOn: true, kind: "points", minZoom: 0,
+        key: "imagerySignals", label: "Imagery signals", group: G.imagery, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: imagerySignalIcon("high"), load: loadImagerySignals,
     },
     {
@@ -1514,13 +1514,13 @@ export const PHONE_LAYERS = [
 
     // Alerts.
     {
-        key: "derivedAlerts", label: "Surge & fusion", group: G.alerts, defaultOn: true, kind: "points", minZoom: 0,
+        key: "derivedAlerts", label: "Surge & fusion", group: G.alerts, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: derivedMark(FUSION_MARK), load: loadDerivedAlerts,
     },
 
     // Context (CONTEXT_TOGGLES; graticule, marker labels and coverage are not drawn on the phone).
     {
-        key: "risk", label: "Country risk index", group: G.context, defaultOn: true, kind: "areas", minZoom: 0,
+        key: "risk", label: "Country risk index", group: G.context, defaultOn: false, kind: "areas", minZoom: 0,
         legendIcon: areaSwatch(RISK_COLOR, 0.46), load: loadRisk,
     },
     {
@@ -1560,10 +1560,10 @@ export const PHONE_LAYERS = [
         legendIcon: getFacilityMarkerDataUri({ kind: "police", color: FAC_COLOUR.security, size: FAC_SIZE }),
         load: facilityLoader("security"),
     },
-    // Endangered places — under Infrastructure (owner, 2026-10-12), on while a call is within 7 days.
+    // Endangered places — under Infrastructure (owner, 2026-10-12).
     {
         key: "endangered", label: "Endangered places", group: G.infra,
-        get defaultOn() { return endangeredDefaultOn() },
+        defaultOn: false,
         kind: "points", minZoom: 0,
         legendIcon: placeIconUri({ kind: "fuel_depot", alarm: "red", hasCall: true, size: 22 }), load: loadEndangered,
     },
