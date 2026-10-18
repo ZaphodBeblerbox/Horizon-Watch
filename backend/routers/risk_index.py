@@ -244,6 +244,11 @@ def _compute_all(window_days: int) -> dict:
     fam = _family_inputs()
     results = _rx.score_all(gdelt_rows, geo_counts, fam["rss"], fam["telegram"],
                             weights=_current_weights, window_days=window_days)
+    import country_codes as _cc
+    for r in results:
+        # a name for every row: the map's country file lacks small states
+        # (Grenada showed as "GRD" in the ranking)
+        r["name"] = _cc.name_of(r["iso_code"])
     timing = {"geoconfirmed": round(t_geo - t0, 2), "gdelt": round(t_gdelt - t_geo, 2), **fam["timing_s"],
               "total": round(_t.monotonic() - t0, 2)}
     if timing["total"] > 5:

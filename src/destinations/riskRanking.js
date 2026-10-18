@@ -69,7 +69,7 @@ export function rankCountries(countries = [], names = new Map(), signals = []) {
     return (countries || [])
         .filter((c) => c && Number.isFinite(c.score) && c.iso_code)
         .map((c) => {
-            const name = names.get(String(c.iso_code).toUpperCase()) || c.iso_code
+            const name = names.get(String(c.iso_code).toUpperCase()) || c.name || c.iso_code
             const n = evidence(c)
             return {
                 iso3: c.iso_code, name, score: c.score, band: c.band,
