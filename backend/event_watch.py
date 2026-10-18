@@ -320,6 +320,42 @@ def cards_for(uid: str, now: _dt.datetime | None = None) -> list[dict]:
         })
     cards += nows[:CAPS["live"]]
 
+    # An announced protest seen on the ground (protest_status.py): "Ongoing ·
+    # since 14:00 (reports 3 min ago): protest march at Place de la République
+    # — est. 1,500–3,000 · from 3 photos + 2 reports". Once per status, and
+    # only on reports from there (the clock alone was the reminder's job).
+    # The announcement's own card says where it stands too.
+    try:
+        import protest_status as ps
+        idx = ps.by_post()
+        for card in new_cards[:CAPS["announcement"]]:
+            ch, _, mid = card["id"][4:].rpartition("/")         # "ann:<channel>/<msg_id>"
+            p = idx.get((ch, int(mid))) if mid.isdigit() else None
+            if p:
+                card["status_label"] = p["status_label"]
+                card["protest_status"] = ps.status_brief(p)
+        seen_p = set()
+        for p in idx.values():
+            st = p["status"]
+            if p["id"] in seen_p or st["key"] not in ("starting", "ongoing", "dispersing") or st.get("basis") != "evidence":
+                continue
+            seen_p.add(p["id"])
+            w = why({"lat": p["lat"], "lon": p["lon"], "country_code": p.get("country_code")}, c)
+            if not w:
+                continue
+            crowd = (p.get("crowd") or {}).get("label")
+            cards.append({
+                "id": f"protest:{p['id']}:{st['key']}", "kind": "live", "alert_type": "Protest, now",
+                "title": f"{p['status_label']}: {p['title'][:1].lower()}{p['title'][1:]}" + (f" — {crowd}" if crowd else ""),
+                "sev": "high" if w[1] == "asset" else "moderate", "reason": w[0],
+                "lat": p["lat"], "lon": p["lon"], "source": (p["sources"][0].get("channel_title") if p["sources"] else None),
+                "url": p["sources"][0].get("url") if p["sources"] else None, "notify": st["key"] != "dispersing",
+                "created_at": st.get("last_report_at") or _iso(now), "status_label": p["status_label"],
+                "protest_status": ps.status_brief(p),
+            })
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[event_watch] error: protest status: {type(e).__name__}: {e}", flush=True)
+
     # Calls for armed conflict rising on Telegram about a country this user
     # has an asset in, a theater over, or an interest in
     # (telegram_mood_alert.py): the alert's own card, with their reason.
