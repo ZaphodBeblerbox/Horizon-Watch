@@ -1,25 +1,27 @@
-"""routers/risk_index.py — the real GDELT country risk index endpoints
-(Parallax translation step 1, Part 4). See gdelt_risk_index.py for the real
-scoring engine and its own detailed real-data-depth honesty notes.
+"""routers/risk_index.py — the country risk index endpoints.
+
+Since 2026-10-18 the index is a cross-reference of four source families —
+GDELT, news (RSS), Telegram and GeoConfirmed — scored and combined in
+risk_crossref.py; gdelt_risk_index.py still scores the GDELT family.
 
 Structural separation from the exposure-scoring engine (fusion_engine.py/
-correlation_scoring.py): this router imports ONLY gdelt_risk_index,
-gdelt_events, geoconfirmed's country_registry, and database — never
-fusion_engine or correlation_scoring, and neither of those modules imports
-anything from here. Grep-verified in the Part 4 report, not just asserted.
+correlation_scoring.py): this router never imports fusion_engine or
+correlation_scoring, and neither of those modules imports anything from
+here.
 """
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Body
 
 import gdelt_risk_index as _gri
+import risk_crossref as _rx
 
 router = APIRouter(prefix="/api/risk-index", tags=["risk-index"])
 
-# Real, session-lifetime weight override (in-memory; a real per-analyst
-# server-persisted setting is real future work beyond this pass's scope —
-# stated explicitly, not silently simplified). Starts at the real default.
-_current_weights: dict = dict(_gri.DEFAULT_WEIGHTS)
+# Session-lifetime weight override, in memory. The weights are the four
+# SOURCE FAMILIES (gdelt, rss, telegram, geoconfirmed); GDELT's own parts
+# (volume, tone, Goldstein) keep their fixed internal weights.
+_current_weights: dict = dict(_rx.DEFAULT_FAMILY_WEIGHTS)
 
 
 def _real_geoconfirmed_counts_by_iso(window_days: int) -> dict:
@@ -123,58 +125,204 @@ def get_all_country_risk(window_days: int = 30, force: bool = False):
         _RISK_LOCK.release()
 
 
+def _ro_con():
+    """A read-only connection to the app database: the index only reads."""
+    import sqlite3
+    from paths import DATA_DIR
+    return sqlite3.connect(f"file:{DATA_DIR}/akili.db?mode=ro", uri=True, timeout=30)
+
+
+def _to_iso3(by_cc2: dict) -> dict:
+    """{alpha-2: x} -> {alpha-3: x}; codes that do not resolve are dropped."""
+    import country_codes as _cc
+    out = {}
+    for cc, v in (by_cc2 or {}).items():
+        iso3 = _cc.from_iso2(str(cc or "").upper()) if cc else None
+        if iso3:
+            out[iso3] = v
+    return out
+
+
+def _telegram_stats(days: int = 7) -> dict:
+    """Per country (alpha-2), over the last `days`: located event posts and
+    their channels, mood-rated posts (tension, calls to act, channels), calls
+    to violence raised as alerts, stated intents, and the two live readings
+    (telegram_unrest: demonstrations / tension; telegram_mood_alert: calls
+    for conflict rising). Four GROUP BYs on indexed time columns plus the
+    two readings the mood page already caches for five minutes."""
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    since_iso = (now - _dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+    since_sql = (now - _dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    out: dict = {}
+
+    def row(cc):
+        return out.setdefault(str(cc).lower(), {})
+
+    con = _ro_con()
+    try:
+        for cc, n, ch in con.execute(
+                "SELECT lower(country_code), COUNT(*), COUNT(DISTINCT channel) FROM telegram_posts"
+                " WHERE posted_at >= ? AND relevant = 1 AND country_code IS NOT NULL AND country_code != ''"
+                " GROUP BY 1", (since_iso,)):
+            row(cc).update(reports=n, report_channels=ch)
+        for cc, n, tsum, calls, ch in con.execute(
+                "SELECT lower(mood_country), COUNT(*), SUM(COALESCE(mood_tension, 0)),"
+                " SUM(CASE WHEN mood_mobilise >= 2 THEN 1 ELSE 0 END), COUNT(DISTINCT channel)"
+                " FROM telegram_posts WHERE posted_at >= ? AND mood_checked = 1"
+                " AND mood_country IS NOT NULL AND mood_country != '' GROUP BY 1", (since_iso,)):
+            row(cc).update(mood_n=n, mood_tension_sum=tsum or 0, mood_calls=calls or 0, mood_channels=ch)
+        try:
+            import telegram_mood_alert as _tma
+            for cc, n in con.execute(
+                    "SELECT lower(country_code), COUNT(*) FROM alerts WHERE alert_type = ? AND created_at >= ?"
+                    " AND country_code IS NOT NULL GROUP BY 1", (_tma.CALL_TYPE, since_sql)):
+                row(cc)["violence_calls"] = n
+        except Exception as e:                                  # noqa: BLE001
+            print(f"[risk-index] error: telegram calls: {type(e).__name__}: {e}", flush=True)
+        try:
+            for cc, n in con.execute(
+                    "SELECT lower(country), COUNT(*) FROM telegram_intents WHERE kind = 'intent'"
+                    " AND posted_at >= ? AND country IS NOT NULL AND country != '' GROUP BY 1", (since_iso,)):
+                row(cc)["intents"] = n
+        except Exception as e:                                  # noqa: BLE001  (table made by telegram_signals)
+            if "no such table" not in str(e):
+                print(f"[risk-index] error: telegram intents: {type(e).__name__}: {e}", flush=True)
+    finally:
+        con.close()
+    try:
+        import telegram_unrest as _tu
+        for cc, rd in (_tu.evaluate() or {}).items():
+            d = ((rd.get("trend") or {}).get("daily")) or {}
+            row(cc).update(unrest_level=((rd.get("likelihood") or {}).get("level")),
+                           trend=d.get("direction"), sharp=bool(d.get("sharp")))
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[risk-index] error: telegram unrest: {type(e).__name__}: {e}", flush=True)
+    try:
+        import telegram_mood_alert as _tma
+        for cc, ind in (_tma.evaluate() or {}).items():
+            if ind.get("rising"):
+                row(cc).update(conflict_rising=True, conflict_severity=ind.get("severity"))
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[risk-index] error: telegram conflict calls: {type(e).__name__}: {e}", flush=True)
+    return {cc: v for cc, v in out.items() if len(cc) == 2}
+
+
+def _rss_stats(days: int = 7) -> dict:
+    import rss_pulse
+    return rss_pulse.country_stats(days)
+
+
+def _family_inputs() -> dict:
+    """RSS and Telegram readings per country (alpha-3), each loader timed and
+    allowed to fail on its own: a broken family is reported, never fatal."""
+    import time as _t
+    out = {"rss": {}, "telegram": {}, "timing_s": {}, "errors": {}}
+    for name, fn in (("rss", lambda: _rss_stats(_rx.WINDOW_DAYS["rss"])),
+                     ("telegram", lambda: _telegram_stats(_rx.WINDOW_DAYS["telegram"]))):
+        t0 = _t.monotonic()
+        try:
+            out[name] = _to_iso3(fn())
+        except Exception as e:                                  # noqa: BLE001
+            out["errors"][name] = f"{type(e).__name__}: {e}"
+            print(f"[risk-index] error: {name} family: {type(e).__name__}: {e}", flush=True)
+        out["timing_s"][name] = round(_t.monotonic() - t0, 2)
+    return out
+
+
 def _compute_all(window_days: int) -> dict:
+    import time as _t
+    t0 = _t.monotonic()
     events = get_all_events()
     geo_counts = _real_geoconfirmed_counts_by_iso(window_days)
+    t_geo = _t.monotonic()
     hist_days = real_history_days(events)
-    results = _gri.compute_all_countries(
-        events, geo_counts, weights=_current_weights, window_days=window_days, real_history_days=hist_days,
+    gdelt_rows = _gri.compute_all_countries(
+        events, geo_counts, weights=None, window_days=window_days, real_history_days=hist_days,
     )
+    t_gdelt = _t.monotonic()
+    fam = _family_inputs()
+    results = _rx.score_all(gdelt_rows, geo_counts, fam["rss"], fam["telegram"],
+                            weights=_current_weights, window_days=window_days)
+    import country_codes as _cc
+    for r in results:
+        # a name for every row: the map's country file lacks small states
+        # (Grenada showed as "GRD" in the ranking)
+        r["name"] = _cc.name_of(r["iso_code"])
+    timing = {"geoconfirmed": round(t_geo - t0, 2), "gdelt": round(t_gdelt - t_geo, 2), **fam["timing_s"],
+              "total": round(_t.monotonic() - t0, 2)}
+    if timing["total"] > 5:
+        print(f"[risk-index] computed {len(results)} countries in {timing['total']}s {timing}", flush=True)
     payload = {
         "countries": results, "weights": _current_weights,
+        "families": [{"key": f, "label": _rx.FAMILY_LABEL[f], "window_days": _rx.WINDOW_DAYS[f],
+                      "full_evidence": _rx.FULL_EVIDENCE[f], "corroborates_at": _rx.CORROBORATES_AT[f]}
+                     for f in _rx.FAMILIES],
+        "family_errors": fam["errors"], "timing_s": timing,
+        "method": ("cross-reference of four source families; one family alone is capped below band 4, "
+                   "two below band 5; confidence is the number of agreeing families"),
         "real_gdelt_history_days": hist_days, "real_total_gdelt_events": len(events),
         "window_days": window_days,
     }
-    import time as _t2
-    _RISK_CACHE[window_days] = (_t2.time(), payload)
+    _RISK_CACHE[window_days] = (_t.time(), payload)
     return payload
+
+
+def _country_row(iso: str, window_days: int = 30) -> dict | None:
+    """One country, from the cached whole-world computation — never a second
+    per-request computation that could disagree with the ranking."""
+    iso = (iso or "").upper()
+    if len(iso) == 2:
+        import country_codes as _cc
+        iso = _cc.from_iso2(iso) or iso
+    payload = get_all_country_risk(window_days=window_days)
+    for row in payload.get("countries") or []:
+        if row.get("iso_code") == iso:
+            return row
+    return None
 
 
 @router.get("/country/{iso_code}")
 def get_one_country_risk(iso_code: str, window_days: int = 30):
-    events = get_all_events()
-    geo_counts = _real_geoconfirmed_counts_by_iso(window_days)
-    hist_days = real_history_days(events)
-    result = _gri.compute_country_risk(
-        iso_code.upper(), events, geo_counts, weights=_current_weights,
-        window_days=window_days, real_history_days=hist_days,
-    )
-    return result
+    row = _country_row(iso_code, window_days)
+    if row is None:
+        return {"iso_code": iso_code.upper(), "score": None, "band": None,
+                "status": "no source family observed this country in its window"}
+    return row
 
 
 @router.get("/weights")
 def get_weights():
-    return {"weights": _current_weights, "default_weights": _gri.DEFAULT_WEIGHTS}
+    return {"weights": _current_weights, "default_weights": _rx.DEFAULT_FAMILY_WEIGHTS}
 
 
 @router.post("/weights")
 def set_weights(weights: dict = Body(...)):
-    """Real, live weight adjustment — every real subsequent /countries or
-    /country/{iso} call reflects the new weights immediately (verified by
-    this round's own regression test)."""
+    """Live family-weight adjustment. The cached ranking is dropped so the
+    next read recomputes with the new weights."""
     for k in weights:
-        if k not in _gri.DEFAULT_WEIGHTS:
+        if k not in _rx.DEFAULT_FAMILY_WEIGHTS:
             raise HTTPException(status_code=400, detail=f"unknown weight key: {k}")
     global _current_weights
     _current_weights = {**_current_weights, **{k: float(v) for k, v in weights.items()}}
+    _expire_cache()
     return {"weights": _current_weights}
 
 
 @router.post("/weights/reset")
 def reset_weights():
     global _current_weights
-    _current_weights = dict(_gri.DEFAULT_WEIGHTS)
+    _current_weights = dict(_rx.DEFAULT_FAMILY_WEIGHTS)
+    _expire_cache()
     return {"weights": _current_weights}
+
+
+def _expire_cache() -> None:
+    """Mark every cached ranking stale WITHOUT removing it: the next read
+    refreshes it while concurrent readers keep the previous answer
+    (build-then-swap, never clear-then-rebuild)."""
+    for k, (_stamp, payload) in list(_RISK_CACHE.items()):
+        _RISK_CACHE[k] = (0.0, payload)
 
 @router.get("/country/{iso_code}/explain")
 def explain_country_risk(iso_code: str, window_days: int = 30, limit: int = 8):
@@ -192,13 +340,13 @@ def explain_country_risk(iso_code: str, window_days: int = 30, limit: int = 8):
     none, because it is checkable and wrong.
     """
     iso = (iso_code or "").upper()
+    if len(iso) == 2:
+        import country_codes as _cc
+        iso = _cc.from_iso2(iso) or iso
     events = get_all_events()
-    geo_counts = _real_geoconfirmed_counts_by_iso(window_days)
-    hist_days = real_history_days(events)
-    risk = _gri.compute_country_risk(
-        iso, events, geo_counts, weights=_current_weights,
-        window_days=window_days, real_history_days=hist_days,
-    )
+    risk = _country_row(iso, window_days) or {
+        "iso_code": iso, "score": None, "band": None,
+        "status": "no source family observed this country in its window"}
 
     # The events behind the score, newest first.
     import datetime as _dt
@@ -255,9 +403,9 @@ def explain_country_risk(iso_code: str, window_days: int = 30, limit: int = 8):
         # flagcdn serves public-domain flags with no key and no rate limit.
         "flag_url": (f"https://flagcdn.com/w160/{_iso2(iso).lower()}.png"
                      if _iso2(iso) else None),
-        "note": ("drivers are the same events the scorer counted, selected by "
-                 "the scorer's own country rule; news is separate RSS and did "
-                 "not affect the score"),
+        "note": ("drivers are the GDELT events the GDELT family counted, selected by the "
+                 "scorer's own country rule; news is the RSS family's own security articles "
+                 "(rss_pulse), which the news family counted"),
     }
 
 
@@ -281,27 +429,17 @@ def _country_name(iso: str) -> str | None:
 
 
 def _recent_articles(iso: str, limit: int) -> list:
-    """Latest ingested RSS for this country.
+    """The newest security articles about this country from the RSS family
+    (rss_pulse.rss_items) — the articles the news family counted.
 
-    SEPARATE FROM THE SCORE ON PURPOSE, and labelled as such in the
-    response. These articles did not feed the index, so presenting them
-    beside it as though they were evidence for the number would be a quiet
-    lie. They answer a different and equally real question: what is
-    happening there right now.
+    news_articles, which this read before, stopped being written on
+    2026-09-11 when the old article pipeline was retired, so the country
+    panel's "latest news" had been a month old.
     """
-    from database import NewsArticle as _NA, get_db as _gdb
+    two = _iso2(iso) or iso
     try:
-        with _gdb() as db:
-            two = _iso2(iso) or iso
-            rows = (db.query(_NA)
-                      .filter(_NA.country_code == two.lower())
-                      .order_by(_NA.ingested_at.desc())
-                      .limit(limit).all())
-            return [{
-                "title": r.title, "url": r.url, "source": r.source_name,
-                "published": r.published, "ingested_at":
-                    r.ingested_at.isoformat() if r.ingested_at else None,
-            } for r in rows]
-    except Exception as ex:                                 # noqa: BLE001
+        import rss_pulse
+        return rss_pulse.recent_items(two, limit=limit, days=_rx.WINDOW_DAYS["rss"])
+    except Exception:                                       # noqa: BLE001
         # A missing news table must not take the risk explanation with it.
         return []

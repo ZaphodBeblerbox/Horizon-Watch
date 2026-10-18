@@ -10,13 +10,13 @@ import Loading from "../ui/Loading.jsx"
 import { rankCountries } from "./riskRanking.js"
 import { places as loadPlaces } from "../voice/gazetteer.js"
 
-const BAND = { 4: "var(--red)", 3: "var(--amber)", 2: "var(--steel, var(--txt3))", 1: "var(--txt4)" }
+const BAND = { 5: "var(--red)", 4: "var(--red)", 3: "var(--amber)", 2: "var(--steel, var(--txt3))", 1: "var(--txt4)" }
 const EYEBROW = {
     fontFamily: "var(--mz-font-mono)", fontWeight: 500, fontSize: 10,
     letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)",
 }
 const CARD = { border: "1px solid var(--gline)", background: "var(--glass2)", overflow: "hidden" }
-const COLS = "28px minmax(0,1fr) 150px 56px minmax(0,1.6fr) 70px"
+const COLS = "28px minmax(0,1fr) 150px 56px 64px minmax(0,1.6fr) 70px"
 
 let _names = null
 function countryNames() {
@@ -76,10 +76,10 @@ export default function RiskRanking({ onOpenModule = () => {} }) {
                 <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
                     <h3 style={{ margin: 0, fontWeight: 600, fontSize: 30, lineHeight: 1.05, letterSpacing: "-.01em" }}>{top.name}</h3>
                     <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 28, color: BAND[top.band] || "var(--txt)" }}>{top.score.toFixed(1)}</span>
-                    <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 12, color: "var(--txt3)" }}>band {top.band} of 4</span>
+                    <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 12, color: "var(--txt3)" }}>band {top.band} of 5{top.agree != null ? ` · ${top.agree} of 4 sources agree` : ""}</span>
                 </div>
                 <span style={{ color: "var(--txt2)" }}>
-                    Why: {top.why}{top.evidence != null ? `, from ${top.evidence} event${top.evidence === 1 ? "" : "s"}` : ""}.
+                    Why: {top.why}{top.evidence != null ? `, from ${top.evidence} observation${top.evidence === 1 ? "" : "s"}` : ""}.
                     {" "}{rows.filter((r) => !r.thin).length} countries ranked on enough evidence, {rows.length} scored.
                 </span>
                 <div><button onClick={() => open(top)} style={{
@@ -90,13 +90,13 @@ export default function RiskRanking({ onOpenModule = () => {} }) {
 
             <div style={CARD}>
                 <div style={{ display: "grid", gridTemplateColumns: COLS, gap: 12, padding: "10px 14px", borderBottom: "1px solid var(--gline)", ...EYEBROW, fontSize: 9 }}>
-                    <span>#</span><span>Country</span><span>Risk</span><span>Band</span><span>Why</span><span title="Signals on the surface there now">Now</span>
+                    <span>#</span><span>Country</span><span>Risk</span><span>Band</span><span title="Source families (GDELT, news, Telegram, GeoConfirmed) that agree it is elevated">Sources</span><span>Why</span><span title="Signals on the surface there now">Now</span>
                 </div>
                 {shown.map((r, i) => (
                     <Fragment key={r.iso3}>
                     {i === firstThin && (
                         <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--gline)", ...EYEBROW, fontSize: 9.5 }}>
-                            Too little evidence to rank · fewer than 10 events in the window — worth a look, not a finding
+                            Too little evidence to rank · fewer than 10 observations in the window — worth a look, not a finding
                         </div>
                     )}
                     <button onClick={() => open(r)} title={`Open ${r.name} on the map`} style={{
@@ -113,8 +113,9 @@ export default function RiskRanking({ onOpenModule = () => {} }) {
                             <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11.5 }}>{r.score.toFixed(1)}</span>
                         </span>
                         <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: BAND[r.band] || "var(--txt3)" }}>{r.band}</span>
+                        <span title={r.confidence ? `${r.confidence} confidence` : undefined} style={{ fontSize: 11.5, color: r.agree ? "var(--txt)" : "var(--txt4)" }}>{r.agree == null ? "—" : `${r.agree} of 4`}</span>
                         <span style={{ fontSize: 12, color: "var(--txt3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {r.why}{r.thin ? ` · only ${r.evidence} event${r.evidence === 1 ? "" : "s"}` : ""}
+                            {r.why}{r.thin ? ` · only ${r.evidence} observation${r.evidence === 1 ? "" : "s"}` : ""}
                         </span>
                         <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 11, color: r.signals ? "var(--txt)" : "var(--txt4)" }}>{r.signals || "—"}</span>
                     </button>

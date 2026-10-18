@@ -672,3 +672,108 @@ for _feed_set in [AFRICA_EXPANDED_FEEDS, MIDDLE_EAST_EXPANDED_FEEDS,
             ADDITIONAL_SCAN_FEEDS.append((name, url))
             _seen_expand.add(url)
 _register_region(SPACE_FEEDS, "space")
+
+
+# ----------------
+# NATIONAL & REGIONAL OUTLETS FOR THE COUNTRY RISK INDEX (rss_pulse.py)
+# ----------------
+# (source_name, url, home country ISO alpha-2 or None, language). Read by
+# rss_pulse.py only: an article that names no country is filed under the
+# outlet's home country. Every URL was fetched on 2026-10-18 and returned
+# items; the owner asked for denser Latin America coverage (Spanish and
+# Portuguese national press) and more on Venezuela and Myanmar.
+NATIONAL_FEEDS = [
+    # Venezuela
+    ("El Pitazo", "https://elpitazo.net/feed/", "ve", "es"),
+    ("Tal Cual", "https://talcualdigital.com/feed/", "ve", "es"),
+    ("Runrunes", "https://runrun.es/feed/", "ve", "es"),
+    ("El Nacional (VE)", "https://www.elnacional.com/feed/", "ve", "es"),
+    ("Crónica Uno", "https://cronica.uno/feed/", "ve", "es"),
+    ("El Estímulo", "https://elestimulo.com/feed/", "ve", "es"),
+    ("Caraota Digital", "https://www.caraotadigital.net/feed", "ve", "es"),
+    ("El Diario (VE)", "https://eldiario.com/feed/", "ve", "es"),
+    ("Armando.info", "https://armando.info/feed/", "ve", "es"),
+    ("Observatorio Venezolano de Conflictividad Social",
+     "https://www.observatoriodeconflictos.org.ve/feed", "ve", "es"),          # monthly protest counts
+    # Colombia
+    ("El Tiempo (CO)", "https://www.eltiempo.com/rss/colombia.xml", "co", "es"),
+    ("El Tiempo Justicia", "https://www.eltiempo.com/rss/justicia.xml", "co", "es"),
+    ("Semana", "https://www.semana.com/arc/outboundfeeds/rss/?outputType=xml", "co", "es"),
+    ("La Silla Vacía", "https://www.lasillavacia.com/feed/", "co", "es"),
+    ("Verdad Abierta", "https://verdadabierta.com/feed/", "co", "es"),
+    ("Indepaz", "https://indepaz.org.co/feed/", "co", "es"),
+    ("Infobae Colombia", "https://www.infobae.com/arc/outboundfeeds/rss/category/colombia/", "co", "es"),
+    # Mexico
+    ("La Jornada", "https://www.jornada.com.mx/rss/edicion.xml", "mx", "es"),
+    ("Zeta Tijuana", "https://zetatijuana.com/feed/", "mx", "es"),
+    ("El Universal (MX)", "https://www.eluniversal.com.mx/arc/outboundfeeds/rss/?outputType=xml", "mx", "es"),
+    ("El Sol de México", "https://www.elsoldemexico.com.mx/rss.xml", "mx", "es"),
+    ("Infobae México", "https://www.infobae.com/arc/outboundfeeds/rss/category/mexico/", "mx", "es"),
+    # Brazil
+    ("G1", "https://g1.globo.com/rss/g1/", "br", "pt"),
+    ("Agência Brasil", "https://agenciabrasil.ebc.com.br/rss/ultimasnoticias/feed.xml", "br", "pt"),
+    ("Ponte Jornalismo", "https://ponte.org/feed/", "br", "pt"),
+    ("Brasil de Fato", "https://www.brasildefato.com.br/feed/", "br", "pt"),
+    ("Folha (últimas)", "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml", "br", "pt"),
+    ("Estadão Brasil", "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/brasil/", "br", "pt"),
+    ("Poder360", "https://www.poder360.com.br/feed/", "br", "pt"),
+    ("CNN Brasil", "https://www.cnnbrasil.com.br/feed/", "br", "pt"),
+    # Ecuador
+    ("El Universo (EC)", "https://www.eluniverso.com/arc/outboundfeeds/rss/?outputType=xml", "ec", "es"),
+    ("El Comercio (EC)", "https://www.elcomercio.com/feed/", "ec", "es"),
+    # Peru
+    ("RPP Noticias", "https://rpp.pe/rss", "pe", "es"),
+    ("El Comercio (PE)", "https://elcomercio.pe/arc/outboundfeeds/rss/?outputType=xml", "pe", "es"),
+    ("Infobae Perú", "https://www.infobae.com/arc/outboundfeeds/rss/category/peru/", "pe", "es"),
+    ("IDL-Reporteros", "https://www.idl-reporteros.pe/feed/", "pe", "es"),
+    # Bolivia
+    ("El Deber", "https://eldeber.com.bo/rss/feed.xml", "bo", "es"),
+    ("Opinión (BO)", "https://www.opinion.com.bo/rss/", "bo", "es"),
+    # Argentina
+    ("La Nación (AR)", "https://www.lanacion.com.ar/arc/outboundfeeds/rss/?outputType=xml", "ar", "es"),
+    ("Clarín (lo último)", "https://www.clarin.com/rss/lo-ultimo/", "ar", "es"),
+    ("Página/12", "https://www.pagina12.com.ar/arc/outboundfeeds/rss/?outputType=xml", "ar", "es"),
+    ("Perfil", "https://www.perfil.com/feed", "ar", "es"),
+    # Chile
+    ("La Tercera", "https://www.latercera.com/arc/outboundfeeds/rss/?outputType=xml", "cl", "es"),
+    ("CIPER", "https://www.ciperchile.cl/feed/", "cl", "es"),
+    ("Cooperativa", "https://www.cooperativa.cl/noticias/site/tax/port/all/rss_3___1.xml", "cl", "es"),
+    # Haiti
+    ("Le Nouvelliste", "https://lenouvelliste.com/rss", "ht", "fr"),
+    ("AlterPresse", "https://www.alterpresse.org/spip.php?page=backend", "ht", "fr"),
+    ("HaitiLibre", "https://www.haitilibre.com/rss-flash-en.xml", "ht", "en"),
+    ("Juno7", "https://www.juno7.ht/feed/", "ht", "fr"),
+    # Central America & Caribbean
+    ("Prensa Libre", "https://www.prensalibre.com/feed/", "gt", "es"),
+    ("La Hora (GT)", "https://lahora.gt/feed/", "gt", "es"),
+    ("Criterio.hn", "https://criterio.hn/feed/", "hn", "es"),
+    ("Proceso Digital (HN)", "https://proceso.hn/feed/", "hn", "es"),
+    ("ContraCorriente", "https://contracorriente.red/feed/", "hn", "es"),
+    ("Confidencial", "https://confidencial.digital/feed/", "ni", "es"),
+    ("Divergentes", "https://www.divergentes.com/feed/", "ni", "es"),
+    ("La Prensa (PA)", "https://www.prensa.com/arc/outboundfeeds/rss/?outputType=xml", "pa", "es"),
+    ("La Nación (CR)", "https://www.nacion.com/arc/outboundfeeds/rss/?outputType=xml", "cr", "es"),
+    ("14ymedio", "https://www.14ymedio.com/rss/", "cu", "es"),
+    ("Diario de Cuba", "https://diariodecuba.com/rss.xml", "cu", "es"),
+    ("CiberCuba", "https://www.cibercuba.com/rss.xml", "cu", "es"),
+    ("Diario Libre", "https://www.diariolibre.com/rss/portada.xml", "do", "es"),
+    ("ABC Color", "https://www.abc.com.py/arc/outboundfeeds/rss/?outputType=xml", "py", "es"),
+    ("Montevideo Portal", "https://www.montevideo.com.uy/anxml.aspx?59", "uy", "es"),
+    # Latin America, regional (no home country: an article is filed under
+    # the countries it names, or nowhere)
+    ("InSight Crime (ES)", "https://insightcrime.org/es/feed/", None, "es"),
+    ("InSight Crime", "https://insightcrime.org/feed/", None, "en"),
+    ("BBC Mundo", "https://feeds.bbci.co.uk/mundo/rss.xml", None, "es"),
+    ("DW Español", "https://rss.dw.com/rdf/rss-sp-all", None, "es"),
+    ("France 24 Español", "https://www.france24.com/es/rss", None, "es"),
+    ("El País América", "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/america/portada", None, "es"),
+    ("RFI Español", "https://www.rfi.fr/es/rss", None, "es"),
+    ("Europa Press Latinoamérica", "https://www.europapress.es/rss/rss.aspx?ch=00069", None, "es"),
+    ("Infobae", "https://www.infobae.com/arc/outboundfeeds/rss/", None, "es"),
+    # Myanmar
+    ("Myanmar Now", "https://myanmar-now.org/en/feed/", "mm", "en"),
+    ("Myanmar Now (Burmese)", "https://myanmar-now.org/mm/feed/", "mm", "my"),
+    ("DVB English", "https://english.dvb.no/feed/", "mm", "en"),
+    ("The Irrawaddy", "https://www.irrawaddy.com/feed", "mm", "en"),
+    ("Kachin News Group", "https://kachinnews.com/feed/", "mm", "en"),
+]

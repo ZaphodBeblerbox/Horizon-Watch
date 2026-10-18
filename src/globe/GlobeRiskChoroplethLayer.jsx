@@ -90,6 +90,8 @@ export default function GlobeRiskChoroplethLayer({ enabled }) {
                         iso3: raw.a3, country: raw.n,
                         score: row.score, band: row.band,
                         components: row.components, contributions: row.contributions,
+                        families: row.families, corroborating: row.corroborating,
+                        confidence: row.confidence, explanation: row.explanation,
                     })
                     ids.push(entity.id)
                 })

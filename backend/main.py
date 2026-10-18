@@ -13830,6 +13830,27 @@ async def _telegram_mood_alert_loop():
         await asyncio.sleep(10 * 60)
 
 
+async def _rss_pulse_loop():
+    """The news (RSS) family of the country risk index (rss_pulse.py, owner
+    2026-10-18: "a cross-reference of GDELT, RSS, Telegram and
+    GeoConfirmed"): a slice of the national and global feeds every 15
+    minutes, read for countries and for violence/unrest in EN/ES/PT/FR, no
+    model. Writes SQLite only (rss_items, rss_country_day), so it runs in
+    the worker, on a thread pool of its own — never on the event loop and
+    never in a pool a request waits on."""
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="rss-pulse")
+    await asyncio.sleep(90)
+    while True:
+        try:
+            if not HEAVY_FEEDS_PAUSED:
+                import rss_pulse as _rp
+                await asyncio.get_running_loop().run_in_executor(_pool, _rp.run_cycle)
+        except Exception as _e:                              # noqa: BLE001
+            print(f"[rss-pulse] error: {type(_e).__name__}: {_e}", flush=True)
+        await asyncio.sleep(15 * 60)
+
+
 async def _endangered_places_loop():
     """Public calls to block or act at named places (endangered_places.py,
     owner 2026-10-11): the gilets jaunes' map every 30 min, the
@@ -16939,6 +16960,7 @@ async def startup_event():
     _spawn(_russia_loiter_loop)
     _spawn(_coastal_targets_loop)
     _spawn(_telegram_mood_alert_loop)
+    _spawn(_rss_pulse_loop)              # the risk index's news family (worker)
     _spawn(_endangered_places_loop)
 
     # WARM THE FINDINGS CACHE ONCE, IN THE BACKGROUND. The walk takes about
