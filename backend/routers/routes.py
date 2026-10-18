@@ -286,6 +286,16 @@ async def demonstrations_situation(request: Request, city: str | None = None):
     return await ds.situation(None, city)
 
 
+@router.get("/demonstrations/street")
+async def demonstrations_street(request: Request, hours: float = 6):
+    """Street reports read out of casual Telegram posts ("ça gaze à Répu",
+    "ça nasse à Répu", "la GNB llegó a Plaza Venezuela"): typed, located,
+    each quoting its posts with their translation (street_reports.py)."""
+    _me(request)
+    import street_reports as srp
+    return await asyncio.to_thread(srp.snapshot, max(0.5, min(24.0, hours)))
+
+
 @router.get("/demonstrations/now")
 async def demonstrations_now(request: Request, city: str | None = None):
     """"What is happening in <city> now": counts, latest developments, the top convergence points."""

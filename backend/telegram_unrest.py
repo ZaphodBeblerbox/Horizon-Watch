@@ -96,7 +96,10 @@ PROTEST = re.compile(
     r"protest|demonstrat|rall(?:y|ies)\b|march(?:ed|ers|es|ing)?\b|riot|sit-in|blockade|blocked (?:the )?road|"
     r"general strike|on strike|strike by|strikers|walkout|walk-out|tear gas|clash(?:ed|es)? with (?:the )?police|"
     r"vigil|chant|crowds? gathered|took to the streets|manifestation|manif\b|grève|تظاهر|احتجاج|اعتصام|"
-    r"تجمع|اعتراض|راهپیمایی|اعتصاب|протест|митинг|забастов",
+    r"تجمع|اعتراض|راهپیمایی|اعتصاب|протест|митинг|забастов|"
+    # Spanish (Venezuela) and Burmese (ဆန္ဒပြ protest, သပိတ် strike), 2026-10-18
+    r"protesta|manifestaci[oó]n|marcha(?:s|ron)?\b|cacerolazo|concentraci[oó]n|guarimba|paro (?:nacional|c[ií]vico)|"
+    r"ဆန္ဒပြ|သပိတ်",
     re.IGNORECASE)
 
 _GENERIC = {"region", "none", "unknown", "district", "province", "oblast", "state", "governorate", "county"}

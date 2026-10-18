@@ -111,6 +111,12 @@ ACT_WORDS = [
     ("gather", r"rassembl\w*|\brdv\b|rendez[- ]vous|rejoi(?:ndre|gnez|gnons|ns|nt)\b|retrouv(?:er|ons|ez)\b|"
                r"(?:se |nous )?reunir\b|reunissons|gather\b|meet (?:at|up)|rally\b|join us|versammel\w*|treff(?:en|punkt)\b"),
     ("strike", r"\bgreve\b|general strike|streik\w*"),
+    # Spanish (Venezuela, 2026-10-18): the same acts as people there write them
+    ("block", r"trancaz\w*|tranc(?:ar|amos|quemos)\b|guarimb\w*|bloque(?:ar|emos|amos)\b|cerr(?:ar|emos|amos) (?:la|el|las|los) (?:autopista|calle|via|vias|avenida)"),
+    ("occupy", r"tom(?:ar|emos|amos) (?:la|el|las|los)\s\w"),
+    ("march", r"march(?:ar|emos|amos)\b|marcha (?:hacia|hasta|a)\b"),
+    ("gather", r"concentr(?:arnos|emonos|ense|acion)\w*|nos vemos en|punto de encuentro|convocatoria|cacerolazo\w*"),
+    ("strike", r"\bparo (?:nacional|civico|general)\b|\bhuelga\b"),
 ]
 _ACT_RE = [(a, re.compile(rf"(?<![\w])(?:{w})", re.I)) for a, w in ACT_WORDS]
 
@@ -121,11 +127,14 @@ CALL = re.compile(
     r"kommt|lasst uns|auf zum|alle (?:zum|zur|nach)|on se retrouve|on se rejoint|rdv|rendez[- ]vous|"
     r"prenons|bloquons|occupons|attaquons|marchons|montons|rassemblons|envahissons|"
     r"on (?:bloque|attaque|occupe|prend|monte|marche|envahit|rejoint|se rejoint|se retrouve|y va|fonce)\b|"
-    r"we (?:block|attack|storm|occupy|march|take)\b|wir (?:blockieren|sturmen|besetzen|gehen))", re.I)
+    r"we (?:block|attack|storm|occupy|march|take)\b|wir (?:blockieren|sturmen|besetzen|gehen)|"
+    r"vamos (?:a|todos|todas)\b|todos (?:a|al|a la|pa)\b|todas a\b|a la calle|salgamos|convocamos|nos vemos (?:en|a)\b|"
+    r"hay que (?:ir|salir|tomar|trancar)|vengan a\b)", re.I)
 
 NOW = re.compile(
     r"(maintenant|tout de suite|immediat\w*|de suite\b|sur le champ|des maintenant|on y va|go\s*go|\bgo\b\s*[!🔥⚡]|"
-    r"la maintenant|right now|\bnow\b|immediately|\basap\b|\bjetzt\b|\bsofort\b|ce moment meme)", re.I)
+    r"la maintenant|right now|\bnow\b|immediately|\basap\b|\bjetzt\b|\bsofort\b|ce moment meme|"
+    r"ahora mismo|ya mismo|\bahorita\b|en este momento)", re.I)
 RELATIVE = re.compile(
     r"\b(?:dans|in)\s+(?P<n>\d{1,3}|une|un|une demi|an|a|one|half an|deux|two|trois|three|quinze|vingt|trente|"
     r"einer|zwei)\s*-?\s*(?P<u>min(?:ute)?s?|mn|h\b|heures?|hours?|hrs?|stunden?|minuten)", re.I)
@@ -145,15 +154,17 @@ WEEKDAY_RE = re.compile(r"\b(" + "|".join(WEEKDAYS) + r")\b", re.I)
 # "on est à Concorde", "we're at Trafalgar Square", "wir sind am Alexanderplatz"
 POSITION = re.compile(
     r"\b(on est|on (?:se )?trouve|nous sommes|je suis|j'suis|chui|on arrive|on est arrives?|nous voila|"
-    r"we'?re|we are|we just (?:got|arrived)|wir sind|ich bin)\s+"
-    r"(?:actuellement\s+|deja\s+|now\s+|still\s+|bien\s+|toujours\s+|grade\s+|tous\s+|plusieurs\s+|\d+\s+|nombreux\s+)*"
-    r"(?P<prep>a|au|aux|sur|devant|vers|pres de|place|rue|at|in|on|outside|near|by|am|an der|beim|vor dem|vor der|auf dem)\b", re.I)
+    r"we'?re|we are|we just (?:got|arrived)|wir sind|ich bin|estamos|ya estamos|nos encontramos|seguimos|llegamos)\s+"
+    r"(?:actuellement\s+|deja\s+|now\s+|still\s+|bien\s+|toujours\s+|grade\s+|tous\s+|plusieurs\s+|\d+\s+|nombreux\s+|todos\s+|ya\s+)*"
+    r"(?P<prep>a|au|aux|sur|devant|vers|pres de|place|rue|at|in|on|outside|near|by|am|an der|beim|vor dem|vor der|auf dem|"
+    r"en|frente a|frente al)\b", re.I)
 
 STREET = {"rue", "place", "pont", "quai", "gare", "porte", "boulevard", "bd", "avenue", "av", "cours", "parvis",
           "rond-point", "square", "esplanade", "carrefour", "allee", "impasse", "street", "st", "road", "bridge",
-          "station", "platz", "strasse", "straße", "brucke", "tor"}
+          "station", "platz", "strasse", "straße", "brucke", "tor",
+          "plaza", "avenida", "calle", "autopista", "redoma", "distribuidor"}
 PARTICLE = {"de", "du", "des", "la", "le", "les", "d'", "l'", "saint", "sainte", "st", "ste", "sur", "en", "of", "the",
-            "am", "an", "der", "die", "dem"}
+            "am", "an", "der", "die", "dem", "del", "el", "los", "las"}
 SKIP = {"a", "au", "aux", "sur", "devant", "vers", "pres", "de", "la", "le", "les", "l'", "d'", "at", "in", "on", "to",
         "the", "outside", "near", "by", "am", "an", "der", "die", "das", "dem", "beim", "vor", "auf", "zum", "zur"}
 STOP = {"et", "avec", "mais", "il", "ils", "elle", "elles", "on", "nous", "vous", "je", "and", "with", "but", "we",
@@ -208,6 +219,17 @@ def landmark(text: str | None) -> dict | None:
     for rx, name, lat, lon, cc in _LANDMARK_RE:
         if rx.search(t):
             return {"place": name, "lat": lat, "lon": lon, "country": cc, "name": name.split(",")[0]}
+    # the places as people write them ("Bastoche", "Répu", "Plaza Altamira",
+    # "Sule"): street_reports.py's gazetteer, squares and sites only
+    try:
+        import street_reports
+        p = street_reports.place_in(text)
+    except Exception:                                          # noqa: BLE001
+        p = None
+    if p and p["kind"] in ("square", "site"):
+        country = {"fr": "France", "ve": "Venezuela", "mm": "Myanmar"}.get(p["country"], p["country"].upper())
+        return {"place": f"{p['name']}, {p['city']}, {country}", "lat": p["lat"], "lon": p["lon"], "country": p["country"],
+                "name": p["name"]}
     return None
 
 
@@ -516,8 +538,49 @@ def chat_context(chan: str) -> dict:
     except Exception:                                          # noqa: BLE001
         info = {}
     lang = info.get("lang")
-    cc = info.get("country") or {"fr": "fr", "de": "de"}.get(lang or "")
+    cc = info.get("country") or {"fr": "fr", "de": "de"}.get(lang or "") or chat_country(chan)
     return {"country": cc, "region": info.get("region")}
+
+
+_CHAT_CC: dict = {}
+CHAT_CC_TTL_S = 3600
+
+
+def dominant_country(codes: list) -> str | None:
+    """The country a chat writes about: the model's country for at least 60 %
+    of 5 or more of its recent posts. Pure."""
+    codes = [str(c).lower() for c in codes if c and len(str(c)) == 2]
+    if len(codes) < 5:
+        return None
+    top = max(set(codes), key=codes.count)
+    return top if codes.count(top) >= 0.6 * len(codes) else None
+
+
+def chat_country(chan: str) -> str | None:
+    """A chat that is not in telegram_channels.json (the Venezuelan and
+    Burmese chats the account joined, 2026-10-18) had no country, so its
+    calls and positions were never geocoded (_resolve needs one) and every
+    position was dropped. Derived on read from what the model said of its
+    posts, cached an hour."""
+    hit = _CHAT_CC.get(chan)
+    if hit and time.time() - hit[0] < CHAT_CC_TTL_S:
+        return hit[1]
+    cc = None
+    try:
+        import telegram_ingest as tg
+        con = tg._con()
+        try:
+            cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=7)).isoformat()
+            codes = [r[0] for r in con.execute(
+                "SELECT country_code FROM telegram_posts WHERE channel=? AND posted_at >= ? AND relevant=1"
+                " AND country_code IS NOT NULL AND country_code != '' ORDER BY posted_at DESC LIMIT 200", (chan, cutoff))]
+        finally:
+            con.close()
+        cc = dominant_country(codes)
+    except Exception:                                          # noqa: BLE001
+        cc = None
+    _CHAT_CC[chan] = (time.time(), cc)
+    return cc
 
 
 def read_post(chan: str, msg_id: int, text: str, posted_at: str, topic_title: str | None = None,

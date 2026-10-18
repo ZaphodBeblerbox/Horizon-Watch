@@ -350,12 +350,35 @@ SITUATION_CUES = re.compile(
     r"(nasse|kettl|encercl|charg|lacrymo|gaz|tear.?gas|renfort|reinforc|\bcrs\b|brav|gendarm|bloqu|fermé|"
     r"ferme |closed|clos(e|ing) |repli|retrait|withdr|retreat|pull(ed|s|ing)? (back|out)|advanc|avanc|"
     r"checkpoint|barrage|évacu|evacu|clash|affront|heurts|kessel|wasserwerfer|räum|انسحاب|تعزيزات|اشتباك|"
-    r"تقدم|انسحب|حاجز)", re.I)
+    r"تقدم|انسحب|حاجز|"
+    # street slang for the police and what they do (2026-10-18: "ça gaze à
+    # Répu", "les flics arrivent"), and Spanish for Venezuela
+    r"\bflics?\b|\bkeufs?\b|\bbac\b|\bcondés?\b|\bpolice|\blbd\b|canon à eau|interpell|"
+    r"lacrim|\bgnb\b|\bpnb\b|guardia nacional|colectivo|detenid|rodead|encerrad|perdig|ballena|barricad|guarimb|"
+    r"ရဲ|စစ်တပ်|စစ်ကောင်စီ|ဖမ်းဆီး|မျက်ရည်ယို)", re.I)
+
+
+def situation_cue(text: str | None) -> bool:
+    """A live development could be read here: the cue words above, or a
+    street report's (street_reports.py: "ça nasse à Répu", "lanzan
+    lacrimógenas en Altamira")."""
+    if SITUATION_CUES.search(text or ""):
+        return True
+    try:
+        import street_reports
+        return street_reports.cues(text)
+    except Exception:                                          # noqa: BLE001
+        return False
 
 SITUATION_SYSTEM = """You read Telegram posts for LIVE developments on the ground that someone nearby
 must know about within minutes: police kettling a crowd (a "nasse"), charges, tear gas, water
 cannon, reinforcements being sent somewhere, roads or stations closed, clashes moving, a force
 withdrawing from or entering a place, a checkpoint set up, an evacuation.
+Posts from people in a crowd are short and in slang; each is a live report: "ça gaze à Répu" = tear
+gas being fired at Place de la République; "ça nasse" = police kettling; "ça charge" = a police
+charge; flics, keufs, condés, CRS, BAC, BRAV-M = police; "Bastoche" = Place de la Bastille; Spanish
+"lacrimógenas" = tear gas, "la ballena" = water-cannon truck, "perdigones" = pellets, GNB, PNB,
+"colectivos" = security forces and armed pro-government groups; Burmese "စစ်ကောင်စီ" = the junta's forces.
 Only what is happening at the time of posting. NOT: announcements of future events, analysis,
 history, videos of something earlier, general statements.
 For each numbered post return an object in "results" (same order): {"events": [...]}, empty when
@@ -406,13 +429,15 @@ def read_situations(limit: int = 40) -> dict:
     con = _con()
     con.row_factory = sqlite3.Row
     cand = con.execute("SELECT channel, channel_title, posted_at, text, msg_id FROM telegram_posts"
-                       " WHERE situation_checked IS NULL AND posted_at >= ? AND text IS NOT NULL AND length(text) > 25"
+                       " WHERE situation_checked IS NULL AND posted_at >= ? AND text IS NOT NULL AND length(text) > 6"
                        " ORDER BY posted_at DESC LIMIT ?", (cutoff, limit * 4)).fetchall()
-    skip = [r for r in cand if not SITUATION_CUES.search(r["text"] or "")]
+    # ("ça gaze à Répu" is 14 characters: the old floor of 25 dropped every
+    # street report written the way people write in a crowd)
+    skip = [r for r in cand if not situation_cue(r["text"])]
     con.executemany("UPDATE telegram_posts SET situation_checked=1 WHERE channel=? AND msg_id=?",
                     [(r["channel"], r["msg_id"]) for r in skip])
     con.commit()
-    rows = [r for r in cand if SITUATION_CUES.search(r["text"] or "")][:limit]
+    rows = [r for r in cand if situation_cue(r["text"])][:limit]
     found = 0
     for i in range(0, len(rows), BATCH):
         chunk = rows[i:i + BATCH]

@@ -302,6 +302,41 @@ def next_interval() -> int:
     return HOT_POLL_S if hot else COLD_POLL_S
 
 
+def street_cue(text: str | None) -> bool:
+    """A call, a position (telegram_signals) or a street report
+    (street_reports: "ça gaze à Répu", "les flics arrivent", "lanzan
+    lacrimógenas") — what makes a group message worth a look."""
+    import telegram_signals
+    if telegram_signals.cues(text):
+        return True
+    try:
+        import street_reports
+        return street_reports.cues(text)
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def keep_message(text: str, media: str, *, group: bool, forwarded: bool, role: str) -> bool:
+    """Is a collected message stored? (2026-10-18: the owner's video of the
+    police moving in at République was lost here.)
+      · a message with words: yes, unless it is a forward in a CHANNEL —
+        a channel's forward is someone else's post, ingested from its own
+        channel if it matters;
+      · a forward in a GROUP: yes when it says something happening in the
+        street. Members share footage by forwarding it, often from a
+        channel nobody here has joined;
+      · a picture or video with no caption in a group: yes, without a
+        thumbnail — Telegram sends "les flics arrivent à Répu" and its
+        video as two messages, and the video belongs to the report
+        (street_reports.build joins them). Never on a laptop's disk: only
+        the row is kept."""
+    if not text:
+        return group and media in ("photo", "video")
+    if forwarded and role != "official":
+        return group and street_cue(text)
+    return True
+
+
 async def _collect(hours: int = LOOKBACK_HOURS) -> int:
     from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
     try:
@@ -386,20 +421,18 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                         print(f"[telegram-live] {chan}: {type(e).__name__}: {e}", flush=True)
                     continue
                 text = (m.message or "").strip()
-                if not text or (chan, m.id) in have:
+                if (chan, m.id) in have:
                     continue
-                # A forward is someone else's post: the original is ingested
-                # from its own channel if it matters, so skip the copy.
-                if m.fwd_from is not None and info["role"] != "official":
-                    continue
-                cue = telegram_signals.cues(text)
-                if cue:
-                    cue_at = m.date.isoformat()
                 media, thumb = "none", None
                 if isinstance(m.media, MessageMediaPhoto):
                     media = "photo"
                 elif isinstance(m.media, MessageMediaDocument) and (m.file and (m.file.mime_type or "").startswith("video")):
                     media = "video"
+                if not keep_message(text, media, group=group, forwarded=m.fwd_from is not None, role=info["role"]):
+                    continue
+                cue = bool(text) and street_cue(text)
+                if cue:
+                    cue_at = m.date.isoformat()
                 # A group's pictures are mostly memes and selfies: a thumbnail
                 # only when the words say something is happening.
                 if media != "none" and (not group or cue):
@@ -451,7 +484,12 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
 # ── classify + locate ───────────────────────────────────────────────────
 
 SYSTEM = """You screen Telegram channel posts for an intelligence console.
-Posts may be in Arabic, Hebrew, Russian, French, German or English; always answer in English.
+Posts may be in Arabic, Hebrew, Russian, Ukrainian, Persian, French, German, Spanish, Burmese or
+English; always answer in English. Group messages are often a few words of street slang from
+someone in a crowd, and are reports like any other: "ça gaze à Répu" = tear gas being fired at
+Place de la République, Paris; "ça nasse" = police kettling the crowd; "les flics / keufs / CRS /
+BAC arrivent à Bastoche" = police arriving at Place de la Bastille; Spanish "lanzan lacrimógenas
+en Altamira", "la GNB llegó a Plaza Venezuela" (Caracas). Translate them faithfully in summary_en.
 Each post is prefixed [channel › topic | role | party]. role "official" means the post
 is that party's own statement; role "group" means a member's message in a group chat,
 and the topic (when given) is the thread it was written in — use it for the region
@@ -555,11 +593,23 @@ def group_worth_reading(text: str | None) -> bool:
     group writes hundreds of "+1", "lol" and links an hour, and every one
     sent to the model would cost as much as a channel's report. Only what
     names an act, a position, a live development or an event goes on."""
-    import telegram_signals
     import telegram_events
     t = text or ""
-    return (telegram_signals.cues(t) or bool(telegram_events.SITUATION_CUES.search(t))
-            or bool(UNREST_WORDS.search(t)) or bool(ANNOUNCE_CUES.search(t)) and len(t) > 40)
+    return (street_cue(t) or bool(telegram_events.SITUATION_CUES.search(t))
+            or bool(UNREST_WORDS.search(t)) or bool(EVENT_CUES_ES_MY.search(t))
+            or bool(ANNOUNCE_CUES.search(t)) and len(t) > 40)
+
+
+# Spanish (Venezuela) and Burmese (Myanmar) event words. Every cue above was
+# French, English, German or Arabic, so a Venezuelan or Burmese group's
+# messages were screened as chatter without ever reaching the model
+# (2026-10-18: "we have Venezuela and Myanmar channels but don't receive
+# enough signals").
+EVENT_CUES_ES_MY = re.compile(
+    r"\b(marcha\w*|protesta\w*|manifestaci\w*|concentraci\w*|convoca\w*|cacerolazo\w*|paro\b|huelga\w*|plant[oó]n|"
+    r"represi[oó]n|enfrentamiento\w*|ataque\w*|bombarde\w*|explosi[oó]n\w*|disparos?|detenid\w*|desaparecid\w*|"
+    r"allanamiento\w*|operativo\w*|militares|tanquetas?|\bgnb\b|\bpnb\b|colectivos?|sebin|dgcim|fanb)\b|"
+    r"ဆန္ဒပြ|သပိတ်|တိုက်ပွဲ|တိုက်ခိုက်|လေကြောင်း|ဗုံး|ပစ်ခတ်|ဖမ်းဆီး|စစ်ကောင်စီ|စစ်တပ်|ပကဖ|မီးရှို့", re.I)
 
 
 def classify(limit: int = 120) -> dict:
@@ -1022,7 +1072,8 @@ def upcoming(days_ahead: int = 30) -> list[dict]:
 UNREST_WORDS = re.compile(
     r"\b(protest\w*|demonstrat\w*|riot\w*|unrest|rall(y|ies)|march(es|ed)?|blockade\w*|block(ed|ing) (the )?road|"
     r"clash\w* with (police|security)|tear ?gas|lbd|water cannon|police charge\w*|tumult|looting|uprising|"
-    r"strike action|general strike|walkout|occupation of|sit-in|manif\w*|émeute\w*|kundgebung|krawall\w*|ausschreitung\w*)\b", re.I)
+    r"strike action|general strike|walkout|occupation of|sit-in|manif\w*|émeute\w*|kundgebung|krawall\w*|ausschreitung\w*|"
+    r"kettl\w*|rubber bullets?|protesta\w*|manifestaci\w*|marchas?|cacerolazo\w*|guarimba\w*|lacrim\w*)\b|ဆန္ဒပြ", re.I)
 
 
 def is_unrest(r) -> bool:
@@ -1145,6 +1196,16 @@ def with_signals(out: list[dict], hours: int, located_only: bool = False, before
     except Exception as e:                                      # noqa: BLE001
         print(f"[telegram] error: unified signals: {type(e).__name__}: {e}", flush=True)
         return out
+    # Street reports ("ça gaze à Répu" → "Tear gas used at Place de la
+    # République (Paris)"), the same way: one signal for the messages behind it.
+    try:
+        import street_reports
+        said = {(x["channel"], x["msg_id"]) for s in sigs for x in s["sources"]}
+        # "on est à Bastoche" is already a position signal (telegram_signals): not twice
+        sigs = sigs + [p for p in street_reports.posts(min(max(hours, 1), street_reports.LOOKBACK_H))
+                       if not (p["tactic"] == "crowd" and all((x["channel"], x["msg_id"]) in said for x in p["sources"]))]
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[telegram] error: street reports: {type(e).__name__}: {e}", flush=True)
     if located_only:
         sigs = [s for s in sigs if s["lat"] is not None]
     if before:

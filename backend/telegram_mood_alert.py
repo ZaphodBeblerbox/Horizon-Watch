@@ -83,7 +83,9 @@ CONFLICT_WORDS = re.compile(
     r"помст|відплат|до зброї|мобіліз|оголосити війну|удар у відповідь|"
     # French
     r"vengeance|venger|représailles|aux armes|prendre les armes|mobilisation générale|"
-    r"déclarer la guerre|guerre sainte|mort aux?\s",
+    r"déclarer la guerre|guerre sainte|mort aux?\s|"
+    # Spanish (Venezuela)
+    r"venganza|vengar|a las armas|tomar las armas|declarar la guerra|muerte a\s|guerra total",
     re.IGNORECASE)
 
 
@@ -552,7 +554,10 @@ CALL_WINDOW_H = 3
 VIOLENT_ACT = re.compile(
     r"\b(attack|attaqu|storm|assault|kill|tuer|burn|br[uû]l|torch|smash|cass(?:er|ons|ez)|destroy|d[ée]trui|"
     r"lynch|shoot|tirer sur|fight|combat|bomb|arm(?:e|es|s)\b|weapons?|fusil|molotov|incendi|pend(?:re|ez)|"
-    r"exterminat|annihilat|massacr|égorg|behead|riot|émeute|insurrection|revolt|révolte|prendre d'assaut)", re.IGNORECASE)
+    r"exterminat|annihilat|massacr|égorg|behead|riot|émeute|insurrection|revolt|révolte|prendre d'assaut|"
+    # Spanish (Venezuela)
+    r"ata(?:car|quemos|camos)|quem(?:ar|emos|amos)|matar|linch|asalt(?:ar|emos|o)|tomar por asalto|incendi(?:ar|emos)|"
+    r"armas|plomo|candela)", re.IGNORECASE)
 
 
 def is_violence_call(row) -> bool:
