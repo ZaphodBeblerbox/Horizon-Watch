@@ -29329,9 +29329,18 @@ def api_get_alerts(
     from database import Alert as _AlertModel, get_db as _gdb_api
     import datetime as _dt_al
     with _gdb_api() as _db:
-        q = _db.query(_AlertModel).filter(_AlertModel.status == status)
+        # BY SOURCE, NOT BY DATE (2026-10-18): a week holds ~145,000 active
+        # alerts and SQLite chose (status, created_at), reading them all to
+        # keep one SAT-TASK row — 2.5 s, 7.5 s through the API. With a source
+        # asked for, status and time are compared as `col || ''`, which SQLite
+        # cannot answer from an index, so it takes the source index: 14 ms,
+        # the same rows. (SQLAlchemy's SQLite dialect drops INDEXED BY hints,
+        # and an index build on the live 6 GB file would hold the write lock.)
+        _st = _AlertModel.status.op("||")("") if source else _AlertModel.status
+        _at = _AlertModel.created_at.op("||")("") if source else _AlertModel.created_at
+        q = _db.query(_AlertModel).filter(_st == status)
         if since_hours:
-            q = q.filter(_AlertModel.created_at >= _dt_al.datetime.utcnow() - _dt_al.timedelta(hours=float(since_hours)))
+            q = q.filter(_at >= _dt_al.datetime.utcnow() - _dt_al.timedelta(hours=float(since_hours)))
         if source:
             q = q.filter(_AlertModel.source == source)
         if alert_type:
