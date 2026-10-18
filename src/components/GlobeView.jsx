@@ -7,7 +7,7 @@ import { Cartesian3, Math as CesiumMath, UrlTemplateImageryProvider, Credit, Ces
 import { publishCameraState } from "../globe/cameraState.js"
 import { publishCursor, publishScale, getScale, scaleFor, zoomLabelFor } from "../globe/mapReadout.js"
 import "cesium/Build/Cesium/Widgets/widgets.css"
-import { esriLabelsProvider, esriSatelliteProvider, esriDarkProvider, esriLightProvider, openSeaMapProvider, openInfraRasterProvider, offlineBasemapProvider } from "../globe/imageryProviders.js"
+import { placeNamesProvider, esriSatelliteProvider, esriDarkProvider, esriLightProvider, openSeaMapProvider, openInfraRasterProvider, offlineBasemapProvider } from "../globe/imageryProviders.js"
 import GlobeAISLayer            from "../globe/GlobeAISLayer.jsx"
 import GlobeADSBLayer           from "../globe/GlobeADSBLayer.jsx"
 import GlobeTrackLayer          from "../globe/GlobeTrackLayer.jsx"
@@ -897,6 +897,10 @@ export default function GlobeView({
             // range. Order is established by lowering the floor once it
             // arrives, which cannot race anything.
             baseLayerRef.current = viewer.imageryLayers.addImageryProvider(provider)
+            // Below every overlay (place names, sea marks, imagery): a swap
+            // appended the new base on top of them, hiding the overlays the
+            // reader had on. The floor is lowered beneath it below.
+            viewer.imageryLayers.lowerToBottom(baseLayerRef.current)
 
             if (!offlineBaseRef.current) {
                 offlineBaseRef.current = true    // claim it before the await
@@ -1291,9 +1295,15 @@ export default function GlobeView({
                     at={geoConfirmedEndDate}
                     theatres={geoConfirmedTheatres}
                 />
-                {cityLabelsEnabled && (
-                    <ImageryLayer imageryProvider={esriLabelsProvider} alpha={1.0} maximumTerrainLevel={19} />
-                )}
+                {/* Place names matched to the basemap: over the plain map only
+                    the cities, since the base already names the countries
+                    (imageryProviders.js placeNamesProvider). Keyed, because
+                    resium cannot swap a layer's provider in place. */}
+                {cityLabelsEnabled && (() => {
+                    const lightTheme = typeof document !== "undefined" && document.documentElement.dataset.theme === "light"
+                    return <ImageryLayer key={`names-${basemap}-${lightTheme ? "l" : "d"}-${themeTick}`}
+                                         imageryProvider={placeNamesProvider(basemap, lightTheme)} alpha={1.0} maximumTerrainLevel={19} />
+                })()}
 
                 {/* ── Heatmap overlays (rectangle entities, clamped to ground) ─ */}
                 <GlobeHeatmapLayer enabled={aisHeatmapEnabled}  domain="ais"  hours={heatmapHours} bounds={viewBounds} />

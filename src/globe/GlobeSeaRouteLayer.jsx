@@ -11,6 +11,7 @@ import { Entity, useCesium } from "resium"
 import { Cartesian2, Cartesian3, Color, LabelStyle, PolygonHierarchy, PolylineDashMaterialProperty, PolylineOutlineMaterialProperty, NearFarScalar } from "cesium"
 import { useSeaRoute } from "../routes/modes/MaritimeRoute.jsx"
 import { hazardColor, ringLatLngs } from "../routes/modes/maritimeCore.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 const line = (coords) => Cartesian3.fromDegreesArray(coords.flatMap(([lat, lon]) => [lon, lat]))
 const css = (c) => Color.fromCssColorString(c)
@@ -73,7 +74,7 @@ export default function GlobeSeaRouteLayer() {
                                 label={{ text: h.name, font: "600 12.5px -apple-system, 'Segoe UI', Roboto, sans-serif", fillColor: Color.WHITE,
                                          outlineColor: Color.BLACK, outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
                                          pixelOffset: new Cartesian2(0, 0), scaleByDistance: new NearFarScalar(1.5e6, 1.0, 2.0e7, 0.7),
-                                         disableDepthTestDistance: Number.POSITIVE_INFINITY }} />,
+                                         disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />,
                     ]
                 }
                 return <Entity key={`sc-${h.id}`} id={`sea-cell-${h.id}`} name={h.name} position={Cartesian3.fromDegrees(h.lon, h.lat)}
@@ -88,16 +89,16 @@ export default function GlobeSeaRouteLayer() {
                 return <Entity key={`srl-${c.key}`} id={`sea-route-label-${c.key}`} position={Cartesian3.fromDegrees(mid[1], mid[0])}
                                label={{ text: `${c.label}\n${c.days} days · ${c.distance_nm.toLocaleString("en-GB")} nm`, font: "600 13px -apple-system, 'Segoe UI', Roboto, sans-serif",
                                         fillColor: css(c.recommended ? "#3ddc84" : "#e6e9ee"), outlineColor: Color.BLACK, outlineWidth: 3,
-                                        style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -14), disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                                        style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -14), disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             })}
             <Entity id="sea-origin" name={plan.origin.name || "Start"} position={Cartesian3.fromDegrees(plan.origin.lon, plan.origin.lat)}
-                    point={{ pixelSize: 13, color: css("#3b8cff"), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY }}
+                    point={{ pixelSize: 13, color: css("#3b8cff"), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
                     label={{ text: plan.origin.name || "Start", font: "600 12px -apple-system, 'Segoe UI', Roboto, sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
-                             style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -16), disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                             style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -16), disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             <Entity id="sea-destination" name={plan.destination.name || "Destination"} position={Cartesian3.fromDegrees(plan.destination.lon, plan.destination.lat)}
-                    point={{ pixelSize: 13, color: css("#3ddc84"), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY }}
+                    point={{ pixelSize: 13, color: css("#3ddc84"), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
                     label={{ text: plan.destination.name || "Destination", font: "600 12px -apple-system, 'Segoe UI', Roboto, sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
-                             style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -16), disableDepthTestDistance: Number.POSITIVE_INFINITY }} />
+                             style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -16), disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
         </>
     )
 }

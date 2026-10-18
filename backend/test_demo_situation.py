@@ -343,3 +343,208 @@ def test_reads_telegram_intents_table_shape():
                         "immediate": 1, "starts_utc": now, "confidence": 0.9}]}
     out = ds.structured_intents(row, posted_at=now, city="paris")
     assert out and out[0]["when"] == "now"
+
+
+# ── crowd-tracking accuracy (2026-10-18): streets, routed paths, "now" ─────
+
+RIVOLI = (48.8592, 2.3466)
+
+
+@pytest.fixture(autouse=True)
+def _no_geocoder(monkeypatch):
+    """No test asks Nominatim: every street phrase is a known miss unless a
+    test stubs the cache, and nothing starts the lookup thread."""
+    monkeypatch.setattr(ds, "_geo_cached", lambda q, box: [])
+    monkeypatch.setattr(ds, "_start_geo_thread", lambda: None)
+    ds._geo_q.clear()
+    yield
+    ds._geo_q.clear()
+
+
+def test_street_phrases():
+    assert ds.street_phrase("le cortege est rue de rivoli maintenant") == "rue de rivoli"
+    assert ds.street_phrase("on passe pont alexandre iii vers la concorde") == "pont alexandre iii"
+    assert ds.street_phrase("boulevard saint-germain a 15h") == "boulevard saint-germain"
+    assert ds.street_phrase("rue du 4 septembre") == "rue du 4 septembre"
+    assert ds.street_phrase("tous les jours") is None and ds.street_phrase("la rue") is None
+
+
+def test_street_geocoding_cache_only_then_background(monkeypatch):
+    """A street not asked yet: nothing now, queued once; the background
+    lookup (stubbed geocoder) fills the cache; the next read has it. A hit
+    outside the city is refused."""
+    cache: dict = {}
+    looked: list = []
+    monkeypatch.setattr(ds, "_geo_cached", lambda q, box: cache.get(q))
+
+    def lookup(q, box):
+        looked.append((q, box))
+        cache[q] = [{"lat": RIVOLI[0], "lon": RIVOLI[1], "display_name": "Rue de Rivoli, Quartier des Halles, Paris, France"}]
+        return cache[q]
+
+    monkeypatch.setattr(ds, "_geo_lookup", lookup)
+    assert ds.extract_positions("On est rue de Rivoli, ça gaze", "paris") == []
+    assert ds.extract_positions("on est rue de Rivoli", "paris") == []
+    assert list(ds._geo_q) == ["rue de rivoli, Paris"]          # once, however often it is read
+    assert ds.geo_drain() == 1 and len(looked) == 1
+    box = looked[0][1]
+    assert box[0] < RIVOLI[1] < box[2] and box[1] < RIVOLI[0] < box[3]
+    out = ds.extract_positions("On est rue de Rivoli, ça gaze", "paris")
+    assert out[0]["kind"] == "at" and out[0]["place"]["name"] == "Rue de Rivoli"
+    assert out[0]["place"]["lat"] == RIVOLI[0] and out[0]["place"]["city"] == "paris"
+    # a "hit" 40 km out is not the street people mean
+    cache["rue de la paix, Paris"] = [{"lat": 49.2, "lon": 2.35, "display_name": "Rue de la Paix, Senlis"}]
+    assert ds.resolve_place("rue de la paix", "paris") is None
+    # no city, no lookup; war-news verbs never geocode
+    assert ds.resolve_place("rue de la gare", None) is None and not ds._geo_q
+    assert ds.extract_intents("take rue de Rivoli", _at(1), PARIS, "paris") == []
+
+
+def test_gather_reads_a_post_again_once_its_street_is_back(monkeypatch):
+    cache: dict = {}
+    monkeypatch.setattr(ds, "_geo_cached", lambda q, box: cache.get(q))
+    monkeypatch.setattr(ds, "_geo_lookup", lambda q, box: cache.setdefault(q, [{"lat": RIVOLI[0], "lon": RIVOLI[1],
+                                                                                "display_name": "Rue de Rivoli, Paris"}]))
+    ds._EXTRACTED.clear()
+    p = [post(70, 5, "On est rue de Rivoli, des milliers de manifestants", "Paris, France", (48.8566, 2.3522), "city")]
+    assert not ds.gather(NOW, p, [], [])["cities"].get("paris", {}).get("reports")
+    ds.geo_drain()
+    parts = ds.gather(NOW, p, [], [])
+    r = parts["cities"]["paris"]["reports"][0]
+    assert r["position_kind"] == "at" and (r["lat"], r["lon"]) == RIVOLI and r["place"].startswith("Rue de Rivoli")
+
+
+def test_path_legs_routed_or_estimated():
+    path = [{"lat": REP[0], "lon": REP[1], "place": "République"}, {"lat": REP[0] + 0.0005, "lon": REP[1], "place": "near"},
+            {"lat": CON[0], "lon": CON[1], "place": "Concorde"}]
+    via = [[REP[0] + 0.0004, REP[1]], [48.866, 2.34], [CON[0], CON[1] + 0.0002]]
+    legs = ds.path_legs(path, lambda a, b: via if b["place"] == "Concorde" else None)
+    assert [x["routed"] for x in legs] == [False, True]
+    assert legs[0]["estimated"] is False                       # 55 m: a straight line is the street
+    assert legs[1]["coords"][0] == [path[1]["lat"], path[1]["lon"]] and legs[1]["coords"][-1] == [CON[0], CON[1]]
+    assert legs[1]["distance_m"] >= round(dm.metres(path[1]["lat"], path[1]["lon"], *CON)) - 1
+    legs = ds.path_legs(path, lambda a, b: None)
+    assert legs[1]["routed"] is False and legs[1]["estimated"] is True
+    assert [b["place"] for a, b in ds.hops_to_route(path)] == ["Concorde"]
+
+
+def test_situation_routes_crowd_paths_through_the_cache(monkeypatch):
+    """A crowd's path hop is walked on the street network once the planner's
+    cache has the route (stubbed _cache_get); until then a straight line,
+    estimated — and the request is spawned within the pass's quota."""
+    import safe_route as sr
+    reports = [x for x in (dm.post_report(_Row(p)) for p in paris_posts()) if x]
+    monkeypatch.setattr(ds, "read_inputs", lambda now: {"posts": paris_posts(), "reports": reports, "hazards": [],
+                                                        "places": [], "intent_rows": {}})
+    ds._memo.clear()
+    ds._tasks.clear()
+    spawned = []
+
+    async def walk(g, t):
+        spawned.append((g["lat"], t["lat"]))
+        return []
+
+    async def table(c, t):
+        return None
+
+    monkeypatch.setattr(ds, "_walk", walk)
+    monkeypatch.setattr(ds, "osrm_table", table)
+    monkeypatch.setattr(ds, "ROUTING_BUDGET_S", 0.1)
+    monkeypatch.setattr(ds, "NEW_REQUESTS_PER_PASS", 20)
+    monkeypatch.setitem(sr._next_slot, "osrm", 0.0)
+    hop = [[REP[0], REP[1] - 0.001], [48.869, 2.34], [ELY[0], ELY[1] + 0.001]]
+    store: dict = {}
+    monkeypatch.setattr(sr, "_cache_get", lambda k: store.get(k))
+    out = asyncio.run(ds.situation(NOW, "paris"))
+    ely = next(g for g in out["cities"][0]["crowds"] if g["place"].startswith("Palais de l'Élysée"))
+    assert ely["path_legs"][0]["routed"] is False and ely["path_legs"][0]["estimated"] is True
+    assert (REP[0], ELY[0]) in spawned
+    store[ds._route_key({"lat": REP[0], "lon": REP[1]}, {"lat": ELY[0], "lon": ELY[1]})] = [{"coords": hop}]
+    out = asyncio.run(ds.situation(NOW, "paris"))
+    ely = next(g for g in out["cities"][0]["crowds"] if g["place"].startswith("Palais de l'Élysée"))
+    leg = ely["path_legs"][0]
+    assert leg["routed"] is True and leg["coords"][1:-1] == hop and leg["coords"][0] == [REP[0], REP[1]]
+    assert out["cities"][0]["routing"]["path_legs_routed"] >= 1
+
+
+def test_path_routing_never_runs_while_the_planner_is_busy(monkeypatch):
+    import time as _t
+    import safe_route as sr
+    reports = [x for x in (dm.post_report(_Row(p)) for p in paris_posts()) if x]
+    monkeypatch.setattr(ds, "read_inputs", lambda now: {"posts": paris_posts(), "reports": reports, "hazards": [],
+                                                        "places": [], "intent_rows": {}})
+    ds._tasks.clear()
+    calls = []
+
+    async def nope(*a):
+        calls.append(a)
+
+    monkeypatch.setattr(ds, "_walk", nope)
+    monkeypatch.setattr(ds, "osrm_table", nope)
+    monkeypatch.setattr(sr, "_cache_get", lambda k: None)
+    monkeypatch.setitem(sr._next_slot, "osrm", _t.monotonic() + 30)
+    out = asyncio.run(ds.situation(NOW, "paris"))
+    assert calls == [] and all(not x["routed"] for g in out["cities"][0]["crowds"] for x in g["path_legs"])
+
+
+def test_now_estimate_along_heading_and_capped():
+    g = {"id": "c1", "lat": REP[0], "lon": REP[1], "at": _at(15), "heading_to": {"id": "g:bas", "name": "Bastille",
+                                                                                "lat": BAS[0], "lon": BAS[1]}}
+    est, reach = ds.now_estimate(g, NOW, [])
+    walked = 15 * ds.CROWD_KMH * 1000 / 60                    # 1000 m in 15 min
+    assert reach == round(walked) and est["basis"] == "heading_to" and est["to"] == "Bastille"
+    assert est["routed"] is False and est["advanced_m"] == round(walked / ds.DETOUR)
+    assert dm.metres(REP[0], REP[1], est["lat"], est["lon"]) == pytest.approx(walked / ds.DETOUR, rel=0.01)
+    assert est["trail"][0] == [REP[0], REP[1]] and est["trail"][-1] == [est["lat"], est["lon"]]
+    # long after, it is at Bastille, not past it; the reach is capped
+    est, reach = ds.now_estimate({**g, "at": _at(200)}, NOW, [])
+    assert est["arrived"] and (est["lat"], est["lon"]) == pytest.approx(BAS) and reach == ds.REACH_CAP_M
+    # along the routed line to its top convergence point, at full walking speed
+    line = {"crowd_id": "c1", "target_id": "tgt-x", "target_name": "Élysée", "routed": True,
+            "coords": [[CON[0], CON[1]], [ELY[0], CON[1]], [ELY[0], ELY[1]]]}
+    est, _ = ds.now_estimate({"id": "c1", "lat": CON[0], "lon": CON[1], "at": _at(3)}, NOW, [line])
+    assert est["basis"] == "convergence" and est["to"] == "Élysée" and est["routed"]
+    assert est["advanced_m"] == 200 and est["lon"] == pytest.approx(CON[1])     # still on the first leg, due north
+    # no direction: no point, only how far it could be
+    est, reach = ds.now_estimate({"id": "c2", "lat": CON[0], "lon": CON[1], "at": _at(6)}, NOW, [line])
+    assert est is None and reach == 400
+
+
+def test_city_model_gives_each_crowd_a_now_estimate():
+    p = [post(9, 20, "Le cortège part de République et se dirige vers Bastille", "Place de la République, Paris, France", REP, "site")]
+    reports = [x for x in (dm.post_report(_Row(x)) for x in p) if x]
+    crowds = ds.build_crowds(ds.gather(NOW, p, reports, [])["cities"]["paris"]["reports"], NOW)
+    m = ds.city_model("paris", crowds, [], [], {}, {}, NOW)
+    g = m["crowds"][0]
+    assert g["age_min"] == 20 and g["now_est"]["basis"] == "heading_to" and g["now_est"]["to"] == "Place de la Bastille"
+    assert 0 < dm.metres(REP[0], REP[1], g["now_est"]["lat"], g["now_est"]["lon"]) < dm.metres(*REP, *BAS)
+    assert g["reach_m"] == round(20 * ds.CROWD_KMH * 1000 / 60)
+
+
+def _rep(rid, ll, m, text, place, **kw):
+    return {"id": rid, "lat": ll[0], "lon": ll[1], "at": _at(m), "country": "fr", "text": text, "place": place, **kw}
+
+
+def test_self_reported_position_outranks_a_second_hand_report():
+    """"On est à Concorde" at 15:50, then a news channel's "crowd outside the
+    Élysée" at 15:55: the crowd is where its people said."""
+    rs = [_rep("pos-chan/1-0", CON, 10, "on est place de la Concorde, ca bouge vers l'Elysee", "Place de la Concorde, Paris, FR",
+               position_kind="at"),
+          _rep("tg-news-2", ELY, 5, "crowd marching outside the Elysee", "Palais de l'Élysée, Paris, FR")]
+    g = ds.build_crowds(rs, NOW)[0]
+    assert g["place"].startswith("Place de la Concorde") and g["self_reported"] and g["at"] == _at(10)
+    assert g["age_min"] == 10 and g["outranked"][0]["place"].startswith("Palais de l'Élysée")
+    assert g["last_report_at"] == _at(5)
+    # a second-hand report well after it (20 min): the crowd has moved on
+    rs2 = [rs[0], {**rs[1], "at": _at(-10)}]
+    g = ds.build_crowds(rs2, NOW + dt.timedelta(minutes=10))[0]
+    assert g["place"].startswith("Palais de l'Élysée") and not g["self_reported"]
+    # a crowd post that only mentions a place is not a self-report
+    m = [{**rs[0], "id": "pos-chan/3-0", "position_kind": "mentioned"}]
+    assert ds.build_crowds(m, NOW)[0]["self_reported"] is False
+
+
+def test_age_is_since_the_report_not_since_it_was_read():
+    rs = [_rep("tg-a", CON, 42, "foule", "Place de la Concorde, Paris, FR")]
+    g = ds.build_crowds(rs, NOW)[0]
+    assert g["age_min"] == 42 and g["at"] == _at(42)

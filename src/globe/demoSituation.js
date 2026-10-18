@@ -10,7 +10,15 @@
  * read every 30 s while on. Per city:
  *   crowds      — last known place of each crowd: a ring with a dot, its
  *                 words "Concorde · 12 min ago" beside it; the whole mark
- *                 fades with age (gone at 3 h). Its recent path, solid amber.
+ *                 fades with age (gone at 3 h). Its recent path, solid amber,
+ *                 each hop on the streets it was walked (path_legs; a fainter
+ *                 dotted straight line while that route is computed).
+ *                 Where it probably is NOW (now_est): a dashed ring, no dot,
+ *                 "probably here now", the dashed way there from the
+ *                 last-seen mark, which then reads "Concorde · last seen
+ *                 15:48 · 12 min ago". How far it could be by now (reach_m):
+ *                 a faint ground circle (its size on the ground at every
+ *                 zoom, never a ring that swells), from street level only.
  *   routes      — each crowd's walking route toward a top convergence point,
  *                 dashed (a straight dashed line, fainter, while the router
  *                 has not answered: "estimated").
@@ -36,6 +44,7 @@ const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t
 const short = (place) => (place ? String(place).split(",")[0].trim() : "")
 const arr = (v) => (Array.isArray(v) ? v : [])
 const fin = (p) => Number.isFinite(+p?.lat) && Number.isFinite(+p?.lon)
+const okCoords = (cs) => arr(cs).filter((p) => Array.isArray(p) && Number.isFinite(+p[0]) && Number.isFinite(+p[1])).map((p) => [+p[0], +p[1]])
 
 /** "just now", "12 min ago", "1 h 20 ago". */
 export function ageLabel(ageMin) {
@@ -80,6 +89,43 @@ export function crowdIcon(label, alpha = 1) {
     return { uri: svgUri(svg), width, height, anchor: [11, 11] }
 }
 
+/** Where a crowd probably is now: a dashed amber ring, no dot (nobody saw it there), words to its right. */
+export function nowIcon(label, alpha = 1) {
+    const text = String(label || "")
+    const width = 24 + textW(text, 11) + 6, height = 22
+    const a = Math.round(alpha * 100) / 100
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g opacity="${a}">`
+        + `<circle cx="11" cy="11" r="8" fill="${rgba(CROWD_COLOUR, 0.12)}" stroke="${CROWD_COLOUR}" stroke-width="2" stroke-dasharray="3.2 2.6"/>`
+        + (text ? `<text x="23" y="15" font-family="${FONT}" font-size="11" font-weight="600" font-style="italic" fill="#F2F4F7" stroke="#05070C" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(text)}</text>` : "")
+        + "</g></svg>"
+    return { uri: svgUri(svg), width, height, anchor: [11, 11] }
+}
+
+/** A ground circle (radius in metres) as a closed line: it keeps its size on the ground at every zoom. */
+export function groundCircle(lat, lon, radiusM, n = 64) {
+    const out = []
+    const dLat = radiusM / 111_320
+    const dLon = dLat / Math.max(0.2, Math.cos((lat * Math.PI) / 180))
+    for (let i = 0; i <= n; i++) {
+        const a = (2 * Math.PI * i) / n
+        out.push([lat + dLat * Math.sin(a), lon + dLon * Math.cos(a)])
+    }
+    return out
+}
+
+/** The reach ring shows from about street level only (map zoom 12; the globe: camera under ~25 km). */
+export const REACH_MIN_ZOOM = 12
+export const REACH_MAX_CAMERA_M = 25_000
+/** The "probably here now" mark and its way there: from zoom 13 (the globe: under ~40 km), where they do not cover the last-seen words. */
+export const NOW_MIN_ZOOM = 13
+export const NOW_MAX_CAMERA_M = 40_000
+const NOW_MIN_ADVANCE_M = 60          // closer than this to where it was seen: the last-seen mark says it
+
+/** "Concorde · last seen 15:48 · 12 min ago" */
+export function lastSeenLabel(g, ageMin) {
+    return [short(g?.place), g?.hhmm ? `last seen ${g.hhmm}` : "last seen", ageLabel(ageMin)].filter(Boolean).join(" · ")
+}
+
 /** A probable convergence point: two rings, a cross and a centre, its words below. Junctions get one ring, dashed. */
 export function convergenceIcon(label, { junction = false } = {}) {
     const text = String(label || "")
@@ -106,11 +152,22 @@ const srcLine = (s) => `• ${s.hhmm || hhmmUtc(s.published_at || s.at)}${s.sour
 /** A crowd's card: where and when, its path, the posts behind it. */
 export function crowdDetail(g) {
     const path = arr(g?.path).map((p) => short(p.place)).filter(Boolean)
+    const est = g?.now_est
+    const legs = arr(g?.path_legs)
+    const reach = Number(g?.reach_m)
     return [
         `A crowd was last reported at ${short(g?.place) || "this place"}${g?.hhmm ? ` at ${g.hhmm}` : ""} (${ageLabel(g?.age_min)}), ${g?.n_reports || 1} report${g?.n_reports === 1 ? "" : "s"}.`,
         path.length > 1 ? `Its path: ${path.join(" → ")}.` : null,
+        legs.some((x) => x.estimated) ? "Parts of its path are straight lines while the walking route is computed (estimated)." : null,
         g?.heading_to?.name ? `Said to be heading to ${g.heading_to.name}.` : null,
-        g?.self_reported ? "Includes positions people reported themselves." : null,
+        est && fin(est) && est.advanced_m >= NOW_MIN_ADVANCE_M
+            ? `Probably near the dashed mark now (estimate): about ${est.advanced_m >= 1000 ? `${(est.advanced_m / 1000).toFixed(1)} km` : `${Math.round(est.advanced_m / 10) * 10} m`} on toward ${est.to || "where it was heading"}`
+              + `${est.basis === "heading_to" ? ", where it said it was heading" : ", its most likely convergence point"}, at a crowd's ~${est.kmh || 4} km/h`
+              + `${est.routed ? " along the walking route" : " (straight line)"}${est.arrived ? "; it may be there already" : ""}.`
+            : null,
+        Number.isFinite(reach) && reach >= 150 ? `By now it could be up to ${reach >= 1000 ? `${(reach / 1000).toFixed(1)} km` : `${Math.round(reach / 10) * 10} m`} from where it was last seen.` : null,
+        g?.self_reported ? "Its place is the one people there reported themselves." : null,
+        ...arr(g?.outranked).map((o) => `A later report (${o.position || "second-hand"}) put it at ${short(o.place)}${o.at ? ` at ${hhmmUtc(o.at)}` : ""}; the people there said otherwise.`),
         "Reconstructed from Telegram reports, not tracked.",
         "Reports:",
         ...arr(g?.sources).slice().reverse().map(srcLine),
@@ -171,11 +228,48 @@ export function situationFeatures(data, now = Date.now()) {
             const raw = { ...g, kind: "demo_crowd", title, detail: crowdDetail({ ...g, age_min: age }), published_at: g.at,
                           url: arr(g.sources).slice().reverse().find((s) => s?.url)?.url || null, source: "Reconstructed from Telegram reports",
                           sources: arr(g.sources) }
-            if (path.length >= 2) {
+            const pathSub = arr(g.path).map((p) => short(p.place)).join(" → ")
+            const legs = arr(g.path_legs).map((l) => ({ ...l, coords: okCoords(l.coords) })).filter((l) => l.coords.length >= 2)
+            if (legs.length) {
+                // each hop on the streets it was walked (routed), or straight and fainter while that is computed
+                for (const l of legs) {
+                    out.push({ id: `sit-path-${g.id}-${l.i}`, type: "demo_path", coords: l.coords,
+                               color: rgba(CROWD_COLOUR, alpha * (l.estimated ? 0.55 : 0.9)), weight: l.estimated ? 2.5 : 3,
+                               dash: l.estimated ? "2 7" : null, title,
+                               sub: `${pathSub}${l.estimated ? " · straight line, walking route pending" : ""}`, raw })
+                }
+            } else if (path.length >= 2) {
                 out.push({ id: `sit-path-${g.id}`, type: "demo_path", coords: path, color: rgba(CROWD_COLOUR, alpha * 0.9), weight: 3, dash: null,
-                           title, sub: arr(g.path).map((p) => short(p.place)).join(" → "), raw })
+                           title, sub: pathSub, raw })
             }
-            const ic = crowdIcon(`${short(g.place)} · ${ageLabel(age)}`, alpha)
+            // how far it could be by now: a faint ground circle, street level only
+            const reach = Number(g.reach_m)
+            if (Number.isFinite(reach) && reach >= 150) {
+                out.push({ id: `sit-reach-${g.id}`, type: "demo_path", coords: groundCircle(+g.lat, +g.lon, reach),
+                           color: rgba(CROWD_COLOUR, 0.22 * alpha), weight: 1, dash: "3 6", minZoom: REACH_MIN_ZOOM,
+                           maxCameraM: REACH_MAX_CAMERA_M, title: `${title}: could be up to ${Math.round(reach / 100) / 10} km away by now`,
+                           sub: "how far a crowd walks at ~4 km/h since it was last seen", raw })
+            }
+            const est = g.now_est
+            const drawNow = est && fin(est) && Number(est.advanced_m) >= NOW_MIN_ADVANCE_M
+            if (drawNow) {
+                const trail = okCoords(est.trail)
+                const nowTitle = `Crowd probably here now (estimate), last seen at ${short(g.place) || "a reported place"} ${ageLabel(age)}`
+                if (trail.length >= 2) {
+                    out.push({ id: `sit-trail-${g.id}`, type: "demo_path", coords: trail, color: rgba(CROWD_COLOUR, 0.6 * alpha), weight: 2,
+                               dash: "4 6", minZoom: NOW_MIN_ZOOM, maxCameraM: NOW_MAX_CAMERA_M,
+                               title: nowTitle, sub: `toward ${est.to || "where it was heading"}`, raw })
+                }
+                const ni = nowIcon("probably here now", Math.max(0.6, alpha))
+                out.push({
+                    id: `sit-now-${g.id}`, type: "demo_crowd", coords: [[+est.lat, +est.lon], [+est.lat, +est.lon]], color: rgba(CROWD_COLOUR, 0), weight: 0,
+                    marker: { lat: +est.lat, lon: +est.lon, iconUri: ni.uri, iconWidth: ni.width, iconHeight: ni.height, iconAnchor: ni.anchor },
+                    minZoom: NOW_MIN_ZOOM, maxCameraM: NOW_MAX_CAMERA_M,
+                    title: nowTitle, sub: `estimate: ~${est.kmh || 4} km/h toward ${est.to || "where it was heading"}`,
+                    raw: { ...raw, title: nowTitle, lat: +est.lat, lon: +est.lon, estimate: true }, alpha,
+                })
+            }
+            const ic = crowdIcon(drawNow ? lastSeenLabel(g, age) : `${short(g.place)} · ${ageLabel(age)}`, alpha)
             out.push({
                 id: `sit-crowd-${g.id}`, type: "demo_crowd", coords: [[+g.lat, +g.lon], [+g.lat, +g.lon]], color: rgba(CROWD_COLOUR, 0), weight: 0,
                 marker: { lat: +g.lat, lon: +g.lon, iconUri: ic.uri, iconWidth: ic.width, iconHeight: ic.height, iconAnchor: ic.anchor },

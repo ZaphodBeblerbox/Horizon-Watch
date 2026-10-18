@@ -464,8 +464,14 @@ async def post_typing(conversation_id: str, request: Request):
     except Exception:
         body = {}
     on = bool((body or {}).get("typing", True)) if isinstance(body, dict) else True
-    with get_db() as db:
-        _membership(db, conversation_id, me["id"])
+
+    def _check():
+        with get_db() as db:
+            _membership(db, conversation_id, me["id"])
+    # the membership read off the event loop: this is pinged every few
+    # seconds by every open thread
+    from starlette.concurrency import run_in_threadpool
+    await run_in_threadpool(_check)
     note_typing(conversation_id, me["id"], me.get("name") or me.get("email") or "", on=on)
     return {"ok": True, "ttl_s": TYPING_TTL_S}
 

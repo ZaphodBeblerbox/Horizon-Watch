@@ -62,7 +62,8 @@ describe("what the fetch layer actually saw outranks navigator.onLine", () => {
 
     it("says the server is unreachable even when the browser thinks it is online", () => {
         const s = freshnessState(CACHED_AT, NOW, true, { state: "cached", cachedAt: CACHED_AT })
-        expect(s.tone).toBe("offline")
+        // the server, not the device: never "offline" while the device has a network
+        expect(s.tone).toBe("server")
         expect(s.text).toMatch(/Server unreachable/)
     })
 
@@ -74,7 +75,7 @@ describe("what the fetch layer actually saw outranks navigator.onLine", () => {
 
     it("still says something honest when the cache has no timestamp", () => {
         const s = freshnessState(CACHED_AT, NOW, true, { state: "cached", cachedAt: null })
-        expect(s.tone).toBe("offline")
+        expect(s.tone).toBe("server")
         expect(s.text).toBe("Server unreachable · showing stored data")
     })
 
@@ -88,5 +89,21 @@ describe("what the fetch layer actually saw outranks navigator.onLine", () => {
     it("is unchanged when the fetch layer has said nothing yet", () => {
         const fresh = new Date(NOW - 60000).toISOString()
         expect(freshnessState(fresh, NOW, true, null).tone).toBe("fresh")
+    })
+})
+
+
+describe("offline means the device, not the server", () => {
+    const CACHED_AT = new Date("2026-09-25T14:00:00Z").toISOString()
+    const NOW = new Date("2026-09-25T14:30:00Z").getTime()
+
+    it("stored data with no network on the device is offline", () => {
+        expect(freshnessState(CACHED_AT, NOW, false, { state: "cached", cachedAt: CACHED_AT }).tone).toBe("offline")
+    })
+
+    it("stored data while the device has a network is the server's problem", () => {
+        const s = freshnessState(CACHED_AT, NOW, true, { state: "cached", cachedAt: CACHED_AT })
+        expect(s.tone).toBe("server")
+        expect(s.text).not.toMatch(/offline/i)
     })
 })

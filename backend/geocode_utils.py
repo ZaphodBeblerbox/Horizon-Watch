@@ -187,7 +187,38 @@ def is_geocode_cached(
         return key in _cache
 
 
-SETTLEMENT_TYPES = {"city", "town", "village", "hamlet", "suburb", "neighbourhood", "quarter", "locality", "isolated_dwelling"}
+def geocode_cached(
+    query: str,
+    expected_country_codes: list[str] | None = None,
+    region_bias: str | None = None,
+    bounds: tuple[float, float, float, float] | None = None,
+) -> list[dict] | None:
+    """What geocode_place would answer, from the memory or disk cache only —
+    never a request. None when the query has not been asked yet (a known
+    miss is [])."""
+    global _cache_hits
+    q = (query or "").strip()
+    if not q:
+        return []
+    key = _make_cache_key(q, expected_country_codes, region_bias, bounds)
+    with _cache_lock:
+        if key in _cache:
+            _cache_hits += 1
+            return _cache[key]
+    dc = _get_disk_cache()
+    if dc is not None:
+        try:
+            hit = dc.get(f"geo:{key}")
+        except Exception:
+            hit = None
+        if hit is not None:
+            with _cache_lock:
+                _cache[key] = hit
+            return hit
+    return None
+
+
+SETTLEMENT_TYPES ={"city", "town", "village", "hamlet", "suburb", "neighbourhood", "quarter", "locality", "isolated_dwelling"}
 
 
 def prefer_settlement(hits: list[dict]) -> list[dict]:

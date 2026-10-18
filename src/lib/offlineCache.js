@@ -30,6 +30,8 @@
  * today, including inside the Tauri webview, without a Rust dependency.
  */
 
+import { classifyFailure, deviceOffline } from "./connectivity.js"
+
 const DB_NAME = "parallax-cache"
 const STORE = "responses"
 /** How long a cached body may still be served. Matches the 12-24h brief. */
@@ -112,6 +114,10 @@ export function isCacheable(method, url, apiBase) {
     // Server-sent events and long-polls have no meaningful "last value",
     // and replaying one would hang a consumer waiting for a stream.
     if (/\/(stream|sse|events\/live|ws)(\/|\?|$)/.test(url)) return false
+    // A health check asks "is the server there NOW". Answering it from a
+    // stored copy would report a dead server as alive (connectivity.js
+    // probes it to tell "slow" from "nothing there").
+    if (/\/api\/health\/live$|\/api\/health\/live\?/.test(url)) return false
     return true
 }
 
@@ -177,12 +183,16 @@ export function installOfflineCache({
     }
     win.__parallaxCacheIdle = whenIdle
 
-    const announce = (state, at) => {
-        if (state === lastState) return
-        lastState = state
+    // `reason` (lib/connectivity.js) says WHY a request failed — "offline"
+    // only when the device has no network, otherwise "slow" or
+    // "unreachable" — so the UI can blame the right party.
+    const announce = (state, at, reason = null) => {
+        const key = `${state}|${reason || ""}`
+        if (key === lastState) return
+        lastState = key
         try {
             win.dispatchEvent(new CustomEvent(CACHE_EVENT, {
-                detail: { state, cachedAt: at ?? null },
+                detail: { state, cachedAt: at ?? null, reason },
             }))
         } catch { /* a webview without CustomEvent must not break fetch */ }
     }
@@ -243,12 +253,17 @@ export function installOfflineCache({
             return res
         } catch (err) {
             if (timer) clearTimeout(timer)
+            // The caller cancelled (a screen closed, its own deadline): that
+            // says nothing about the server or the network.
+            const callerAborted = !timedOut && !!init.signal?.aborted
+            const reason = callerAborted ? null
+                : classifyFailure({ online: !deviceOffline(win.navigator), error: err, timedOut })
             const entry = await lookup(backing, url, wholePaths)
             if (!entry || (now() - entry.at) > maxAgeMs) {
                 // Nothing usable. Re-throw rather than handing back an
                 // empty 200, which would read to every caller as "the
                 // server says there is nothing".
-                announce("offline-empty")
+                if (!callerAborted) announce("offline-empty", null, reason)
                 // BUT NOT THE RAW AbortError. Its message is "signal is
                 // aborted without reason", which callers put straight on
                 // screen — Analytics showed exactly that string to the
@@ -261,7 +276,7 @@ export function installOfflineCache({
                 }
                 throw err
             }
-            announce("cached", entry.at)
+            if (!callerAborted) announce("cached", entry.at, reason)
             return new Response(entry.body, {
                 status: 200,
                 headers: {

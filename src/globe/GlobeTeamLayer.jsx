@@ -17,6 +17,7 @@ import { positionStream } from "../location/positionStream.js"
 import { freshness, presence } from "../location/glide.js"
 import { useGlidingPosition, useRenderTick } from "./useGlidingPosition.js"
 import { getCurrentUser } from "../state/authStore.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 const dot = (fill, live) => `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
   <circle cx="20" cy="20" r="18" fill="${fill}" fill-opacity="${live ? 0.26 : 0.12}"/>
@@ -40,10 +41,10 @@ function Person({ p, me }) {
         <Entity id={`team-${p.user_id}`} name={name} position={position}
                 description={`${name} — ${coarseOf(p) ? "city level, from their connection" : p.accuracy_m != null ? `within ${Math.round(p.accuracy_m)} m` : "live location"}`}
                 billboard={{ image: ICONS[`${live ? 1 : 0}|${coarseOf(p) ? 1 : 0}`], width: 30, height: 30, heightReference: HeightReference.CLAMP_TO_GROUND,
-                             disableDepthTestDistance: Number.POSITIVE_INFINITY, scaleByDistance: new NearFarScalar(2e4, 1.1, 8e6, 0.7) }}
+                             disableDepthTestDistance: MARKER_DEPTH_TEST_M, scaleByDistance: new NearFarScalar(2e4, 1.1, 8e6, 0.7) }}
                 label={{ text, font: "600 12.5px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                          style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 14),
-                         heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                         heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                          distanceDisplayCondition: new DistanceDisplayCondition(0, 3_000_000) }} />
     )
 }
