@@ -65,6 +65,8 @@ export const INSPECTOR_TYPES = new Set([
     // Demonstrations, live: the planner's hazards and the reconstructed
     // crowd movement (GlobeDemonstrationsLayer).
     "demonstration", "protest_track",
+    // The city situation: crowds, their paths, routes, convergence points.
+    "demo_crowd", "demo_path", "demo_route", "demo_convergence",
 ])
 
 // ── Inline threat-region popup ────────────────────────────────────────────────

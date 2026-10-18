@@ -31,6 +31,8 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "frontline_claim", "troop_movement", "trajectory",
             // Demonstrations, live (GlobeDemonstrationsLayer).
             "demonstration", "protest_track",
+            // The city situation: crowds, their paths, routes, convergence points.
+            "demo_crowd", "demo_path", "demo_route", "demo_convergence",
         ].sort())
     })
 

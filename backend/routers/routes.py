@@ -8,6 +8,9 @@
     GET  /api/routes/hazards               ?lat&lon&km&providers — the live hazards near a point
     GET  /api/routes/demonstrations        every current demonstration the planner knows about, the world over,
                                            and protester movement reconstructed from Telegram (demonstrations.py)
+    GET  /api/routes/demonstrations/situation  ?city — per city: crowds (last known places), named targets, ranked
+                                           probable convergence points with walking routes (demo_situation.py)
+    GET  /api/routes/demonstrations/now    ?city — "what is happening in <city> now", compact
     GET  /api/routes/status                the last calls to the routing services
 
 POST /api/routes/plan
@@ -270,6 +273,25 @@ async def demonstrations(request: Request):
     _me(request)
     import demonstrations as dm
     return await asyncio.to_thread(dm.snapshot)
+
+
+@router.get("/demonstrations/situation")
+async def demonstrations_situation(request: Request, city: str | None = None):
+    """Crowds, targets and probable convergence points, per city (an
+    estimate, labelled so). Routing is bounded and cached; a cold call
+    answers with straight-line estimates within ~1.5 s and the next poll
+    has the routes (demo_situation.py)."""
+    _me(request)
+    import demo_situation as ds
+    return await ds.situation(None, city)
+
+
+@router.get("/demonstrations/now")
+async def demonstrations_now(request: Request, city: str | None = None):
+    """"What is happening in <city> now": counts, latest developments, the top convergence points."""
+    _me(request)
+    import demo_situation as ds
+    return await ds.now_summary(city)
 
 
 @router.get("/status")

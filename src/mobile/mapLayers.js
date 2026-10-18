@@ -42,6 +42,7 @@ import {
 import {
     DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, demoSub, demoTitle, trackSegments,
 } from "../globe/demonstrations.js"
+import { SITUATION_PATH, SITUATION_REFRESH_MS, convergenceIcon, situationFeatures } from "../globe/demoSituation.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -591,6 +592,15 @@ async function loadDemoMovement({ bounds }) {
     const now = Date.now()
     return cullLines(arr(d?.tracks).flatMap((t) => trackSegments(t, now)).map((f) => ({ ...f, id: `demo-move-${f.id}` })),
                      normBounds(bounds))
+}
+
+// The city situation (globe/demoSituation.js, backend/demo_situation.py):
+// crowds' last known places fading with age, their paths, dashed walking
+// routes toward the probable convergence points, and those points, ringed —
+// one "lines" layer, a point being a zero-length line carrying its marker.
+async function loadDemoSituation({ bounds }) {
+    const d = await getJson(`${API_BASE}${SITUATION_PATH}`, { ttlMs: SITUATION_REFRESH_MS / 2 })
+    return cullLines(situationFeatures(d, Date.now()), normBounds(bounds))
 }
 
 async function loadImagerySignals({ bounds }) {
@@ -1373,7 +1383,7 @@ export const PHONE_LAYERS = [
     },
     // What the route planner ("Get me out") avoids, as a layer, and the
     // crowd's movement reconstructed from Telegram reports beside it; off by
-    // default. refreshMs: read again each minute while on.
+    // default. refreshMs: read again every 30 s while on.
     {
         key: "demonstrations", label: "Demonstrations, live", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         refreshMs: DEMOS_REFRESH_MS, legendIcon: demoIconUri({ kind: "march" }), load: loadDemonstrations,
@@ -1382,6 +1392,13 @@ export const PHONE_LAYERS = [
         key: "demonstrations:movement", label: "Protester movement (reconstructed from reports)", group: G.news,
         defaultOn: false, kind: "lines", minZoom: 0, refreshMs: DEMOS_REFRESH_MS,
         legendIcon: lineSwatch(TRACK_COLOUR), load: loadDemoMovement,
+    },
+    // Owner, 2026-10-17: "last known locations, probable points of
+    // convergence … Movements displayed in real time" — read every 30 s while on.
+    {
+        key: "demonstrations:situation", label: "Crowds now & likely convergence (estimate)", group: G.news,
+        defaultOn: false, kind: "lines", minZoom: 0, refreshMs: SITUATION_REFRESH_MS,
+        legendIcon: convergenceIcon("").uri, load: loadDemoSituation,
     },
     {
         key: "strikes", label: "Strikes & control", group: G.news, defaultOn: true, kind: "points", minZoom: 0,

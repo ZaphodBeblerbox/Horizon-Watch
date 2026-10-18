@@ -52,3 +52,17 @@ export function useDemonstrations({ enabled = true, lat = null, lon = null, km =
     }, [enabled])
     return { data, near: lat != null && lon != null ? demonstrationsNear(data, lat, lon, km) : null }
 }
+
+const cityQuery = (city) => (city ? `?city=${encodeURIComponent(city)}` : "")
+
+/** The city situation (crowds, targets, probable convergence points, routes): every active city, or one. */
+export function getSituation(city = null, doFetch = fetch) {
+    return doFetch(`${API_BASE}/api/routes/demonstrations/situation${cityQuery(city)}`, { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+}
+
+/** "What is happening in <city> now": {cities: [{city, headline, counts, crowds, convergence, latest}]}. */
+export function getCityNow(city = null, doFetch = fetch) {
+    return doFetch(`${API_BASE}/api/routes/demonstrations/now${cityQuery(city)}`, { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+}
