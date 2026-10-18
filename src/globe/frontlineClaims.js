@@ -369,8 +369,8 @@ export function trajectorySummary(t) {
 export const FRONTLINE_LAYERS = [
     { key: "frontlineClaims", label: "Frontline claims",
       hint: "Ground a report says was taken, drawn on top of the official line · hatched: CLAIMED, unverified · solid: confirmed by DeepStateMap · grey: expired after 7 days or contradicted" },
-    { key: "movements", label: "Movements",
-      hint: "Ground forces followed over the days: numbered legs from place to place (later legs brighter), converging arrows round a besieged place, a single arrow where nothing earlier is known · NATO APP-6 symbols · every arrow is our reading, said on the card" },
+    { key: "movements", label: "Troop movements",
+      hint: "Ground forces followed over the days from front-line reports: numbered legs from place to place (later legs brighter), converging arrows round a besieged place, a single arrow where nothing earlier is known · NATO APP-6 symbols · every arrow is our reading, said on the card" },
     { key: "trajectories", label: "Trajectories",
       hint: "Drones and missiles from the launch origin (the report's, or an assumed one, always said so) to the target · ballistic high arc, cruise low arc · a click replays the flight" },
 ]

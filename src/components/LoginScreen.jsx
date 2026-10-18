@@ -17,7 +17,7 @@ import { TrifectaLine } from "../plx6/LaunchIntro.jsx"
 
 const FADE_MS = 620
 
-export default function LoginScreen({ onLoggedIn, offline = false }) {
+export default function LoginScreen({ onLoggedIn, offline = false, reason = null }) {
     const [email, setEmail] = useState("")
     const [password, setPassword] = useState("")
     const [error, setError] = useState(null)
@@ -50,7 +50,7 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
         }
         setSubmitting(true)
         try {
-            const user = await login(trimmedEmail, password)
+            const user = await login(trimmedEmail, password, { allowLocal: offline })
             // Fade first, hand over after. onLoggedIn unmounts this
             // component, so calling it immediately would remove the thing
             // that is supposed to be fading.
@@ -113,9 +113,15 @@ export default function LoginScreen({ onLoggedIn, offline = false }) {
                         background: "var(--bg-0, #14161f)", border: "1px solid var(--line, #2b3040)",
                         borderRadius: 3, padding: "8px 10px", marginBottom: 4,
                     }}>
-                        <b style={{ color: "var(--txt-2, #b6bec6)" }}>Working offline.</b> The server
-                        cannot be reached, so this signs you in against this machine&rsquo;s stored
-                        credentials. You&rsquo;ll see the data this machine already has.
+                        {/* "Offline" only when the device has no network
+                            (lib/connectivity.js); a slow server is not that. */}
+                        <b style={{ color: "var(--txt-2, #b6bec6)" }}>
+                            {reason === "offline" ? "Working offline." : "Using the data on this device."}
+                        </b>{" "}
+                        {reason === "offline"
+                            ? "This device has no network, so this signs you in against its stored credentials."
+                            : "The server isn’t answering right now, so this signs you in against this device’s stored credentials."}
+                        {" "}You&rsquo;ll see the data this device already has.
                     </div>
                 )}
 

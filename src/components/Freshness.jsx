@@ -57,8 +57,10 @@ export function freshnessState(updatedAt, now = Date.now(), online = true, cache
     if (cache && cache.state === "cached") {
         const at = cache.cachedAt ? new Date(cache.cachedAt) : null
         const known = at && !Number.isNaN(at.getTime())
+        // The server is the one not answering; the device may be fine.
+        // "Not connected" is kept for a device with no network at all.
         return {
-            tone: "offline",
+            tone: online ? "server" : "offline",
             text: known
                 ? `Server unreachable · showing data from ${hm(at)} · ${ago(now - at.getTime())}`
                 : "Server unreachable · showing stored data",
@@ -88,6 +90,7 @@ const TONE = {
     fresh:   { dot: "var(--green, #3f9a58)", ink: "var(--txt-3)", word: "Connected" },
     stale:   { dot: "var(--amber)",          ink: "var(--amber)",  word: "Disrupted" },
     offline: { dot: "var(--sev-critical)",   ink: "var(--sev-critical)", word: "Not connected" },
+    server:  { dot: "var(--amber)",          ink: "var(--amber)",  word: "Server unreachable" },
     unknown: { dot: "var(--amber)",          ink: "var(--amber)",  word: "Disrupted" },
 }
 

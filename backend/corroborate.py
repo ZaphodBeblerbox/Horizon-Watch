@@ -144,23 +144,37 @@ def cluster(observations: list[dict], *,
     """
     obs = [o for o in (normalise(o) for o in observations) if o]
     obs.sort(key=lambda o: o["ts"])
-    window = timedelta(hours=window_hours)
+    window_s = timedelta(hours=window_hours).total_seconds()
 
+    # LATITUDE BANDS, NOT EVERY PAIR. Comparing each observation with every
+    # member of every cluster is O(n²): with ~12,000 observations it held
+    # the event loop 8-27 s every quarter hour in production (loop-lag,
+    # 2026-10-18, corroborate.py:154). Two points within radius_km are at
+    # most radius_km / 111.19 degrees of latitude apart, so a member that
+    # can match lies in the observation's own band or a neighbour. The
+    # result is identical: an observation still joins the FIRST cluster
+    # (lowest index) holding any member within the radius and window.
+    band_deg = max(radius_km / 111.19 * 1.001, 1e-6)
+    bands: dict[int, list[tuple]] = defaultdict(list)
     clusters: list[list[dict]] = []
     for o in obs:
-        joined = None
-        for c in clusters:
-            for m in c:
-                if abs((o["ts"] - m["ts"]).total_seconds()) <= window.total_seconds() \
-                        and haversine_km(o["lat"], o["lon"], m["lat"], m["lon"]) <= radius_km:
-                    joined = c
-                    break
-            if joined is not None:
-                break
-        if joined is None:
+        lat, lon, ts = o["lat"], o["lon"], o["ts"].timestamp()
+        b = int(math.floor(lat / band_deg))
+        best = None
+        for bb in (b - 1, b, b + 1):
+            for idx, mlat, mlon, mts in bands.get(bb, ()):
+                if best is not None and idx >= best:
+                    continue
+                # cheap tests first: time, then latitude, then the sphere
+                if abs(ts - mts) <= window_s and abs(lat - mlat) <= band_deg \
+                        and haversine_km(lat, lon, mlat, mlon) <= radius_km:
+                    best = idx
+        if best is None:
+            best = len(clusters)
             clusters.append([o])
         else:
-            joined.append(o)
+            clusters[best].append(o)
+        bands[b].append((best, lat, lon, ts))
 
     return [summarise(c) for c in clusters]
 

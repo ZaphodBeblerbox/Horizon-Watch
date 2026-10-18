@@ -37,6 +37,7 @@ import MapMeta from "../components/MapMeta.jsx"
 import AoiLockDimming from "../globe/AoiLockDimming.jsx"
 import { useUserLocation } from "../globe/useUserLocation.js"
 import { maxOf, minOf } from "../utils/extent.js"
+import { MARKER_DEPTH_TEST_M } from "../globe/entityIcons.js"
 
 // Real "zoomed in" altitude for the no-real-data default view (vs.
 // zonesCenter()'s 15,000km world-ish fallback) — a genuine device location
@@ -268,7 +269,7 @@ export default function AoiMiniMap({
                             // Points must not swell into blobs when the
                             // camera comes in close.
                             scaleByDistance: new NearFarScalar(1.0e3, 1.0, 8.0e6, 0.4),
-                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                            disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                         },
                         // The hover text is the sentence the product promises:
                         // never a bare identifier, always what and where.

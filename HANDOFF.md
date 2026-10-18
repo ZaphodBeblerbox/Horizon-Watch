@@ -1,3 +1,208 @@
+# Handoff — 2026-10-18
+
+Written for the next session (an engineer or a Claude agent) so it can carry on
+without re-reading the long chat of 2026-10-13 → 18. Checked against the repo
+on 2026-10-18. Older sections below still hold where this one doesn't override them.
+
+## Where things stand
+
+- `main` = `origin/main` = **`16b7d52`**, pushed; Railway deploys on push.
+  Nothing uncommitted except `backend/test_sanctions_loader.py`, which isn't ours: leave it.
+- **DMG v1.1.25** built successfully (2026-10-18 09:35 UTC). Next one: **≥ 1.1.26**
+  (`gh workflow run desktop-dmg.yml -f version=1.1.26`).
+- Push and DMG **only when the owner asks, each time**. The log is in memory
+  `feedback_no_railway_no_dmg.md`. A push can hang at the macOS keychain, so push with:
+  `git -c credential.helper= -c credential.helper='!gh auth git-credential' push origin main`.
+- Local: backend on :8000 (from `backend/`:
+  `~/.pyenv/versions/3.12.7/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000`),
+  vite on :5173 (`npx vite --port 5173 --host 127.0.0.1`). Both were started from the
+  last session and may be gone: restart them. Login: `localshot@test.local` / `localshot-pw`.
+- **The local DB has no Telegram posts after 2026-10-07**: Telegram runs on the
+  server only. Anything Telegram-driven can only be judged on production data.
+  **Never start a Telegram client locally**: a second client on the session kills the live ingest.
+- Disk was full on 2026-10-17 (285 MB free). It now has about 11 GB. Don't leave `dist/`
+  in worktrees; remove finished worktrees (`git worktree remove`).
+- Tests: `npx vitest run` passes 2,046 tests. `src/lib/ref.test.js` needs the live backend and
+  fails if run while it is still starting. Backend: run the suites you touch.
+  About 28 older tests need the real DB and fail anywhere.
+
+## THE URGENT NEXT TASK: crowd-tracking accuracy (owner, 2026-10-18)
+
+The owner's words: "only work on the crowd tracking accuracy. Push that to DMG
+and Railway. That's the only urgency right now." Earlier: "crowds with their last
+known place and age, their paths, walking routes … make sure that is precise and
+good. We have the roads, we have the routes."
+
+**No code was changed for this yet.** It was analysed, with this plan, when the
+session ended. Code: `backend/demo_situation.py` (model, scoring, routing),
+`backend/demonstrations.py` (`link_tracks`, reports),
+`src/globe/demoSituation.js` (shared drawing), `GlobeDemonstrationsLayer.jsx`,
+and `src/mobile/mapLayers.js` key `demonstrations:situation`.
+Endpoints: `/api/routes/demonstrations/situation` and `/now`.
+
+Where precision is lost today, and the fix for each:
+1. **Places resolve only from a ~40-entry gazetteer** (`GAZETTEER`, mostly Paris landmarks).
+   - **The gap:** a street-level report ("rue de Rivoli", "pont Alexandre III",
+     "boulevard Saint-Germain", "métro X") is dropped unless the place was learned from
+     endangered places or geocoded posts.
+   - **Fix:** in `resolve_place`, when nothing matches and the phrase has a street word
+     (rue, avenue, boulevard, place, pont, quai, porte, gare, métro/station, square, parc,
+     esplanade, carrefour, rond-point…), use `geocode_utils.geocode_place(phrase,
+     ["fr"], bounds=<city box from CITY_CENTRES>)`.
+   - **That geocoder is Nominatim:** 1 request/s, sync, cached in memory and on disk for 30 days.
+     Don't call it inline. Serve cache hits only, queue misses to one background thread, and
+     the next 30 s pass picks them up.
+   - **Accept a hit only if** it lies within `CITY_RADIUS_M` of the city centre.
+2. **Crowd paths are straight lines between reports** (`build_crowds` → `path`).
+   - **Fix:** route each hop longer than ~150 m with the OSRM foot profile, using
+     `sr.osrm` with the same `_spawn` / `_route_key` / `sr._cache_get` budget pattern as
+     the convergence routes (`NEW_REQUESTS_PER_PASS`, `PLANNER_BUSY_S`: never delay
+     someone's "Get me out" route).
+   - Fall back to the straight line, marked "estimated", until the route is cached.
+3. **No estimate of where the crowd is now.**
+   - **Fix:** if a crowd has `heading_to` (or its top convergence route), advance it along that
+     route at `CROWD_KMH` for its age, capped at the destination. Return
+     `now_est: {lat, lon, basis}` and a `reach_m` radius (age × speed, capped).
+   - **Draw it:** a dashed "probably here now" mark, with the last-seen point kept and labelled
+     "last seen 14:05 · 12 min ago".
+   - **Ground-sized circles:** the owner hates rings that swell with zoom (the alert-ring
+     fix of 2026-10-17). If the reach is drawn as a ground circle, keep it faint, and
+     consider hiding it below about zoom 12.
+4. **Check also:**
+   - `MERGE_M` / `MERGE_MIN` (crowd merging) and `link_tracks`'s 6 km/h + 1.5 km slack.
+   - That self-reported positions ("on est à Concorde") outrank second-hand reports.
+   - That the age shown is time since the last report, not since ingest.
+5. **Tests:** fixtures in `backend/test_demo_situation.py` (39 tests, plus one added 2026-10-18).
+   Add tests for:
+   - street geocoding with a stubbed geocoder
+   - routed paths with a stubbed `_cache_get`
+   - the "now" estimate
+6. **Then:** build, browser-check on the phone (mock `/api/routes/demonstrations/situation`
+   with `ctx.route`, since the local DB has no live crowds), commit, push, and build
+   DMG ≥ 1.1.26, as asked.
+
+## What was built 2026-10-14 → 18 (29 commits, `37721d8..16b7d52`, all pushed)
+
+**Phone, after Benji Taylor's rules** (`src/mobile/`, memory `project_phone_benji_redesign.md`):
+- **Look:** monochrome words and buttons, colour only in icons, glass over the map.
+  Tokens are in the "PHONE v4 / v4.1" blocks at the end of `m2.css`.
+- **Moving around:**
+  - the header and tab bar hide on scroll (`MobileApp.jsx`, `data-chrome`; a screen can force
+    it with the event `m2:chrome`)
+  - screens slide in from their tab's side
+  - one marker glides between the tabs
+- **Gestures:** shared in `gesture.js` (`attachDrag`, which uses native non-passive touch,
+  and `attachPullToRefresh`).
+- **The map card** (`screens/MPeek.jsx`):
+  - swipe left or right through the points in view, up for details, down to close
+  - the map moving closes it
+  - the details sheet grows out of the card and shrinks back into it by clipping
+    (`common.jsx` `Sheet` `fromPeek`, `peekShape`/`morph`), so the text keeps its size
+  - one guarded close ends the open/close races
+- **Notifications:** a signal with a place opens the map at it with the card; one without a
+  place opens Alerts on that row. Only urgent ones (critical, warning, live) show as toasts
+  that fade.
+- **Map performance:** markers are kept between draws by key and signature, and event
+  points cluster until zoom 11 (`MMap.jsx` `CLUSTER_LAYERS`). Icons are 1.2× larger.
+- **Other phone features:**
+  - pull to refresh on the Desk and Home; a hard pull on Home slides it away to the map
+  - a centre-on-me button
+  - the "Get me out" route planner is a tray over the main map (`routes/RoutePanel.jsx`;
+    the route is drawn in `MMap.jsx`)
+  - a Mood screen (`screens/MMood.jsx`)
+  - "What may follow" shows its reasoning (`insight/OutlookExplain.jsx`, also a dialog on
+    desktop Home)
+  - For You takes every source
+  - a theatre filter shared across Home, Desk and Alerts (`mobile/theaterScope.js`)
+  - Live from Telegram swipes
+  - the newest items always show: the General feed puts new items straight on top every 20 s
+    and on return to the app, and every list reloads on `visibilitychange`
+- **Messages:** WhatsApp-style chats with typing dots (`POST/GET
+  /api/chat/conversations/{id}/typing`, in memory, 6 s). Full-screen media viewer:
+  `mobile/MediaViewer.jsx`.
+
+**Desktop:**
+- The design pass (`src/styles/desktopV4.css` under `:root[data-shell="desk"]`,
+  `src/ui/travelMark.js`, `useSwap.js`, `usePresence.js`).
+- Alert marks stay a fixed size on screen (pixel rings, not ground ellipses).
+
+**Map and intelligence:**
+- **Troop movements followed over days, and sieges** (`backend/frontline_claims.py`): a path
+  links stops ≤4 days apart and ≤15 km + 15 km/day apart, capped at 60 km. Sieges get
+  converging arrows; directions over the sea are dropped. Mountains are not read.
+- **Live demonstrations** (`demonstrations.py`, `demo_situation.py`): crowds, routes to
+  places named in calls, and estimated meeting points labelled "est. N%". Not yet seen on
+  real crowds.
+- **Telegram ingestion** (`backend/telegram_ingest.py`, new `telegram_signals.py`):
+  - **Groups:** now reads groups and forum supergroups, keeping topic titles; it had only read
+    channels before. The gilets jaunes groups were added to `telegram_channels.json`.
+    "Le Grand Café" couldn't be found and is probably private: the account must join it.
+  - **Calls and positions:** stored in the `telegram_intents` table (act, target, time,
+    `immediate`, self-reported positions).
+  - **Merging:** related messages merge into one signal when read.
+  - **Polling:** every 15 s while a chat is active, otherwise every 60 s.
+- **Mood:**
+  - per country/city tension trend and a Low/Elevated/High chance of demonstrations in 48 h
+    (`telegram_unrest.py`)
+  - **every single call to violence is its own alert** (`telegram_mood_alert.py`
+    `detect_calls`, type "Telegram mood: call to violence"; it needs violent wording as well
+    as the model's rating)
+  - the check runs every 10 min
+  - spikes and calls appear on the Desk, as notifications, and on both maps
+    ("Mood & calls to violence", `src/globe/telegramMood.js`)
+- **Imagery** (`smoke_classify.py`, `imagery_verdict.py`):
+  - **Smoke needs a source** (FIRMS or a verified hot pixel). New checks reject clouds,
+    shadows, snow, haze and glint.
+  - **Stored detections are re-judged** on read: smoke plumes went from 14 to 3.
+  - **Caps on findings were removed.** Cost guards on paid Copernicus usage stay.
+- **`/api/alerts?source=…`** uses the source index: 7.5 s → 1 s.
+
+## Still to do (owner's list, most important first)
+
+1. **Crowd tracking accuracy**: above. Urgent; push and build the DMG after.
+2. **"What may follow" is broken on desktop and phone.**
+   - **Locally:** the outlook (`routers/enrichment.py` `refresh_outlook`,
+     `outlook.py` `validate`) was last built 32 h ago and **all statements were dropped**: 3
+     cited signals that weren't in its input, 3 with no citation.
+   - **To check on production:** whether `_outlook_refresh_loop` runs in the right process,
+     and whether every statement is dropped there too.
+   - **The owner also wants:** past forecasts **scored** (there are routes `/api/enrich/outlook/forecasts`,
+     `/outlook/due` and `/outlook/forecasts/{fid}/resolve`, but nothing resolves them yet),
+     what is learned fed back in, and statements made "more creative and more specific".
+     Memory `feedback_forecasts_must_be_falsifiable.md`: actor + place + act, cited, with a
+     criterion and a date.
+3. **Desktop motion:** the grow-and-shrink animations and the rest of the new design, on the
+   desktop as on the phone. The desktop pass so far is light. Inline red/amber text remains
+   (Inspector "ESCALATING" and others), and rail icons keep their colours: the owner chose
+   them on 2026-10-05; ask before greying them.
+4. **Mood in the country risk index** (owner: "not urgent").
+5. **Imagery is paused**: both Copernicus accounts are out of processing units, and scans
+   have failed with 403 since 13 Oct. The owner will refill them. The imagery-signal layer
+   reads only SAT-TASK alerts, so OVERWATCH radar-change and sweep findings never show
+   there (an easy fix).
+
+## Check on the server after this deploy
+
+- **Telegram groups:** are groups and forum topics arriving
+  (`telegram_posts.chat_kind`, `telegram_topics`)? Did the gilets jaunes groups join? Any
+  flood waits at 15 s polling? Is the skip-unchanged-chats logic missing chats?
+- **The mood rater:** its limit of 75 posts a minute may now lag behind the group volume.
+- **New alerts:** are "Telegram mood: call to violence" alerts appearing, and are they
+  real calls?
+- **The Desk feed:** is the newest General item minutes old, not hours?
+
+## Owner rules worth knowing (in memory, repeated here)
+
+- No typewriter or monospace fonts anywhere.
+- On the phone, colour only in icons. Alert counts are red, the wordmark stripes blue,
+  your location dot blue.
+- Never push or build the DMG unless asked in that message.
+- Verify locally in a browser before saying something works; build first, because the
+  service worker serves `dist`.
+- Don't stash while the backend runs (`risk_band_state.json` is rewritten live).
+
+---
+
 # Addendum — 2026-10-13, later session
 
 - Committed locally (not pushed): `c23529d` (strikes chips in shared state,

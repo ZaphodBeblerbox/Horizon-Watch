@@ -643,9 +643,11 @@ async function loadDemoMovement({ bounds }) {
 // crowds' last known places fading with age, their paths, dashed walking
 // routes toward the probable convergence points, and those points, ringed —
 // one "lines" layer, a point being a zero-length line carrying its marker.
-async function loadDemoSituation({ bounds }) {
+async function loadDemoSituation({ bounds, zoom }) {
     const d = await getJson(`${API_BASE}${SITUATION_PATH}`, { ttlMs: SITUATION_REFRESH_MS / 2 })
-    return cullLines(situationFeatures(d, Date.now()), normBounds(bounds))
+    // a crowd's reach ring only from street level (its minZoom)
+    const z = Number.isFinite(+zoom) ? +zoom : 99
+    return cullLines(situationFeatures(d, Date.now()).filter((f) => !(f.minZoom > z)), normBounds(bounds))
 }
 
 // ── The mood on Telegram, as signals (globe/telegramMood.js) ──────────────
@@ -1441,7 +1443,7 @@ export const PHONE_LAYERS = [
     // crowd's movement reconstructed from Telegram reports beside it; off by
     // default. refreshMs: read again every 30 s while on.
     {
-        key: "demonstrations", label: "Demonstrations, live", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
+        key: "demonstrations", label: "Protests & crowds, live", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         refreshMs: DEMOS_REFRESH_MS, legendIcon: demoIconUri({ kind: "march" }), load: loadDemonstrations,
     },
     {

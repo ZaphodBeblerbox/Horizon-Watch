@@ -1119,6 +1119,10 @@ _sanctions_inflight = 0
 _sanctions_shed = 0
 # Zone scans: satellite fetch + ONNX inference, minutes at a time.
 _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="zone-scan")
+# The corroboration pass (clustering every geolocated observation), every
+# quarter hour: its own thread, so it neither blocks the loop nor queues
+# behind or ahead of request work in _executor.
+_corroborate_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="corroborate")
 # Briefing drafting gets its OWN pool. A researched narrative draft occupies a
 # thread for around four minutes; run on the shared _executor (4 workers) two
 # concurrent briefings plus ordinary blocking I/O would starve everything else
@@ -11462,8 +11466,13 @@ async def _ais_websocket_loop():
 
 
 @app.get("/api/ais/vessels")
-async def api_ais_vessels(bbox: str = Query(None, description="south,west,north,east")):
-    """Return AIS vessel positions within bbox (or all if no bbox), capped at 500."""
+def api_ais_vessels(bbox: str = Query(None, description="south,west,north,east")):
+    """Return AIS vessel positions within bbox (or all if no bbox), capped at 500.
+
+    A PLAIN `def`, so it runs in the threadpool. As `async def` with no
+    await, the sort and identity enrichment of up to 6,000 vessels ran on
+    the event loop — and when vessel_identity's cache misbehaved (2026-10-18)
+    that was a query per vessel, blocking every other request for 60 s."""
     # Evict stale entries (older than 5 min)
     now = time.time()
     with _AIS_LOCK:
@@ -15631,23 +15640,30 @@ async def _corroboration_trigger_pass() -> None:
     global _CORROBORATION_ACTED
     _CORROBORATION_ACTED = [p for p in _CORROBORATION_ACTED if p.get("at", now) >= cutoff]
 
-    with _gdbc() as _db:
-        zones = _db.query(WatchZone).filter(WatchZone.enabled == True).all()  # noqa: E712
-        zone_data = [{
-            "id": z.id, "system_id": z.system_id, "name": z.name,
-            "bbox_min_lon": z.bbox_min_lon, "bbox_min_lat": z.bbox_min_lat,
-            "bbox_max_lon": z.bbox_max_lon, "bbox_max_lat": z.bbox_max_lat,
-            "ml_tasks": z.ml_tasks, "scan_interval_hours": z.scan_interval_hours,
-            "alert_threshold": z.alert_threshold,
-            "sensor_preference": getattr(z, "sensor_preference", None) or "sentinel2_optical",
-        } for z in zones
-            if None not in (z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat)]
+    # OFF THE LOOP, ALL OF IT. The zone query, the three table reads in
+    # _gather_observations and the clustering ran on the event loop and
+    # held it 8-27 s every quarter hour (loop-lag 2026-10-18:
+    # _corroboration_trigger_pass -> corroborate.cluster). A thread of its
+    # own, not _executor, which the HTTP endpoints share.
+    def _zones_and_clusters():
+        with _gdbc() as _db:
+            zones = _db.query(WatchZone).filter(WatchZone.enabled == True).all()  # noqa: E712
+            zone_data = [{
+                "id": z.id, "system_id": z.system_id, "name": z.name,
+                "bbox_min_lon": z.bbox_min_lon, "bbox_min_lat": z.bbox_min_lat,
+                "bbox_max_lon": z.bbox_max_lon, "bbox_max_lat": z.bbox_max_lat,
+                "ml_tasks": z.ml_tasks, "scan_interval_hours": z.scan_interval_hours,
+                "alert_threshold": z.alert_threshold,
+                "sensor_preference": getattr(z, "sensor_preference", None) or "sentinel2_optical",
+            } for z in zones
+                if None not in (z.bbox_min_lon, z.bbox_min_lat, z.bbox_max_lon, z.bbox_max_lat)]
+        if not zone_data:
+            return zone_data, []
+        return zone_data, _co.corroborated_only(_co.cluster(_gather_observations(hours=72)))
 
-    if not zone_data:
-        return
-
-    clusters = _co.corroborated_only(_co.cluster(_gather_observations(hours=72)))
-    if not clusters:
+    zone_data, clusters = await asyncio.get_running_loop().run_in_executor(
+        _corroborate_executor, _zones_and_clusters)
+    if not zone_data or not clusters:
         return
 
     for zd in zone_data:
@@ -29740,31 +29756,9 @@ def _notif_source_label(d: dict) -> str:
     return str(d.get("alert_type") or d.get("source") or k or "alert")
 
 
-def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, include_silent: bool = False) -> list:
-    """Alerts that have earned an interruption, with titles a human can read.
-
-    One function for the tray and for push (event_watch.sweep), so what
-    reaches a phone with the app closed is what would have popped up on
-    screen with it open.
-
-    This is deliberately NOT a second alerts feed. /api/alerts returns the
-    record — every row, unfiltered, which is what the map and the analytics
-    surfaces need. This returns the much smaller set that should reach a
-    person, and says why each one qualified.
-
-    The two questions are answered separately and both answers travel with
-    the row: `title` is the rebuilt, contextual headline (never an MMSI or a
-    bare date), and `reason` states which relevance gate fired. An analyst
-    who disagrees with a notification can therefore see the rule that
-    produced it rather than guessing.
-
-    `include_silent=true` returns everything with `notify` set per row, which
-    is how you inspect what the filter is holding back without having to
-    trust that it is holding back the right things.
-
-    Measured against real production traffic (2,589 alerts over the three
-    days to 2026-09-17): 863 alerts/day in, 142 notifications/day out.
-    """
+def _notification_alert_cards_build(limit: int, hours: int, include_silent: bool, _timings: dict) -> list:
+    """The Alert-table part of the notification feed: the same for every
+    user, and the expensive part (2,000-2,400 rows read and judged)."""
     import notification_context as _nc
     from database import Alert as _A, get_db as _gdb
     from datetime import datetime as _dt, timedelta as _td
@@ -29813,7 +29807,6 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
             return r, {"notify": False, "sev": "low", "reason": "unreadable"}, r.title
 
     _t_start = time.monotonic()
-    _timings = {}
 
     judged, exhausted = [], False
     for page in pages:
@@ -29866,6 +29859,112 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
         # merge below.
         if len(out) >= max(8, limit // 2):
             break
+
+    return out
+
+
+#: THE ALERT SCAN IS SHARED, NOT PER USER. It reads and judges 2,000-2,400
+#: alert rows and does not depend on who is asking, yet it ran once per
+#: request: every open desktop, phone Home and phone More polls this every
+#: 20-30 s, and event_watch.sweep runs it again for every user each minute.
+#: In production (2026-10-18) that was "[notifications] SLOW 38.4s {'scan':
+#: 37.52, 'rows': 2400}" in pairs, one per open device. Now one build serves
+#: everybody for _NOTIF_ALERTS_TTL_S; past that the previous answer is served
+#: at once while ONE background thread rebuilds it (stale-while-revalidate,
+#: build-then-swap), and only a cold or very old entry makes a caller wait —
+#: behind a single builder, never in a stampede.
+_NOTIF_ALERTS_TTL_S = 20
+_NOTIF_ALERTS_MAX_STALE_S = 180
+_NOTIF_ALERTS_CACHE: dict = {}
+_NOTIF_ALERTS_LOCK = threading.Lock()
+_NOTIF_ALERTS_REFRESHING: set = set()
+
+
+def _notification_alert_cards(limit: int, hours: int, include_silent: bool, _timings: dict | None = None,
+                              _build=None) -> list:
+    build = _build or _notification_alert_cards_build
+    timings = _timings if _timings is not None else {}
+    key = (int(limit), int(hours), bool(include_silent))
+
+    def _copy(rows):
+        # callers decorate the rows (asset_watch takes a card over), so
+        # each gets its own dicts, never the cached ones
+        return [dict(r) for r in rows]
+
+    def _store(rows):
+        _NOTIF_ALERTS_CACHE[key] = (time.monotonic(), rows)
+
+    hit = _NOTIF_ALERTS_CACHE.get(key)
+    now = time.monotonic()
+    if hit and now - hit[0] < _NOTIF_ALERTS_TTL_S:
+        timings["scan"] = 0.0
+        timings["cached"] = True
+        return _copy(hit[1])
+    if hit and now - hit[0] < _NOTIF_ALERTS_MAX_STALE_S:
+        with _NOTIF_ALERTS_LOCK:
+            start = key not in _NOTIF_ALERTS_REFRESHING
+            if start:
+                _NOTIF_ALERTS_REFRESHING.add(key)    # claimed before the thread starts
+
+        if start:
+            def _bg():
+                try:
+                    with _NOTIF_ALERTS_LOCK_BUILD:
+                        _store(build(limit, hours, include_silent, {}))
+                except Exception as ex:                     # noqa: BLE001
+                    print(f"[notifications] error: background scan: {type(ex).__name__}: {ex}", flush=True)
+                finally:
+                    with _NOTIF_ALERTS_LOCK:
+                        _NOTIF_ALERTS_REFRESHING.discard(key)
+            threading.Thread(target=_bg, name="notif-scan", daemon=True).start()
+        timings["scan"] = 0.0
+        timings["cached"] = "stale"
+        return _copy(hit[1])
+    # Nothing usable: build now, one builder at a time; whoever waited
+    # behind it takes its result instead of building again.
+    with _NOTIF_ALERTS_LOCK_BUILD:
+        hit = _NOTIF_ALERTS_CACHE.get(key)
+        if hit and time.monotonic() - hit[0] < _NOTIF_ALERTS_TTL_S:
+            timings["scan"] = 0.0
+            timings["cached"] = True
+            return _copy(hit[1])
+        rows = build(limit, hours, include_silent, timings)
+        _store(rows)
+        return _copy(rows)
+
+
+_NOTIF_ALERTS_LOCK_BUILD = threading.Lock()
+
+
+def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, include_silent: bool = False) -> list:
+    """Alerts that have earned an interruption, with titles a human can read.
+
+    One function for the tray and for push (event_watch.sweep), so what
+    reaches a phone with the app closed is what would have popped up on
+    screen with it open.
+
+    This is deliberately NOT a second alerts feed. /api/alerts returns the
+    record — every row, unfiltered, which is what the map and the analytics
+    surfaces need. This returns the much smaller set that should reach a
+    person, and says why each one qualified.
+
+    The two questions are answered separately and both answers travel with
+    the row: `title` is the rebuilt, contextual headline (never an MMSI or a
+    bare date), and `reason` states which relevance gate fired. An analyst
+    who disagrees with a notification can therefore see the rule that
+    produced it rather than guessing.
+
+    `include_silent=true` returns everything with `notify` set per row, which
+    is how you inspect what the filter is holding back without having to
+    trust that it is holding back the right things.
+
+    Measured against real production traffic (2,589 alerts over the three
+    days to 2026-09-17): 863 alerts/day in, 142 notifications/day out.
+    """
+    import notification_context as _nc
+    _t_start = time.monotonic()
+    _timings = {}
+    out = _notification_alert_cards(limit, hours, include_silent, _timings)
 
     # ── everything else this system detects ──────────────────────────────
     #
@@ -31108,10 +31207,18 @@ def _cookie_kwargs(request: Request) -> dict:
 
 @app.post("/api/auth/login")
 async def api_auth_login(request: Request, response: Response):
+    body = await request.json()
+    # bcrypt (a quarter second of CPU) and a commit that can wait on the
+    # write lock: in the threadpool, not on the event loop every other
+    # user's request is waiting on.
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(_auth_login_sync, request, response, body)
+
+
+def _auth_login_sync(request: Request, response: Response, body: dict):
     from database import User, get_db as _gdb_auth
     from passlib.context import CryptContext
     pwd = CryptContext(schemes=["bcrypt"])
-    body = await request.json()
     email = (body.get("email") or "").strip().lower()
     password = body.get("password") or ""
     with _gdb_auth() as db:

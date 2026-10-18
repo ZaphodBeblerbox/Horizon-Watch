@@ -17,6 +17,7 @@ import {
   ringPoints, shahedModelUri,
 } from "./vesselThreat.js"
 import { renderDuringFlight } from "./flightRender.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 const FONT = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
 const FONT_SM = "12px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
@@ -70,7 +71,7 @@ export default function GlobeVesselThreatLayer() {
           label: {
             text: `${km.toLocaleString("en-GB")} km — drone reach`, font: FONT_SM, fillColor: Color.fromCssColorString(RING_COLORS[i] || "#ffd166"),
             outlineColor: Color.BLACK, outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.BOTTOM,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            disableDepthTestDistance: MARKER_DEPTH_TEST_M,
           },
         })
       })
@@ -94,13 +95,13 @@ export default function GlobeVesselThreatLayer() {
           position: deg2(t, 50),
           point: {
             pixelSize: isTop ? 11 : 6, color: Color.fromCssColorString(isTop ? "#ff3b30" : "#c9c9c9").withAlpha(isTop ? 1 : 0.8),
-            outlineColor: Color.BLACK, outlineWidth: isTop ? 2 : 1, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            outlineColor: Color.BLACK, outlineWidth: isTop ? 2 : 1, disableDepthTestDistance: MARKER_DEPTH_TEST_M,
           },
           label: isTop ? {
             text: `${rank}. ${t.name} · ${Math.round(t.distance_km)} km`,
             font: FONT_SM, fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
             style: LabelStyle.FILL_AND_OUTLINE, horizontalOrigin: HorizontalOrigin.LEFT, verticalOrigin: VerticalOrigin.CENTER,
-            pixelOffset: new Cartesian2(10, 0), disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            pixelOffset: new Cartesian2(10, 0), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             translucencyByDistance: new NearFarScalar(2.5e6, 1, 6e6, 0),
           } : undefined,
         })
@@ -109,11 +110,11 @@ export default function GlobeVesselThreatLayer() {
       add({
         id: `${pre}-vessel`,
         position: deg2(c, 30),
-        point: { pixelSize: 15, color: Color.fromCssColorString("#ff3b30"), outlineColor: Color.WHITE, outlineWidth: 3, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+        point: { pixelSize: 15, color: Color.fromCssColorString("#ff3b30"), outlineColor: Color.WHITE, outlineWidth: 3, disableDepthTestDistance: MARKER_DEPTH_TEST_M },
         label: {
           text: `${data.synthetic ? "SYNTHETIC — " : ""}${v.name || `MMSI ${v.mmsi}`}\n${data.assessment?.tier_label || ""} · ${data.assessment?.score ?? "—"}/100`,
           font: FONT, fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 4, style: LabelStyle.FILL_AND_OUTLINE,
-          verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -14), disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -14), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
         },
       })
       if (fly) {
@@ -175,7 +176,7 @@ export default function GlobeVesselThreatLayer() {
           }, false),
           font: FONT_SM, fillColor: Color.fromCssColorString("#ffe2b8"), outlineColor: Color.BLACK, outlineWidth: 4,
           style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 30),
-          showBackground: true, backgroundColor: Color.BLACK.withAlpha(0.55), disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          showBackground: true, backgroundColor: Color.BLACK.withAlpha(0.55), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
           distanceDisplayCondition: new DistanceDisplayCondition(0, 2.0e7),
         },
       }, simIds)

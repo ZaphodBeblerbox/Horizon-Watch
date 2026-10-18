@@ -92,3 +92,101 @@ describe("authStore.checkSession() — genuine 401 vs. transient failure", () =>
         expect(isAuthTransientError()).toBe(true) // but honestly flagged as unresolved this time
     })
 })
+
+// Android, 2026-10-18: a slow server was reported to the user as "offline".
+// The reason a check failed is now settled, and only a device with no
+// network is offline.
+describe("authStore — why the server could not be asked", () => {
+    beforeEach(() => {
+        vi.resetModules()
+        vi.useFakeTimers()
+    })
+    afterEach(() => {
+        vi.useRealTimers()
+        vi.unstubAllGlobals()
+    })
+
+    async function drain(p) {
+        for (let i = 0; i < 12; i++) {
+            await Promise.resolve()
+            await vi.advanceTimersByTimeAsync(60000)
+        }
+        return p
+    }
+
+    const isMe = (url) => String(url).includes("/api/auth/me")
+    const isProbe = (url) => String(url).includes("/api/health/live")
+
+    it("a server that never answers in time is 'slow', not offline", async () => {
+        vi.stubGlobal("navigator", { onLine: true })
+        vi.stubGlobal("fetch", vi.fn((url, init) => new Promise((_res, rej) => {
+            init?.signal?.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError")))
+        })))
+        const { checkSession, isAuthTransientError, authTransientReason } = await import("./authStore.js")
+        await drain(checkSession())
+        expect(isAuthTransientError()).toBe(true)
+        expect(authTransientReason()).toBe("slow")
+    })
+
+    it("an edge 502 that reaches the page as a TypeError, with the server reachable, is 'slow'", async () => {
+        vi.stubGlobal("navigator", { onLine: true })
+        vi.stubGlobal("fetch", vi.fn(async (url) => {
+            if (isProbe(url)) return { type: "opaque", status: 0 }
+            throw new TypeError("Failed to fetch")
+        }))
+        const { checkSession, authTransientReason } = await import("./authStore.js")
+        await drain(checkSession())
+        expect(authTransientReason()).toBe("slow")
+    })
+
+    it("nothing answering at all, on a device with a network, is 'unreachable'", async () => {
+        vi.stubGlobal("navigator", { onLine: true })
+        vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch") }))
+        const { checkSession, authTransientReason } = await import("./authStore.js")
+        await drain(checkSession())
+        expect(authTransientReason()).toBe("unreachable")
+    })
+
+    it("a 5xx is the server having trouble", async () => {
+        vi.stubGlobal("navigator", { onLine: true })
+        vi.stubGlobal("fetch", vi.fn(async () => ({ status: 503, ok: false })))
+        const { checkSession, authTransientReason } = await import("./authStore.js")
+        await drain(checkSession())
+        expect(authTransientReason()).toBe("server-error")
+    })
+
+    it("only a device with no network is offline, and it does not hammer retries", async () => {
+        vi.stubGlobal("navigator", { onLine: false })
+        const f = vi.fn(async () => { throw new TypeError("Failed to fetch") })
+        vi.stubGlobal("fetch", f)
+        const { checkSession, authTransientReason } = await import("./authStore.js")
+        await drain(checkSession())
+        expect(authTransientReason()).toBe("offline")
+        expect(f.mock.calls.filter(([u]) => isMe(u)).length).toBe(1)
+    })
+
+    it("a success clears the reason", async () => {
+        vi.stubGlobal("navigator", { onLine: true })
+        vi.stubGlobal("fetch", vi.fn()
+            .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+            .mockResolvedValue({ status: 200, ok: true, json: async () => ({ id: "u9" }) }))
+        const { checkSession, authTransientReason, isAuthTransientError } = await import("./authStore.js")
+        await drain(checkSession())
+        expect(isAuthTransientError()).toBe(false)
+        expect(authTransientReason()).toBe(null)
+    })
+
+    it("signing in while the server is up but slow says so, instead of signing in 'offline'", async () => {
+        vi.stubGlobal("navigator", { onLine: true })
+        vi.stubGlobal("fetch", vi.fn(async (url) => {
+            if (isProbe(url)) return { type: "opaque", status: 0 }
+            throw new TypeError("Failed to fetch")
+        }))
+        const { login, isOfflineSession } = await import("./authStore.js")
+        const outcome = login("a@b.c", "pw").then(() => null, (e) => e)
+        const err = await drain(outcome)
+        expect(err?.message).toMatch(/server/i)
+        expect(err?.message).not.toMatch(/offline/i)
+        expect(isOfflineSession()).toBe(false)
+    })
+})

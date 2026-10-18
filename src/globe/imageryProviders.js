@@ -69,6 +69,31 @@ export const esriLabelsProvider = new UrlTemplateImageryProvider({
     credit:       new Credit("Esri", false),
 })
 
+// THE PLACE NAMES THAT GO WITH THE GREY CANVAS BASES. The dark and light
+// Canvas bases already print country and region names (ALGERIA, TUNISIA…);
+// World_Boundaries_and_Places prints them again in another size and font,
+// so with "Place names" on over the plain map every country was named
+// twice (owner, 2026-10-18). Esri's own *_Reference layers are made for
+// these bases: city and town names only, nothing the base already says.
+// The phone pairs them the same way (mobile/tileSources.js). Level 16 like
+// the bases.
+export const esriDarkLabelsProvider = new UrlTemplateImageryProvider({
+    url:          "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+    maximumLevel: 16,
+    credit:       new Credit("Esri", false),
+})
+export const esriLightLabelsProvider = new UrlTemplateImageryProvider({
+    url:          "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+    maximumLevel: 16,
+    credit:       new Credit("Esri", false),
+})
+
+/** The place-name overlay for a basemap: the Canvas reference over the plain map (its own names, not repeated), the full one over imagery, which has none. */
+export function placeNamesProvider(basemap, lightTheme) {
+    if (basemap === "dark") return lightTheme ? esriLightLabelsProvider : esriDarkLabelsProvider
+    return esriLabelsProvider
+}
+
 // OpenInfraMap — PBF tiles rendered server-side to PNG rasters.
 // Requires backend /api/tiles/openinfra-render/{z}/{x}/{y}.png endpoint.
 export const openInfraRasterProvider = new UrlTemplateImageryProvider({

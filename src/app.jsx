@@ -30,7 +30,8 @@ import { subscribeLive } from "./state/liveEvents.js"
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
 import LoginScreen from "./components/LoginScreen.jsx"
-import { checkSession, subscribeAuth, isAuthTransientError, canLoginOffline, getCurrentUser } from "./state/authStore.js"
+import { checkSession, subscribeAuth, isAuthTransientError, authTransientReason, canLoginOffline, getCurrentUser } from "./state/authStore.js"
+import { bootGate, connectionCopy, retryDelayMs } from "./lib/connectivity.js"
 import { reconcileTheme, getThemeMode, setThemeMode } from "./state/themeStore.js"
 import { reconcileSettings, getSettings, subscribeSettings, updateSetting } from "./state/settingsStore.js"
 import CommandPalette from "./components/CommandPalette.jsx"
@@ -380,6 +381,14 @@ export default function App() {
     // login screen (the confirmed root cause of "closing the tab forces a
     // re-login").
     const [authTransientError, setAuthTransientError] = useState(false)
+    // Why it failed — "offline" only when the DEVICE has no network
+    // (lib/connectivity.js). A slow or restarting server is not offline.
+    const [authReason, setAuthReason] = useState(null)
+    // The reader chose to sign in against this device's stored credentials
+    // while the server is unreachable.
+    const [useLocalData, setUseLocalData] = useState(false)
+    const [reconnectAttempt, setReconnectAttempt] = useState(0)
+    const [authChecking, setAuthChecking] = useState(false)
     // Whether this machine can sign in with no server at all. Resolved
     // once, asynchronously, because it reads IndexedDB.
     const [offlineLoginAvailable, setOfflineLoginAvailable] = useState(false)
@@ -390,9 +399,12 @@ export default function App() {
     useEffect(() => installSignalCardNav(window), [])
     useEffect(() => { canLoginOffline().then(setOfflineLoginAvailable).catch(() => {}) }, [])
     const runAuthCheck = useCallback(() => {
+        setAuthChecking(true)
         checkSession().then((u) => {
+            setAuthChecking(false)
             setAuthUser(u)
             setAuthTransientError(isAuthTransientError())
+            setAuthReason(authTransientReason())
             setAuthChecked(true)
             reconcileTheme(u)
             reconcileSettings(u)
@@ -409,6 +421,26 @@ export default function App() {
             if (u) { reconcileTheme(u); reconcileSettings(u) }
         })
     }, [runAuthCheck])
+    // RECONNECT BY ITSELF. While the server cannot be asked and nobody is
+    // signed in, try again with backoff (5 s, 10 s, 20 s, then every 30 s),
+    // at once when the device gets its network back, and when the app
+    // returns to the screen (a phone pauses timers while it is away).
+    // One check at a time: the next try is scheduled only once the last
+    // has settled, so a slow server is never asked twice in parallel.
+    useEffect(() => {
+        if (authUser || !authTransientError || useLocalData || authChecking) return undefined
+        const again = () => { setReconnectAttempt((n) => n + 1); runAuthCheck() }
+        const t = setTimeout(again, retryDelayMs(reconnectAttempt))
+        const onVisible = () => { if (document.visibilityState === "visible") again() }
+        window.addEventListener("online", again)
+        document.addEventListener("visibilitychange", onVisible)
+        return () => {
+            clearTimeout(t)
+            window.removeEventListener("online", again)
+            document.removeEventListener("visibilitychange", onVisible)
+        }
+    }, [authUser, authTransientError, useLocalData, authChecking, reconnectAttempt, runAuthCheck])
+    useEffect(() => { if (authUser) { setReconnectAttempt(0); setUseLocalData(false) } }, [authUser])
     // Real sliding-expiry companion (backend/main.py's GET /api/auth/me
     // now reissues the session cookie with a fresh window on every real
     // success) — this periodic re-check is what actually exercises that
@@ -2098,25 +2130,47 @@ export default function App() {
     // instead: it signs in locally against the stored digest. Only a
     // machine that has never reached the server sees the dead end, and for
     // that one it is true — there is genuinely nothing to sign in against.
-    if (!authUser && authTransientError && !offlineLoginAvailable) {
+    //
+    // AND ONLY A DEVICE WITHOUT A NETWORK IS "OFFLINE" (2026-10-18). On
+    // Android the boot check timed out against a server that was up but
+    // slow, and this gate told a second user they were working offline.
+    // Now the reason is settled first (lib/connectivity.js): no network on
+    // the device goes to the offline sign-in as before; a slow, erroring or
+    // restarting server gets a "reconnecting" screen that retries by itself,
+    // with the local sign-in offered as a choice.
+    const gate = bootGate({ authUser, transient: authTransientError, reason: authReason,
+                            offlineLoginAvailable, useLocalData })
+    if (gate === "reconnecting") {
+        const copy = connectionCopy(authReason)
         return (
-            <div style={{
+            <div role="status" style={{
                 position: "fixed", inset: 0, display: "flex", flexDirection: "column",
                 alignItems: "center", justifyContent: "center", gap: "var(--space-3)",
                 background: "var(--bg-0)", color: "var(--txt-2)", font: "400 13px var(--font)",
                 textAlign: "center", padding: 24,
             }}>
-                <div>Couldn't reach the server — your session may still be valid.</div>
+                <div>{copy.title}</div>
                 <div style={{ font: "400 11px var(--font)", color: "var(--txt-3)", maxWidth: 380, lineHeight: 1.6 }}>
-                    This machine has not signed in before, so there is nothing stored to
-                    sign in against offline. Connect once and it will work without a
-                    server afterwards.
+                    {copy.body}
+                    {!offlineLoginAvailable && authReason === "offline" && (
+                        <> This device has not signed in before, so there is nothing stored to
+                        sign in against offline. Connect once and it will work without a
+                        server afterwards.</>
+                    )}
                 </div>
-                <button className="btn primary sm" onClick={runAuthCheck}>Retry</button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+                    <button className="btn primary sm" disabled={authChecking}
+                            onClick={() => { setReconnectAttempt(0); runAuthCheck() }}>
+                        {authChecking ? "Trying…" : "Retry now"}
+                    </button>
+                    {offlineLoginAvailable && (
+                        <button className="btn sm" onClick={() => setUseLocalData(true)}>Use the data on this device</button>
+                    )}
+                </div>
             </div>
         )
     }
-    if (!authUser) return <LoginScreen onLoggedIn={setAuthUser} offline={authTransientError} />
+    if (!authUser) return <LoginScreen onLoggedIn={setAuthUser} offline={gate === "login-offline"} reason={authReason} />
 
     // Real structural swap (not a fluid reflow) — below the phone breakpoint,
     // the four-tab mobile shell renders in place of the entire ten-module
