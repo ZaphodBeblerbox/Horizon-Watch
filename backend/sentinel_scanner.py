@@ -144,6 +144,13 @@ def _firms_points(west, south, east, north, day: str) -> list:
             FireDetection.acquired_at < d + datetime.timedelta(days=2)).all()]
 
 
+def firms_within(pts, lat: float, lon: float, km: float) -> int:
+    """How many of the (lat, lon) FIRMS points lie within `km` of a place."""
+    import math
+    c = max(0.1, math.cos(math.radians(lat)))
+    return sum(1 for a, o in pts if math.hypot((a - lat) * 111.0, (o - lon) * 111.0 * c) <= km)
+
+
 def _smoke_context(now, hist, bounds: dict) -> dict:
     """Scene-grid context for smoke_classify: WorldCover, OSM, the fire mask."""
     import numpy as np
@@ -163,15 +170,25 @@ def _smoke_context(now, hist, bounds: dict) -> dict:
     return ctx
 
 
-async def _classify_plumes(found, now, hist, bounds: dict, day: str) -> list:
-    """smoke.py's candidates, classified; returns only those to publish."""
+async def _classify_plumes(found, now, hist, bounds: dict, day: str, *, when=None, pts=None,
+                          rejected: list | None = None) -> list:
+    """smoke.py's candidates, classified; returns only those to publish.
+    The rest go to `rejected` with their class and the reasons that decided
+    it, so a scan says what it saw and why it was not smoke."""
     import smoke_classify
-    try:
-        pts = await asyncio.to_thread(_firms_points, bounds["west"], bounds["south"], bounds["east"], bounds["north"], day)
-    except Exception as e:                                       # noqa: BLE001
-        print(f"[sentinel-scanner] smoke classify: FIRMS unreadable, deciding without it: {type(e).__name__}: {e}")
-        pts = []
+    if pts is None:
+        try:
+            pts = await asyncio.to_thread(_firms_points, bounds["west"], bounds["south"], bounds["east"], bounds["north"], day)
+        except Exception as e:                                   # noqa: BLE001
+            print(f"[sentinel-scanner] smoke classify: FIRMS unreadable, deciding without it: {type(e).__name__}: {e}")
+            pts = []
     ctx = await asyncio.to_thread(_smoke_context, now, hist, bounds)
+    if when is not None:
+        ctx["when"] = when
+        # The wind of the hour, only when a candidate has a fire for a source.
+        if any(p.get("fire_px") for p in found):
+            ctx["wind_to"] = await asyncio.to_thread(
+                smoke_classify.wind_to, (bounds["south"] + bounds["north"]) / 2, (bounds["west"] + bounds["east"]) / 2, when)
     judged = await _off_loop(smoke_classify.assess_plumes, now, hist, found, bounds, ctx, pts)
     keep = [p for p in judged if smoke_classify.is_finding(p.get("class"))]
     dropped = [p for p in judged if p not in keep]
@@ -180,11 +197,17 @@ async def _classify_plumes(found, now, hist, bounds: dict, day: str) -> list:
         c = collections.Counter(p.get("class") for p in dropped)
         print(f"[sentinel-scanner] smoke classify: {len(found)} candidate(s), {len(keep)} published; not smoke: "
               + ", ".join(f"{n} {k}" for k, n in c.most_common()))
+        if rejected is not None:
+            rejected.extend({"class": p.get("class"), "decided_by": p.get("decided_by"),
+                             "reasons": [r.get("text") for r in (p.get("reasons") or [])][:4],
+                             "lat": p.get("source_lat"), "lon": p.get("source_lon"), "area_km2": p.get("area_km2")}
+                            for p in dropped)
     return keep
 
 
-async def _smoke_pass(zone_dict, scene_dt, west, south, east, north) -> list:
-    """Smoke plumes and active fires on this pass, as detections."""
+async def _smoke_pass(zone_dict, scene_dt, west, south, east, north, rejected: list | None = None) -> list:
+    """Smoke plumes and active fires on this pass, as detections; what was
+    seen and judged not to be smoke or fire goes to `rejected`, with why."""
     import numpy as np
     import s2_bands
     import smoke
@@ -200,13 +223,23 @@ async def _smoke_pass(zone_dict, scene_dt, west, south, east, north) -> list:
         return []                     # no baseline to see a change against
     now = await asyncio.to_thread(s2_bands.fetch, west, south, east, north, day, w, h)
     hist = await asyncio.gather(*[asyncio.to_thread(s2_bands.fetch, west, south, east, north, d, w, h) for d in past])
+    # A pass fetched after s2_bands stepped down to fewer bands: judge every
+    # pass on the bands they all have.
+    nb = min([now.shape[0]] + [h_.shape[0] for h_ in hist])
+    now, hist = now[:nb], [h_[:nb] for h_ in hist]
     base = np.median(np.stack(hist), axis=0)
     bounds = {"west": west, "south": south, "east": east, "north": north}
     found, fires = await _off_loop(smoke.plumes, now, base, bounds)
+    try:
+        pts = await asyncio.to_thread(_firms_points, west, south, east, north, day)
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[sentinel-scanner] smoke pass: FIRMS unreadable, deciding without it: {type(e).__name__}: {e}")
+        pts = []
     # A change is not smoke (owner, 2026-10-13: fields, runways and cloud
     # shadows were published as plumes). smoke_classify decides what each
     # candidate is; only smoke plumes and burn scars are published.
-    found = await _classify_plumes(found, now, hist, bounds, day) if found else []
+    found = (await _classify_plumes(found, now, hist, bounds, day, when=scene_dt, pts=pts, rejected=rejected)
+             if found else [])
     out = []
     for p in found:
         cls = p.get("class")
@@ -226,7 +259,16 @@ async def _smoke_pass(zone_dict, scene_dt, west, south, east, north) -> list:
                                       "baseline_passes": past}),
         })
     for f in fires:
-        if f["px"] < 2:
+        # A fire is published on its own heat only when it is more than a
+        # few pixels, else with a FIRMS detection within 1 km that day
+        # (owner, 2026-10-17: Rostock harbour's 2-px "fires" had no FIRMS
+        # on any day and turned clouds into "smoke from a fire").
+        firms_near = firms_within(pts, f["lat"], f["lon"], 1.0)
+        if f["px"] < 2 or (f["px"] < 4 and not firms_near):
+            if rejected is not None:
+                rejected.append({"class": "hot_pixels", "lat": f["lat"], "lon": f["lon"], "px": f["px"],
+                                 "decided_by": f"{f['px']} hot pixel(s) with no FIRMS fire within 1 km that day — "
+                                               "too few to call a fire on their own"})
             continue
         d = 0.0004
         ring = [[f["lon"] - d, f["lat"] - d], [f["lon"] + d, f["lat"] - d], [f["lon"] + d, f["lat"] + d],
@@ -236,7 +278,11 @@ async def _smoke_pass(zone_dict, scene_dt, west, south, east, north) -> list:
             "centroid_lat": f["lat"], "centroid_lon": f["lon"],
             "geo_geometry": json.dumps({"type": "Polygon", "coordinates": [ring]}), "area_m2": f["area_m2"],
             "severity": "high", "alert_tier": "silent",
-            "attributes": json.dumps({"tier": "confirmed", "models": ["smoke.py"], "fire_area_m2": f["area_m2"]}),
+            "attributes": json.dumps({"tier": "confirmed", "models": ["smoke.py"], "fire_area_m2": f["area_m2"],
+                                      "fire_px": f["px"], "firms_within_1km": firms_near,
+                                      # The hot-pixel test this fire passed (smoke.hot_pixels);
+                                      # stored fires without it predate the blue-band check.
+                                      "hot_pixel_test": "v2"}),
         })
     return out
 
@@ -870,8 +916,9 @@ class SentinelScanner:
         # SMOKE AND FIRE (smoke.py): this pass against the area's own clear
         # passes, in reflectance at 20 m. Found the Khurais plume, 10 km
         # streaming south-west from the fire, three hours before VIIRS.
+        smoke_rejected: list = []
         try:
-            sm = await _smoke_pass(zone_dict, scene_dt, min_lon, min_lat, max_lon, max_lat)
+            sm = await _smoke_pass(zone_dict, scene_dt, min_lon, min_lat, max_lon, max_lat, rejected=smoke_rejected)
             all_detections.extend(sm)
             if sm:
                 print(f"[sentinel-scanner] smoke/fire: {len(sm)} detection(s) — "
@@ -933,6 +980,11 @@ class SentinelScanner:
                 result_summary["resolution_note"] = "coarsened below native to fit a budget"
         if skipped_tasks:
             result_summary["not_implemented_or_skipped"] = skipped_tasks
+        if smoke_rejected:
+            # Every smoke/fire candidate judged not to be one, with the
+            # reason — kept on the scan, never as a detection (it would
+            # mix into counts and "gone since the last pass").
+            result_summary["smoke_rejected"] = smoke_rejected
 
         return {
             "status": "completed",

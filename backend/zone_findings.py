@@ -24,8 +24,13 @@ import json
 
 import finding_boxes as fb
 
-MAX_FINDINGS = 60
-RADAR_SCANS = 3          # the last few comparisons that reported a change
+# No cap on how many findings a zone has (owner, 2026-10-17: "have no cap
+# on how many things we can actually recognise on the map, because a lot
+# of things are capped"). Until then a zone returned at most 60 findings —
+# object findings, concatenated last, were the ones cut — at most 30 new
+# objects, and radar findings from only the last 3 comparisons. The window
+# (days) is the only bound; a caller that wants pages asks for them
+# (offset / limit), and the map layers cluster rather than truncate.
 
 
 def _j(v, default):
@@ -126,7 +131,7 @@ def radar_findings(db, zone, scan_id: str | None = None, since: _dt.datetime | N
             continue
         if fresh:
             changed_seen.append((sid, s, created, when, fresh))
-    for sid, s, created, when, fresh in changed_seen[-RADAR_SCANS:][::-1]:
+    for sid, s, created, when, fresh in changed_seen[::-1]:
         bounds = fb.as_bounds(s.get("bounds")) or zone_bounds(zone)
         date = (s.get("change") or {}).get("until") or when or created
         for r in sorted(fresh, key=lambda r: -(r.get("area_m2") or 0)):
@@ -137,9 +142,12 @@ def radar_findings(db, zone, scan_id: str | None = None, since: _dt.datetime | N
 
 
 def object_findings(db, zone, scan_id: str | None = None, since: _dt.datetime | None = None,
-                    limit: int = 30) -> list[dict]:
-    """Objects the detector outlined that are new since the pass before."""
+                    limit: int | None = None) -> list[dict]:
+    """Objects the detector outlined that are new since the pass before —
+    all of them unless a limit is asked for. Smoke, burn scars and fires
+    today's rules withdraw (imagery_verdict) are not findings."""
     from database import SentinelDetection
+    import imagery_verdict
     q = (db.query(SentinelDetection)
          .filter(SentinelDetection.zone_id == zone.id, SentinelDetection.object_type != "structural_change",
                  SentinelDetection.attributes.like('%"change_type": "new"%')))
@@ -147,19 +155,31 @@ def object_findings(db, zone, scan_id: str | None = None, since: _dt.datetime | 
         q = q.filter(SentinelDetection.scan_id == scan_id)
     elif since:
         q = q.filter(SentinelDetection.created_at >= since)
+    q = q.order_by(SentinelDetection.created_at.desc())
+    rows = (q.limit(limit) if limit else q).all()
+    try:
+        verdict = imagery_verdict.verdicts(db, rows)
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[zone_findings] error: smoke/fire verdicts unavailable, all shown: {type(e).__name__}: {e}", flush=True)
+        verdict = {}
     out = []
-    for d in q.order_by(SentinelDetection.created_at.desc()).limit(limit).all():
+    for d in rows:
+        if not imagery_verdict.shown(verdict.get(d.detection_id)):
+            continue
         f = fb.object_finding(_det_dict(d), zone_id=zone.system_id, date=d.created_at)
         if f:
             out.append(f)
     return out
 
 
-def zone_findings(db, zone, *, scan_id: str | None = None, days: int = 30) -> dict:
+def zone_findings(db, zone, *, scan_id: str | None = None, days: int = 30,
+                  offset: int = 0, limit: int | None = None) -> dict:
     since = _dt.datetime.utcnow() - _dt.timedelta(days=max(1, int(days)))
-    found = (sweep_findings(db, zone, scan_id)
+    every = (sweep_findings(db, zone, scan_id)
              + radar_findings(db, zone, scan_id, since)
-             + object_findings(db, zone, scan_id, since))[:MAX_FINDINGS]
+             + object_findings(db, zone, scan_id, since))
+    off = max(0, int(offset or 0))
+    found = every[off:off + int(limit)] if limit else every[off:]
     # Whether the radar images of the comparison behind each radar finding
     # are held (radar_images.py) — derived from the files, never stored.
     import radar_images as ri
@@ -177,7 +197,9 @@ def zone_findings(db, zone, *, scan_id: str | None = None, days: int = 30) -> di
                  "sensor_preference": getattr(zone, "sensor_preference", None), "aoi_class": zone.aoi_class,
                  "caveat": meta.get("caveat")},
         "findings": found,
-        "counts": {k: sum(1 for f in found if f["kind"] == k) for k in ("sweep_find", "radar_change", "object")},
+        "counts": {k: sum(1 for f in every if f["kind"] == k) for k in ("sweep_find", "radar_change", "object")},
+        "total": len(every), "offset": off,
+        "next_offset": off + len(found) if off + len(found) < len(every) else None,
     }
 
 

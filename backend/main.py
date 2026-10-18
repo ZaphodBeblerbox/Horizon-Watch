@@ -23511,7 +23511,7 @@ def _scan_row_to_dict(row) -> dict:
     }
 
 
-def _detection_row_to_dict(row) -> dict:
+def _detection_row_to_dict(row, verdict: dict | None = None) -> dict:
     attrs = None
     if row.attributes:
         try:
@@ -23547,7 +23547,21 @@ def _detection_row_to_dict(row) -> dict:
         "nearest_chokepoint":      row.nearest_chokepoint,
         "reviewed_status":         getattr(row, "reviewed_status", None) or "pending",
         "created_at":              row.created_at.isoformat() if row.created_at else None,
+        # Smoke, burn scars and fires re-judged on read (imagery_verdict.py):
+        # {shown, class, decided_by, …}; absent for every other kind.
+        "verdict":                 verdict,
     }
+
+
+def _imagery_verdicts(db, rows) -> dict:
+    """imagery_verdict.verdicts, or {} (everything shown) when it fails —
+    logged, so a broken judge is seen rather than silently hiding smoke."""
+    try:
+        import imagery_verdict
+        return imagery_verdict.verdicts(db, rows)
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[imagery-verdict] error: not judged: {type(e).__name__}: {e}", flush=True)
+        return {}
 
 
 # ── imagery areas are personal ──────────────────────────────────────────────
@@ -23892,7 +23906,12 @@ def api_watch_zone_detections(
     object_type: str = None,
     min_confidence: float = None,
     since: str = None,
+    include_withdrawn: bool = False,
 ):
+    """Every detection of the zone, newest first. Smoke, burn scars and fires
+    today's rules no longer stand behind are left out (owner, 2026-10-17:
+    clouds were still on the map as smoke); include_withdrawn=1 returns them
+    too, each with its verdict and the reason."""
     from database import WatchZone, SentinelDetection, get_db
     import datetime as _dt_wz
 
@@ -23913,7 +23932,10 @@ def api_watch_zone_detections(
             except Exception:
                 pass
         detections = q.order_by(SentinelDetection.created_at.desc()).all()
-        return [_detection_row_to_dict(d) for d in detections]
+        import imagery_verdict as _iv
+        v = _imagery_verdicts(db, detections)
+        return [_detection_row_to_dict(d, v.get(d.detection_id)) for d in detections
+                if include_withdrawn or _iv.shown(v.get(d.detection_id))]
 
 
 @app.get("/api/watch-zones/{system_id}/analytics", dependencies=[Depends(_zone_guard)])
@@ -23980,8 +24002,12 @@ def api_watch_zone_analytics(system_id: str):
         change_pct = ((current - baseline) / baseline * 100) if baseline > 0 else 0.0
 
         # Last fire / smoke detections
-        fires = [d for d in all_detections if d.object_type == "fire" and d.created_at]
-        smokes = [d for d in all_detections if d.object_type == "smoke_plume" and d.created_at]
+        import imagery_verdict as _iv
+        _v = _imagery_verdicts(db, all_detections)
+        fires = [d for d in all_detections if d.object_type in ("fire", "active_fire") and d.created_at
+                 and _iv.shown(_v.get(d.detection_id))]
+        smokes = [d for d in all_detections if d.object_type == "smoke_plume" and d.created_at
+                  and _iv.shown(_v.get(d.detection_id))]
         last_fire = max((d.created_at for d in fires), default=None)
         last_smoke = max((d.created_at for d in smokes), default=None)
 
@@ -24705,11 +24731,14 @@ def api_imagery_scene_pdf(scan_id: str):
                   .filter(SentinelDetection.scan_id == scan_id)
                   .order_by(SentinelDetection.confidence.desc())
                   .all())
+        import imagery_verdict as _iv
+        _v = _imagery_verdicts(db, dets)
         scene = {
             "scan": _scan_row_to_dict(scan), "image_b64": scan.image_b64,
             "reference_image_b64": ref_image_b64,
             "zone": _zone_row_to_dict(zone),
-            "detections": [_detection_row_to_dict(d) for d in dets],
+            "detections": [_detection_row_to_dict(d, _v.get(d.detection_id)) for d in dets
+                           if _iv.shown(_v.get(d.detection_id))],
             **comparison,
         }
         # Read inside the session: `zone` is detached once the `with` exits.
@@ -24993,7 +25022,7 @@ def api_imagery_confirm_detection(detection_id: str):
             raise HTTPException(404, f"detection {detection_id} not found")
         d.reviewed_status = "confirmed"
         db.commit()
-        return _detection_row_to_dict(d)
+        return _detection_row_to_dict(d, _imagery_verdicts(db, [d]).get(d.detection_id))
 
 
 @app.post("/api/imagery/detections/{detection_id}/reject")
@@ -25005,7 +25034,7 @@ def api_imagery_reject_detection(detection_id: str):
             raise HTTPException(404, f"detection {detection_id} not found")
         d.reviewed_status = "rejected"
         db.commit()
-        return _detection_row_to_dict(d)
+        return _detection_row_to_dict(d, _imagery_verdicts(db, [d]).get(d.detection_id))
 
 
 def _launch_zone_scan_background(zone_dict: dict, triggered_by: str) -> None:
@@ -25340,7 +25369,7 @@ def _overwatch_finish_tile(job: dict, verdict: dict, scan_id: str | None) -> dic
             verdict["title"] = title
             meta = _jow.loads(z.zone_metadata or "{}")
             meta.update({"subgroup": _ow.FOUND_BY_SWEEP, "reason": verdict["summary"], "finding": top,
-                         "findings": verdict["findings"][:5], "found_at": datetime.utcnow().isoformat(timespec="seconds"),
+                         "findings": verdict["findings"], "found_at": datetime.utcnow().isoformat(timespec="seconds"),
                          "title": title, "sweep_scan_id": scan_id,
                          "caveat": "At 10-20 m a field hospital, a tent camp and a vehicle park look alike — identify on high-resolution imagery."})
             z.zone_metadata = _jow.dumps(meta)
@@ -25387,7 +25416,7 @@ def _overwatch_finish_tile(job: dict, verdict: dict, scan_id: str | None) -> dic
             "raw_json": {"zone_id": kept, "scan_id": scan_id, "kind": "sweep_find", "tile_id": tile["tile_id"],
                          "reason": f"found by the border sweep — {verdict['summary']}",
                          # each finding with its box on the ground (overwatch.py / finding_boxes.py)
-                         "findings": verdict["findings"][:5], "actions": ["image"]},
+                         "findings": verdict["findings"], "actions": ["image"]},
         })
     return {"tile_id": tile["tile_id"], "result": verdict["result"], "kept": kept, "summary": verdict["summary"]}
 
@@ -25564,8 +25593,9 @@ def api_detection_delete(detection_id: str):
 
 
 @app.get("/api/watch-zones/{zone_id}/scans/{scan_id}/detections")
-def api_scan_detections(zone_id: str, scan_id: str):
-    """Return all detections for a specific scan as a GeoJSON FeatureCollection."""
+def api_scan_detections(zone_id: str, scan_id: str, include_withdrawn: bool = False):
+    """Return all detections for a specific scan as a GeoJSON FeatureCollection
+    (smoke/fire that today's rules withdraw only with include_withdrawn=1)."""
     from database import WatchZone, SentinelDetection, get_db
 
     with get_db() as db:
@@ -25583,9 +25613,14 @@ def api_scan_detections(zone_id: str, scan_id: str):
             .all()
         )
 
+        import imagery_verdict as _iv
+        _v = _imagery_verdicts(db, dets)
+        if not include_withdrawn:
+            dets = [d for d in dets if _iv.shown(_v.get(d.detection_id))]
         features = []
         for d in dets:
             props = {
+                "verdict":        _v.get(d.detection_id),
                 "detection_id":   d.detection_id,
                 "object_type":    d.object_type,
                 "confidence":     d.confidence,
@@ -29278,11 +29313,18 @@ def api_get_alerts(
     severity: str = None,
     status: str = "active",
     limit: int = 100,
+    since_hours: float | None = None,
     current_user=None,
 ):
+    """Alerts, newest first. limit=0 returns every row (bound it with
+    since_hours): the imagery-signal layers ask for the whole week rather
+    than the newest 200 (owner, 2026-10-17: no caps on what is on the map)."""
     from database import Alert as _AlertModel, get_db as _gdb_api
+    import datetime as _dt_al
     with _gdb_api() as _db:
         q = _db.query(_AlertModel).filter(_AlertModel.status == status)
+        if since_hours:
+            q = q.filter(_AlertModel.created_at >= _dt_al.datetime.utcnow() - _dt_al.timedelta(hours=float(since_hours)))
         if source:
             q = q.filter(_AlertModel.source == source)
         if alert_type:
@@ -29291,7 +29333,16 @@ def api_get_alerts(
             q = q.filter(_AlertModel.region == region)
         if severity:
             q = q.filter(_AlertModel.severity == severity)
-        rows = q.order_by(_AlertModel.created_at.desc()).limit(limit).all()
+        q = q.order_by(_AlertModel.created_at.desc())
+        rows = (q.limit(limit) if limit and limit > 0 else q).all()
+        # A smoke plume today's rules withdraw is no longer an imagery
+        # signal on the map (imagery_verdict; the alert row is untouched).
+        try:
+            import imagery_verdict as _iv
+            _gone = _iv.withdrawn_alerts(_db, rows)
+            rows = [r for r in rows if r.alert_id not in _gone]
+        except Exception as _ive:                                # noqa: BLE001
+            print(f"[alerts] error: imagery verdicts unavailable, all shown: {type(_ive).__name__}: {_ive}", flush=True)
         return [
             {
                 "alert_id":    r.alert_id, "source": r.source, "alert_type": r.alert_type,

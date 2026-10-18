@@ -56,7 +56,9 @@ export default function GlobeImagerySignalsLayer({ enabled = true }) {
     useEffect(() => {
         if (!enabled) { setItems([]); return undefined }
         let live = true
-        const load = () => fetch(`${API_BASE}/api/alerts?source=SAT-TASK&limit=200`, { credentials: "include" })
+        // Every signal of the window, not the newest 200 (owner, 2026-10-17:
+        // "no cap on how many things we can actually recognise on the map").
+        const load = () => fetch(`${API_BASE}/api/alerts?source=SAT-TASK&since_hours=${DAYS * 24}&limit=0`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
                 if (!live || !d) return

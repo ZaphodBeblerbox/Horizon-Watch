@@ -63,12 +63,12 @@ def _zone_for(request: Request, system_id: str):
         return z.id
 
 
-def _findings_sync(zone_pk: int, scan_id: str | None, days: int) -> dict:
+def _findings_sync(zone_pk: int, scan_id: str | None, days: int, offset: int = 0, limit: int | None = None) -> dict:
     import zone_findings
     from database import WatchZone, get_db
     with get_db() as db:
         z = db.query(WatchZone).filter(WatchZone.id == zone_pk).first()
-        return zone_findings.zone_findings(db, z, scan_id=scan_id, days=days)
+        return zone_findings.zone_findings(db, z, scan_id=scan_id, days=days, offset=offset, limit=limit)
 
 
 def _crop_sync(zone_pk: int, box: list, prefer: str | None, scan_id: str | None = None) -> dict | None:
@@ -143,10 +143,14 @@ def _radar_source_sync(zone_pk: int, scan_id: str) -> tuple:
 
 @router.get("/{system_id}/findings")
 async def zone_findings_list(request: Request, system_id: str, scan_id: str | None = None,
-                             days: int = Query(30, ge=1, le=365)):
+                             days: int = Query(30, ge=1, le=3650), offset: int = Query(0, ge=0),
+                             limit: int | None = Query(None, ge=1)):
+    """Every finding of the zone in the window — no cap (owner, 2026-10-17);
+    offset/limit page through them when a caller wants pages, and
+    next_offset says whether there are more."""
     import asyncio
     pk = await asyncio.to_thread(_zone_for, request, system_id)
-    return await asyncio.to_thread(_findings_sync, pk, scan_id, days)
+    return await asyncio.to_thread(_findings_sync, pk, scan_id, days, offset, limit)
 
 
 @router.get("/{system_id}/findings/crop")

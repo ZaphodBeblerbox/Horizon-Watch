@@ -24,6 +24,28 @@ module decides, per candidate region, which of these it is:
     storage_tank  on an OSM storage tank or tank farm
     vessel        a small bright compact change on open water (WorldCover 80)
 
+Added 2026-10-17 (owner: "We're still recognising clouds as smoke. We're
+still recognising random stuff as smoke."), each from its own physics:
+
+    snow          bright in green, black at 1.6 µm (snow index > 0.4)
+    haze          a brightening beside cloud with nothing burning
+    sun_glint     water brightened out to the NIR and SWIR, no cloud near
+    bright_surface  brightened at 1.6 µm as much as in blue: a roof, sand,
+                  cleared ground — smoke is nearly transparent there
+    no_source     looks like smoke, but no hot pixel and no FIRMS fire
+                  within 1 km that day: a plume needs a source
+    and cloud / cloud_shadow now also from a cloud-probability band
+    (s2cloudless / Sen2Cor), SWIR opacity in reflectance units, and shadow
+    pairing: a cloud's shadow lies away from the sun at height × tan(zenith),
+    found by sliding the region along the sun's line (scene time → sun
+    position). The plume's drift is checked against the wind of the hour
+    (Open-Meteo, 850 hPa) when its source is a fire.
+
+Every verdict carries `decision` (kept / rejected) and `decided_by`, the
+reason that decided it; the scanner stores the rejects on the scan
+(result_summary.smoke_rejected), and imagery_verdict.py re-judges stored
+detections with these rules on every read.
+
 Only smoke_plume and burn_scar are published (as findings, and as signals);
 the rest explain why a change was not reported and are logged, never stored
 as detections — publishing "vessel" or "port_infrastructure" here would mix
@@ -63,14 +85,17 @@ import time
 import numpy as np
 
 # s2_bands order: B02 B03 B04 B08 B11 B12 SCL mask [B01]
-IB = {"B02": 0, "B03": 1, "B04": 2, "B08": 3, "B11": 4, "B12": 5, "SCL": 6, "MASK": 7, "B01": 8}
+IB = {"B02": 0, "B03": 1, "B04": 2, "B08": 3, "B11": 4, "B12": 5, "SCL": 6, "MASK": 7, "B01": 8, "CLOUDP": 9}
 CLOUD_SCL = (8, 9, 10)
 SHADOW_SCL = (3,)
 BAD_SCL = (0, 1, 3, 8, 9, 10, 11)
 
 FINDING_CLASSES = ("smoke_plume", "burn_scar")
 CLASSES = ("smoke_plume", "burn_scar", "runway", "aircraft", "port_infrastructure", "storage_tank", "vessel",
-           "field_change", "cloud", "cloud_shadow", "persistent", "water")
+           "field_change", "cloud", "cloud_shadow", "persistent", "water",
+           # 2026-10-17 (owner: "we're still recognising clouds as smoke …
+           # random stuff as smoke"): the look-alikes named for what they are.
+           "snow", "haze", "bright_surface", "sun_glint", "no_source")
 DARK_SCL = (2,)          # Sentinel-2 "dark area pixels": dark ground, burn scars, topographic shadow
 
 # The smoke evidence score a candidate must reach. Set by hand, not fitted;
@@ -265,13 +290,50 @@ def features(now, hist, comp, px_m: float = 20.0, ctx: dict | None = None, base=
     # Cloud pixels: scene class, or white and bright out to the SWIR
     # (desert is bright in SWIR but far from white; smoke is clear in SWIR).
     cloudish = np.isin(now[IB["SCL"]], CLOUD_SCL) | ((now[0] > 0.2) & (now[4] > 0.25) & (now[0] > 0.6 * now[4]))
+    cp = now[IB["CLOUDP"]] if now.shape[0] > IB["CLOUDP"] else None
+    if cp is not None:
+        cloudish = cloudish | (cp >= 0.5)
     cloud_px = float(cloudish[comp].mean())
+    near_c = None
     try:
         from scipy import ndimage
         near_c = ndimage.binary_dilation(comp, iterations=max(2, int(1500 / px_m)))
         cloud_near = float(cloudish[near_c & ~comp].mean())
     except Exception:
         cloud_near = 0.0
+
+    # ── What tells a cloud and a bright surface from smoke (2026-10-17) ──
+    # Owner: "we're still recognising clouds as smoke. We're still
+    # recognising random stuff as smoke." The ratios above are relative:
+    # over dark ground or water a tiny change in SWIR is a large ratio, and
+    # a cloud over the sea read as "SWIR hardly moved". These are in
+    # reflectance units, region minus ring:
+    #   * cloud probability (s2cloudless / Sen2Cor) inside and around;
+    #   * how much SWIR (B11, 1.6 µm) brightened against blue: smoke
+    #     particles are far smaller than 1.6 µm and nearly transparent
+    #     there, a cloud's droplets are not — cloud brightens B11 by
+    #     0.1-0.4, smoke by under a tenth of what it adds in blue;
+    #   * whiteness: a cloud is spectrally flat blue to NIR, smoke is bluish;
+    #   * the normalised snow index (green vs SWIR) — snow is bright in
+    #     green and black at 1.6 µm.
+    def dabs(name):
+        d = _band(now, name) - _band(base, name)
+        a = float(np.median(d[reg])) if reg.any() else 0.0
+        b = float(np.median(d[ring_c])) if ring_c.any() else 0.0
+        return a - b
+    d_b02, d_b08, d_b11 = dabs("B02"), dabs("B08"), dabs("B11")
+    swir_opaque = d_b11 / d_b02 if d_b02 > 0.01 else 0.0
+    cloud_prob = float(np.median(cp[reg])) if cp is not None and reg.any() else -1.0
+    cloud_prob_near = (float((cp[near_c & ~comp & ok_now] >= 0.5).mean())
+                       if cp is not None and near_c is not None and (near_c & ~comp & ok_now).any() else -1.0)
+    if reg.any():
+        b03n, b11n = now[IB["B03"]][reg], now[IB["B11"]][reg]
+        ndsi = float(np.median((b03n - b11n) / np.maximum(b03n + b11n, 1e-4)))
+        b03_now = float(np.median(b03n))
+        vnir = np.array([float(np.median(now[IB[k]][reg])) for k in ("B02", "B03", "B04", "B08")])
+        whiteness = float(vnir.std() / max(vnir.mean(), 1e-3))
+    else:
+        ndsi, b03_now, whiteness = 0.0, 0.0, 1.0
 
     wc = ctx.get("worldcover")
     cropland = builtup = 0.0
@@ -312,6 +374,13 @@ def features(now, hist, comp, px_m: float = 20.0, ctx: dict | None = None, base=
          "cropland": cropland, "builtup": builtup, "aeroway": aeroway, "fire": fire,
          "apron": apron, "port": port, "tanks": tanks, "water": water, "dark_frac": dark_frac,
          "firms": int(ctx.get("firms") or 0), "length_m": sh["length_m"], "width_m": sh["width_m"],
+         "d_b02": d_b02, "d_b08": d_b08, "d_b11": d_b11, "swir_opaque": swir_opaque,
+         "cloud_prob": cloud_prob, "cloud_prob_near": cloud_prob_near, "ndsi": ndsi, "b03_now": b03_now,
+         "whiteness": whiteness,
+         # Filled by assess() from the whole scene (they look kilometres
+         # away) and the plume's drift; -1 = not measured.
+         "shadow_pair": float(ctx.get("shadow_pair", -1.0)), "pair_km": float(ctx.get("pair_km", -1.0)),
+         "wind_diff": float(ctx.get("wind_diff", -1.0)),
          "ratios": {k: round(v, 3) for k, v in r.items()}}
     return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in f.items()}
 
@@ -377,6 +446,34 @@ def smoke_evidence(f: dict) -> tuple[float, list]:
         add(1.0, "fire", f"{f['firms']} FIRMS fire detection(s) nearby that day")
     if f["aeroway"] > 0.2:
         add(-2.0, "context", "on an airfield runway/apron (OpenStreetMap)")
+
+    # 2026-10-17 physics (see features()). Every key may be missing on
+    # features stored before that day: missing = not measured = no points.
+    g = lambda k, d=-1.0: d if f.get(k) is None else f.get(k)
+    if g("cloud_prob") >= 0.5:
+        add(-1.0 if heat else -2.5, "spectral",
+            f"cloud-probability model: {round(g('cloud_prob') * 100)}% inside" + (" (thick smoke over a fire can read as cloud)" if heat else ""))
+    if bright and g("d_b02", 0.0) > 0.01 and g("swir_opaque", 0.0) >= 0.6 and g("d_b11", 0.0) > 0.03:
+        add(-2.0, "spectral", f"short-wave infrared brightened by {g('d_b11'):+.2f} against {g('d_b02'):+.2f} in blue — "
+                              "opaque at 1.6 µm like a cloud or a new surface; smoke is nearly transparent there")
+    if bright and 0 <= g("whiteness", 1.0) < 0.12 and g("b03_now", 0.0) > 0.2:
+        add(-1.0, "spectral", "white — flat from blue to near-infrared, as cloud is; smoke is bluish")
+    if g("shadow_pair") >= 0.3:
+        add(-2.5 if not heat else -1.0, "shadow",
+            (f"a matching shadow {g('pair_km'):.1f} km away on the side away from the sun — a cloud casting it"
+             if bright else f"a cloud {g('pair_km'):.1f} km toward the sun, the right size and distance to cast it"))
+    if g("ndsi", 0.0) > 0.4 and g("b03_now", 0.0) > 0.25:
+        add(-3.0, "spectral", f"snow index {g('ndsi'):.2f} — bright in green, black at 1.6 µm: snow or ice")
+    # Elongation only counts against: a drawn-out shape gave no points
+    # because a haze band over a town with roof "hot pixels" (labelled set,
+    # DET-1dfd899883de) is drawn out too, and a point tipped it into smoke.
+    if f.get("elong", 9) < 1.4 and f.get("area_km2", 0) > 1:
+        add(-0.5, "shape", "a round blob, not drawn out from a source")
+    if g("wind_diff") >= 0:
+        if g("wind_diff") <= 45:
+            add(0.8, "wind", f"drifts with the wind of the hour (within {round(g('wind_diff'))}°)")
+        elif g("wind_diff") >= 120:
+            add(-1.2, "wind", f"drifts {round(g('wind_diff'))}° against the wind of the hour")
     return s, why
 
 
@@ -389,16 +486,54 @@ def _rule_class(f: dict) -> tuple[str, float, list]:
     def first(kind, sign, text):
         why.insert(0, {"kind": kind, "sign": sign, "text": text})
 
+    n = lambda k, d=-1.0: d if f.get(k) is None else f.get(k)
+    opaque = bright and n("d_b02", 0.0) > 0.01 and n("swir_opaque", 0.0) >= 0.6 and n("d_b11", 0.0) > 0.03
+    # A ship is small, compact, white and opaque too: the place decides it below.
+    ship_like = g("water") > 0.6 and f["area_km2"] < 0.5 and f["solidity"] > 0.7
+    if ship_like:
+        opaque = False
+
+    # Snow before cloud: both are white, only snow is black at 1.6 µm.
+    if n("ndsi", 0.0) > 0.4 and n("b03_now", 0.0) > 0.25 and not heat:
+        first("spectral", "-", f"snow index {n('ndsi'):.2f} with green at {n('b03_now'):.2f} — snow or ice")
+        return "snow", 0.85, why
     # Cloud / shadow first: they explain everything else away.
     if (f["cloud_frac"] > 0.3 or f["cloud_px"] > 0.2 or (bright and f["nir_frac"] > 0.8 and f["cloud_near"] > 0.02)
             or (f["cloud_px"] > 0.03 and f["cloud_near"] > 0.05)):
         first("spectral", "-", "bright in visible and near-infrared alike, cloud pixels in/around it — cloud")
         return "cloud", 0.85, why
+    if not heat and n("cloud_prob") >= 0.5:
+        first("spectral", "-", f"the cloud-probability model puts {round(n('cloud_prob') * 100)}% on it — cloud")
+        return "cloud", 0.85, why
+    if not heat and bright and n("shadow_pair") >= 0.3:
+        first("shadow", "-", f"it has a shadow {n('pair_km'):.1f} km away, opposite the sun — a cloud")
+        return "cloud", 0.85, why
+    # Sun glint: the sea turned mirror, bright out to the infrared — white
+    # and opaque like a cloud, but with no cloud in or around it.
+    if (not heat and bright and not ship_like and g("water") > 0.5 and n("d_b08", 0.0) > 0.02
+            and n("d_b11", 0.0) > 0.01 and f["cloud_near"] <= 0.02 and n("cloud_prob") < 0.3):
+        first("spectral", "-", "water brightened in near- and short-wave infrared too, no cloud near — sun glint on the sea")
+        return "sun_glint", 0.8, why
+    if not heat and opaque and (n("whiteness", 1.0) < 0.2 or f["cloud_near"] > 0.02 or n("cloud_prob") >= 0.3):
+        first("spectral", "-", "white and opaque in short-wave infrared — cloud")
+        return "cloud", 0.8, why
     flat = abs(f["nir"] - f["vis"]) < 0.25 * abs(f["vis"]) and abs(f["swir"] - f["vis"]) < 0.45 * abs(f["vis"])
     if f["shadow_frac"] > 0.3 or (not bright and flat and f["vis"] < -0.15 and f["cloud_near"] > 0.02):
         first("spectral", "-", "darker by the same factor in every band with cloud next to it — a cloud shadow"
               + (f" (scene class shadow on {round(f['shadow_frac'] * 100)}%)" if f["shadow_frac"] > 0.3 else ""))
         return "cloud_shadow", 0.8, why
+    if not heat and not bright and n("shadow_pair") >= 0.3:
+        first("shadow", "-", f"a cloud {n('pair_km'):.1f} km toward the sun casts it — a cloud shadow")
+        return "cloud_shadow", 0.8, why
+    # The brightening at a cloud's edge: next to cloud, no fire.
+    if not heat and bright and (f["cloud_near"] > 0.02 or n("cloud_prob_near") > 0.1):
+        first("spectral", "-", "brightening beside cloud with nothing burning — the haze at a cloud's edge")
+        return "haze", 0.7, why
+    # A new bright surface: roof, sand, cleared ground — opaque to SWIR.
+    if not heat and opaque:
+        first("spectral", "-", f"brightened in short-wave infrared ({n('d_b11'):+.2f}) as much as in blue — "
+                               "a new bright surface (roof, sand, cleared ground), not a layer of smoke")
+        return "bright_surface", 0.7, why
     # Smoke with a fire under it beats the place it is in: a strike on a
     # port or an airfield smokes too.
     if heat and s >= SMOKE_THRESHOLD and f["persist"] < 2:
@@ -433,8 +568,18 @@ def _rule_class(f: dict) -> tuple[str, float, list]:
             and (f["fire"] or f["firms"]) and f["edge_align"] < 0.45):
         first("spectral", "+", f"burn ratio dropped by {f['dnbr']:.2f} with heat on it — burnt ground")
         return "burn_scar", 0.8, why
-    if s >= SMOKE_THRESHOLD:
+    if s >= SMOKE_THRESHOLD and heat:
         return "smoke_plume", round(min(0.97, 0.6 + (s - SMOKE_THRESHOLD) * 0.08), 2), why
+    if s >= SMOKE_THRESHOLD:
+        # A plume needs a source (owner, 2026-10-17: "random stuff as
+        # smoke"). Jebel Ali, 9 Oct: three "white smoke plumes … from its
+        # densest point", no hot pixel and no FIRMS fire within days — every
+        # smoke plume in the labelled set had one or the other. A smoulder
+        # too small for both is missed; that is the price of not putting
+        # clouds on the map as smoke.
+        first("fire", "-", "looks like smoke, but nothing is burning under it — no hot pixel (B12 > B11) at its edge "
+                           "and no FIRMS fire within 1 km that day; a plume needs a source")
+        return "no_source", 0.6, why
     return "field_change", round(min(0.95, 0.5 + (SMOKE_THRESHOLD - s) * 0.08), 2), why
 
 
@@ -475,7 +620,7 @@ def classify(f: dict) -> dict:
     """{class, confidence, reasons, classifier, smoke_score} for one region's features."""
     cls, conf, why = _rule_class(f)
     s, _ = smoke_evidence(f)
-    out = {"class": cls, "confidence": conf, "reasons": why, "classifier": "rules v1", "smoke_score": round(s, 2)}
+    out = {"class": cls, "confidence": conf, "reasons": why, "classifier": "rules v2", "smoke_score": round(s, 2)}
     model = _load_model()
     # The model only re-decides between ground-truth classes it was trained
     # on; cloud and shadow stay with the physics.
@@ -487,6 +632,11 @@ def classify(f: dict) -> dict:
             out.update({"class": mcls, "confidence": round(mconf, 2), "classifier": f"model {model.get('trained_at', '')[:10]}"})
         except Exception as e:                                     # noqa: BLE001
             print(f"[smoke_classify] error: model predict failed, rules used: {e}", flush=True)
+    # The decision in one line, stored with the detection and the rejects
+    # alike (owner, 2026-10-17): kept or rejected, and the reason that decided.
+    out["decision"] = "kept" if is_finding(out["class"]) else "rejected"
+    lead = next((r for r in why if r.get("sign") == ("+" if out["decision"] == "kept" else "-")), None)
+    out["decided_by"] = lead["text"] if lead else out["class"].replace("_", " ")
     return out
 
 
@@ -609,7 +759,145 @@ def _window(comp: np.ndarray, px_m: float):
     return slice(max(0, ys.min() - pad), min(h, ys.max() + pad + 1)), slice(max(0, xs.min() - pad), min(w, xs.max() + pad + 1))
 
 
-def assess(now, hist, comp, bounds: dict, ctx: dict | None = None, base=None, firms_points=()) -> dict:
+def sun_position(when, lat: float, lon: float) -> tuple[float, float]:
+    """(azimuth, zenith) of the sun in degrees — azimuth clockwise from
+    north — at a UTC datetime (NOAA's low-precision formulae, ~0.5°)."""
+    import datetime as _dt
+    if isinstance(when, str):
+        when = _dt.datetime.fromisoformat(when.replace("Z", "+00:00"))
+    if when.tzinfo is not None:
+        when = when.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+    doy = when.timetuple().tm_yday
+    hour = when.hour + when.minute / 60 + when.second / 3600
+    g = 2 * math.pi / 365 * (doy - 1 + (hour - 12) / 24)
+    decl = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g) - 0.006758 * math.cos(2 * g)
+            + 0.000907 * math.sin(2 * g) - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
+    eqt = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
+                    - 0.014615 * math.cos(2 * g) - 0.040849 * math.sin(2 * g))
+    tst = hour * 60 + eqt + 4 * lon
+    ha = math.radians(tst / 4 - 180)
+    la = math.radians(lat)
+    cz = math.sin(la) * math.sin(decl) + math.cos(la) * math.cos(decl) * math.cos(ha)
+    zen = math.acos(max(-1.0, min(1.0, cz)))
+    az = math.degrees(math.atan2(math.sin(ha), math.cos(ha) * math.sin(la) - math.tan(decl) * math.cos(la))) + 180
+    return az % 360, math.degrees(zen)
+
+
+SHADOW_MAX_KM = 12.0     # cloud tops a shadow is looked for under (fair-weather cumulus 0.5-3 km)
+
+
+def scene_partners(now, base) -> tuple[np.ndarray, np.ndarray]:
+    """(shadow, cloud) masks over the whole scene: pixels darker than the
+    baseline in every band, and pixels that are cloud (white, bright out to
+    SWIR, or cloud by the scene class / cloud probability)."""
+    eps = 1e-3
+    now = np.asarray(now, dtype=np.float32)
+    base = np.asarray(base, dtype=np.float32)
+    ok = (now[IB["MASK"]] > 0) & (base[IB["MASK"]] > 0)
+    r = lambda n: (_band(now, n) + eps) / (_band(base, n) + eps)
+    vis = (r("B02") + r("B03") + r("B04")) / 3
+    shadow = ok & (vis < 0.8) & (r("B08") < 0.85) & (r("B11") < 0.9)
+    cloud = ok & (np.isin(now[IB["SCL"]], CLOUD_SCL) | ((vis > 1.25) & (r("B11") > 1.1) & (now[0] > 0.12)))
+    if now.shape[0] > IB["CLOUDP"]:
+        cloud |= ok & (now[IB["CLOUDP"]] >= 0.5)
+    return shadow, cloud
+
+
+def shadow_pairing(comp, partner, px_m: float, sun_az: float, sun_zen: float, toward_sun: bool) -> tuple[float, float]:
+    """(score, km): slide the region along the sun's line and find where it
+    best lands on its partner — a cloud's shadow lies away from the sun at
+    height × tan(zenith), the cloud casting a shadow lies toward it. Score
+    is the overlap there minus the overlap the same distance the other way
+    (so ground that is dark or bright everywhere scores nothing).
+
+    The owner's test (2026-10-17): a cloud has a displaced shadow; smoke at
+    that geometry usually does not — a plume is thin and low, its shadow
+    faint and joined to it."""
+    comp = np.asarray(comp, dtype=bool)
+    ys, xs = np.nonzero(comp)
+    if ys.size == 0 or sun_zen >= 85:
+        return 0.0, -1.0
+    if ys.size > 20000:
+        k = np.random.default_rng(0).choice(ys.size, 20000, replace=False)
+        ys, xs = ys[k], xs[k]
+    h, w = comp.shape
+    az = math.radians(sun_az if toward_sun else sun_az + 180)
+    t = math.tan(math.radians(sun_zen))
+    best, best_km = 0.0, -1.0
+
+    def frac(dy, dx):
+        y, x = np.round(ys + dy).astype(int), np.round(xs + dx).astype(int)
+        inside = (y >= 0) & (y < h) & (x >= 0) & (x < w)
+        if inside.mean() < 0.5:
+            return None
+        y, x = y[inside], x[inside]
+        return float((partner[y, x] & ~comp[y, x]).mean())
+
+    step_km = max(0.1, px_m * 2 / 1000 / max(t, 0.05))
+    for hk in np.arange(0.2, SHADOW_MAX_KM + 1e-6, step_km):
+        d_px = hk * 1000 * t / px_m
+        if d_px < 2:
+            continue
+        dx, dy = d_px * math.sin(az), -d_px * math.cos(az)
+        a, b = frac(dy, dx), frac(-dy, -dx)
+        if a is None or b is None:
+            continue                     # no control the other way: no claim
+        sc = a - b
+        if sc > best:
+            best, best_km = sc, hk * t
+    return round(best, 3), round(best_km, 2)
+
+
+WIND_URLS = ("https://api.open-meteo.com/v1/forecast", "https://archive-api.open-meteo.com/v1/archive")
+_WIND_CACHE: dict = {}
+
+
+def wind_to(lat: float, lon: float, when) -> float | None:
+    """Where the wind blew TO (degrees from north) at the plume's height
+    (850 hPa, ~1.5 km; else 10 m) at the hour of the pass — Open-Meteo
+    (ERA5 reanalysis for older days, the forecast model for recent ones);
+    free and keyless. None when it cannot be read: the classifier then
+    judges the drift by shape alone."""
+    import datetime as _dt
+    import urllib.parse
+    import urllib.request
+    if isinstance(when, str):
+        when = _dt.datetime.fromisoformat(when.replace("Z", "+00:00"))
+    if when.tzinfo is not None:
+        when = when.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+    day, hour = when.date().isoformat(), int(round(when.hour + when.minute / 60)) % 24
+    key = (round(lat, 1), round(lon, 1), day, hour)
+    if key in _WIND_CACHE:
+        return _WIND_CACHE[key]
+    out = None
+    for url in WIND_URLS:
+        q = urllib.parse.urlencode({"latitude": round(lat, 3), "longitude": round(lon, 3), "start_date": day,
+                                    "end_date": day, "timezone": "UTC",
+                                    "hourly": "wind_direction_850hPa,wind_direction_10m"
+                                    if "forecast" in url else "wind_direction_10m"})
+        try:
+            d = json.loads(urllib.request.urlopen(urllib.request.Request(f"{url}?{q}", headers={"User-Agent": UA}),
+                                                  timeout=10).read())
+            hr = d.get("hourly") or {}
+            for k in ("wind_direction_850hPa", "wind_direction_10m"):
+                v = (hr.get(k) or [None] * 24)[hour] if len(hr.get(k) or []) > hour else None
+                if v is not None:
+                    out = (float(v) + 180) % 360
+                    break
+            if out is not None:
+                break
+        except Exception as e:                                       # noqa: BLE001
+            print(f"[smoke_classify] wind {url.split('/')[2]}: {type(e).__name__}: {str(e)[:100]}", flush=True)
+    _WIND_CACHE[key] = out
+    return out
+
+
+def angle_diff(a: float, b: float) -> float:
+    return abs((a - b + 180) % 360 - 180)
+
+
+def assess(now, hist, comp, bounds: dict, ctx: dict | None = None, base=None, firms_points=(),
+           partners=None) -> dict:
     """Features and class of one candidate region on a scene. ctx holds
     scene-grid arrays (worldcover, aeroway, apron, port, tanks, fire);
     firms_points the (lat, lon) of FIRMS detections around that day."""
@@ -634,6 +922,30 @@ def assess(now, hist, comp, bounds: dict, ctx: dict | None = None, base=None, fi
             if 0 <= yi < near.shape[0] and 0 <= xi < near.shape[1] and near[yi, xi]:
                 firms += 1
     sub["firms"] = firms
+    # Shadow pairing looks kilometres beyond the window, on the whole scene.
+    sun = ctx.get("sun")
+    if sun is None and ctx.get("when") is not None:
+        try:
+            sun = sun_position(ctx["when"], (bounds["south"] + bounds["north"]) / 2, (bounds["west"] + bounds["east"]) / 2)
+        except (TypeError, ValueError):
+            sun = None
+    if sun is not None:
+        if partners is None:
+            partners = scene_partners(now, baseline(hist) if base is None else base)
+        f_bright = None
+        try:
+            eps = 1e-3
+            bb = baseline(hist) if base is None else np.asarray(base)
+            vn = (now[0] + now[1] + now[2])[comp].mean()
+            vb = (bb[0] + bb[1] + bb[2])[comp].mean()
+            f_bright = vn + eps >= vb + eps
+        except Exception:                                            # noqa: BLE001
+            f_bright = True
+        sc_, km_ = shadow_pairing(comp, partners[0] if f_bright else partners[1], pm, sun[0], sun[1],
+                                  toward_sun=not f_bright)
+        sub["shadow_pair"], sub["pair_km"] = sc_, km_
+    if ctx.get("wind_diff") is not None:
+        sub["wind_diff"] = ctx["wind_diff"]
     b = None if base is None else np.asarray(base)[:, ys, xs]
     f = features(now[:, ys, xs], hist[:, :, ys, xs], comp[ys, xs], px_m=pm, ctx=sub, base=b)
     out = classify(f)
@@ -647,13 +959,33 @@ def assess_plumes(now, hist, plumes: list, bounds: dict, ctx: dict | None = None
     "unclassified" — not a finding, so not published; the error is logged.
     Smoke.py's word alone is what put fields and runways on the map."""
     hist = np.asarray(hist, dtype=np.float32)
+    now = np.asarray(now, dtype=np.float32)
+    # Passes fetched either side of a band step-down (s2_bands) differ by the
+    # cloud-probability band: judge on what all of them have.
+    nb = min(now.shape[0], hist.shape[1])
+    now, hist = now[:nb], hist[:, :nb]
     base = baseline(hist)
-    shape = np.asarray(now).shape[1:]
+    shape = now.shape[1:]
+    ctx = dict(ctx or {})
+    partners = None
+    if ctx.get("when") is not None:
+        try:
+            ctx["sun"] = sun_position(ctx["when"], (bounds["south"] + bounds["north"]) / 2,
+                                      (bounds["west"] + bounds["east"]) / 2)
+            partners = scene_partners(now, base)
+        except Exception as e:                                       # noqa: BLE001
+            print(f"[smoke_classify] error: sun geometry unavailable, no shadow pairing: {type(e).__name__}: {e}", flush=True)
+            ctx.pop("sun", None)
     out = []
     for p in plumes:
         try:
             comp = polygon_mask(p["geometry"], bounds, shape)
-            v = assess(now, hist, comp, bounds, ctx, base=base, firms_points=firms_points)
+            pctx = ctx
+            # Drift against the wind only means something when the source is
+            # a fire: without one smoke.py's "source" is just the densest point.
+            if ctx.get("wind_to") is not None and p.get("fire_px") and p.get("drift_deg") is not None:
+                pctx = {**ctx, "wind_diff": angle_diff(float(p["drift_deg"]), float(ctx["wind_to"]))}
+            v = assess(now, hist, comp, bounds, pctx, base=base, firms_points=firms_points, partners=partners)
         except Exception as e:                                       # noqa: BLE001
             print(f"[smoke_classify] error: region at {p.get('source_lat')},{p.get('source_lon')} unclassified: "
                   f"{type(e).__name__}: {e}", flush=True)

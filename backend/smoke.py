@@ -57,9 +57,32 @@ def masks(now: np.ndarray, baseline: np.ndarray):
     # SWIR than desert): it must also be dimmer than cloud in blue, and not
     # what Sentinel-2's scene classification calls cloud, cirrus or shadow.
     cloudy = np.isin(now[6], (3, 8, 9, 10))
+    # A cloud-probability model's word too, where the pass carries one
+    # (s2_bands' tenth band): cumulus the scene class calls "vegetation".
+    if now.shape[0] > 9:
+        cloudy |= now[9] >= 0.5
     bright = valid & (rv > 1.25) & (rv - rs > 0.15) & (now[0] < 0.3) & ~cloudy
-    fire = valid & (now[5] - now[4] > 0.08) & (now[5] > 0.3) & (now[5] - baseline[5] > 0.1)
+    fire = hot_pixels(now, baseline) & valid
     return dark, bright, fire, rv
+
+
+def hot_pixels(now: np.ndarray, baseline: np.ndarray) -> np.ndarray:
+    """Pixels burning now: B12 well above B11, bright, and brighter than before.
+
+    Owner, 2026-10-17: "we're still recognising random stuff as smoke".
+    Rostock harbour, 10 and 12 Oct, had 2-7 "fire" pixels with no FIRMS
+    detection on any day — and each one turned a cloud edge or a roof into a
+    "smoke plume from a fire". Things that are bright at 2.2 µm without
+    burning are bright in blue too (cloud, sun glint on water and on metal
+    roofs, white sand); a flame is not — at Khurais B12 was 0.5-0.9 over
+    B02 0.03-0.15. So a hot pixel must also be at least 1.5× brighter at
+    2.2 µm than in blue, and not cloud or glinting water by the scene class."""
+    hot = (now[5] - now[4] > 0.08) & (now[5] > 0.3) & (now[5] - baseline[5] > 0.1)
+    hot &= now[5] > 1.5 * now[0]
+    scl = now[6]
+    hot &= ~(np.isin(scl, (8, 9, 10)) & (now[0] > 0.2))
+    hot &= ~((scl == 6) & (now[0] > 0.1))
+    return hot
 
 
 def _bearing(lat1, lon1, lat2, lon2) -> float:

@@ -129,7 +129,9 @@ def summarize(out: dict, previous: list[dict] | None, previous_until: str | None
         "where": [{"lat": r["centroid_lat"], "lon": r["centroid_lon"], "direction": r.get("change_direction"),
                    "area_m2": round(r["area_m2"]), "t_peak": r.get("t_peak"),
                    "box": _fb.region_box(r, out.get("bounds"))[0]} for r in
-                  sorted(fresh, key=lambda r: -r["area_m2"])[:5]],
+                  # Every new region, largest first — it was the largest 5;
+                  # no cap (owner, 2026-10-17: "no cap on how many things we can actually recognise on the map")
+                  sorted(fresh, key=lambda r: -r["area_m2"])],
         "changed_fraction": frac,
     }
     block["headline"] = headline(block)

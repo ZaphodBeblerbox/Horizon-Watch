@@ -62,17 +62,38 @@ def passes(west, south, east, north, days_back: int = 60, max_cloud: float = 100
     return out
 
 
-EVALSCRIPT = """//VERSION=3
+EVALSCRIPT_BASE = """//VERSION=3
 function setup(){return{input:[{bands:["B02","B03","B04","B08","B11","B12","SCL","dataMask","B01"],
  units:["REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","REFLECTANCE","DN","DN","REFLECTANCE"]}],
  output:{bands:9,sampleType:"FLOAT32"}}}
 function evaluatePixel(s){return[s.B02,s.B03,s.B04,s.B08,s.B11,s.B12,s.SCL,s.dataMask,s.B01]}"""
 
+# A cloud probability per pixel as a tenth band, 0..1 (owner, 2026-10-17:
+# "we're still recognising clouds as smoke"). The scene classification
+# misses cumulus and haze that a cloud-probability model sees: s2cloudless
+# (CLP, 0-255) first, Sen2Cor's own probability (CLD, 0-100) if the
+# collection does not offer CLP. Neither could be checked against the live
+# API when this was written (both accounts were out of processing units on
+# 2026-10-17), so an evalscript the API refuses (HTTP 400) steps down to the
+# next and the step is remembered; the base nine bands always work.
+CLOUD_BAND = 9
+EVALSCRIPTS = [
+    ("CLP", EVALSCRIPT_BASE.replace('"B01"],', '"B01","CLP"],').replace('"REFLECTANCE"]}]', '"REFLECTANCE","DN"]}]')
+     .replace("bands:9,", "bands:10,").replace("s.B01]}", "s.B01,s.CLP/255]}")),
+    ("CLD", EVALSCRIPT_BASE.replace('"B01"],', '"B01","CLD"],').replace('"REFLECTANCE"]}]', '"REFLECTANCE","DN"]}]')
+     .replace("bands:9,", "bands:10,").replace("s.B01]}", "s.B01,s.CLD/100]}")),
+    ("base", EVALSCRIPT_BASE),
+]
+EVALSCRIPT = EVALSCRIPT_BASE
+_SCRIPT = {"i": 0}
+
 
 def fetch(west, south, east, north, date: str, width: int, height: int, upsampling: str = "BICUBIC"):
-    """float32 array (9, H, W): B02 B03 B04 B08 B11 B12 SCL mask B01, for one day.
-    B01 (443 nm, coastal aerosol, 60 m resampled) is last so every index
-    before it keeps its meaning; smoke scatters it most of all."""
+    """float32 array (10, H, W): B02 B03 B04 B08 B11 B12 SCL mask B01 cloud-probability,
+    for one day — (9, H, W) without the last when the API offers no cloud
+    probability. B01 (443 nm, coastal aerosol, 60 m resampled) comes after
+    the mask so every index before it keeps its meaning; smoke scatters it
+    most of all."""
     import numpy as np
     body = {
         "input": {"bounds": {"bbox": [west, south, east, north],
@@ -83,7 +104,7 @@ def fetch(west, south, east, north, date: str, width: int, height: int, upsampli
                             "processing": {"upsampling": upsampling, "downsampling": "BICUBIC"}}]},
         "output": {"width": int(width), "height": int(height),
                    "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}]},
-        "evalscript": EVALSCRIPT,
+        "evalscript": EVALSCRIPTS[_SCRIPT["i"]][1],
     }
     import copernicus_accounts
 
@@ -96,7 +117,7 @@ def fetch(west, south, east, north, date: str, width: int, height: int, upsampli
     # spent processing units moves to the backup account (copernicus_accounts).
     import time
     switched = False
-    for attempt in range(4):
+    for attempt in range(4 + len(EVALSCRIPTS)):
         try:
             raw = urllib.request.urlopen(req, timeout=120).read()
             break
@@ -110,6 +131,14 @@ def fetch(west, south, east, north, date: str, width: int, height: int, upsampli
                     req = _req()
                     continue
                 raise
+            if e.code == 400 and _SCRIPT["i"] < len(EVALSCRIPTS) - 1:
+                # The collection has no such band: step down and remember.
+                print(f"[s2_bands] {EVALSCRIPTS[_SCRIPT['i']][0]} cloud probability refused "
+                      f"({e.read()[:160]!r}); using {EVALSCRIPTS[_SCRIPT['i'] + 1][0]}", flush=True)
+                _SCRIPT["i"] += 1
+                body["evalscript"] = EVALSCRIPTS[_SCRIPT["i"]][1]
+                req = _req()
+                continue
             if e.code != 429 or attempt == 3:
                 raise
             time.sleep((5, 15, 40)[attempt])
