@@ -10,6 +10,7 @@ import { useEffect, useState } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, NearFarScalar } from "cesium"
 import { myPosition, subscribeMyPosition } from "../location/liveShare.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 const GLOW = `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
   <defs><radialGradient id="g"><stop offset="0" stop-color="#3b8cff" stop-opacity=".55"/><stop offset=".55" stop-color="#3b8cff" stop-opacity=".18"/><stop offset="1" stop-color="#3b8cff" stop-opacity="0"/></radialGradient></defs>
@@ -24,7 +25,7 @@ export default function GlobeMeLayer() {
     return (
         <Entity name={me.live ? "You (live)" : "You"} position={Cartesian3.fromDegrees(me.lon, me.lat, 0)}
                 billboard={{ image: GLOW, width: 40, height: 40, heightReference: HeightReference.CLAMP_TO_GROUND,
-                             disableDepthTestDistance: Number.POSITIVE_INFINITY, scaleByDistance: new NearFarScalar(2e5, 1.15, 2e7, 0.75),
+                             disableDepthTestDistance: MARKER_DEPTH_TEST_M, scaleByDistance: new NearFarScalar(2e5, 1.15, 2e7, 0.75),
                              color: me.live ? Color.WHITE : Color.WHITE.withAlpha(0.85) }}
                 description={me.live ? "Where you are now (shared live)" : `Where you said you are${me.label ? `: ${me.label}` : ""}`} />
     )

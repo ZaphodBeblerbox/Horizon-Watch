@@ -19,7 +19,7 @@ import { altitudeFor, findingsBounds, getShownFindings, labelRanks, mapCaption, 
 import { cesiumRectDegrees, loadOverlayRadar, overlayUrl, retryOverlay, setOverlayOpacity, setOverlayView, subscribeOverlay, viewsFor } from "../lib/findingOverlay.js"
 import { subscribeSignalPin } from "../lib/signalPin.js"
 import { renderDuringFlight } from "./flightRender.js"
-import { getShapeMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
+import { getShapeMarkerDataUri, MARK_SIZE, MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 // The opened signal is a fusion signal: drawn as the map's own fusion mark
 // (GlobeDerivedAlertsLayer's triangle), never a ringed dot with its headline
@@ -84,7 +84,7 @@ export default function GlobeFindingsLayer() {
                     horizontalOrigin: HorizontalOrigin.LEFT, verticalOrigin: VerticalOrigin.BOTTOM,
                     pixelOffset: new Cartesian2(0, -4),
                     heightReference: HeightReference.CLAMP_TO_GROUND,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                     // the most telling few from afar; the rest once close in
                     distanceDisplayCondition: new DistanceDisplayCondition(0, (ranks.get(f.id) ?? 99) < MAP_LABELS || focus ? 250000 : 2500),
                 },
@@ -165,7 +165,7 @@ function useSignalPin(viewer) {
                     position: Cartesian3.fromDegrees(p.lon, p.lat),
                     billboard: { image: FUSION_MARK(), width: MARK_SIZE.alert, height: MARK_SIZE.alert,
                                  heightReference: HeightReference.CLAMP_TO_GROUND,
-                                 disableDepthTestDistance: Number.POSITIVE_INFINITY },
+                                 disableDepthTestDistance: MARKER_DEPTH_TEST_M },
                     properties: { signalPin: p },
                 })
             }

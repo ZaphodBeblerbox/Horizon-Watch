@@ -37,6 +37,7 @@ import {
     overlayUrl, replaySeconds, sideColour, trajectoryPath,
 } from "./frontlineClaims.js"
 import { fmtMinutes, modelHeadingRad, pathLengthKm, positionAlong, shahedModelUri } from "./vesselThreat.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 const REFRESH_MS = 3 * 60_000
 const FONT = "600 12px system-ui, -apple-system, Segoe UI, sans-serif"
@@ -131,7 +132,7 @@ const ClaimEntity = memo(function ClaimEntity({ c }) {
                 verticalOrigin: VerticalOrigin.CENTER, heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 2_500_000),
                 scaleByDistance: new NearFarScalar(100_000, 1, 2_500_000, 0.75),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             }} />
     )
 })
@@ -169,7 +170,7 @@ const MovementEntity = memo(function MovementEntity({ m }) {
                 heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 3_000_000),
                 scaleByDistance: new NearFarScalar(80_000, 1.1, 3_000_000, 0.6),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             } : undefined} />
     )
 })
@@ -189,7 +190,7 @@ const MovementLabelEntity = memo(function MovementLabelEntity({ m, l }) {
                 heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, l.siege ? 2_500_000 : 1_200_000),
                 scaleByDistance: new NearFarScalar(80_000, 1, 1_200_000, 0.8),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             }} />
     )
 })
@@ -218,14 +219,14 @@ function OriginEntity({ id, t, n }) {
     return (
         <Entity id={id} name={text} position={pos}
             point={{ pixelSize: 8, color: css("#0b1220"), outlineColor: css(colour), outlineWidth: 2,
-                     heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY }}
+                     heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
             label={{
                 text, font: FONT, fillColor: css(colour), outlineColor: css("#05070C"), outlineWidth: 3,
                 style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -10),
                 heightReference: HeightReference.CLAMP_TO_GROUND, showBackground: true,
                 backgroundColor: css("#0B0F1A", 0.72), backgroundPadding: new Cartesian2(5, 3),
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 4_000_000),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             }} />
     )
 }
@@ -291,7 +292,7 @@ function TrajectoryReplay({ trajectories }) {
                 font: "12px system-ui, -apple-system, Segoe UI, sans-serif", fillColor: css("#ffe2b8"),
                 outlineColor: Color.BLACK, outlineWidth: 4, style: LabelStyle.FILL_AND_OUTLINE,
                 verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 26), showBackground: true,
-                backgroundColor: Color.BLACK.withAlpha(0.55), disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                backgroundColor: Color.BLACK.withAlpha(0.55), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             }
             if (drone) {
                 // the Shahed/Geran-class model, as the vessel-of-concern simulation flies it
@@ -313,7 +314,7 @@ function TrajectoryReplay({ trajectories }) {
                     id: `ftraj-replay-craft-${t.id}`,
                     position: new CallbackProperty(() => at(posNow()), false),
                     point: { pixelSize: 10, color: css("#fff4e0"), outlineColor: css(colour), outlineWidth: 3,
-                             disableDepthTestDistance: Number.POSITIVE_INFINITY },
+                             disableDepthTestDistance: MARKER_DEPTH_TEST_M },
                     label,
                 }))
             }

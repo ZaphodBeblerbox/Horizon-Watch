@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import {
     Cartesian3, Color, CallbackProperty, PolylineDashMaterialProperty,
 } from "cesium"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 // GlobeReplayLayer.jsx — draws the "Replay on map" walk (see
 // src/services/replayOnMap.js) on the one real globe. Plain component
@@ -64,7 +65,7 @@ export default function GlobeReplayLayer({ viewerRef, isVisible }) {
                     return color.withAlpha(1 - easeOutCubic(t))
                 }, false),
                 outlineWidth: 0,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             },
         })
         run.entities.add(ent)
