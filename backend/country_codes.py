@@ -59,6 +59,31 @@ FIPS_TO_ISO3: dict[str, str] = {
     "SZ": "CHE", "TH": "THA", "TI": "TJK", "TS": "TUN", "TW": "TWN",
     "TX": "TKM", "TZ": "TZA", "UG": "UGA", "UV": "BFA", "UZ": "UZB",
     "VE": "VEN", "VM": "VNM", "YM": "YEM", "ZA": "ZMB", "ZI": "ZWE",
+    # LATIN AMERICA AND THE REST, added 2026-10-18. Measured on the live
+    # GDELT cache that day: 1,232 of 20,000 events (6 %) carried an
+    # ActionGeo code this table did not know and were dropped from the risk
+    # index without a word — every event located in Bolivia, Haiti,
+    # Guatemala, El Salvador, Nicaragua, Panama, Paraguay and Uruguay among
+    # them, plus Belgium (102), Liberia (98), Jamaica (61) and the UAE (60).
+    # FIPS 10-4 codes, each checked against the code it is NOT in ISO
+    # (FIPS PA is Paraguay, ISO PA is Panama; FIPS BL is Bolivia; FIPS NU
+    # Nicaragua; FIPS ES El Salvador, not Spain; FIPS HA Haiti).
+    "BL": "BOL", "HA": "HTI", "GT": "GTM", "ES": "SLV", "NU": "NIC",
+    "PM": "PAN", "PA": "PRY", "UY": "URY", "JM": "JAM", "TD": "TTO",
+    "GY": "GUY", "NS": "SUR", "BH": "BLZ", "BF": "BHS", "BB": "BRB",
+    "ST": "LCA", "DO": "DMA", "GJ": "GRD",
+    "BE": "BEL", "AL": "ALB", "CY": "CYP", "LU": "LUX", "MT": "MLT",
+    "MJ": "MNE", "MK": "MKD", "RI": "SRB",
+    "AE": "ARE",
+    "LI": "LBR", "GA": "GMB", "GH": "GHA", "MI": "MWI", "MP": "MUS",
+    "RW": "RWA", "WA": "NAM", "BN": "BEN", "SL": "SLE", "MA": "MDG",
+    "CM": "CMR", "AO": "AGO", "BC": "BWA", "CT": "CAF", "EK": "GNQ",
+    "GV": "GIN", "PU": "GNB", "LT": "LSO", "MR": "MRT", "TO": "TGO",
+    "WZ": "SWZ", "WI": "ESH", "CN": "COM", "CV": "CPV", "SE": "SYC",
+    "NP": "NPL", "LA": "LAO", "BT": "BTN", "BX": "BRN", "TT": "TLS",
+    "MV": "MDV", "HK": "HKG",
+    "PP": "PNG", "FJ": "FJI", "BP": "SLB", "NH": "VUT", "WS": "WSM",
+    "TN": "TON",
 }
 
 # ISO 3166-1 alpha-2 -> alpha-3, for the codes this app's other feeds use.
@@ -86,6 +111,27 @@ ISO2_TO_ISO3: dict[str, str] = {
     "TN": "TUN", "TR": "TUR", "TW": "TWN", "TZ": "TZA", "UA": "UKR",
     "UG": "UGA", "US": "USA", "UZ": "UZB", "VE": "VEN", "VN": "VNM",
     "YE": "YEM", "ZA": "ZAF", "ZM": "ZMB", "ZW": "ZWE",
+    # Added 2026-10-18 with the FIPS codes above: without them Telegram,
+    # RSS and GeoConfirmed readings for these countries (alpha-2) could not
+    # reach the alpha-3 index, and CAMEO actor codes like BOL or HTI were
+    # discarded as unknown.
+    "BO": "BOL", "HT": "HTI", "GT": "GTM", "SV": "SLV", "NI": "NIC",
+    "PA": "PAN", "PY": "PRY", "UY": "URY", "DO": "DOM", "CU": "CUB",
+    "CR": "CRI", "HN": "HND", "JM": "JAM", "TT": "TTO", "GY": "GUY",
+    "SR": "SUR", "BZ": "BLZ", "PR": "PRI", "BS": "BHS", "BB": "BRB",
+    "LC": "LCA", "DM": "DMA", "GD": "GRD",
+    "AL": "ALB", "BA": "BIH", "CY": "CYP", "LU": "LUX", "MT": "MLT",
+    "ME": "MNE", "MK": "MKD",
+    "AO": "AGO", "BJ": "BEN", "BW": "BWA", "GQ": "GNQ", "GM": "GMB",
+    "GN": "GIN", "GW": "GNB", "LS": "LSO", "LR": "LBR", "MG": "MDG",
+    "MW": "MWI", "MR": "MRT", "NA": "NAM", "RW": "RWA", "SL": "SLE",
+    "TG": "TGO", "SZ": "SWZ", "BI": "BDI", "DJ": "DJI", "GA": "GAB",
+    "CG": "COG", "SN": "SEN", "EH": "ESH", "KM": "COM", "CV": "CPV",
+    "MU": "MUS", "SC": "SYC",
+    "LA": "LAO", "BT": "BTN", "BN": "BRN", "TL": "TLS", "KH": "KHM",
+    "MV": "MDV", "HK": "HKG",
+    "PG": "PNG", "FJ": "FJI", "SB": "SLB", "VU": "VUT", "WS": "WSM",
+    "TO": "TON",
 }
 
 ISO3_TO_ISO2 = {v: k for k, v in ISO2_TO_ISO3.items()}
@@ -186,6 +232,23 @@ ISO3_NAME: dict[str, str] = {
     "UGA": "Uganda", "UKR": "Ukraine", "USA": "United States",
     "UZB": "Uzbekistan", "VEN": "Venezuela", "VNM": "Vietnam", "YEM": "Yemen",
     "ZAF": "South Africa", "ZMB": "Zambia", "ZWE": "Zimbabwe",
+    "BOL": "Bolivia", "HTI": "Haiti", "GTM": "Guatemala", "SLV": "El Salvador",
+    "NIC": "Nicaragua", "PAN": "Panama", "PRY": "Paraguay", "URY": "Uruguay",
+    "JAM": "Jamaica", "TTO": "Trinidad and Tobago", "GUY": "Guyana",
+    "SUR": "Suriname", "BLZ": "Belize", "BHS": "Bahamas", "BRB": "Barbados",
+    "LCA": "Saint Lucia", "DMA": "Dominica", "GRD": "Grenada",
+    "ALB": "Albania", "CYP": "Cyprus", "LUX": "Luxembourg", "MLT": "Malta",
+    "MNE": "Montenegro", "MKD": "North Macedonia",
+    "AGO": "Angola", "BEN": "Benin", "BWA": "Botswana", "GNQ": "Equatorial Guinea",
+    "GMB": "Gambia", "GIN": "Guinea", "GNB": "Guinea-Bissau", "LSO": "Lesotho",
+    "LBR": "Liberia", "MDG": "Madagascar", "MWI": "Malawi", "MRT": "Mauritania",
+    "NAM": "Namibia", "RWA": "Rwanda", "SLE": "Sierra Leone", "TGO": "Togo",
+    "SWZ": "Eswatini", "ESH": "Western Sahara", "COM": "Comoros", "CPV": "Cabo Verde",
+    "MUS": "Mauritius", "SYC": "Seychelles",
+    "LAO": "Laos", "BTN": "Bhutan", "BRN": "Brunei", "TLS": "Timor-Leste",
+    "MDV": "Maldives", "HKG": "Hong Kong",
+    "PNG": "Papua New Guinea", "FJI": "Fiji", "SLB": "Solomon Islands",
+    "VUT": "Vanuatu", "WSM": "Samoa", "TON": "Tonga",
 }
 
 

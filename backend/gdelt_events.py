@@ -25,12 +25,25 @@ MASTERFILELIST_URL_CANDIDATES = [
     "https://data.gdeltproject.org/gdeltv2/masterfilelist.txt",
     "http://data.gdeltproject.org/gdeltv2/masterfilelist.txt",
 ]
+# GDELT TRANSLINGUAL. The English export above codes English-language
+# coverage only; GDELT machine-translates 65 other languages into a second
+# export of exactly the same format every 15 minutes. Without it, Spanish
+# and Portuguese national press — most of what is written about Latin
+# America — never reached the risk index (owner, 2026-10-18: "Latin America
+# coverage density"). Measured that day: the translation export is about as
+# large as the English one.
+TRANSLATION_LASTUPDATE_URL_CANDIDATES = [
+    "https://data.gdeltproject.org/gdeltv2/lastupdate-translation.txt",
+    "http://data.gdeltproject.org/gdeltv2/lastupdate-translation.txt",
+]
 
 TARGET_COUNTRY_CODES = {
     "TZ", "KE", "UG", "RW", "BI", "CD", "SO", "ET", "SS", "SD", "MZ", "ZM", "MW",
 }
 RECENT_FILES_TO_PULL = int(os.getenv("GDELT_RECENT_FILES_TO_PULL", "12"))
-MAX_EVENTS_CACHE = int(os.getenv("GDELT_MAX_EVENTS_CACHE", "20000"))
+# 30,000 since the translingual export was added (it doubles the events per
+# refresh); at 20,000 the retained span would have halved.
+MAX_EVENTS_CACHE = int(os.getenv("GDELT_MAX_EVENTS_CACHE", "30000"))
 MAX_EVENTS_RETURNED = int(os.getenv("GDELT_MAX_EVENTS_RETURNED", "5000"))
 
 LIST_TIMEOUT_SECONDS = 20.0
@@ -131,6 +144,7 @@ def _bool_env(name: str, default: bool) -> bool:
 
 # Temporarily disabled by default to avoid empty output during validation.
 APPLY_COUNTRY_FILTER = _bool_env("GDELT_APPLY_COUNTRY_FILTER", False)
+TRANSLINGUAL = _bool_env("GDELT_TRANSLINGUAL", True)
 GDELT_SSL_VERIFY = _bool_env("GDELT_SSL_VERIFY", False)
 
 _CACHE_LOCK = threading.Lock()
@@ -313,13 +327,74 @@ def _extract_url_from_line(line: str) -> str | None:
     return None
 
 
-def _is_event_export_url(url: str) -> bool:
+def _is_event_export_url(url: str, translation: bool = False) -> bool:
+    """An events export file: English (default) or, with translation=True,
+    the translingual one (YYYYMMDDHHMMSS.translation.export.CSV.zip)."""
     u = (url or "").strip().lower()
     if not u:
         return False
-    if ".mentions." in u or ".gkg." in u or "translation" in u:
+    if ".mentions." in u or ".gkg." in u:
+        return False
+    if ("translation" in u) != translation:
         return False
     return u.endswith(".export.csv.zip")
+
+
+def parse_translation_lastupdate(text: str) -> list[str]:
+    """The translingual events export named in lastupdate-translation.txt."""
+    out: list[str] = []
+    for line in (text or "").splitlines():
+        u = _extract_url_from_line(line)
+        if u and _is_event_export_url(u, translation=True) and u not in out:
+            out.append(u)
+    return out
+
+
+#: Translingual exports already read, so a file is fetched once.
+_TRANSLATION_LOADED: set[str] = set()
+TRANSLATION_LOOKBACK = 8          # quarter hours (2 h)
+TRANSLATION_PER_REFRESH = 3
+
+
+def translation_candidates(listed: list[str], loaded: set[str] | None = None,
+                           lookback: int = TRANSLATION_LOOKBACK, limit: int = TRANSLATION_PER_REFRESH) -> list[str]:
+    """The translingual exports of the last `lookback` quarter hours up to the
+    listed one, OLDEST first, minus those already read.
+
+    MEASURED 2026-10-18: lastupdate-translation.txt names a file that then
+    answers 404 for three quarters of an hour (14:30, 14:15 and 14:00 listed
+    or implied and missing at 14:47; 13:45 present). Reading only the listed
+    file would miss nearly all of them, and newest-first would spend every
+    slot on files not there yet. Oldest-first always makes progress, and
+    each file is read once.
+    """
+    loaded = _TRANSLATION_LOADED if loaded is None else loaded
+    out: list[str] = []
+    for u in listed:
+        m = re.search(r"/(\d{14})\.translation\.export\.CSV\.zip$", u, re.IGNORECASE)
+        if not m:
+            continue
+        t = datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
+        base = u[: m.start(1)]
+        for i in reversed(range(lookback)):
+            cand = f"{base}{(t - timedelta(minutes=15 * i)).strftime('%Y%m%d%H%M%S')}.translation.export.CSV.zip"
+            if cand not in loaded and cand not in out:
+                out.append(cand)
+    return out[:limit]
+
+
+def fetch_translation_urls() -> list[str]:
+    """Translingual exports to read this refresh, or [] (never fatal: the
+    English feed still refreshes when this one is unavailable)."""
+    if not TRANSLINGUAL:
+        return []
+    txt, _used, err = _download_text_with_retries(TRANSLATION_LASTUPDATE_URL_CANDIDATES, LIST_TIMEOUT_SECONDS,
+                                                  "lastupdate-translation")
+    if not txt:
+        if err:
+            print(f"[gdelt] translingual: {err}")
+        return []
+    return translation_candidates(parse_translation_lastupdate(txt))
 
 
 def _download_text_with_retries(url_candidates: list[str], timeout: float, label: str) -> tuple[str | None, str | None, str | None]:
@@ -358,9 +433,13 @@ def _download_bytes_with_retries(url: str, timeout: float = FILE_TIMEOUT_SECONDS
                 return resp.content
         except Exception as ex:
             last_ex = ex
+            # A 404 is an answer, not a hiccup: translingual exports are
+            # listed before they exist, and retrying cost 3.5 s each.
+            if getattr(getattr(ex, "response", None), "status_code", None) == 404:
+                break
             if idx < 3:
                 time.sleep(backoff)
-    print(f"[gdelt] download failed {url}: {type(last_ex).__name__}: {last_ex}")
+    print(f"[gdelt] download failed {url}: {type(last_ex).__name__}: {str(last_ex)[:160]}")
     return None
 
 
@@ -401,7 +480,10 @@ def fetch_gdelt_event_file_urls() -> tuple[list[str], str, str | None]:
     if txt:
         urls = _parse_lastupdate_text(txt)
         if urls:
-            return urls[: max(1, RECENT_FILES_TO_PULL)], "last15min", None
+            # The translingual export of the same quarter hour, after the
+            # English one (outside the RECENT_FILES_TO_PULL slice).
+            extra = [u for u in fetch_translation_urls() if u not in urls]
+            return urls[: max(1, RECENT_FILES_TO_PULL)] + extra, "last15min", None
         err = "lastupdate parsed but contained no EVENT export URLs"
     elif err:
         print(f"[gdelt] {err}")
@@ -463,6 +545,10 @@ def _collect_events_from_urls(
             continue
 
         loaded_urls.append(loaded_from)
+        if "translation" in original_url.lower():
+            if len(_TRANSLATION_LOADED) > 2000:
+                _TRANSLATION_LOADED.clear()
+            _TRANSLATION_LOADED.add(original_url)
         for ev in parsed_rows:
             # Relevance filter: root code + Goldstein + source/mention minimums
             if not _passes_filter(ev):
@@ -1104,7 +1190,9 @@ async def _enrich_with_headlines(events: list[dict[str, Any]]) -> None:
 
 def refresh_cache() -> dict[str, Any]:
     urls, source_mode, list_err = fetch_gdelt_event_file_urls()
-    recent_urls = urls[: max(1, RECENT_FILES_TO_PULL)]
+    # Already sliced by fetch_gdelt_event_file_urls (plus the translingual
+    # export, which a second slice here would drop).
+    recent_urls = urls[: max(1, RECENT_FILES_TO_PULL) + 2]
     source_mode_effective = source_mode
 
     if not recent_urls:
