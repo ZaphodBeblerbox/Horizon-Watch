@@ -24,6 +24,7 @@ import { Icon, Sheet } from "./screens/common.jsx"
 import API_BASE from "../apiBase.js"
 import { usePoll, arr } from "./useMine.js"
 import useOnlineUsers from "../state/useOnlineUsers.js"
+import useConnection, { connectionLine } from "../lib/useConnection.js"
 import PlxWordmark from "../plx6/PlxWordmark.jsx"
 import GeneralFeed from "../general/GeneralFeed.jsx"
 import MAdmin from "./screens/MAdmin.jsx"
@@ -58,7 +59,8 @@ export default function MobileApp() {
     // Check in like the desktop does, so the phone counts as online and
     // keeps "last seen" current. The list itself isn't shown here.
     useOnlineUsers("phone")
-    const go = (t, opts) => { setMenu(false); if (opts?.asset) setAssetOpen(opts.asset); setTab(t) }
+    const connLine = connectionLine(useConnection())
+    const go =(t, opts) => { setMenu(false); if (opts?.asset) setAssetOpen(opts.asset); setTab(t) }
     useEffect(() => { const h = (e) => go(e.detail); window.addEventListener("m2:go", h); return () => window.removeEventListener("m2:go", h) }, []) // eslint-disable-line react-hooks/exhaustive-deps
     // the route planner opens on THE map (its tray over it), never a second one
     useEffect(() => { const h = () => go("map"); window.addEventListener("plx:route-panel", h); return () => window.removeEventListener("plx:route-panel", h) }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -191,6 +193,18 @@ export default function MobileApp() {
                 <MMap active={tab === "map"} chrome={tab === "map"} focus={focus} onOpen={go} alerts={arr(notes).length} />
             </div>
             <LivePlayerHost />
+            {/* WHOSE PROBLEM IT IS (2026-10-18): "offline" only when the
+                phone has no network; a slow or restarting server says so. */}
+            {connLine && (
+                <div role="status" aria-live="polite" style={{
+                    position: "fixed", left: "50%", transform: "translateX(-50%)",
+                    top: "calc(env(safe-area-inset-top, 0px) + 58px)", zIndex: 40,
+                    maxWidth: "calc(100vw - 32px)", padding: "5px 12px", borderRadius: 14,
+                    background: "var(--bg-1, #1b1e27)", border: "1px solid var(--line, #2b3040)",
+                    color: "var(--txt-2)", font: "400 12px var(--font)", whiteSpace: "nowrap",
+                    overflow: "hidden", textOverflow: "ellipsis", pointerEvents: "none",
+                }}>{connLine}</div>
+            )}
             <MNotifCards onOpen={(n) => openSignal(n)} />
             <SourceViewer />
             {/* The map runs edge to edge (its own round controls carry the bell). */}
