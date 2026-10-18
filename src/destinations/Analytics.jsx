@@ -31,7 +31,7 @@ const SEVERITY = [
 // (validate_palette.js, dark and light: all checks pass).
 const TG_GROUPS = [
     { key: "violence", label: "Strikes, attacks, clashes", color: "#d95926", of: ["strike", "attack", "clash"] },
-    { key: "movement", label: "Movements", color: "#3987e5", of: ["movement"] },
+    { key: "movement", label: "Troop movements", color: "#3987e5", of: ["movement"] },
     { key: "unrest", label: "Unrest", color: "#24a89c", of: ["unrest"] },
     { key: "other", label: "Other", color: "#b26fd6", of: ["other"] },
 ]

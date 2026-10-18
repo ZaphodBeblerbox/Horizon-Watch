@@ -50,7 +50,7 @@ const TOOLS = [
 const TOGGLES = [
     { key: "imagery", id: "t-imagery", icon: "i-sat",   title: "Imagery detection" },
     { key: "grat",    id: "t-grat",    icon: "i-grid",  title: "Graticule" },
-    { key: "label",   id: "t-label",   icon: "i-label", title: "Marker labels" },
+    { key: "label",   id: "t-label",   icon: "i-label", title: "Place names (cities and towns)" },
 ]
 
 function Btn({ id, icon, title, on, onClick, disabled = false }) {

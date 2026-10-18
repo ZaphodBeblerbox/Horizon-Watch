@@ -65,7 +65,7 @@ export const LAYER_GROUPS = [
         label: "Zones",
         layers: [
             { key: "eez", label: "Exclusive Economic Zones", hint: "200 nm maritime boundaries" },
-            { key: "cityLabels", label: "City Labels", hint: null },
+            { key: "cityLabels", label: "Place names", hint: "City and town names over the map (the map already names the countries)" },
         ],
     },
     {
@@ -120,7 +120,9 @@ export const CONTEXT_TOGGLES = [
     { key: "graticule",  label: "Graticule 10°" },
     { key: "flows",      label: "Trade & energy flows" },
     { key: "aois",       label: "Areas of interest" },
-    { key: "labels",     label: "Marker labels" },
+    // Not names on our markers: the Esri place-name overlay (GlobeView
+    // cityLabelsEnabled). "Marker labels" told nobody what it did (owner, 2026-10-18).
+    { key: "labels",     label: "Place names", hint: "City and town names over the map (the map already names the countries)" },
     { key: "frontlines", label: "Frontlines" },
     { key: "coverage",   label: "Coverage" },
 ]
@@ -167,7 +169,8 @@ export const SUB_LAYERS = [
     { key: "unrest",          label: "Unrest & protests",        parent: "news" },
     // What the route planner ("Get me out") avoids, and the crowd's movement
     // reconstructed from Telegram reports (globe/GlobeDemonstrationsLayer.jsx).
-    { key: "demonstrations",  label: "Demonstrations, live",     parent: "news" },
+    { key: "demonstrations",  label: "Protests & crowds, live",  parent: "news",
+      hint: "Demonstrations happening now, where their crowds have been and are heading, pieced together from Telegram reports" },
     // The mood on Telegram as signals: spikes and each call to violence (globe/GlobeTelegramMoodLayer.jsx).
     { key: "telegramMood",    label: "Mood & calls to violence", parent: "news" },
     // Strikes, bombings, assaults and ground taken, read out of the same
@@ -176,7 +179,10 @@ export const SUB_LAYERS = [
     { key: "strikes",         label: "Strikes & control",        parent: "news" },
     // Drawn from the same events (globe/GlobeFrontlineClaimsLayer.jsx).
     { key: "frontlineClaims", label: "Frontline claims",         parent: "news" },
-    { key: "movements",       label: "Movements",                parent: "news" },
+    // "Movements" alone meant nothing to a reader (owner, 2026-10-18):
+    // ground forces followed over days (frontlineClaims.js FRONTLINE_LAYERS).
+    { key: "movements",       label: "Troop movements",          parent: "news",
+      hint: "Ground forces followed over the days from front-line reports: numbered legs from place to place, arrows closing round a besieged town" },
     { key: "trajectories",    label: "Trajectories",             parent: "news" },
     { key: "airspace",        label: "Controlled airspace",      parent: null },
     { key: "gfw:encounters",  label: "Vessel encounters",        parent: null },
@@ -190,7 +196,7 @@ export const SUB_LAYERS = [
 export const DEFAULT_SUBS = {
     imagery: ["imagerySignals"],
     // GDELT is not a map signal (owner, 2026-10-13): it feeds the country risk index only
-    news: ["geoConfirmed", "telegram", "unrest", "telegramMood", "strikes", "frontlineClaims", "trajectories"],
+    news: ["geoConfirmed", "telegram", "unrest", "demonstrations", "telegramMood", "strikes", "frontlineClaims", "trajectories"],
     air: [],
 }
 

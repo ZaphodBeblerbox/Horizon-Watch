@@ -107,7 +107,7 @@ export default function StartupLayersEditor() {
                     }}>{g.title}</div>
 
                     {g.items.map((it) => (
-                        <label key={`${g.id}.${it.key}`} style={{
+                        <label key={`${g.id}.${it.key}`} title={it.hint || undefined} style={{
                             display: "flex", alignItems: "center", gap: 8, padding: "3px 0",
                             font: "400 12px var(--font)", color: "var(--txt-2)", cursor: "pointer",
                         }}>

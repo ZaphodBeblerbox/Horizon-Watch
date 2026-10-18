@@ -1439,7 +1439,7 @@ export const PHONE_LAYERS = [
     // crowd's movement reconstructed from Telegram reports beside it; off by
     // default. refreshMs: read again every 30 s while on.
     {
-        key: "demonstrations", label: "Demonstrations, live", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
+        key: "demonstrations", label: "Protests & crowds, live", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         refreshMs: DEMOS_REFRESH_MS, legendIcon: demoIconUri({ kind: "march" }), load: loadDemonstrations,
     },
     {
