@@ -52,7 +52,9 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const seed = useRef(Math.floor(Math.random() * 997)).current
     const surface = usePoll("/api/surface", 30_000, (d) => arr(d?.items ?? d))
     const notes = usePoll("/api/notifications?limit=40", 30_000, (d) => arr(d?.items ?? d))
-    const posts = usePoll("/api/telegram/posts?hours=48", 10 * 60_000, (d) => arr(d?.posts))
+    // ALWAYS THE NEWEST (owner, 2026-10-18): Live from Telegram and From the
+    // ground every 30 s; only what happened earlier keeps to its turn of the day
+    const posts = usePoll("/api/telegram/posts?hours=48", 30_000, (d) => arr(d?.posts))
     const outlook = usePoll("/api/enrich/outlook", 20 * 60_000)
     const [open, setOpen] = useState(null)
     const [why, setWhy] = useState(null)               // a line of the outlook, opened on its reasoning
@@ -92,7 +94,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
         }
         return out
     }, [posts, mine.w]) // eslint-disable-line react-hooks/exhaustive-deps
-    const videos = useFrozen(`m-ground:${slot.key}`, pick, (a) => mine.ready && a.length > 0 && a.length >= Math.min(3, pick.length))
+    const videos = pick
 
     const happenedNow = useMemo(() => {
         const base = mine.has ? split.mine : arr(surface)
@@ -110,7 +112,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const ahead = useFrozen(`m-ahead:${slot.key}`, aheadNow, (a) => mine.ready && a.length > 0)
 
     // LE DIRECT: the newest Telegram posts, a swipe away.
-    const live = usePoll("/api/telegram/feed?limit=12", 2 * 60_000, (d) => arr(d?.posts))
+    const live = usePoll("/api/telegram/feed?limit=12", 20_000, (d) => arr(d?.posts))
 
     // FOR YOU: what is near you, your assets and in your theaters, each with why
     const here = useHere()

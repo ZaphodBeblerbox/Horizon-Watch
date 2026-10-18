@@ -23,7 +23,10 @@ export function usePoll(path, everyMs, pick = (d) => d) {
         const t = everyMs ? setInterval(load, everyMs) : null
         // a pull to refresh asks every list on screen for its newest (gesture.js)
         window.addEventListener("m2:refresh", load)
-        return () => { live = false; if (t) clearInterval(t); window.removeEventListener("m2:refresh", load) }
+        // back on the screen (a phone pauses timers while away): the newest at once
+        const vis = () => { if (document.visibilityState === "visible") load() }
+        document.addEventListener("visibilitychange", vis)
+        return () => { live = false; if (t) clearInterval(t); window.removeEventListener("m2:refresh", load); document.removeEventListener("visibilitychange", vis) }
     }, [path, everyMs]) // eslint-disable-line react-hooks/exhaustive-deps
     return v
 }

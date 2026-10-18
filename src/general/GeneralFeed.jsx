@@ -145,18 +145,41 @@ export default function GeneralFeed({ onMap, onShare, compact = false, keep = nu
         return () => { live = false }
     }, [kinds]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // new at the top, offered, not pushed in under the reader
+    // THE NEWEST, ALWAYS (owner, 2026-10-18: "signals 2 hours old as the
+    // latest on the desk is impossible"): every 20 s, and the moment the app
+    // comes back to the screen (a phone pauses timers while it is away), what
+    // arrived goes straight in at the top when the reader is at the top;
+    // only someone reading further down is offered it instead of having the
+    // list moved under them.
+    const root = useRef(null)
+    const itemsRef = useRef(items)
+    itemsRef.current = items
+    const freshRef = useRef(fresh)
+    freshRef.current = fresh
     useEffect(() => {
         if (!items) return undefined
-        const t = setInterval(() => {
+        const atTop = () => {
+            let n = root.current?.parentElement
+            while (n && n !== document.body) { if (n.scrollHeight > n.clientHeight + 4 && /(auto|scroll)/.test(getComputedStyle(n).overflowY)) return n.scrollTop < 120; n = n.parentElement }
+            return (window.scrollY || 0) < 120
+        }
+        const check = () => {
+            if (document.visibilityState === "hidden") return
             get().then((d) => {
-                const have = shownIds([...(items || []), ...fresh])
+                const have = shownIds([...(itemsRef.current || []), ...freshRef.current])
                 const nw = (d.items || []).filter((x) => !have.has(x.id))
-                if (nw.length) setFresh((f) => [...nw, ...f])
+                if (!nw.length) return
+                if (atTop()) { setItems((cur) => [...nw, ...freshRef.current, ...(cur || [])]); setFresh([]) }
+                else setFresh((f) => [...nw, ...f])
             }).catch(() => {})
-        }, 60_000)
-        return () => clearInterval(t)
-    }, [items, fresh]) // eslint-disable-line react-hooks/exhaustive-deps
+        }
+        const t = setInterval(check, 20_000)
+        const vis = () => { if (document.visibilityState === "visible") check() }
+        document.addEventListener("visibilitychange", vis)
+        window.addEventListener("focus", vis)
+        window.addEventListener("m2:refresh", check)
+        return () => { clearInterval(t); document.removeEventListener("visibilitychange", vis); window.removeEventListener("focus", vis); window.removeEventListener("m2:refresh", check) }
+    }, [items === null]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const more = useCallback(() => {
         if (!next || loading) return
@@ -183,7 +206,7 @@ export default function GeneralFeed({ onMap, onShare, compact = false, keep = nu
     }, [more])
 
     return (
-        <div data-testid="general-feed">
+        <div data-testid="general-feed" ref={root}>
             <div role="tablist" style={{ display: "flex", gap: 6, padding: compact ? "0 0 6px" : "4px 0 8px", flexWrap: "wrap" }}>
                 {FILTERS.map(([k, l]) => (
                     <button key={k} role="tab" aria-selected={kind === k} onClick={() => setKind(k)}
