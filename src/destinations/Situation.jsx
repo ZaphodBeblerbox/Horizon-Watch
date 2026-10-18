@@ -38,7 +38,12 @@ import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
 import MapMeta from "../components/MapMeta.jsx"
 import MapTip from "../components/MapTip.jsx"
-import { LAYER_GROUPS, CONTEXT_TOGGLES, SEVERITY_FLOORS, TIME_WINDOWS } from "../components/layerRailConfig.js"
+import { LAYER_GROUPS, CONTEXT_TOGGLES, SEVERITY_FLOORS, TIME_WINDOWS, nothingOn } from "../components/layerRailConfig.js"
+import { defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
+
+// What the stand-alone layers were before nothing started on: only for a
+// default saved before then that does not name them (see the startup apply).
+const STANDALONE_BEFORE_2026_10_18 = () => ({ assets: true, team: true, safeHouses: true, endangered: endangeredDefaultOn() })
 import { mergeNotificationItems } from "../components/notificationsNormalize.js"
 import { summarizeHealth } from "../utils/systemHealth.js"
 import { buildWatchQueueRows, sortRowsBySeverity, timeAgoLabel } from "./dashboardLogic.js"
@@ -65,7 +70,6 @@ import LayerStatus from "../components/LayerStatus.jsx"
 import FlowsPanel from "../components/FlowsPanel.jsx"
 import { whenLabel } from "../utils/formatTime.js"
 import { hm } from "../utils/clock.js"
-import { defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
 import EndangeredCountryChips from "../components/EndangeredCountryChips.jsx"
 import { closeOpenedSignal } from "../lib/signalPin.js"
 
@@ -391,16 +395,16 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // group to true; severity floor/time window are filter settings, not
     // layer toggles, and keep their own sensible defaults since they don't
     // clutter an empty map on their own.
-    // DEFAULT MAP STATE: news, GDELT and country risk on; everything
-    // else off. A globe that opens with every layer lit is not a map of
-    // anything — the reader has to turn things OFF to find the picture,
-    // which is backwards.
+    // DEFAULT MAP STATE: NOTHING ON (owner, 2026-10-18): "When a user opens
+    // the system for the first time, nothing should be on by default; they
+    // have to save to default themselves what they want on by default."
+    // Every group, context, infrastructure and track switch starts off; the
+    // user's saved default (getStartupLayers) or this desk's restored
+    // session is what turns things on. The switches INSIDE a group below
+    // keep their usual values: nothing draws until the group itself is on,
+    // and turning News on should then show the news.
     const [groupsOn, setGroupsOn] = useState(() => Object.fromEntries(
-        // News and alerts on: an alert or a fusion the map does not show is
-        // one nobody sees — the Alerts group was off unless switched on.
-        // Imagery on too: it no longer means "cover the map in satellite
-        // imagery" — that is its own switch (satImageOn), off by default.
-        LAYER_GROUPS.map((g) => [g.key, g.key === "news" || g.key === "alerts" || g.key === "imagery"])))
+        LAYER_GROUPS.map((g) => [g.key, false])))
     // Default OFF. Machine-coded pins are opt-in: the reader should choose
     // to accept them, not discover them mixed in with verified events.
     // CONFIRMED AND UNCONFIRMED ARE SEPARATE SWITCHES because they are
@@ -442,16 +446,18 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // signals a pass raised, the heat detections, and the full satellite
     // base image — which used to come on with the group and hide the map.
     const [imagerySignalsOn, setImagerySignalsOn] = useState(true)
-    // Our assets on the map (GlobeAssetsLayer): on — they are the point.
-    const [assetsOn, setAssetsOn] = useState(true)
-    // The team's live locations (GlobeTeamLayer, pushed as they move): on —
+    // These four stand on their own (no group gates them), so they start
+    // off with everything else; a saved default turns them on.
+    // Our assets on the map (GlobeAssetsLayer).
+    const [assetsOn, setAssetsOn] = useState(false)
+    // The team's live locations (GlobeTeamLayer, pushed as they move) —
     // their own switch, so a desk that hides the register still sees its people.
-    const [teamOn, setTeamOn] = useState(true)
-    // Our safe houses (GlobeSafeHousesLayer): on — where an evacuation leads.
-    const [safeHousesOn, setSafeHousesOn] = useState(true)
+    const [teamOn, setTeamOn] = useState(false)
+    // Our safe houses (GlobeSafeHousesLayer): where an evacuation leads.
+    const [safeHousesOn, setSafeHousesOn] = useState(false)
     // Places public calls name for blockades and other actions
-    // (GlobeEndangeredPlacesLayer): on by default while a call is within 7 days.
-    const [endangeredOn, setEndangeredOn] = useState(() => endangeredDefaultOn())
+    // (GlobeEndangeredPlacesLayer).
+    const [endangeredOn, setEndangeredOn] = useState(false)
     const [satImageOn, setSatImageOn] = useState(false)
     // Default off: it is a specialist reading, and a globe that
     // opens with every layer lit is not a map of anything.
@@ -464,7 +470,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // would bury the rest of the map.
     const [theatresOn, setTheatresOn] = useState({})
     const [frontlineTheatres, setFrontlineTheatres] = useState([])
-    const [contextOn, setContextOn] = useState({ risk: true, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
+    const [contextOn, setContextOn] = useState({ risk: false, frontlines: false, coverage: false, graticule: false, flows: false, aois: false, labels: false })
     // Global Fishing Watch events, per kind. Off by default: they are
     // days old by nature and belong on the map only when asked for.
     const [gfwOn, setGfwOn] = useState({
@@ -571,7 +577,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
      * by-product of another question.
      */
     const [infraOn, setInfraOn] = useState({
-        cables: false, chokepoints: true, ports: true, airfields: true,
+        cables: false, chokepoints: false, ports: false, airfields: false,
         power: false, nautical: false,
         facMilitary: false, facMedical: false, facSecurity: false,
     })
@@ -600,17 +606,18 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
             const saved = getStartupLayers()
             if (!saved) return
             startupApplied.current = true
-            if (saved.clean) {
-                // a first login's clean sheet: every layer off
-                const off = (o) => Object.fromEntries(Object.keys(o).map((k) => [k, false]))
-                setGroupsOn(off); setContextOn(off); setInfraOn(off); setTracksOn(off)
-                return
-            }
             if (saved.groups)  setGroupsOn(saved.groups)
             if (saved.context) setContextOn(saved.context)
             if (saved.infra)   setInfraOn(saved.infra)
             if (saved.tracks)  setTracksOn(saved.tracks)
-            if (saved.subs)    applySubs(saved.subs)
+            // A DEFAULT SAVED BEFORE EVERYTHING STARTED OFF (2026-10-18) opened
+            // with the four stand-alone layers on unless it named them (team
+            // and safe houses it could not name at all). Kept exactly so: a
+            // user's saved default must open as it always has.
+            const subs = Array.isArray(saved.subs) ? saved.subs
+                : { ...(saved.v >= 2 ? {} : STANDALONE_BEFORE_2026_10_18()), ...(saved.subs || {}) }
+            applySubs(subs)
+            if (!Array.isArray(subs)) { setTeamOn(!!subs.team); setSafeHousesOn(!!subs.safeHouses) }
             // severity and time window stay with the session, which brings them back itself
             applyLayerExtrasRef.current({ ...saved, severityFloor: undefined, timeWindow: undefined })
         }
@@ -1380,6 +1387,11 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     }, [])
     const sourceW = sourceDock.open && sourceDock.docked ? sourceDock.width + 10 : 0
     const closedLeftForSource = useRef(false)
+    // FIRST RUN: nothing is on until the user turns it on, so an empty map
+    // says why, quietly, where the layer controls are.
+    const mapEmpty = nothingOn(groupsOn, contextOn, infraOn, gfwOn,
+        { vessels: tracksOn.vessels, aircraft: tracksOn.aircraft },
+        { assetsOn, teamOn, safeHousesOn, endangeredOn, airspaceOn, gfwHeatOn })
     useEffect(() => {
         if (sourceDock.open && sourceDock.docked && !leftMin) {
             const free = window.innerWidth - 48 - 270 - (activeRightOverlayWidth + 12) - sourceW
@@ -1402,6 +1414,14 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                 noticing it. These panes are reached from the rail's tools
                 group now, which is where every other way into a surface
                 already lives. */}
+            {!asCanvas && mapEmpty && leftMin && (
+                <button type="button" className="pane-glass" data-testid="layers-empty-hint" onClick={() => setLeftMin(false)}
+                        style={{ position: "absolute", left: 10, top: 10, zIndex: 24, maxWidth: 300, textAlign: "left",
+                                 border: "1px solid var(--gline)", borderRadius: 6,
+                                 padding: "7px 10px", font: "400 12px/1.45 var(--font)", color: "var(--txt-2)", cursor: "pointer" }}>
+                    Nothing on yet — open Layers, pick what you want, then “save default” to keep it.
+                </button>
+            )}
             {asCanvas ? null : (
             <div className="pane-glass" data-testid="glass-layers-pane" data-open={!leftMin} aria-hidden={leftMin || undefined} style={leftPaneStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)" }}>
@@ -1427,7 +1447,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         <span role="button" tabIndex={0}
                               title="Open the app with exactly these layers next time"
                               onClick={() => {
-                                  saveStartupLayers({ groups: groupsOn, context: contextOn, infra: infraOn, tracks: tracksOn, subs: currentSubs(), gdeltTypes,
+                                  saveStartupLayers({ groups: groupsOn, context: contextOn, infra: infraOn, tracks: tracksOn, subs: { ...currentSubs(), team: teamOn, safeHouses: safeHousesOn }, gdeltTypes,
                                       theatres: onKeys(theatresOn), vessel: layerSnapshot.current().vessel, aircraft: layerSnapshot.current().aircraft })
                                       .then((r) => (r?.ok !== false
                                           ? toast("Saved as your default view", { icon: "i-check" })
@@ -1452,6 +1472,12 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         </button>
                     </div>
                 </div>
+
+                {mapEmpty && (
+                    <div data-testid="layers-empty-hint-pane" style={{ padding: "8px 12px", borderBottom: "1px solid var(--line)", font: "400 12px/1.45 var(--font)", color: "var(--txt-3)" }}>
+                        Nothing on yet — pick layers, then “save default” to keep them.
+                    </div>
+                )}
 
                 {/* Views — §5.2, literal first group in this panel (a
                     genuinely separate structure from the session itself). */}

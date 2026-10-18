@@ -70,7 +70,7 @@ export default function StartupLayersEditor() {
             <p style={{ font: "400 11.5px/1.6 var(--font)", color: "var(--txt-3)", margin: "0 0 10px" }}>
                 {saved
                     ? "The app opens with exactly these switches. Anything unticked starts off."
-                    : "Nothing saved — the app opens with its built-in defaults. Tick what you want, then Save."}
+                    : "Nothing saved — the map opens with nothing on. Tick what you want, then Save."}
             </p>
 
             <div style={{

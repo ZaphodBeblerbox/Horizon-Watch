@@ -39,7 +39,8 @@ export async function theaterHere({ name, lat, lon, height = 450_000 }) {
         const t = await createTheater({
             name: String(name).slice(0, 60), sev: "elevated",
             view: { lat, lon, height },
-            layers: { groups: ["news", "alerts", "maritime"], infra: ["chokepoints", "ports", "airfields"], tracks: ["vessels", "aircraft"] },
+            // nothing on: a new theater starts empty (owner, 2026-10-18)
+            layers: { groups: [], infra: [], tracks: [], context: [], subs: [] },
         })
         window.dispatchEvent(new CustomEvent("akili:theater-created", { detail: { id: t.id } }))
         toast(`Theater “${t.name}” created`, { icon: "i-check" })
