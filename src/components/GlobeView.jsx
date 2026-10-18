@@ -27,6 +27,7 @@ import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeTelegramLayer        from "../globe/GlobeTelegramLayer.jsx"
 import GlobeDemonstrationsLayer  from "../globe/GlobeDemonstrationsLayer.jsx"
+import GlobePoliceActionsLayer   from "../globe/GlobePoliceActionsLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
 import GlobeTelegramMoodLayer from "../globe/GlobeTelegramMoodLayer.jsx"
 import GlobeEndangeredPlacesLayer from "../globe/GlobeEndangeredPlacesLayer.jsx"
@@ -1251,6 +1252,9 @@ export default function GlobeView({
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} limit={1500} />
                 <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={Math.max(48, signalWindowHours || 48)} />
                 <GlobeDemonstrationsLayer enabled={demonstrationsEnabled} />
+                {/* street reports (tear gas, kettles, police moving in): with the
+                    demonstrations layer, and with unrest (on by default), whose pins they replace */}
+                <GlobePoliceActionsLayer enabled={demonstrationsEnabled || unrestEnabled} />
                 <GlobeTelegramMoodLayer enabled={telegramMoodEnabled} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
                 <GlobeEndangeredPlacesLayer enabled={endangeredEnabled} />

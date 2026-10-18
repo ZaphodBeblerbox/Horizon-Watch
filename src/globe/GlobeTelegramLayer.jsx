@@ -66,7 +66,8 @@ export default function GlobeTelegramLayer({ enabled = false, unrest = false, ho
     const covered = useCoveredIds()
     const [allPosts, setPosts] = useState([])
     const [upcoming, setUpcoming] = useState([])
-    const posts = allPosts.filter((p) => (p.category === "unrest" ? unrest : enabled))
+    // street reports are drawn as what they are (GlobePoliceActionsLayer: the gas area, the police lines)
+    const posts = allPosts.filter((p) => !p.street_report && (p.category === "unrest" ? unrest : enabled))
     useEffect(() => {
         if (!unrest) { setUpcoming([]); return undefined }
         let live = true

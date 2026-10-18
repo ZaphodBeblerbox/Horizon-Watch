@@ -1516,7 +1516,36 @@ export function adaptDemoSituation(data = {}) {
     }
 }
 
+/**
+ * A street report (globe/policeActions.js, backend/street_reports.py): tear
+ * gas, a kettle, police moving in … read out of what people wrote, with every
+ * post quoted, translated and linked.
+ */
+export function adaptPoliceAction(data = {}) {
+    const srcs = (Array.isArray(data.sources) ? data.sources : [])
+        .map((s) => ({ source: `Telegram · ${s.channel_title || s.channel || ""}`, url: s.url, time: s.posted_at }))
+    const point = pointOf(data)
+    return {
+        identity: { title: data.title || "Street report", subtitle: "Street report from Telegram · unverified",
+                    entityType: "police_action", subtype: data.tactic || null, sanctionsStatus: null },
+        description: data.detail || null,
+        attributes: compact([
+            attr("Place", data.place || null),
+            attr("Last reported", _when(data.at)),
+            attr("Messages", data.n_messages != null ? `${data.n_messages} in ${data.n_channels || 1} chat${data.n_channels > 1 ? "s" : ""}` : null),
+            attr("Exits closed", Array.isArray(data.exits) && data.exits.length ? String(data.exits.length) : null),
+            attr("Coming from", data.from_place || null),
+            attr("Read by", data.read_by || null),
+            ..._srcAttrs(srcs),
+            attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
+        ]),
+        provenance: { feed: _feed(srcs) || "Telegram", ingestedAt: data.at || null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
 const ADAPTERS = {
+    police_action: adaptPoliceAction,
     vessel: adaptVessel,
     aircraft: adaptAircraft,
     alert: adaptAlert,

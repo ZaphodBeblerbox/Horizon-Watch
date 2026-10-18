@@ -33,6 +33,8 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             "demonstration", "protest_track",
             // The city situation: crowds, their paths, routes, convergence points.
             "demo_crowd", "demo_path", "demo_route", "demo_convergence",
+            // Street reports: tear gas, kettles, police moving in (GlobePoliceActionsLayer).
+            "police_action",
         ].sort())
     })
 

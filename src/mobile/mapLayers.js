@@ -44,6 +44,7 @@ import {
 } from "../globe/demonstrations.js"
 import { MOOD_PATH, MOOD_REFRESH_MS, moodIconUri, moodPoint } from "../globe/telegramMood.js"
 import { SITUATION_PATH, SITUATION_REFRESH_MS, convergenceIcon, situationFeatures } from "../globe/demoSituation.js"
+import { POLICE_PATH, POLICE_REFRESH_MS, policeFeatures, tacticIcon } from "../globe/policeActions.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -596,7 +597,7 @@ async function loadUnrest({ bounds, hours }) {
         })
     }
     for (const p of arr(posts?.posts)) {
-        if (p.category !== "unrest") continue
+        if (p.category !== "unrest" || p.street_report) continue      // street reports: "demonstrations:police"
         feats.push({
             id: p.id, lat: num(p.lat), lon: num(p.lon), iconUri: tgUnrestIcon(), size: TG_SIZE,
             title: p.headline || p.summary_en || "Unrest",
@@ -646,6 +647,14 @@ async function loadDemoMovement({ bounds }) {
 async function loadDemoSituation({ bounds }) {
     const d = await getJson(`${API_BASE}${SITUATION_PATH}`, { ttlMs: SITUATION_REFRESH_MS / 2 })
     return cullLines(situationFeatures(d, Date.now()), normBounds(bounds))
+}
+
+// Street reports (globe/policeActions.js, backend/street_reports.py): tear
+// gas as an area's edge, a kettle as police lines across the square's exits,
+// police moving in as an arrow, each with its mark — one "lines" layer.
+async function loadPoliceActions({ bounds }) {
+    const d = await getJson(`${API_BASE}${POLICE_PATH}`, { ttlMs: POLICE_REFRESH_MS / 2 })
+    return cullLines(policeFeatures(d, Date.now()), normBounds(bounds))
 }
 
 // ── The mood on Telegram, as signals (globe/telegramMood.js) ──────────────
@@ -1453,6 +1462,13 @@ export const PHONE_LAYERS = [
         key: "demonstrations:situation", label: "Crowds now & likely convergence (estimate)", group: G.news,
         defaultOn: false, kind: "lines", minZoom: 0, refreshMs: SITUATION_REFRESH_MS,
         legendIcon: convergenceIcon("").uri, load: loadDemoSituation,
+    },
+    // Owner, 2026-10-18: "ça gaze à Répu", "ça nasse à Répu" on the map —
+    // on by default, read every 30 s.
+    {
+        key: "demonstrations:police", label: "Street reports: tear gas, kettles, police", group: G.news,
+        defaultOn: true, kind: "lines", minZoom: 0, refreshMs: POLICE_REFRESH_MS,
+        legendIcon: tacticIcon("kettle").uri, load: loadPoliceActions,
     },
     {
         // spikes in the mood, and each single call to violence (owner, 2026-10-18)
