@@ -45,7 +45,6 @@ import json
 import math
 import re
 import sqlite3
-import threading
 import time
 import unicodedata
 
@@ -902,13 +901,14 @@ def build(rows: list[dict]) -> list[dict]:
     return out
 
 
-_cache: dict = {}
-_lock = threading.Lock()
+# one read serves every caller at once (shared_cache): this is asked by the
+# same feeds, layers and per-user passes as street_reports.signals
+from shared_cache import SharedCache  # noqa: E402
+_SIGNALS = SharedCache("telegram-signals", ttl=CACHE_S, max_stale=120)
 
 
 def invalidate() -> None:
-    with _lock:
-        _cache.clear()
+    _SIGNALS.clear()
 
 
 def _why_of(con, chan: str, topic_title: str | None) -> str | None:
@@ -952,28 +952,23 @@ def signals_from(con, hours: int = SIGNAL_HOURS) -> list[dict]:
 
 def signals(hours: int = SIGNAL_HOURS, db_path: str | None = None) -> list[dict]:
     """Unified signals of the last `hours`, newest first; cached CACHE_S."""
-    key = (hours, db_path)
-    with _lock:
-        hit = _cache.get(key)
-        if hit and time.time() - hit[0] < CACHE_S:
-            return hit[1]
-    import telegram_ingest as tg
-    con = sqlite3.connect(db_path, timeout=30) if db_path else tg._con()
-    try:
-        out = signals_from(con, hours)
-    finally:
-        con.close()
-    # a call whose gathering is over (or whose own time ran out) is no longer
-    # a signal anywhere — map, Desk, notifications (protest_status.call_live,
-    # owner 2026-10-19); signals_from stays whole for the protests' own reading
-    try:
-        import protest_status
-        out = protest_status.live_signals(out)
-    except Exception as e:                                     # noqa: BLE001
-        print(f"[telegram-signals] error: expiry: {type(e).__name__}: {e}", flush=True)
-    with _lock:
-        _cache[key] = (time.time(), out)
-    return out
+    def _build():
+        import telegram_ingest as tg
+        con = sqlite3.connect(db_path, timeout=30) if db_path else tg._con()
+        try:
+            out = signals_from(con, hours)
+        finally:
+            con.close()
+        # a call whose gathering is over (or whose own time ran out) is no longer
+        # a signal anywhere — map, Desk, notifications (protest_status.call_live,
+        # owner 2026-10-19); signals_from stays whole for the protests' own reading
+        try:
+            import protest_status
+            out = protest_status.live_signals(out)
+        except Exception as e:                                     # noqa: BLE001
+            print(f"[telegram-signals] error: expiry: {type(e).__name__}: {e}", flush=True)
+        return out
+    return _SIGNALS.get((hours, db_path), _build)
 
 
 def source_keys(sigs: list[dict]) -> set:

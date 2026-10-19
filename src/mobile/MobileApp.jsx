@@ -59,7 +59,7 @@ export default function MobileApp() {
     const unread = usePoll("/api/chat/unread", 30_000, (d) => d?.unread ?? 0)
     // Check in like the desktop does, so the phone counts as online and
     // keeps "last seen" current. The list itself isn't shown here.
-    useOnlineUsers("phone")
+    useOnlineUsers("phone", { listen: false })
     const connLine = connectionLine(useConnection())
     const go =(t, opts) => { setMenu(false); if (opts?.asset) setAssetOpen(opts.asset); setTab(t) }
     useEffect(() => { const h = (e) => go(e.detail); window.addEventListener("m2:go", h); return () => window.removeEventListener("m2:go", h) }, []) // eslint-disable-line react-hooks/exhaustive-deps

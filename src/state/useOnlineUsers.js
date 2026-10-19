@@ -12,6 +12,7 @@
  */
 import { useEffect, useState } from "react"
 import { getPresence, presenceHeartbeat } from "../lib/collabApi.js"
+import { guardPoll } from "../lib/pollGuard.js"
 
 export const ONLINE_KEY = "app:online"
 const EVERY_MS = 15_000
@@ -23,26 +24,29 @@ export function othersOnline(users, meId) {
         .sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)))
 }
 
-export default function useOnlineUsers(meId) {
+/** `listen: false` only checks in: the phone doesn't show the list, and
+ * reading it back cost every phone 412 KB every 15 s (2026-10-19). */
+export default function useOnlineUsers(meId, { listen = true } = {}) {
     const [users, setUsers] = useState([])
     useEffect(() => {
         if (!meId) return undefined
         let live = true
-        const tick = async () => {
-            if (typeof document !== "undefined" && document.visibilityState === "hidden") return
+        // never two check-ins out at once, none while hidden (lib/pollGuard.js)
+        const tick = guardPoll(async () => {
             try {
                 await presenceHeartbeat(ONLINE_KEY)
+                if (!listen) return
                 const d = await getPresence(ONLINE_KEY)
                 if (live) setUsers(othersOnline(d?.users, meId))
             } catch { /* offline or signed out: show nobody rather than stale faces */
                 if (live) setUsers([])
             }
-        }
+        })
         tick()
         const t = setInterval(tick, EVERY_MS)
         const onVis = () => { if (document.visibilityState === "visible") tick() }
         document.addEventListener("visibilitychange", onVis)
         return () => { live = false; clearInterval(t); document.removeEventListener("visibilitychange", onVis) }
-    }, [meId])
+    }, [meId, listen])
     return users
 }

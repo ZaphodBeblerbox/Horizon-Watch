@@ -863,8 +863,11 @@ export default function App() {
     const [plxToast, setPlxToast] = useState(null)
     const [plxAlertsOpen, setPlxAlertsOpen] = useState(false)
     const plxOpenedAt = useRef(new Date().toISOString().slice(11, 16) + "Z")
-    // The menu bar's avatars: colleagues actually signed in now.
-    const onlineUsers = useOnlineUsers(getCurrentUser()?.id)
+    // The menu bar's avatars: colleagues actually signed in now. Not on the
+    // phone: this component stays mounted under MobileApp, which checks in
+    // by itself — so a phone checked in twice and downloaded the list it
+    // never shows (2026-10-19, browser run: 8 POST + 4 GET in 45 s).
+    const onlineUsers = useOnlineUsers(phoneMode ? null : getCurrentUser()?.id)
 
     useEffect(() => {
         // A6.4 — one toast at a time, cleared 2.6 s after the text changes.
