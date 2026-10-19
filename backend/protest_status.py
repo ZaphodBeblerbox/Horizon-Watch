@@ -1019,7 +1019,9 @@ def read_evidence(con, now: _dt.datetime, posts: list[dict], announced: set) -> 
     try:
         import street_reports as srp
         for s in srp.signals(min(24.0, KEEP_PAST_H)):
-            if s.get("lat") is None:
+            # a report past its own validity stays on the map a while, but
+            # says nothing more about whether people are still there
+            if s.get("lat") is None or not s.get("current", True):
                 continue
             ev.append({"at": s.get("at"), "lat": s["lat"], "lon": s["lon"], "kind": "street_report",
                        "dispersal": bool(DISPERSE_WORDS.search(fold(s.get("summary")))),

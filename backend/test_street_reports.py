@@ -185,6 +185,9 @@ def test_captionless_video_right_after_a_report_joins_it():
     b = _post("", mid=11, minutes_ago=5, media="video", thumb="x.jpg")
     s = sr.build([a, b], now=NOW, chats=PARIS)
     assert len(s) == 1 and s[0]["media"] == "video" and s[0]["thumb_url"] == "/api/telegram/media/x.jpg"
+    # the video plays from the message that carries it, not the words before it
+    assert s[0]["video_url"] == "/api/telegram/video/GJ2026IDF/11"
+    assert s[0]["sources"][0]["media_msg_id"] == 11 and s[0]["sources"][0]["video_url"] == "/api/telegram/video/GJ2026IDF/11"
 
 
 def test_same_tactic_same_place_is_one_signal_across_chats():
@@ -195,9 +198,14 @@ def test_same_tactic_same_place_is_one_signal_across_chats():
     assert s[0]["severity"] == "critical"
 
 
-def test_old_reports_fade_out():
-    assert sr.build([_post("ça gaze à Répu", minutes_ago=90)], now=NOW, chats=PARIS) == []
-    assert sr.build([_post("ça nasse à Répu", minutes_ago=90)], now=NOW, chats=PARIS)
+def test_a_report_stays_after_its_validity_but_is_no_longer_current():
+    # owner, 2026-10-19: police at Châtelet an hour ago must not be dimmed or
+    # gone; the report stays for the read window, `current` only within its validity
+    gas = sr.build([_post("ça gaze à Répu", minutes_ago=90)], now=NOW, chats=PARIS)
+    assert len(gas) == 1 and gas[0]["current"] is False and gas[0]["valid_min"] == 60
+    assert sr.build([_post("ça nasse à Répu", minutes_ago=90)], now=NOW, chats=PARIS)[0]["current"] is True
+    assert sr.build([_post("ça gaze à Répu", minutes_ago=7 * 60)], now=NOW, chats=PARIS) == []      # past the 6 h window
+    assert sr.build([_post("ça gaze à Répu", minutes_ago=90)], now=NOW, chats=PARIS, keep_min=60) == []
 
 
 def test_regional_chat_reads_its_own_city_first():

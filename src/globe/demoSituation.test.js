@@ -41,9 +41,11 @@ describe("demo situation — words and marks", () => {
         expect(ageLabel(0.4)).toBe("just now")
         expect(ageLabel(12)).toBe("12 min ago")
         expect(ageLabel(80)).toBe("1 h 20 ago")
+        // never dimmed within hours (owner, 2026-10-19), never gone while the server has it
         expect(crowdAlpha(0)).toBe(1)
-        expect(crowdAlpha(90)).toBeGreaterThan(crowdAlpha(170))
-        expect(crowdAlpha(1000)).toBe(0.35)
+        expect(crowdAlpha(90)).toBe(1)
+        expect(crowdAlpha(170)).toBe(1)
+        expect(crowdAlpha(5000)).toBe(0.55)
         expect(scoreLabel(0.724)).toBe("est. 72%")
     })
 
@@ -93,7 +95,7 @@ describe("demo situation — features", () => {
         expect(conv.raw.estimate).toBe(true)
         expect(conv.marker.iconAnchor[1]).toBe(17)
         const fresh = fs.find((f) => f.id === "sit-crowd-crowd-a"), old = fs.find((f) => f.id === "sit-crowd-crowd-b")
-        expect(fresh.alpha).toBeGreaterThan(old.alpha)
+        expect(fresh.alpha).toBe(1); expect(old.alpha).toBe(1)          // both within hours: neither dimmed (owner, 2026-10-19)
         expect(fresh.raw.url).toBe("https://t.me/chan/2")
         expect(situationFeatures(null)).toEqual([])
     })

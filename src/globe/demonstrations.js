@@ -8,13 +8,14 @@
  *     map and the planner never disagree;
  *   tracks — protester movement RECONSTRUCTED from located Telegram reports
  *     (A said "heading to Bastille", B is at Bastille 40 min later): a line
- *     through the reported places in time order, older hops fainter, an
+ *     through the reported places in time order, an
  *     arrowhead on the latest and "last reported HH:MM" at its head. Nobody
  *     tracks the crowd, and every label says so.
  *
  * Colour lives in the icons and the lines only; every word is plain.
  */
 import { hazardLine } from "../routes/view.js"
+import { freshAlpha } from "./freshness.js"
 import { itemStatusLabel } from "./protests.js"
 
 export const DEMOS_PATH = "/api/routes/demonstrations"
@@ -112,11 +113,10 @@ export function demoRaw(h, now = Date.now()) {
 
 // ── reconstructed movement ────────────────────────────────────────────────
 
-/** A hop's strength by age: full when fresh, half at 90 min, never below a quarter. */
+/** A hop's strength by age: the shared rule (freshness.js) — never dimmed
+ *  within hours (owner, 2026-10-19); the arrowhead says which is latest. */
 export function segmentAlpha(ageMin) {
-    const a = Number(ageMin)
-    if (!Number.isFinite(a) || a <= 0) return 1
-    return Math.max(0.25, Math.min(1, 0.5 ** (a / 90)))
+    return Math.max(freshAlpha(ageMin), 0.55)
 }
 
 export function trackRgba(hex, a) {

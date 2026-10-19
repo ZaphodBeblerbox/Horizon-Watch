@@ -45,7 +45,12 @@ police lines across every exit street of the named square (exits from
 OpenStreetMap, precomputed in seed/square_exits.json by
 build_square_exits.py; radial exits when the place is not one of them);
 police moving in is an arrow (from the street they came by, when said)
-or a marker. Each fades with age and is gone after its VALID_MIN.
+or a marker. A report is CURRENT for its VALID_MIN (its kettle bars, gas
+area and arrow are drawn only then); its mark stays at full strength for
+the hours after (owner, 2026-10-19: "the police interventions at Châtelet
+were dimmer than the other icons, although they happened literally 1 hour
+ago") and leaves with the read window (LOOKBACK_H, at most 24 h:
+demo_freshness.MAX_AGE_H).
 """
 from __future__ import annotations
 
@@ -692,14 +697,23 @@ def _same_place(a: dict, b: dict) -> bool:
     return metres(a["lat"], a["lon"], b["lat"], b["lon"]) <= MERGE_M
 
 
+def _video_url(channel: str, msg_id) -> str:
+    """/api/telegram/video/… for a post's video (a channel without a username as Telegram's -100<id>)."""
+    seg = f"-100{str(channel)[2:]}" if str(channel).startswith("c/") else str(channel)
+    return f"/api/telegram/video/{seg}/{msg_id}"
+
+
 def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime | None = None,
-          chats: dict | None = None) -> list[dict]:
+          chats: dict | None = None, keep_min: float | None = None) -> list[dict]:
     """Posts (dicts: channel, msg_id, channel_title, posted_at, text, media,
     thumb, summary_en, lat, lon, precision, place, country_code, reply_to)
     → street-report signals, newest first. Pure: tested without a
     database. `situations`: {(channel, msg_id): [model events]}; `chats`:
-    {channel: {"city": …, "protest": bool}}."""
+    {channel: {"city": …, "protest": bool}}. A report is kept for
+    `keep_min` (default LOOKBACK_H) or its own validity if longer, with
+    `current` saying whether it is still within that validity."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
+    keep_min = LOOKBACK_H * 60 if keep_min is None else keep_min
     situations = situations or {}
     chats = chats or {}
     posts = sorted(posts, key=lambda p: p["posted_at"])
@@ -739,7 +753,7 @@ def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime |
         kind = g["kind"]
         verb, valid_min, sev = TACTICS[kind]
         age = (now - g["last"]).total_seconds() / 60
-        if age > valid_min or age < -5:
+        if age > max(valid_min, keep_min) or age < -5:
             continue
         rs = g["reps"]
         first, last = rs[0]["post"], rs[-1]["post"]
@@ -768,7 +782,10 @@ def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime |
                 continue
             ftg = [f for f in r.get("footage") or []]
             footage += ftg
-            media = p.get("media") if (p.get("media") or "none") != "none" else (ftg[0].get("media") if ftg else "none")
+            # the picture or video may be the captionless message right after the words
+            own = (p.get("media") or "none") != "none"
+            mp = p if own else (ftg[0] if ftg else None)
+            media = mp.get("media") if mp else "none"
             thumb = p.get("thumb") or next((f.get("thumb") for f in ftg if f.get("thumb")), None)
             sources.append({
                 "channel": p["channel"], "channel_title": p.get("channel_title") or p["channel"], "msg_id": p["msg_id"],
@@ -778,6 +795,8 @@ def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime |
                 "translated_by": "model" if (p.get("summary_en") or r.get("happening")) else "rule",
                 "words": r.get("words") or None, "media": media or "none",
                 "thumb_url": f"/api/telegram/media/{thumb}" if thumb else None,
+                "media_msg_id": mp["msg_id"] if mp else None,
+                "video_url": _video_url(mp["channel"], mp["msg_id"]) if mp and media == "video" else None,
                 "url": None if str(p["channel"]).startswith("c/") else f"https://t.me/{p['channel']}/{p['msg_id']}",
                 "read_by": r.get("source"),
             })
@@ -795,10 +814,11 @@ def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime |
             "country_code": (cc or "").lower() or None, "lat": a.get("lat"), "lon": a.get("lon"),
             "precision": a.get("precision"),
             "first_at": first["posted_at"], "at": last["posted_at"], "hhmm": hhmm, "age_min": round(max(0.0, age), 1),
-            "valid_min": valid_min, "severity": sev,
+            "valid_min": valid_min, "current": age <= valid_min, "severity": sev,
             "n_messages": n, "n_channels": len(chans), "chats": titles, "channels": chans,
             "sources": sources, "media": next((s["media"] for s in reversed(sources) if s["media"] != "none"), "none"),
             "thumb_url": next((s["thumb_url"] for s in reversed(sources) if s["thumb_url"]), None),
+            "video_url": next((s["video_url"] for s in reversed(sources) if s["video_url"]), None),
             "url": latest["url"] or sources[0]["url"],
             "read_by": "+".join(sorted({x for s in sources for x in str(s["read_by"] or "rule").split("+")})),
             "vague": vague, "note": NOTE,
@@ -848,6 +868,7 @@ def chat_contexts(chans: list[str]) -> dict:
 
 
 def read(con, hours: float = LOOKBACK_H, now: _dt.datetime | None = None) -> list[dict]:
+    """Every street report of the last `hours`, kept that long."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     cutoff = (now - _dt.timedelta(hours=hours)).isoformat()
     prev = con.row_factory
@@ -884,7 +905,7 @@ def read(con, hours: float = LOOKBACK_H, now: _dt.datetime | None = None) -> lis
                 keep.append(r)
     finally:
         con.row_factory = prev
-    return build(keep, sits, now, chat_contexts(list({r["channel"] for r in keep})))
+    return build(keep, sits, now, chat_contexts(list({r["channel"] for r in keep})), keep_min=hours * 60)
 
 
 def signals(hours: float = LOOKBACK_H, db_path: str | None = None) -> list[dict]:
@@ -929,8 +950,8 @@ def as_post(sig: dict) -> dict:
         "posted_at": sig["at"], "first_at": sig["first_at"], "event_type": "unrest", "category": "unrest",
         "place": sig["place"], "precision": sig.get("precision") or "site", "country_code": sig["country_code"],
         "lat": sig["lat"], "lon": sig["lon"], "geocoded_as": sig["place"],
-        "media": sig["media"], "thumb_url": sig["thumb_url"], "url": sig["url"],
-        "also_reported_by": sig["chats"][1:], "views": None, "role": "group", "party": None,
+        "media": sig["media"], "thumb_url": sig["thumb_url"], "video_url": sig.get("video_url"), "url": sig["url"],
+        "current": sig.get("current", True), "also_reported_by": sig["chats"][1:], "views": None, "role": "group", "party": None,
         "claim": False, "first_hand": True, "msg_id": first["msg_id"],
         "severity_tier": SEV_TIER.get(sig["severity"], "elevated"), "signal_severity": sig["severity"],
         "graphic": False, "on_map": sig["lat"] is not None, "signal_kind": "street_report", "tactic": sig["tactic"],
