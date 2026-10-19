@@ -40,11 +40,14 @@ describe("geometry helpers", () => {
         // the barbs point back toward where the police came from
         expect(metres(head[0][0], head[0][1], from.lat, from.lon)).toBeLessThan(metres(REPU.lat, REPU.lon, from.lat, from.lon))
     })
-    it("reportAlpha fades with age and ends at the report's life", () => {
+    it("reportAlpha: never dimmed for hours (owner, 2026-10-19: Châtelet police an hour ago), gone after a day", () => {
         expect(reportAlpha(0, 60)).toBe(1)
-        expect(reportAlpha(30, 60)).toBeCloseTo(0.65, 2)
-        expect(reportAlpha(59, 60)).toBeGreaterThanOrEqual(0.3)
-        expect(reportAlpha(61, 60)).toBe(0)
+        expect(reportAlpha(30, 60)).toBe(1)
+        expect(reportAlpha(61, 60)).toBe(1)          // past its own life: still full strength
+        expect(reportAlpha(170, 60)).toBe(1)
+        expect(reportAlpha(12 * 60, 60)).toBeGreaterThanOrEqual(0.55)
+        expect(reportAlpha(12 * 60, 60)).toBeLessThan(1)
+        expect(reportAlpha(25 * 60, 60)).toBe(0)
     })
     it("tacticIcon: a data-URI SVG with the words, no monospace", () => {
         const ic = tacticIcon("tear_gas", "Tear gas · 17:55")
@@ -70,6 +73,9 @@ describe("policeFeatures", () => {
           ...REPU, at: at(2), hhmm: "17:58", valid_min: 60, from: { lat: 48.8705, lon: 2.3610 }, from_place: "Boulevard de Magenta",
           sources: [src("les CRS arrivent par le bd Magenta", { media: "video" })] },
         { id: "old", tactic: "tear_gas", title: "Tear gas used at Bastille", lat: 48.8532, lon: 2.3692, at: at(90), valid_min: 60, sources: [] },
+        { id: "chatelet", tactic: "police_arrival", title: "Police moving in at Châtelet", lat: 48.8576, lon: 2.3472, at: at(55),
+          hhmm: "17:05", valid_min: 60, from: { lat: 48.86, lon: 2.35 }, sources: [src("Belek a vous Chatelet la bac partout")] },
+        { id: "day", tactic: "arrests", title: "Arrests at Bastille", lat: 48.8532, lon: 2.3692, at: at(25 * 60), valid_min: 90, sources: [] },
         { id: "nowhere", tactic: "arrests", title: "Arrests", lat: null, lon: null, at: at(1), valid_min: 90, sources: [] },
     ] }
     const f = policeFeatures(data, NOW)
@@ -88,12 +94,15 @@ describe("policeFeatures", () => {
         expect(decodeURIComponent(mark.marker.iconUri)).toContain("Kettled — exits blocked (reported 17:50)")
     })
     it("police moving in is an arrow from the street they came by", () => {
-        const [a] = byType("police_arrow")
+        const a = f.find((x) => x.id === "pol-arrow-p")
         expect(a.coords).toHaveLength(2)
         expect(a.coords[0][1]).toEqual([REPU.lat, REPU.lon])
     })
-    it("expired and unplaced reports are not drawn", () => {
-        expect(f.some((x) => x.id.endsWith("-old"))).toBe(false)
+    it("past its own life a report keeps its mark but not its area; a day old or unplaced it is not drawn", () => {
+        expect(f.some((x) => x.id === "pol-gas-old")).toBe(false)
+        expect(f.find((x) => x.id === "pol-mark-old").alpha).toBe(1)
+        expect(f.find((x) => x.id === "pol-mark-old").raw.current).toBe(false)
+        expect(f.some((x) => x.id.endsWith("-day"))).toBe(false)
         expect(f.some((x) => x.id.endsWith("-nowhere"))).toBe(false)
     })
     it("every feature opens a card quoting the post with its translation and link", () => {
@@ -103,10 +112,12 @@ describe("policeFeatures", () => {
         expect(mark.raw.detail).toContain("https://t.me/GJ2026IDF/1")
         expect(mark.raw.url).toBe("https://t.me/GJ2026IDF/1")
     })
-    it("older marks are fainter", () => {
-        const g = f.find((x) => x.id === "pol-mark-g"), k = f.find((x) => x.id === "pol-mark-k")
-        expect(g.alpha).toBeGreaterThan(k.alpha - 0.2)
-        expect(f.find((x) => x.id === "pol-mark-p").alpha).toBeGreaterThan(g.alpha)
+    it("a mark of the last hours is as strong as its peers: police at Châtelet 55 min ago is not dimmed", () => {
+        const marks = f.filter((x) => x.type === "police_mark")
+        expect(marks.map((x) => x.alpha)).toEqual(marks.map(() => 1))
+        const c = f.find((x) => x.id === "pol-mark-chatelet")
+        expect(decodeURIComponent(c.marker.iconUri)).toContain('opacity="1"')
+        expect(f.some((x) => x.id === "pol-arrow-chatelet")).toBe(true)      // still current: its arrow too
     })
     it("the card lists the closed exits", () => {
         const k = f.find((x) => x.id === "pol-mark-k")

@@ -23,6 +23,7 @@ import PlaceModel from "../../assets/PlaceModel.jsx"
 import CountryFlag from "../../components/CountryFlag.jsx"
 import { factionCountry } from "../../globe/frontlineClaims.js"
 import ProtestDetail from "../../inspector/ProtestDetail.jsx"
+import ReportMedia from "../../components/ReportMedia.jsx"
 import { itemStatusLabel } from "../../globe/protests.js"
 
 // Severity is an ICON's colour (a diamond, a dot), never a word's: the phone's
@@ -243,7 +244,10 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
             {s.kind === "endangered_place" && <div style={{ marginBottom: 12 }}><PlaceModel key={s.id} place={s} height={210} /></div>}
             {/* AN ANNOUNCED PROTEST: where it stands, the crowd, the photos and videos from there */}
             {s.kind === "protest" && <ProtestDetail protest={s} phone />}
-            {(s.media === "video" || s.thumb_url) && s.channel && <div style={{ margin: "0 -14px 10px" }}><TelegramMedia post={s} maxHeight="46vh" radius="0" /></div>}
+            {/* A STREET REPORT: the pictures and videos of every post behind it, each opening the real thing */}
+            {(s.kind === "police_action" || s.street_report) && <ReportMedia item={s} phone />}
+            {!(s.kind === "police_action" || s.street_report) && (s.media === "video" || s.thumb_url) && s.channel
+                && <div style={{ margin: "0 -14px 10px" }}><TelegramMedia post={s} maxHeight="46vh" radius="0" /></div>}
             {s.kind === "strike_event"
                 ? <div style={{ marginBottom: 10 }}><StrikeSourceMedia event={s} /></div>
                 : xs.map((u) => <XPost key={u} url={u} />)}

@@ -18,6 +18,7 @@ import TelegramMedia from "../components/TelegramMedia.jsx"
 import XPost from "../components/XPost.jsx"
 import SourceLink from "../components/SourceLink.jsx"
 import { agoLabel } from "../utils/formatTime.js"
+import { dropStaleDemos } from "../globe/freshness.js"
 
 const SEV = { critical: "#E5484D", high: "#F5A524", significant: "#F5A524", elevated: "#F5A524", moderate: "#8FB4E8" }
 // "signal" is the backend's kind for our own alerts
@@ -141,7 +142,7 @@ export default function GeneralFeed({ onMap, onShare, compact = false, keep = nu
     useEffect(() => {
         let live = true
         setItems(null); setFresh([])
-        get().then((d) => { if (live) { setItems(d.items || []); setNext(d.next) } }).catch(() => live && setItems([]))
+        get().then((d) => { if (live) { setItems(dropStaleDemos(d.items || [])); setNext(d.next) } }).catch(() => live && setItems([]))
         return () => { live = false }
     }, [kinds]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -187,7 +188,7 @@ export default function GeneralFeed({ onMap, onShare, compact = false, keep = nu
         get(next).then((d) => {
             // an event already shown (as itself or as one of a card's other
             // reports) is not shown again on the next page
-            setItems((cur) => { const have = shownIds(cur); return [...(cur || []), ...(d.items || []).filter((x) => !have.has(x.id))] })
+            setItems((cur) => { const have = shownIds(cur); return [...(cur || []), ...dropStaleDemos(d.items || []).filter((x) => !have.has(x.id))] })
             setNext(d.next)
         }).finally(() => setLoading(false))
     }, [next, loading]) // eslint-disable-line react-hooks/exhaustive-deps

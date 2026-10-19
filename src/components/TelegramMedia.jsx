@@ -52,7 +52,7 @@ function SensitiveCover({ still, maxHeight, radius, onShow }) {
 
 export function videoSrc(post) {
     // the server says where the video is (private chats too: "~u<id>")
-    if (post?.video_url) return `${API_BASE}${post.video_url}`
+    if (post?.video_url) return abs(post.video_url)
     const chan = post?.channel
     const mid = post?.msg_id ?? String(post?.id || "").split("-").pop()
     if (!chan || !mid) return null

@@ -417,6 +417,10 @@ def snapshot(now: _dt.datetime | None = None) -> dict:
         import protest_status as ps
         out["protests"] = ps.snapshot(now)["protests"]
         out["demonstrations"] = status_hazards(out["demonstrations"], out["protests"])
+        # a protest whose last activity is over 24 h old is off the map and
+        # the cards (demo_freshness.py; the statistics count it elsewhere)
+        import demo_freshness as dfr
+        out["protests"] = [p for p in out["protests"] if not dfr.stale({**p, "kind": "protest"}, t)]
     except Exception as ex:                                    # noqa: BLE001
         out["protests"] = []
         print(f"[demonstrations] error: protests: {type(ex).__name__}: {ex}", flush=True)

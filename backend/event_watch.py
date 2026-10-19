@@ -375,7 +375,11 @@ def cards_for(uid: str, now: _dt.datetime | None = None) -> list[dict]:
         cards += ep.cards_for(c, now)
     except Exception as e:                                     # noqa: BLE001
         print(f"[endangered] error: cards for {uid}: {type(e).__name__}: {e}", flush=True)
-    return cards
+    # a demonstration whose last activity is over 24 h old is not a card any
+    # more (owner, 2026-10-19; demo_freshness.py): announcements and protests
+    import demo_freshness as dfr
+    return [x for x in cards if not ((x.get("kind") == "announcement" or str(x.get("id") or "").startswith("protest:"))
+                                     and dfr.stale({**x, "kind": "announcement"}, now))]
 
 
 def notifications_for(uid: str | None) -> list[dict]:

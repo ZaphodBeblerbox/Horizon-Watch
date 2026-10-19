@@ -360,6 +360,11 @@ def feed(db_path: str, before: str | None = None, limit: int = 40, kinds: tuple 
             nxt.append(f"{_CODE[k]}={min(i['at'] for i in got)}")
     for e in page:
         e.pop("precise", None)
+    # a demonstration's card whose last activity is over 24 h old is off the
+    # General feed (demo_freshness.py); the cursor above still walks past it
+    import demo_freshness
+    page = [e for e in page if not demo_freshness.stale(
+        {**e, "kind": None, "at": max([e.get("at") or "", *((a.get("at") or "") for a in e.get("also") or [])])})]
     return {"items": page, "next": "|".join(nxt) or None}
 
 

@@ -1360,7 +1360,10 @@ def published(hours: int = 72) -> list[dict]:
                             + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
         })
         seen[key] = out[-1]
-    return with_signals(out, hours, located_only=True)
+    # a demonstration's post whose last activity is over 24 h old is off the
+    # map and the notifications (demo_freshness.py; statistics read the table)
+    import demo_freshness
+    return demo_freshness.keep(with_signals(out, hours, located_only=True))
 
 
 def with_signals(out: list[dict], hours: int, located_only: bool = False, before: str | None = None,
@@ -1431,8 +1434,13 @@ def feed(before: str | None = None, limit: int = 40) -> dict:
     # this page's span so paging neither repeats nor skips them.
     full = len(out) == limit
     out = with_signals(out, 72, before=before, floor=out[-1]["posted_at"] if full else "")[:limit]
+    nxt = out[-1]["posted_at"] if out and (full or len(out) == limit) else None
+    # a demonstration's post whose last activity is over 24 h old leaves the
+    # Desk (demo_freshness.py); the cursor still walks past it
+    import demo_freshness
+    out = demo_freshness.keep(out)
     _protest_status(out)
-    return {"posts": out, "next": out[-1]["posted_at"] if out and (full or len(out) == limit) else None}
+    return {"posts": out, "next": nxt}
 
 
 # Worth interrupting for: a party claiming it struck, attacked, intercepted

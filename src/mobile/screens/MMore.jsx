@@ -35,6 +35,7 @@ import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 import { locate } from "../../location/geo.js"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
 import PushDevices from "../../notify/PushDevices.jsx"
+import { dropStaleDemos } from "../../globe/freshness.js"
 
 const EXPOSURE = { high: ["High exposure", "#E5484D"], elevated: ["Elevated", "#F5A524"], low: ["Low", "#8FB4E8"], quiet: ["Quiet", "#4CAF7A"], unknown: ["No position", "#9AA9BC"] }
 const isAdmin = () => { try { const u = getCurrentUser(); return !!u?.is_super_admin || String(u?.role || "").toLowerCase() === "admin" } catch { return false } }
@@ -217,7 +218,7 @@ export function MAssets({ onShowOnMap, initial }) {
 }
 
 export function MAlerts({ onShowOnMap, onOpen, focus = null }) {
-    const all = usePoll("/api/notifications?limit=60", 30_000, (d) => arr(d?.items ?? d))
+    const all = usePoll("/api/notifications?limit=60", 30_000, (d) => dropStaleDemos(arr(d?.items ?? d)))
     // in the theater you are looking at (mobile/theaterScope.js); the one opened from its notification always shows
     const mineW = useMine()
     const scope = useTheaterScope()

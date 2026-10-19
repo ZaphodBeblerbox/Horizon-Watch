@@ -1,7 +1,8 @@
 /**
  * GlobePoliceActionsLayer.jsx — street reports on the globe, part of
  * "Demonstrations, live" (mounted beside GlobeDemonstrationsLayer with the
- * same switch). Read every 30 s while on from
+ * same switch). Read every 15 s while anything is under way, every 2 min
+ * when nothing is (demoLive.js), from
  * GET /api/routes/demonstrations/street (backend/street_reports.py); drawn by
  * globe/policeActions.js, shared with the phone: tear gas as a faint area,
  * a kettle as police lines across the square's exit streets, police moving in
@@ -13,7 +14,8 @@ import { Entity, useCesium } from "resium"
 import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference, PolylineDashMaterialProperty } from "cesium"
 import API_BASE from "../apiBase.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { POLICE_PATH, POLICE_REFRESH_MS, policeFeatures } from "./policeActions.js"
+import { POLICE_PATH, policeFeatures } from "./policeActions.js"
+import { LIVE_MS, livePoll } from "./demoLive.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
 export default function GlobePoliceActionsLayer({ enabled = false }) {
@@ -23,14 +25,12 @@ export default function GlobePoliceActionsLayer({ enabled = false }) {
 
     useEffect(() => {
         if (!enabled) { setData(null); return undefined }
-        let live = true
-        const load = () => fetch(`${API_BASE}${POLICE_PATH}`, { credentials: "include" })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (live && d) { setData(d); setNowMs(Date.now()) } })
-            .catch(() => { /* keep the last reports */ })
-        load()
-        const iv = setInterval(load, POLICE_REFRESH_MS)
-        return () => { live = false; clearInterval(iv) }
+        return livePoll(`${API_BASE}${POLICE_PATH}`, (d) => { setData(d); setNowMs(Date.now()) })
+    }, [enabled])
+    useEffect(() => {
+        if (!enabled) return undefined
+        const iv = setInterval(() => setNowMs(Date.now()), LIVE_MS)
+        return () => clearInterval(iv)
     }, [enabled])
 
     const feats = useMemo(() => policeFeatures(data, nowMs), [data, nowMs])

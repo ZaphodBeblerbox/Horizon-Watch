@@ -50,10 +50,11 @@ describe("demonstrations — points", () => {
 })
 
 describe("demonstrations — reconstructed movement", () => {
-    it("fades older hops and never drops one", () => {
+    it("hops of the last hours are not dimmed, and none is dropped", () => {
         expect(segmentAlpha(0)).toBe(1)
-        expect(segmentAlpha(90)).toBeCloseTo(0.5)
-        expect(segmentAlpha(1000)).toBe(0.25)
+        expect(segmentAlpha(90)).toBe(1)
+        expect(segmentAlpha(1000)).toBeGreaterThanOrEqual(0.55)
+        expect(segmentAlpha(5000)).toBe(0.55)
         expect(trackRgba("#F5A524", 0.5)).toBe("rgba(245,165,36,0.5)")
     })
     it("puts the arrowhead at the latest place, pointing on", () => {
@@ -73,7 +74,7 @@ describe("demonstrations — reconstructed movement", () => {
         expect(last.latest).toBe(true)
         expect(last.coords).toHaveLength(2)                 // shaft and arrowhead, as parts
         expect(last.coords[1]).toHaveLength(3)
-        expect(old.alpha).toBeLessThan(last.alpha)
+        expect(old.alpha).toBe(last.alpha)                 // within hours: not dimmed (owner, 2026-10-19)
         expect(last.title).toBe("Crowd movement, last reported 15:30 (reconstructed)")
         expect(old.title).toMatch(/reconstructed/)
         expect(last.sub).toBe("Place de la Bastille → Place de la Nation · 2 reports")

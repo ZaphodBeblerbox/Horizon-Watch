@@ -18,18 +18,35 @@ import { useEffect, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { openMedia } from "../mobile/MediaViewer.jsx"
 import { crowdLabel, crowdSources, hhmm, mediaItems, protestIcon, statusLabel } from "../globe/protests.js"
+import { DEMOS_PATH } from "../globe/demonstrations.js"
+import { livePoll, protestLive } from "../globe/demoLive.js"
 import SourceLink from "../components/SourceLink.jsx"
 
 const arr = (v) => (Array.isArray(v) ? v : [])
 const KIND = { street_report: "Street report", crowd_report: "Crowd report", position: "People there", post: "Post" }
 
-export default function ProtestDetail({ protest, phone = false }) {
-    const p = protest || {}
+export default function ProtestDetail({ protest, phone = false, follow = true }) {
+    // WHILE IT GOES ON the card follows it (owner, 2026-10-19: "followed in
+    // near real time"): the protest read again with the layer's answer every
+    // 15 s (demoLive.js), so its status, crowd, footage, movement and latest
+    // messages change under your eyes; the minutes count up every 15 s
+    const [fresh, setFresh] = useState(null)
+    const p = (fresh && fresh.id === protest?.id ? fresh : protest) || {}
     const [now, setNow] = useState(() => Date.now())
     useEffect(() => {
-        const iv = setInterval(() => setNow(Date.now()), 30_000)
+        const iv = setInterval(() => setNow(Date.now()), 15_000)
         return () => clearInterval(iv)
     }, [])
+    const followIt = follow && !!protest?.id && protestLive(protest, Date.now())
+    useEffect(() => {
+        setFresh(null)
+        if (!followIt) return undefined
+        const id = protest.id
+        return livePoll(`${API_BASE}${DEMOS_PATH}`, (d) => {
+            const hit = (Array.isArray(d?.protests) ? d.protests : []).find((x) => x?.id === id)
+            if (hit) { setFresh(hit); setNow(Date.now()) }
+        })
+    }, [protest?.id, followIt]) // eslint-disable-line react-hooks/exhaustive-deps
     const key = p.status?.key || "planned"
     const st = statusLabel({ ...p.status, tz: p.tz }, now) || p.status_label
     const media = mediaItems(p, API_BASE)

@@ -17,10 +17,16 @@
  *                  marker. A charge on a named street draws the street too;
  *   everything else a marker with its words (arrests, LBD, shots, water
  *                  cannon, barricades, fires, a crowd, footage).
- * Every mark fades with age and is gone after the report's own life
- * (valid_min, from the server). Colour only in the marks and lines; words
- * white on a dark halo; no monospace.
+ * A report is CURRENT for its own life (valid_min, from the server): only
+ * then are its area, police lines and arrow drawn — they say what is so
+ * now. Its mark stays after that, at FULL strength for the first three
+ * hours like every other icon (globe/freshness.js; owner, 2026-10-19: "the
+ * police interventions at Châtelet were dimmer than the other icons,
+ * although they happened literally 1 hour ago"), easing after, and is gone
+ * once a day old. Colour only in the marks and lines; words white on a
+ * dark halo; no monospace.
  */
+import { freshAlpha } from "./freshness.js"
 
 export const POLICE_PATH = "/api/routes/demonstrations/street"
 export const POLICE_REFRESH_MS = 30_000
@@ -99,12 +105,18 @@ export function arrowCoords(from, to, headM = 45, spread = 28) {
     return [[[+from.lat, +from.lon], tip], [offset(tip[0], tip[1], b + 180 - spread, headM), tip, offset(tip[0], tip[1], b + 180 + spread, headM)]]
 }
 
-/** How strong a mark is by age: full when new, a third at the end of its life; 0 once past it. */
+/** How strong a mark is by age: the shared rule (freshness.js) — full for
+ *  hours, never dimmed within its own life; 0 once a day old. */
 export function reportAlpha(ageMin, validMin = 60) {
     const a = Number(ageMin), v = Math.max(1, Number(validMin) || 60)
-    if (!Number.isFinite(a) || a <= 0) return 1
-    if (a > v) return 0
-    return Math.max(0.3, 1 - (0.7 * a) / v)
+    if (Number.isFinite(a) && a <= v) return 1
+    return freshAlpha(a)
+}
+
+/** Still current: within the report's own life, when its area, lines and arrow say what is so now. */
+export function reportCurrent(ageMin, validMin = 60) {
+    const a = Number(ageMin)
+    return !Number.isFinite(a) || a <= Math.max(1, Number(validMin) || 60)
 }
 
 export function ageLabel(ageMin) {
@@ -180,39 +192,41 @@ export function policeFeatures(data, now = Date.now()) {
         const age = Number.isFinite(ms(r.at)) ? (now - ms(r.at)) / 60_000 : Number(r.age_min)
         const alpha = reportAlpha(age, r.valid_min)
         if (alpha <= 0) continue
+        const current = reportCurrent(age, r.valid_min)
         const lat = +r.lat, lon = +r.lon
         const colour = tacticColour(r.tactic)
         const title = r.title || "Street report"
         const raw = {
-            ...r, kind: "police_action", title, detail: policeDetail({ ...r, age_min: age }), published_at: r.at,
+            ...r, kind: "police_action", title, detail: policeDetail({ ...r, age_min: age }), published_at: r.at, current,
             source: "Telegram, from the street", url: r.url || arr(r.sources).slice().reverse().find((s) => s?.url)?.url || null,
         }
         const sub = `${(TACTIC[r.tactic] || TACTIC.footage).short} · reported ${r.hhmm || ""} · ${ageLabel(age)}`
         const base = { title, sub, raw, alpha }
-        if (r.tactic === "tear_gas") {
+        if (current && r.tactic === "tear_gas") {
             const radius = +r.area?.radius_m || 120
             out.push({ ...base, id: `pol-gas-${r.id}`, type: "police_area", coords: circleRing(lat, lon, radius),
                        color: rgba(GAS_COLOUR, 0.85 * alpha), weight: 2, dash: "5 5",
                        area: { lat, lon, radius_m: radius, fill: rgba(GAS_COLOUR, 0.22 * alpha) } })
         }
-        if (r.tactic === "kettle" && arr(r.exits).length) {
+        if (current && r.tactic === "kettle" && arr(r.exits).length) {
             const bars = arr(r.exits).filter(fin).map((e) => exitBar(e))
             if (bars.length) {
                 out.push({ ...base, id: `pol-kettle-${r.id}`, type: "police_line", coords: bars, color: rgba(POLICE_COLOUR, alpha),
                            weight: 5, dash: null })
             }
         }
-        if (arr(r.street_line).length >= 2) {
+        if (current && arr(r.street_line).length >= 2) {
             out.push({ ...base, id: `pol-street-${r.id}`, type: "police_street", coords: arr(r.street_line).map((p) => [+p[0], +p[1]]),
                        color: rgba(colour, 0.6 * alpha), weight: 4, dash: "2 6" })
         }
-        if ((r.tactic === "police_arrival" || r.tactic === "charge") && fin(r.from)) {
+        if (current && (r.tactic === "police_arrival" || r.tactic === "charge") && fin(r.from)) {
             out.push({ ...base, id: `pol-arrow-${r.id}`, type: "police_arrow", coords: arrowCoords(r.from, { lat, lon }),
                        color: rgba(POLICE_COLOUR, alpha), weight: 3.5, dash: null })
         }
-        const label = r.tactic === "kettle" ? (r.label || `Kettled — exits blocked (reported ${r.hhmm || "?"})`)
+        const label = r.tactic === "kettle"
+            ? (current ? (r.label || `Kettled — exits blocked (reported ${r.hhmm || "?"})`) : `Kettle reported ${r.hhmm || ageLabel(age)}`)
             : `${(TACTIC[r.tactic] || TACTIC.footage).short} · ${r.hhmm || ageLabel(age)}`
-        const ic = tacticIcon(r.tactic, label, Math.max(0.45, alpha))
+        const ic = tacticIcon(r.tactic, label, alpha)
         // several reports at one place (gas, a kettle and police arriving at
         // République): their marks stack downward instead of writing over each other
         const spot = `${lat.toFixed(4)},${lon.toFixed(4)}`

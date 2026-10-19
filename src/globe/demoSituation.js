@@ -9,8 +9,9 @@
  * One answer, GET /api/routes/demonstrations/situation (backend/demo_situation.py),
  * read every 30 s while on. Per city:
  *   crowds      — last known place of each crowd: a ring with a dot, its
- *                 words "Concorde · 12 min ago" beside it; the whole mark
- *                 fades with age (gone at 3 h). Its recent path, solid amber,
+ *                 words "Concorde · 12 min ago" beside it; at full
+ *                 strength like every other icon (freshness.js: never
+ *                 dimmed within hours; the server drops it at 3 h). Its recent path, solid amber,
  *                 each hop on the streets it was walked (path_legs; a fainter
  *                 dotted straight line while that route is computed).
  *                 Where it probably is NOW (now_est): a dashed ring, no dot,
@@ -29,13 +30,14 @@
  * Colour only in icons and lines; every word white on a dark halo.
  */
 
+import { freshAlpha } from "./freshness.js"
+
 export const SITUATION_PATH = "/api/routes/demonstrations/situation"
 export const SITUATION_REFRESH_MS = 30_000
 export const CROWD_COLOUR = "#F5A524"          // the protest amber of the movement layer
 export const CONVERGE_COLOUR = "#FF5C7A"       // a target, distinct from any crowd or hazard mark
 export const ROUTE_COLOUR = "#F5A524"
 export const ESTIMATE_NOTE = "Estimate from Telegram calls and reports and walking times, not a confirmed prediction"
-const CROWD_MAX_AGE_MIN = 180
 
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
@@ -55,11 +57,10 @@ export function ageLabel(ageMin) {
     return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} ago`
 }
 
-/** A crowd mark's strength by age: full when fresh, a third at 3 h. */
+/** A crowd mark's strength by age: the shared rule (freshness.js) — never
+ *  dimmed within hours (owner, 2026-10-19), never gone while on the map. */
 export function crowdAlpha(ageMin) {
-    const a = Number(ageMin)
-    if (!Number.isFinite(a) || a <= 0) return 1
-    return Math.max(0.35, 1 - (0.65 * Math.min(a, CROWD_MAX_AGE_MIN)) / CROWD_MAX_AGE_MIN)
+    return Math.max(freshAlpha(ageMin), 0.55)
 }
 
 export function rgba(hex, a) {

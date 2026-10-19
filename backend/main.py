@@ -29722,6 +29722,9 @@ def _telegram_report_cards(hours: int, cap: int = 25) -> list:
             "reason": " · ".join(x for x in (p.get("channel_title") or p.get("channel"), p.get("place")) if x),
             "lat": p.get("lat"), "lon": p.get("lon"), "country_code": p.get("country_code"),
             "region": p.get("place"), "created_at": p.get("posted_at"), "source": "telegram",
+            # its picture or video, so the card shows the footage, not only its words (owner, 2026-10-19)
+            "media": p.get("media"), "thumb_url": p.get("thumb_url"), "channel": p.get("channel"),
+            "msg_id": p.get("msg_id"), "graphic": p.get("graphic"), "category": p.get("category"),
         })
     # OFFICIAL STATEMENTS, as the desktop raises them: a claimed strike,
     # attack, interception or seizure, at most one per party every 12 hours

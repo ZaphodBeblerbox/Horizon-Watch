@@ -32,6 +32,7 @@ function useHere() {
     return h
 }
 import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
+import { dropStaleDemos } from "../../globe/freshness.js"
 
 const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
 
@@ -41,9 +42,9 @@ export default function MHome({ onShowOnMap, onOpen }) {
     useEffect(() => subscribeAuth(setUser), [])
     const seed = useRef(Math.floor(Math.random() * 997)).current
     const surface = usePoll("/api/surface", 30_000, (d) => arr(d?.items ?? d))
-    const notes = usePoll("/api/notifications?limit=40", 30_000, (d) => arr(d?.items ?? d))
+    const notes = usePoll("/api/notifications?limit=40", 30_000, (d) => dropStaleDemos(arr(d?.items ?? d)))
     // Telegram's located posts, for "For you" (the footage strip reads its own)
-    const posts = usePoll("/api/telegram/posts?hours=48", 30_000, (d) => arr(d?.posts))
+    const posts = usePoll("/api/telegram/posts?hours=48", 30_000, (d) => dropStaleDemos(arr(d?.posts)))
     const outlook = usePoll("/api/enrich/outlook", 20 * 60_000)
     const [open, setOpen] = useState(null)
     const [why, setWhy] = useState(null)               // a line of the outlook, opened on its reasoning

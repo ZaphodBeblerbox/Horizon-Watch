@@ -3,8 +3,13 @@
  * "I want to be able to more or less follow in real time the demonstrations
  * and happenings in a city").
  *
- * One answer, read every minute while on (GET /api/routes/demonstrations,
- * backend/demonstrations.py):
+ * NEAR REAL TIME (owner, 2026-10-19: "the protest movements can be followed
+ * in near real time in the desktop version"): every answer is read again
+ * every 15 s while something is under way and every 2 min when nothing is
+ * (demoLive.js), at once when the window comes back; the ages on the map
+ * ("12 min ago", "reports 3 min ago") count up every 15 s between reads.
+ *
+ * One answer (GET /api/routes/demonstrations, backend/demonstrations.py):
  *   · every current demonstration or happening the route planner ("Get me
  *     out") avoids — its own hazards — as the unrest diamond in the planner's
  *     ring (entity type "demonstration");
@@ -34,8 +39,9 @@ import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReferenc
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, trackSegments } from "./demonstrations.js"
-import { SITUATION_PATH, SITUATION_REFRESH_MS, situationFeatures } from "./demoSituation.js"
+import { DEMOS_PATH, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, trackSegments } from "./demonstrations.js"
+import { SITUATION_PATH, situationFeatures } from "./demoSituation.js"
+import { LIVE_MS, livePoll } from "./demoLive.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 import { protestPoints } from "./protests.js"
 
@@ -49,26 +55,20 @@ export default function GlobeDemonstrationsLayer({ enabled = false }) {
 
     useEffect(() => {
         if (!enabled) { setData(null); return undefined }
-        let live = true
-        const load = () => fetch(`${API_BASE}${DEMOS_PATH}`, { credentials: "include" })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (live && d) { setData(d); setNowMs(Date.now()) } })
-            .catch(() => { /* a dropped poll is not an empty city */ })
-        load()
-        const iv = setInterval(load, DEMOS_REFRESH_MS)
-        return () => { live = false; clearInterval(iv) }
+        // a dropped poll is not an empty city: the last answer stays
+        return livePoll(`${API_BASE}${DEMOS_PATH}`, (d) => { setData(d); setNowMs(Date.now()) })
     }, [enabled])
 
     useEffect(() => {
         if (!enabled) { setSit(null); return undefined }
-        let live = true
-        const load = () => fetch(`${API_BASE}${SITUATION_PATH}`, { credentials: "include" })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (live && d) { setSit(d); setNowMs(Date.now()) } })
-            .catch(() => { /* keep the last situation */ })
-        load()
-        const iv = setInterval(load, SITUATION_REFRESH_MS)
-        return () => { live = false; clearInterval(iv) }
+        return livePoll(`${API_BASE}${SITUATION_PATH}`, (d) => { setSit(d); setNowMs(Date.now()) })
+    }, [enabled])
+
+    // the ages count up between reads ("12 min ago", "reports 3 min ago")
+    useEffect(() => {
+        if (!enabled) return undefined
+        const iv = setInterval(() => setNowMs(Date.now()), LIVE_MS)
+        return () => clearInterval(iv)
     }, [enabled])
 
     const points = useMemo(() => safeArray(data?.demonstrations)

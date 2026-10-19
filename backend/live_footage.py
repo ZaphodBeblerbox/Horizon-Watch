@@ -229,7 +229,9 @@ def footage(hours: int = HOURS, limit: int = MAX_ITEMS) -> dict:
         got = cached(hours, limit)            # built while this one waited
         if got is not None:
             return got
-        items = build(_rows(hours), _ground(hours), limit)
+        # footage of a demonstration over 24 h ago is not Home's (demo_freshness.py)
+        import demo_freshness
+        items = demo_freshness.keep(build(_rows(hours), _ground(hours), limit * 2))[:limit]
         out = {"items": items, "built_at": _dt.datetime.now(_dt.timezone.utc).isoformat(), "cache_s": CACHE_S}
         _cache[(hours, limit)] = (time.time(), out)
         return out
