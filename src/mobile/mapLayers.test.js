@@ -17,6 +17,19 @@ describe("phone map layer registry", () => {
         }
     })
 
+    it("every layer defaults off: nothing is on until the user turns it on (owner, 2026-10-18)", () => {
+        for (const l of PHONE_LAYERS) expect(l.defaultOn, l.key).toBe(false)
+    })
+
+    it("the phone map's built-in state has ships and aircraft off too", async () => {
+        const { readFileSync } = await import("node:fs")
+        const src = readFileSync("src/mobile/screens/MMap.jsx", "utf8")
+        const built = /const builtIn = \(\) => \(([^\n]*)\)\n/.exec(src)[1]
+        expect(built).toContain("ships: false")
+        expect(built).toContain("aircraft: false")
+        expect(built).not.toMatch(/:\s*true/)
+    })
+
     it("keys are unique", () => {
         const keys = PHONE_LAYERS.map((l) => l.key)
         expect(new Set(keys).size).toBe(keys.length)

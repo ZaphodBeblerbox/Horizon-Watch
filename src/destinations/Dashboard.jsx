@@ -43,7 +43,7 @@
  * LayersFlyout, rather than a second bespoke map+controls implementation.
  * GlobeView's own bottom-left MapMeta readout comes along for free.
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import API_BASE from "../apiBase.js"
 import { Panel, EmptyState } from "../ui/index.js"
 import Icon from "../ui/Icon.jsx"
@@ -68,16 +68,15 @@ function layerOn(active, key) {
     return def ? isLayerOn(active, def) : !!active?.[key]
 }
 
-// Windowed (normal, non-fullscreen) Dashboard overview default — real
-// vessels/aircraft/news/alerts on, matching the Globe home screen's own
-// workspace defaults (src/app.jsx's <GlobeView> mount: aisVessels/adsb off
-// by default there, but this destination's whole point is "show me what's
-// happening", so this destination's own separate default turns them on).
-const WINDOWED_DEFAULT_LAYERS = { aisVessels: true, adsb: true, unifiedEvents: true }
+// Windowed (normal, non-fullscreen) Dashboard overview default: nothing on
+// (owner, 2026-10-18: "When a user opens the system for the first time,
+// nothing should be on by default").
+const WINDOWED_DEFAULT_LAYERS = {}
 
-// Canonical operational view defaults (UI correction pass, Part 4/5) — only
-// applied while the map is in `fullscreen`, keyed by the exact real layer
-// key names from layerRailConfig.js.
+// Canonical operational view presets (UI correction pass, Part 4/5) — keyed
+// by the exact real layer key names from layerRailConfig.js. Applied only
+// once the user CHOOSES a canonical view in the header; the fullscreen map
+// opens with nothing on (owner, 2026-10-18).
 const CANONICAL_LAYER_DEFAULTS = {
     maritime:       { aisVessels: true, ports: true, cables: true, chokepoints: true },
     aerial:         { adsb: true, airports: true },
@@ -195,7 +194,8 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
 
     const [fullscreen, setFullscreen] = useState(false)
     const [windowedLayers, setWindowedLayers] = useState(WINDOWED_DEFAULT_LAYERS)
-    const [fullscreenLayers, setFullscreenLayers] = useState(() => CANONICAL_LAYER_DEFAULTS[canonicalView] || {})
+    const [fullscreenLayers, setFullscreenLayers] = useState({})
+    const firstCanonical = useRef(canonicalView)
 
     // Selecting an entity opens the real docked InspectorPanel (mounted by
     // this destination's own embedded GlobeView, fixed to the same
@@ -214,6 +214,8 @@ export default function Dashboard({ canonicalView = "maritime", onFullscreenChan
     // itself), so switching Canonical views always starts from that view's
     // own real defaults rather than leaking the previous view's toggles.
     useEffect(() => {
+        if (canonicalView === firstCanonical.current) return   // not chosen yet: nothing on
+        firstCanonical.current = null
         setFullscreenLayers(CANONICAL_LAYER_DEFAULTS[canonicalView] || {})
     }, [canonicalView])
 

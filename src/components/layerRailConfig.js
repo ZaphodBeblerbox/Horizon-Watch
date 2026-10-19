@@ -39,8 +39,8 @@ export const LAYER_GROUPS = [
         key: "news",
         label: "News",
         layers: [
-            { key: "unifiedEvents", label: "Intelligence Events", hint: "All news & city events", defaultOn: true, hasRelevanceFilter: true },
-            { key: "precisionEvents", label: "Verified Events", hint: "Conflict · maritime · aviation · score ≥ 8", defaultOn: true },
+            { key: "unifiedEvents", label: "Intelligence Events", hint: "All news & city events", hasRelevanceFilter: true },
+            { key: "precisionEvents", label: "Verified Events", hint: "Conflict · maritime · aviation · score ≥ 8" },
             // Its own row, not folded into the others: a GDELT pin is a
             // machine that read a wire story, a GeoConfirmed pin is a human
             // who found the building in the video. The reader has to be able
@@ -79,15 +79,22 @@ export const LAYER_GROUPS = [
             // findings, which is the whole point of the addendum: an arrival
             // is a fact and belongs in the tray, a surge and a fusion point
             // are statements that something changed and belong on the map.
-            { key: "derivedAlerts", label: "Surge & fusion", hint: "Derived findings — evaluated at the playhead", defaultOn: true },
+            { key: "derivedAlerts", label: "Surge & fusion", hint: "Derived findings — evaluated at the playhead" },
         ],
     },
 ]
 
+// NOTHING IS ON UNTIL THE USER TURNS IT ON (owner, 2026-10-18): "When a
+// user opens the system for the first time, nothing should be on by default;
+// they have to save to default themselves what they want on by default."
+// A layer absent from `active` is off; no definition carries a defaultOn.
 export function isLayerOn(active, layerDef) {
-    const v = active?.[layerDef.key]
-    if (v === undefined || v === null) return !!layerDef.defaultOn
-    return !!v
+    return !!active?.[layerDef.key]
+}
+
+/** True when nothing in a layer state map is switched on (for the first-run hint). */
+export function nothingOn(...maps) {
+    return maps.every((m) => !m || !Object.values(m).some((v) => v === true))
 }
 
 export function countActive(active, group) {

@@ -101,6 +101,15 @@ const clusterIcon = (n) => {
 }
 const pickedIcon = L.divIcon({ className: "", iconSize: [40, 40], iconAnchor: [20, 20], html: '<div class="m2-picked"></div>' })
 
+// What this phone has on now, for a user who has not saved a default.
+const localLayersKey = () => `m2-layers-now:${getCurrentUser()?.id ?? getCurrentUser()?.email ?? "anon"}`
+function readLocalLayers() {
+    try { const v = JSON.parse(localStorage.getItem(localLayersKey()) || "null"); return v && typeof v === "object" ? v : null } catch { return null }
+}
+function writeLocalLayers(on) {
+    try { localStorage.setItem(localLayersKey(), JSON.stringify(on)) } catch { /* private mode: the session keeps them */ }
+}
+
 export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true }) {
     const el = useRef(null)
     const map = useRef(null)
@@ -126,13 +135,20 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         setOn({ ...builtIn(), ...(v.layers || {}) }); if (v.base) setBaseKey(v.base); if (v.floor) setFloor(v.floor)
     }), []) // eslint-disable-line react-hooks/exhaustive-deps
     const saveDefault = () => { updateSetting("phoneMapDefault", { layers: on, base: baseKey, floor }); setSavedAt(Date.now()) }
-    const resetDefault = () => { updateSetting("phoneMapDefault", null); setOn(builtIn()); setBaseKey("dark"); setFloor("all"); setSavedAt(null) }
+    const resetDefault = () => { touched.current = true; updateSetting("phoneMapDefault", null); setOn(builtIn()); setBaseKey("dark"); setFloor("all"); setSavedAt(null) }
     // MY DEFAULT LAYERS (owner, 2026-10-10): saved with the account's
-    // settings (Filters › Save as my default), so every phone opens on them
-    const builtIn = () => ({ ...Object.fromEntries(PHONE_LAYERS.map((l) => [l.key, !!l.defaultOn])), ships: true, aircraft: true })
+    // settings (Filters › Save as my default), so every phone opens on them.
+    // NOTHING ON UNTIL THE USER TURNS IT ON (owner, 2026-10-18): "When a
+    // user opens the system for the first time, nothing should be on by
+    // default" — every layer, ships and aircraft included, starts off.
+    const builtIn = () => ({ ...Object.fromEntries(PHONE_LAYERS.map((l) => [l.key, !!l.defaultOn])), ships: false, aircraft: false })
     const savedView = () => getSettings()?.phoneMapDefault || null
-    const [on, setOn] = useState(() => ({ ...builtIn(), ...(savedView()?.layers || {}) }))
+    // With no saved default, what this phone last had on comes back (kept
+    // on the device per user); a saved default always wins.
+    const [on, setOn] = useState(() => ({ ...builtIn(), ...(savedView()?.layers || readLocalLayers() || {}) }))
     const touched = useRef(false)
+    useEffect(() => { if (touched.current) writeLocalLayers(on) }, [on])
+    const nothingShown = !Object.values(on).some((v) => v === true)
     const [savedAt, setSavedAt] = useState(null)
     // OTHER SCREENS TURN LAYERS ON (the route tray's "Demonstrations on the
     // map"): {key: bool} by event, and what is on is said back
@@ -750,6 +766,13 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         {zoom < TRACK_ZOOM ? "Zoom in for ships and aircraft"
                             : [on.ships && `${ships.length} ships`, on.aircraft && `${planes.length} aircraft`].filter(Boolean).join(" · ")}
                     </div>
+                )}
+                {/* FIRST RUN: nothing is on, so say where to start (quiet, monochrome) */}
+                {nothingShown && !open && (
+                    <button type="button" className="m2-pill" data-testid="m2-empty-hint" onClick={() => setSheet("filters")}
+                            style={{ height: "auto", whiteSpace: "normal", textAlign: "center", padding: "7px 14px", width: "max-content", maxWidth: "calc(100% - 48px)", lineHeight: 1.4 }}>
+                        Nothing on yet — tap Filters, pick layers, then “Save as my default” to keep them.
+                    </button>
                 )}
                 {threatOn && (
                     <button className="m2-btn ghost" onClick={clearThreat} data-testid="m2-threat-clear"

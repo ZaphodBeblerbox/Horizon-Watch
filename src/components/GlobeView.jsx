@@ -175,9 +175,9 @@ export default function GlobeView({
     imagerySignalsEnabled = false,
     // Places public calls name for blockades (endangered_places.py).
     endangeredEnabled = false,
-    assetsEnabled = true,
-    teamEnabled = true,
-    safeHousesEnabled = true,
+    assetsEnabled = false,
+    teamEnabled = false,
+    safeHousesEnabled = false,
     gdeltTypes = null,
     frontlinesEnabled = false,
     warmapTheatres = [],
@@ -273,7 +273,7 @@ export default function GlobeView({
     portsEnabled    = false,
     // Forge alerts/rules on the globe
     eventsMinRelevance = 4,
-    precisionEventsEnabled = true,
+    precisionEventsEnabled = false,
     autoModeEnabled = false,
     // Basemap preset — "dark" (default) | "satellite" | "terrain". Swaps the
     // one base ImageryLayer + terrainProvider on the existing viewer

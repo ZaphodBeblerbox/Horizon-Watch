@@ -59,7 +59,12 @@ export function useChrome(key) {
  */
 export function getStartupLayers() {
     const v = getSettings()?.startupLayers
-    return v && typeof v === "object" ? v : null
+    // A first login's {clean: true} is not a default the user saved: the
+    // built-in launch state is already everything off (owner, 2026-10-18),
+    // and counting it as saved would stop the desk's own session toggles
+    // from coming back at launch (sessionStore.applySession).
+    if (!v || typeof v !== "object" || v.clean === true) return null
+    return v
 }
 
 export function saveStartupLayers(layers) {
@@ -68,7 +73,9 @@ export function saveStartupLayers(layers) {
     // clean: false is written explicitly: settings PATCHes deep-merge, so a
     // first login's {clean: true} would otherwise survive the save and the
     // launch would still open on a bare map.
-    return updateSetting("startupLayers", { ...layers, clean: false })
+    // v: 2 marks a default saved once everything started off (2026-10-18):
+    // what it does not name is off. One saved before keeps its old reading.
+    return updateSetting("startupLayers", { ...layers, clean: false, v: 2 })
 }
 
 export function clearStartupLayers() {

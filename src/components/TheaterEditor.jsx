@@ -93,13 +93,15 @@ export default function TheaterEditor({ theater = null, readView = null, readLay
     const [placeName, setPlaceName] = useState(null)
     const [showCoords, setShowCoords] = useState(false)
     const [layers, setLayers] = useState(() => ({
-        groups: theater?.layers?.groups || ["news"],
+        // A NEW theater starts with nothing on (owner, 2026-10-18); an old
+        // one saved without a group list keeps the News it always opened with.
+        groups: theater?.layers?.groups || (theater ? ["news"] : []),
         infra: theater?.layers?.infra || [],
         tracks: theater?.layers?.tracks || [],
         context: theater?.layers?.context || [],
         // A theater from before sub-layers were saved gets the ones its
         // groups bring by default, so editing it does not switch them off.
-        subs: theater?.layers?.subs || (theater?.layers?.groups || ["news"]).flatMap((g) => DEFAULT_SUBS[g] || []),
+        subs: theater?.layers?.subs || (theater?.layers?.groups || (theater ? ["news"] : [])).flatMap((g) => DEFAULT_SUBS[g] || []),
         gdeltTypes: theater?.layers?.gdeltTypes ?? null,
         theatres: theater?.layers?.theatres || [],
         severityFloor: theater?.layers?.severityFloor || null,
