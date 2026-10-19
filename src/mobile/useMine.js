@@ -8,6 +8,7 @@ import API_BASE from "../apiBase.js"
 import { getSettings, subscribeSettings } from "../state/settingsStore.js"
 import { watched, partition } from "../state/interests.js"
 import { places as loadPlaces } from "../voice/gazetteer.js"
+import { guardPoll } from "../lib/pollGuard.js"
 
 export const getJSON = (path) => fetch(`${API_BASE}${path}`, { credentials: "include" }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
 export const arr = (v) => (Array.isArray(v) ? v : [])
@@ -18,9 +19,11 @@ export function usePoll(path, everyMs, pick = (d) => d) {
     useEffect(() => {
         if (!path) return undefined
         let live = true
-        const load = () => getJSON(path).then((d) => { if (live && d != null) setV(pick(d)) })
+        // never two of the same request out at once, and nothing while hidden (lib/pollGuard.js)
+        const tick = guardPoll(() => getJSON(path).then((d) => { if (live && d != null) setV(pick(d)) }))
+        const load = () => tick.force()
         load()
-        const t = everyMs ? setInterval(load, everyMs) : null
+        const t = everyMs ? setInterval(tick, everyMs) : null
         // a pull to refresh asks every list on screen for its newest (gesture.js)
         window.addEventListener("m2:refresh", load)
         // back on the screen (a phone pauses timers while away): the newest at once
