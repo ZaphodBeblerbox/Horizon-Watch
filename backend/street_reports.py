@@ -55,8 +55,6 @@ import math
 import os
 import re
 import sqlite3
-import threading
-import time
 import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -91,9 +89,35 @@ RANK = ["gunfire", "kettle", "lbd", "tear_gas", "water_cannon", "charge", "arres
         "fire", "barricade", "crowd", "footage"]
 
 
+def _memo(fn, size: int = 50_000):
+    """Keep a pure function's answers per argument (bounded: cleared when
+    full). The reader runs over the same ~4,500 posts every pass; the
+    lexicon and the gazetteer are fixed at import, so a post's text gives
+    the same answer every time — see _screened."""
+    memo: dict = {}
+
+    def wrapped(arg):
+        hit = memo.get(arg, memo)
+        if hit is memo:
+            hit = wrapped.__wrapped__(arg)
+            if len(memo) >= size:
+                memo.clear()
+            memo[arg] = hit
+        return hit
+    wrapped.__wrapped__ = fn
+    wrapped.__doc__ = fn.__doc__
+    wrapped.cache_clear = memo.clear
+    return wrapped
+
+
 def fold(s: str | None) -> str:
     """Lower case, accents dropped, curly apostrophes straightened. Burmese
     and other scripts pass through (NFKD leaves their letters alone)."""
+    return _fold(str(s or ""))
+
+
+@_memo
+def _fold(s: str) -> str:
     out, base = [], ""
     for c in unicodedata.normalize("NFKD", str(s or "")):
         # an accent on a Latin letter goes; a Burmese vowel sign or asat is
@@ -203,7 +227,11 @@ def cues(text: str | None) -> bool:
 
 def tactics(text: str | None) -> list[dict]:
     """[{kind, start, end, words}] in the post, gravest first, one per kind."""
-    t = fold(text)
+    return [dict(o) for o in _tactics(fold(text))]     # callers may change theirs
+
+
+@_memo
+def _tactics(t: str) -> tuple:
     out = []
     for k, rx in _T.items():
         m = rx.search(t)
@@ -220,7 +248,7 @@ def tactics(text: str | None) -> list[dict]:
         if cb and not out:
             out.append({"kind": "police_arrival", "start": cb.start(), "end": cb.end(), "words": cb.group(0), "vague": True})
     out.sort(key=lambda o: RANK.index(o["kind"]))
-    return out
+    return tuple(out)
 
 
 # ── places as people write them ─────────────────────────────────────────────
@@ -400,6 +428,11 @@ for _p in _PLACES:
 
 def _hits(t: str) -> list[tuple]:
     """(place, position, alias length) for every gazetteer place in folded text."""
+    return list(_hits_in(t))                            # place_in sorts its copy
+
+
+@_memo
+def _hits_in(t: str) -> tuple:
     hits = []
     for p in _PLACES:
         for rx, ln in p["pats"]:
@@ -407,7 +440,7 @@ def _hits(t: str) -> list[tuple]:
             if m:
                 hits.append((p, m.start(), ln))
                 break
-    return hits
+    return tuple(hits)
 
 
 def place_in(text: str | None, city: str | None = None, after: int = 0, exclude: set | None = None) -> dict | None:
@@ -822,9 +855,34 @@ def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime |
 
 # ── reads ───────────────────────────────────────────────────────────────────
 
-_cache: dict = {}
-_lock = threading.Lock()
 _chat_ctx: dict = {}
+# fresh for CACHE_S; past that the last answer is served for up to two
+# minutes while one thread re-reads (a warm re-read is ~0.15 s)
+from shared_cache import SharedCache  # noqa: E402
+_SIGNALS = SharedCache("street-reports", ttl=CACHE_S, max_stale=120)
+
+# THE SCREEN, ONCE PER POST (2026-10-19). The screen below ran every
+# gazetteer pattern over every post of the window on every read: ~4,500
+# posts, 2.6-3.5 s of pure Python in production, repeated every CACHE_S by
+# whoever asked first — and by EVERY caller at once when the entry expired
+# (no single flight). Under the GIL that is everyone's latency: py-spy put
+# street_reports.read at 35 % of all GIL samples, and with three phones open
+# the API queued 60-115 requests deep and /api/health/live took 111 s. A
+# post's text does not change and the lexicon is fixed at import, so the
+# verdict is kept per text; a read screens only what is new.
+_SCREEN: dict = {}
+_SCREEN_MAX = 100_000
+
+
+def _screened(txt: str, has_media: bool) -> bool:
+    key = (txt, has_media)
+    hit = _SCREEN.get(key)
+    if hit is None:
+        hit = bool(cues(txt) or (has_media and (not txt.strip() or place_in(txt))))
+        if len(_SCREEN) >= _SCREEN_MAX:
+            _SCREEN.clear()
+        _SCREEN[key] = hit
+    return hit
 
 
 def chat_contexts(chans: list[str]) -> dict:
@@ -863,11 +921,7 @@ def read(con, hours: float = LOOKBACK_H, now: _dt.datetime | None = None) -> lis
             f"SELECT {sel} FROM telegram_posts WHERE posted_at >= ? AND COALESCE(role,'') != 'ignore'"
             " ORDER BY posted_at DESC LIMIT 20000", (cutoff,))]
         # the cheap screen first: most posts say nothing of the street
-        keep = []
-        for r in rows:
-            txt = r.get("text") or ""
-            if cues(txt) or ((r.get("media") or "none") != "none" and (not txt.strip() or place_in(txt))):
-                keep.append(r)
+        keep = [r for r in rows if _screened(r.get("text") or "", (r.get("media") or "none") != "none")]
         sits: dict = {}
         try:
             for s in con.execute("SELECT channel, msg_id, kind, place, precision, lat, lon, country, happening"
@@ -888,24 +942,24 @@ def read(con, hours: float = LOOKBACK_H, now: _dt.datetime | None = None) -> lis
 
 
 def signals(hours: float = LOOKBACK_H, db_path: str | None = None) -> list[dict]:
-    """Street-report signals of the last `hours`, newest first; cached CACHE_S."""
-    key = (hours, db_path)
-    with _lock:
-        hit = _cache.get(key)
-        if hit and time.time() - hit[0] < CACHE_S:
-            return hit[1]
-    import telegram_ingest as tg
-    con = sqlite3.connect(db_path, timeout=30) if db_path else tg._con()
-    try:
-        out = read(con, hours)
-    except sqlite3.OperationalError as e:
-        print(f"[street-reports] error: read: {e}", flush=True)
-        out = []
-    finally:
-        con.close()
-    with _lock:
-        _cache[key] = (time.time(), out)
-    return out
+    """Street-report signals of the last `hours`, newest first.
+
+    One read serves every caller (shared_cache: fresh for CACHE_S, then the
+    last answer is served while ONE thread re-reads). It is asked by the
+    Telegram feed and posts, the map's surface, notifications, the
+    demonstration layers, each user's assets and the push sweep — before,
+    each of them re-read the window itself whenever the entry had expired."""
+    def _build():
+        import telegram_ingest as tg
+        con = sqlite3.connect(db_path, timeout=30) if db_path else tg._con()
+        try:
+            return read(con, hours)
+        except sqlite3.OperationalError as e:
+            print(f"[street-reports] error: read: {e}", flush=True)
+            return []
+        finally:
+            con.close()
+    return _SIGNALS.get((hours, db_path), _build)
 
 
 def snapshot(hours: float = LOOKBACK_H) -> dict:
