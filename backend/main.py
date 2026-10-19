@@ -30058,6 +30058,17 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] event watch: {type(ex).__name__}: {ex}", flush=True)
 
+    # ── a message for you, a new post on your desk (inbox_notify.py) ─────
+    # Personal: only in the feed of the people they are for, and only
+    # while unread.
+    try:
+        import inbox_notify as _inb
+        _have = {o.get("id") for o in out}
+        # (their titles are people's own words: not run through _nc.plain)
+        out = [c for c in _inb.cards_for(uid, hours=hours) if c["id"] not in _have] + out
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] inbox: {type(ex).__name__}: {ex}", flush=True)
+
     # SAY WHERE THE TIME WENT. This endpoint has now had four separate
     # causes of slowness — a missing index, an N+1 on AIS coverage, a
     # whole-world risk recompute, and a cache whose TTL was shorter than

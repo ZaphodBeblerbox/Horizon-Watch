@@ -366,7 +366,11 @@ def push_body(card: dict) -> str:
 
 # What pops up on screen (src/state/notificationStore.js interrupts()) is
 # what goes to a closed app: the same rule, so the two cannot disagree.
-INTERRUPT_KINDS = {"escalate", "assign", "rfi", "telegram", "surge", "fusion", "live", "livestream", "exit", "warning"}
+# "message" and "desk" (inbox_notify.py, owner 2026-10-19): a chat message
+# for you, a new post on your desk — personal, so they exist only in the feed
+# of the people they are for.
+INTERRUPT_KINDS = {"escalate", "assign", "rfi", "telegram", "surge", "fusion", "live", "livestream", "exit", "warning",
+                   "message", "desk"}
 
 
 def interrupts(card: dict) -> bool:
@@ -411,10 +415,14 @@ def notifies(card: dict, c: dict) -> bool:
 KIND_LABEL = {"escalate": "Escalation", "assign": "Assigned to you", "rfi": "Request for information",
               "telegram": "Telegram report", "surge": "Surge", "fusion": "Fusion point", "live": "On the ground now",
               "livestream": "Live on Telegram", "announcement": "Announced", "asset": "Near your asset", "exit": "Leave now", "warning": "WARNING",
-              "confirm": "Confirmed", "detector": "Detector", "signal": "Signal"}
+              "confirm": "Confirmed", "detector": "Detector", "signal": "Signal",
+              "message": "Message", "desk": "On the Desk"}
 
 
 def label_for(card: dict) -> str:
+    # a card that knows its own title (a message: who, and in which chat)
+    if card.get("push_title"):
+        return str(card["push_title"])[:120]
     kind = card.get("kind") or "signal"
     if card.get("sev") == "critical" and kind in ("signal", "detector", "confirm"):
         return "Critical alert"
@@ -424,6 +432,8 @@ def label_for(card: dict) -> str:
 
 def body_for(card: dict) -> str:
     """The headline, then its context (where, why) when that adds something."""
+    if card.get("push_body"):
+        return str(card["push_body"])[:220]
     head = str(card.get("title") or "").strip()
     ctx = str(card.get("reason") or card.get("region") or "").strip()
     return (f"{head} — {ctx}" if ctx and ctx.lower() not in head.lower() else head)[:220]
@@ -465,6 +475,8 @@ def bundle(cards: list[dict]) -> list[tuple[str, str, dict]]:
                                               "lat": x.get("lat"), "lon": x.get("lon"),
                                               "asset_id": x.get("asset_id"), "livestream_id": x.get("livestream_id"),
                                               "route_plan_id": x.get("route_plan_id"),
+                                              # a message opens its conversation, a desk card its post
+                                              "conversation_id": x.get("conversation_id"), "post_id": x.get("post_id"),
                                               "alert_type": x.get("alert_type"), "mmsi": mmsi_of(x)})
            for x in cards[:PUSH_SINGLES]]
     rest = cards[PUSH_SINGLES:]
