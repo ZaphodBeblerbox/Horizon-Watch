@@ -19,7 +19,8 @@ import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { attachDrag, flingMs, swallowClickAfterDrag } from "../gesture.js"
 import { ago, sevColor } from "./common.jsx"
-import { itemStatusLabel } from "../../globe/protests.js"
+import { itemStatusLabel, mediaItems } from "../../globe/protests.js"
+import ReportMedia from "../../components/ReportMedia.jsx"
 
 const kindOf = (s) => s?.source || s?.channel_title || s?.layerLabel || s?.alert_type || s?.kind_label || "Signal"
 
@@ -101,8 +102,15 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
                 {sev && <i style={{ background: sevColor(sev) }} />}
                 <span data-testid="m2-peek-when">{[kindOf(s), status || (t ? ago(t) : null)].filter(Boolean).join(" · ")}</span>
             </div>
-            <h3>{title}</h3>
-            {place && place !== title && <div className="m2-peek-place">{String(place).split(",").slice(0, 3).join(",")}</div>}
+            {/* FOOTAGE ON THE CARD (owner, 2026-10-19: "when I click on it, I want the actual footage"):
+                a thumbnail beside the words, a tap plays it full screen */}
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <h3>{title}</h3>
+                    {place && place !== title && <div className="m2-peek-place">{String(place).split(",").slice(0, 3).join(",")}</div>}
+                </div>
+                <ReportMedia item={s.kind === "protest" ? { sources: mediaItems(s).map((m) => ({ ...m, media: m.type, channel_title: m.chat })) } : s} compact />
+            </div>
             <div className="m2-peek-acts">
                 <button className="m2-btn" onClick={() => onDetails?.()} data-testid="m2-peek-details">Details</button>
                 <button className="m2-btn ghost" aria-label="Put away" onClick={() => onClose?.()}>Close</button>

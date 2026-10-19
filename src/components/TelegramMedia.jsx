@@ -51,6 +51,7 @@ function SensitiveCover({ still, maxHeight, radius, onShow }) {
 }
 
 export function videoSrc(post) {
+    if (post?.video_url) return abs(post.video_url)
     const chan = post?.channel
     const mid = post?.msg_id ?? String(post?.id || "").split("-").pop()
     if (!chan || !mid) return null

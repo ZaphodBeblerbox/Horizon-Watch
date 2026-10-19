@@ -39,6 +39,7 @@ import { useTrackPhoto, TrackPhotoView } from "./TrackPhoto.jsx"
 import CountryFlag from "./CountryFlag.jsx"
 import { trackCountry } from "../lib/icaoCountry.js"
 import RiskFamilyBreakdown from "./RiskFamilyBreakdown.jsx"
+import ReportMedia from "./ReportMedia.jsx"
 
 // Best-effort entityType -> reference-grammar kind (src/lib/ref.js), used
 // only to give registered extensions a real recordRef to key off of.
@@ -843,12 +844,15 @@ export default function InspectorPanel({
                 {entityType === "endangered_place" && <EndangeredPlaceDetail place={data} />}
                 {entityType === "strike_event" && <StrikeEventDetail event={data} />}
                 {entityType === "protest" && <ProtestDetail protest={data} />}
+                {/* A STREET REPORT (or a post standing for several): the pictures and
+                    videos behind it, each opening the real thing (ReportMedia.jsx) */}
+                {(entityType === "police_action" || (entityType === "telegram" && data?.street_report)) && <ReportMedia item={data} />}
                 {(entityType === "frontline_claim" || entityType === "troop_movement" || entityType === "trajectory")
                     && <FrontlineClaimDetail type={entityType} data={data} />}
 
                 {/* A Telegram post's picture or video, in our own frame:
                     autoplaying, paused by a click (TelegramMedia.jsx). */}
-                {entityType === "telegram" && (data?.thumb_url || data?.media === "video") && (
+                {entityType === "telegram" && !data?.street_report && (data?.thumb_url || data?.media === "video") && (
                     <div style={{ marginBottom: "var(--space-4)" }}><TelegramMedia post={data} /></div>
                 )}
                 {/* The X posts this record cites, in our own frame: author, text,
