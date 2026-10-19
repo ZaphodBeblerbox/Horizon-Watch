@@ -384,6 +384,19 @@ def test_demo_situation_calls_follow_the_lifecycle():
     assert ds.call_live({**call, "start_at": _t(30), "when": _t(30)}, NOW, []) is True
 
 
+def test_while_ongoing_the_card_has_the_crowd_track_and_says_where_police_tracks_are():
+    BAS = (48.8532, 2.3692)
+    p = protest(-60, kind="march")
+    ev_ = [{**ev(-40, text="le cortège part de République et se dirige vers Bastille"), "title": "départ"},
+           {"at": _t(-10), "lat": BAS[0], "lon": BAS[1], "kind": "post", "text": "on est à Bastille, le cortège arrive", "title": "Bastille"}]
+    near = ps.near_evidence({**p, "radius_m": 2500}, ev_, NOW)
+    hub = ps.hub_tracks({**p, "radius_m": 2500}, {"key": "ongoing"}, near, NOW, PARIS)
+    assert len(hub["crowd"]) == 1 and len(hub["crowd"][0]["points"]) == 2
+    assert hub["crowd"][0]["hhmm"] == "14:50"
+    assert hub["police"] == [] and hub["police_note"]                    # police_tracks.py not deployed here
+    assert ps.hub_tracks(p, {"key": "ended"}, near, NOW, PARIS)["crowd"] == []
+
+
 def test_finished_protests_leave_the_hazards():
     import demonstrations as dm
     hz = [{"id": "tga-grp-1-0"}, {"id": "tga-grp-2-0"}, {"id": "tgs-x"}]

@@ -813,6 +813,50 @@ def evidence_from_posts(posts: list[dict], announced: set) -> list[dict]:
     return out
 
 
+HUB_KEYS = {"starting", "ongoing", "dispersing"}
+
+
+def hub_tracks(p: dict, st: dict, ev: list[dict], now: _dt.datetime, zone=None) -> dict:
+    """While it goes on, the protest's card is the hub (owner, 2026-10-19:
+    "while it's going on we want full coverage: videos, photos, messages,
+    tracking, police movement, protester movement"): the crowd's movement
+    linked from the reports near it (demonstrations.link_tracks), and the
+    police's — from police_tracks.py when that module is deployed (another
+    pass is writing it; its function is looked up, never assumed)."""
+    out = {"crowd": [], "police": [], "police_note": None}
+    if st.get("key") not in HUB_KEYS:
+        return out
+    try:
+        import demonstrations as dm
+        reps = [{"id": f"ev{i}-{e.get('post') or ''}", "lat": e["lat"], "lon": e["lon"], "at": e.get("at"),
+                 "place": e.get("place") or "", "text": e.get("text") or e.get("title") or "", "title": e.get("title"),
+                 "url": e.get("url"), "source": e.get("source"), "country": p.get("cc") or ""}
+                for i, e in enumerate(ev) if not e.get("dispersal")]
+        for t in dm.link_tracks(reps, now, lambda _cc: zone, min_nodes=2)[:4]:
+            out["crowd"].append({"id": t["id"], "points": [{"lat": x["lat"], "lon": x["lon"], "at": x["at"]} for x in t["points"]],
+                                 "last_at": t["last_at"], "hhmm": t["last"]["hhmm"], "n_reports": t["n_reports"],
+                                 "heading_deg": t.get("heading_deg"), "distance_m": sum(s["distance_m"] for s in t["segments"])})
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[protest-status] error: crowd tracks: {type(e).__name__}: {e}", flush=True)
+    try:
+        import importlib
+        pt = importlib.import_module("police_tracks")
+    except ImportError:
+        out["police_note"] = "Police movement: not available here yet"
+        return out
+    fn = next((getattr(pt, n) for n in ("tracks_near", "near", "for_place") if callable(getattr(pt, n, None))), None)
+    if fn is None:
+        out["police_note"] = "Police movement: no tracks_near() in police_tracks"
+        return out
+    try:
+        since = _utc(p.get("starts_utc")) - _dt.timedelta(minutes=EARLY_MIN) if p.get("starts_utc") else None
+        got = fn(p["lat"], p["lon"], (p.get("radius_m") or RADIUS_DEFAULT_M) * 2, since) or []
+        out["police"] = [t for t in got if isinstance(t, dict)][:6]
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[protest-status] error: police tracks: {type(e).__name__}: {e}", flush=True)
+    return out
+
+
 def build(cands: list[dict], evidence: list[dict], now: _dt.datetime, zone_of=None,
           media_of=None, vision_of=None) -> list[dict]:
     """Candidates → protests with their status, crowd and media (pure but for
@@ -840,6 +884,7 @@ def build(cands: list[dict], evidence: list[dict], now: _dt.datetime, zone_of=No
             for fg in crowd_figures(e.get("text"), e.get("role")):
                 figs.append({**fg, "post": e.get("post"), "url": e.get("url"), "source": e.get("source"), "at": e.get("at")})
         media = media_of(p, st, now) if media_of else []
+        hub = hub_tracks(p, st, ev, now, zone)
         vis = vision_of({**p, "status": st}, media) if vision_of else None
         crowd = crowd_estimate(figs, vis)
         start, end, approx = window(p)
@@ -856,7 +901,8 @@ def build(cands: list[dict], evidence: list[dict], now: _dt.datetime, zone_of=No
             "sources": p["sources"][:12], "n_sources": len(p["sources"]),
             "evidence": [{k: e.get(k) for k in ("at", "kind", "title", "url", "source", "distance_m", "dispersal")}
                          for e in reversed(ev)][:12],
-            "media": media, "crowd": crowd,
+            "media": media, "crowd": crowd, "crowd_tracks": hub["crowd"], "police_tracks": hub["police"],
+            "police_note": hub["police_note"],
             "crowd_figures": [{k: f.get(k) for k in ("who", "low", "high", "value", "words", "url", "source", "at")} for f in figs][:12],
             "vision": vis, "note": NOTE,
         })

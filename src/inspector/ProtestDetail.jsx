@@ -36,7 +36,8 @@ export default function ProtestDetail({ protest, phone = false }) {
     const crowd = crowdLabel(p)
     const bySource = crowdSources(p)
     const pending = p.vision?.pending > 0 && !(p.vision?.photos > 0)
-    const ev = arr(p.evidence).slice(0, 5)
+    // while it goes on the card is the hub: more of the latest messages
+    const ev = arr(p.evidence).slice(0, ["ongoing", "starting", "dispersing"].includes(key) ? 8 : 4)
     const dim = phone ? "var(--txt2, #c3c7cf)" : "var(--text-dim, var(--txt2))"
     const small = { fontSize: phone ? 12.5 : "var(--text-xs, 12px)", color: dim, lineHeight: 1.45 }
     return (
@@ -94,6 +95,23 @@ export default function ProtestDetail({ protest, phone = false }) {
                             </figure>
                         ))}
                     </div>
+                </div>
+            )}
+
+            {(arr(p.crowd_tracks).length > 0 || arr(p.police_tracks).length > 0) && (
+                <div data-testid="protest-tracks">
+                    <div style={{ ...small, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10.5, marginBottom: 4 }}>Movement</div>
+                    {arr(p.crowd_tracks).map((t) => (
+                        <div key={t.id} style={{ ...small, color: undefined, fontSize: phone ? 13 : "var(--text-xs, 12px)", marginBottom: 3 }}>
+                            Crowd moved {t.distance_m >= 1000 ? `${(t.distance_m / 1000).toFixed(1)} km` : `${Math.round(t.distance_m / 10) * 10} m`}
+                            {" "}through {t.points.length} reported places, last seen {t.hhmm} <span style={{ color: dim }}>· reconstructed from {t.n_reports} reports</span>
+                        </div>
+                    ))}
+                    {arr(p.police_tracks).map((t, i) => (
+                        <div key={t.id || i} style={{ ...small, color: undefined, fontSize: phone ? 13 : "var(--text-xs, 12px)", marginBottom: 3 }}>
+                            Police: {t.title || t.label || "movement reported"}{t.hhmm ? ` · ${t.hhmm}` : ""}
+                        </div>
+                    ))}
                 </div>
             )}
 

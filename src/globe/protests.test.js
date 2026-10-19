@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { moodPoint } from "./telegramMood.js"
 import { crowdLabel, crowdSources, dayLabel, itemStatusLabel, mediaItems, protestPoints, protestRaw, span, statusLabel } from "./protests.js"
 
 const NOW = Date.parse("2026-10-18T13:00:00Z")          // 15:00 in Paris
@@ -85,6 +86,16 @@ describe("the map and the card", () => {
         expect(pt.key).toBe("ongoing")
         expect(pt.iconUri).toMatch(/^data:image\/svg\+xml/)
         expect(decodeURIComponent(pt.iconUri)).toContain("Ongoing · since 14:00")
+    })
+    it("a protest that is over is no longer on the map (owner, 2026-10-19)", () => {
+        const over = [{ ...PROTEST, id: "e", status: { key: "ended" } }, { ...PROTEST, id: "n", status: { key: "no_show" } }]
+        expect(protestPoints({ protests: [...over, PROTEST] }, NOW).map((p) => p.raw.id)).toEqual(["pr-1"])
+    })
+    it("a call to violence (no time said) leaves the map after 12 h", () => {
+        const a = { alert_id: "1", alert_type: "Telegram mood: call to violence", lat: 48.8, lon: 2.3, title: "x" }
+        expect(moodPoint({ ...a, created_at: T(-60 * 3) }, NOW)).not.toBeNull()
+        expect(moodPoint({ ...a, created_at: T(-60 * 13) }, NOW)).toBeNull()
+        expect(moodPoint({ ...a, alert_type: "Telegram mood: tension rising sharply", created_at: T(-60 * 13) }, NOW)).not.toBeNull()
     })
     it("media get absolute URLs", () => {
         const [m] = mediaItems(PROTEST, "https://api.example")
