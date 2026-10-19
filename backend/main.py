@@ -12524,12 +12524,11 @@ async def api_telegram_statements(lat: float, lon: float, hours: int = Query(72,
 async def api_telegram_video(chan: str, msg_id: int):
     """The post's video, fetched from Telegram when opened; not kept (telegram_ingest.VIDEO_DIR)."""
     import telegram_ingest as _tg
-    # a channel without a username comes as Telegram's "-100<id>" (a URL
-    # segment cannot carry the "c/<id>" the posts table uses)
-    m_id = re.fullmatch(r"-100(\d{5,15})", chan)
-    if m_id:
-        chan = f"c/{m_id.group(1)}"
-    elif not re.fullmatch(r"[A-Za-z0-9_]{3,64}", chan):
+    # a channel without a username comes as Telegram's "-100<id>", a private
+    # chat as "~u<id>" / "~g<id>" (a URL segment cannot carry the "c/<id>"
+    # the posts table uses): telegram_ingest.chan_from_url
+    chan = _tg.chan_from_url(chan)
+    if not chan:
         raise HTTPException(400, "bad channel")
     if not _tg.on_server():
         raise HTTPException(503, _tg.SERVER_ONLY)
@@ -13782,6 +13781,36 @@ async def _coastal_targets_loop():
             print(f"[coastal-targets] error: {type(_e).__name__}: {_e}\n{_tb.format_exc()}")
         # Stale regions one every few minutes; otherwise look again in 6 h.
         await asyncio.sleep(300 if rest else 6 * 3600)
+
+
+async def _telegram_vision_loop():
+    """What Telegram's photos and videos show, read by the vision model and
+    decided by rule (telegram_vision.py, owner 2026-10-19). Feed-driven, so
+    on a one-thread pool of its own — never _executor, which serves
+    requests — every minute, within its hourly, daily and dollar caps.
+    Server only, like the collector whose pictures it reads."""
+    import telegram_ingest as _tg
+    if not _tg.on_server():
+        return
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="tg-vision")
+    await asyncio.sleep(120)
+    while True:
+        try:
+            if not HEAVY_FEEDS_PAUSED and _tg.configured() and _tg.logged_in():
+                import telegram_vision as _tv
+                await asyncio.get_running_loop().run_in_executor(_pool, _tv.run_once)
+        except Exception as _e:                              # noqa: BLE001
+            # loud, counted, and on /api/telegram/status — a pass that dies
+            # silently every minute is a feature switched off
+            try:
+                import telegram_vision as _tv
+                _tv.STATUS["failed_passes"] = _tv.STATUS.get("failed_passes", 0) + 1
+                _tv.STATUS["last_error"] = f"pass: {type(_e).__name__}: {str(_e)[:200]}"
+            except Exception:                                # noqa: BLE001
+                pass
+            _loop_error("tg-vision", _e, every=10)
+        await asyncio.sleep(60)
 
 
 async def _telegram_mood_alert_loop():
@@ -16731,6 +16760,7 @@ async def startup_event():
     # and event notification raised twice. Seen 2026-10-10 as two
     # "[telegram] error (occurrence 1)" lines per start.
     _spawn(_telegram_loop)
+    _spawn(_telegram_vision_loop)
     _spawn(_event_watch_loop)
     _spawn(_exit_watch_loop)
     _spawn(_warning_resend_loop)
