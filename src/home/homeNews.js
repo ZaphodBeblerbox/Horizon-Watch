@@ -53,7 +53,7 @@ export function homeVisible() {
 }
 
 const SECTION = {
-    ground: "From the ground",
+    ground: "Live footage",
     happened: "What happened while you were away",
 }
 

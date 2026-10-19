@@ -219,8 +219,8 @@ export const WHATS_NEW = [
     {
         where: "Home",
         title: "Footage, and channels live now",
-        body: "From the ground plays one video at a time with its headline large above it. When a channel we read goes live on Telegram you are told — “livestream started … click to watch” — and it plays here, pulled only while you watch. New footage or a new story on Home is announced too.",
-        target: '[data-testid="ground-reel"]',
+        body: "Live footage is one strip of the newest Telegram videos — from every chat we read, street reports and people saying where they are — one card per video, renewed every 20 seconds. Scroll it sideways (arrows, trackpad or shift + wheel); a click opens it full screen, where the arrow keys go on to the next and “Show on map” takes you to its place. When a channel we read goes live on Telegram you are told — “livestream started … click to watch” — and it plays here, pulled only while you watch.",
+        target: '[data-testid="live-footage"]',
         go: () => nav("home"),
     },
     {

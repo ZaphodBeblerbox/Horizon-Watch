@@ -39,7 +39,7 @@ import { THEATER_SCOPE } from "../data/theaterScope.js"
 import { whenLabel } from "../utils/formatTime.js"
 
 import { slotOf, useFrozen } from "../home/dayPart.js"
-import GroundReel from "../home/GroundReel.jsx"
+import LiveFootage from "../home/LiveFootage.jsx"
 import { announceNew } from "../home/homeNews.js"
 import { hmZone } from "../utils/clock.js"
 import { createPortal } from "react-dom"
@@ -130,7 +130,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     useEffect(() => subscribeAuth(setUser), [])
 
     /* HOME IS LIVE. The surface (critical signals, Telegram footage) is
-       re-read every minute so the lead, Newest and "From the ground" show
+       re-read every 30 s so the lead and Newest show
        what is happening now; a failed poll keeps what is on screen. */
     useEffect(() => {
         const load = () => fetch(`${API_BASE}/api/surface`, { credentials: "include" })
@@ -271,56 +271,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
        list above them refreshes every 30 s; these hold still for a part of
        the day, so they can be read rather than chased. */
     const slot = useMemo(() => slotOf(new Date()), [dayPart, Math.floor(Date.now() / 600_000)]) // eslint-disable-line react-hooks/exhaustive-deps
-    const iso2Name = useMemo(() => new Map(countryPlaces.filter((p) => p.iso2).map((p) => [String(p.iso2).toLowerCase(), p.name])), [countryPlaces])
-
-    // Telegram's own feed (the pool holds news): the last 48 hours of posts.
-    const [tgPosts, setTgPosts] = useState([])
-    useEffect(() => {
-        let live = true
-        const load = () => fetch(`${API_BASE}/api/telegram/posts?hours=48`, { credentials: "include" })
-            .then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d) setTgPosts(safeArray(d.posts)) }).catch(() => {})
-        load()
-        const t = setInterval(load, 10 * 60_000)
-        return () => { live = false; clearInterval(t) }
-    }, [])
-
-    /* THE THREE MOST BREAKING POINTS, ON VIDEO. Footage from the last two
-       days, yours first (near your assets, in your theaters and interests),
-       then the hardest events, then the newest — one per place, so three
-       videos are three stories. Chosen once per part of the day. */
-    const groundPick = useMemo(() => {
-        const HARD = { strike: 0, attack: 0, explosion: 0, clash: 1, interception: 1, unrest: 2 }
-        const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, low: 3 }
-        const vids = tgPosts.filter((x) => x.media === "video" && Number.isFinite(+x.lat))
-            .map((x) => ({ ...x, location_country: iso2Name.get(String(x.country_code || "").toLowerCase()) || x.location_country }))
-        const mine = new Set(partition(vids, w).mine.map((m) => m.id))
-        const ranked = vids.sort((a, b) => (mine.has(b.id) - mine.has(a.id))
-            || ((a.graphic ? 1 : 0) - (b.graphic ? 1 : 0))
-            || ((SEVR[a.severity_tier] ?? 4) - (SEVR[b.severity_tier] ?? 4))
-            || ((HARD[a.event_type] ?? 3) - (HARD[b.event_type] ?? 3))
-            || String(b.posted_at || "").localeCompare(String(a.posted_at || "")))
-        // one per place: a story within 30 km of one already chosen is the
-        // same place told twice ("Obolon, Kyiv" and "Kyiv, Ukraine")
-        const kmTo = (a, b) => {
-            const r = Math.PI / 180
-            const h = Math.sin((b.lat - a.lat) * r / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin((b.lon - a.lon) * r / 2) ** 2
-            return 12742 * Math.asin(Math.sqrt(h))
-        }
-        // Three by default; beyond them, more only while it is urgent:
-        // critical footage, or footage from what this user watches.
-        const out = []
-        for (const v of ranked) {
-            const at = { lat: +v.lat, lon: +v.lon }
-            if (out.some((o) => kmTo(at, { lat: +o.lat, lon: +o.lon }) < 30)) continue
-            const urgent = v.severity_tier === "critical" || mine.has(v.id)
-            if (out.length >= 3 && !urgent) continue
-            out.push({ ...v, _mine: mine.has(v.id) })
-            if (out.length === 8) break
-        }
-        return out
-    }, [tgPosts, w, iso2Name])
     const knowsYou = myAssets !== null && countryPlaces.length > 0
-    const groundVideos = useFrozen(`ground:${slot.key}`, groundPick, (a) => knowsYou && a.length > 0 && a.length >= Math.min(3, groundPick.length))
 
     /* Overnight — our own surface, newest first. Deliberately NOT sorted on
        relevance_score: that field is a lookup on severity_tier (main.py
@@ -344,14 +295,11 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     }, [surface, split, slot])
     const overnight = useFrozen(`happened:${slot.key}`, overnightNow, (a) => knowsYou && a.length > 0 && a.length >= Math.min(4, overnightNow.length))
 
-    /* NEW ON HOME (owner, 2026-10-10): footage or an item added here is
-       announced once — in the tray always, as a card only when Home is not
-       on screen (home/homeNews.js). Only once the sections are settled
-       (knowsYou), or the first fill would read as news. */
-    useEffect(() => {
-        if (!knowsYou) return
-        announceNew("ground", groundVideos, { titleOf: (v) => v.headline || v.summary_en, whereOf: (v) => v.place })
-    }, [groundVideos, knowsYou])
+    /* NEW ON HOME (owner, 2026-10-10): an item added here is announced once —
+       in the tray always, as a card only when Home is not on screen
+       (home/homeNews.js). Only once the sections are settled (knowsYou), or
+       the first fill would read as news. The Live footage strip is not
+       announced: it changes every 20 s and says so itself ("N new"). */
     useEffect(() => {
         if (!knowsYou) return
         announceNew("happened", overnight, { idOf: (s) => s.id ?? s.headline, titleOf: (s) => s.title || s.headline, whereOf: (s) => placeOf(s) })
@@ -638,32 +586,14 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
 
                     {/* Telegram channels live now (telegram/LivePlayer.jsx) */}
                     <LiveNow />
-                    {/* ── From the ground: one video at a time, the next when it ends ── */}
-                    {groundVideos.length > 0 && (
-                        <div data-screen-label="From the ground" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                            <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--txt4)" }}>From the ground</span>
-                                <span style={{ fontSize: 11.5, color: "var(--txt4)" }}>the {groundVideos.length === 1 ? "most breaking story" : `${groundVideos.length} most breaking stories, one after another`} {split.hasInterests ? "for you" : "worldwide"} · renewed {slot.part === "night" ? "tonight" : `this ${slot.part}`}</span>
-                            </div>
-                            <GroundReel videos={groundVideos} renderInfo={(v, at, n) => (
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 14px 14px", minWidth: 0 }}>
-                                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, color: "var(--txt4)" }}>{at + 1} / {n}</span>
-                                            <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase",
-                                                           color: v.severity_tier === "critical" ? "var(--red)" : "var(--txt3)" }}>
-                                                {whenLabel(v.posted_at || v.published_at)} · <bdi>{v.channel_title || v.source || v.channel}</bdi>{v._mine ? " · yours" : ""}
-                                            </span>
-                                            {v.summary_en && v.summary_en !== v.headline && <span style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--txt2)", overflowWrap: "anywhere" }}>{v.summary_en}</span>}
-                                            <span style={{ fontSize: 12, color: "var(--txt3)", overflowWrap: "anywhere" }}>{String(v.place || v.geocoded_as || "").split(",").slice(0, 2).join(",")}</span>
-                                            <button onClick={() => {
-                                                onOpenModule("map")
-                                                window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: v.lat, lon: v.lon, altitude: 60000 } }))
-                                                window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "telegram", entityId: v.id, data: v } }))
-                                            }} style={{ alignSelf: "flex-start", height: 28, padding: "0 12px", border: 0, background: "var(--acc)", color: "var(--mz-cream)",
-                                                        font: "inherit", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Show on the map</button>
-                                        </div>
-                            )} />
-                        </div>
-                    )}
+                    {/* ── Live footage (owner, 2026-10-18): one strip of the newest
+                           Telegram videos, in place of From the ground ── */}
+                    <LiveFootage variant="desk" onShowOnMap={(v) => {
+                        onOpenModule("map")
+                        window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: +v.lat, lon: +v.lon, altitude: 60000 } }))
+                        window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: "telegram", entityId: v.id,
+                            data: { ...v, headline: v.headline || v.caption } } }))
+                    }} />
 
                     {/* ── Daily brief + Suggested ───────────────────────── */}
                     <div style={{

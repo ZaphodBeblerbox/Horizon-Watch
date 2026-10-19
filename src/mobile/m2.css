@@ -267,22 +267,6 @@
 .m2-banner-body .m2-sub { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m2-banner-x { border: 0; background: none; color: var(--txt3); font-size: 22px; height: 40px; cursor: pointer; }
 @keyframes m2-banner-in { from { transform: translateY(-120%); opacity: 0; } to { transform: none; opacity: 1; } }
-/* LIVE FROM TELEGRAM, one post at a time (MHome.jsx TelegramStory) */
-.m2-story-card { transition: opacity .32s ease; }
-.m2-story-media { display: block; width: 100%; height: 210px; padding: 0; border: 0; background: #000; overflow: hidden; cursor: pointer; }
-.m2-story-media img { width: 100%; height: 210px; object-fit: cover; display: block; }
-.m2-story-place { display: flex; align-items: flex-end; height: 100%; padding: 14px 16px; font-size: 26px; font-weight: 700; letter-spacing: -.01em; color: var(--txt2, #c3c7cf);
-                  background: linear-gradient(160deg, rgba(122,167,255,.18), rgba(122,167,255,.03)); }
-.m2-story-text { display: block; width: 100%; padding: 14px 16px 16px; border: 0; background: none; color: var(--txt); text-align: left; font: inherit; cursor: pointer; }
-.m2-story-when { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--txt2); }
-.m2-story-when b { padding: 3px 9px; border-radius: 11px; background: rgba(229,72,77,.16); color: #ff8a8d; font-weight: 650; font-variant-numeric: tabular-nums; }
-.m2-story-when span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.m2-story-head { display: block; margin: 10px 0 6px; font-size: 22px; line-height: 1.22; font-weight: 700; letter-spacing: -.015em;
-                 display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-.m2-story-dots { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
-.m2-story-dots button { width: 6px; height: 6px; padding: 0; border: 0; border-radius: 3px; background: var(--txt4, #6b7280); opacity: .5; cursor: pointer; transition: width .25s ease, opacity .25s ease; }
-.m2-story-dots button[aria-selected="true"] { width: 18px; opacity: 1; background: var(--txt2); }
-.m2-story-media.bare { height: 110px; }
 
 /* findings of the automatic watch, as boxes (mobile/findingsLeaflet.js) */
 .leaflet-tooltip.m2-finding-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
@@ -341,8 +325,6 @@
 .m2 .m2-badge { background: #f4f5f7; color: var(--ink); }
 .m2-bubble.me > div { background: rgba(255, 255, 255, .14); }
 .m2-ios { background: rgba(255, 255, 255, .05); border-color: var(--gline2); }
-.m2-story-when b { background: rgba(255, 255, 255, .1); color: var(--txt); }
-.m2-story-place { background: rgba(255, 255, 255, .04); }
 .m2-post-acts button[aria-pressed="true"] { color: var(--txt); }
 .m2 .m2-widget .plx-getout { background: var(--glass) !important; color: #ff6159 !important; }
 /* words: white, or a grey — never a colour */
@@ -466,10 +448,6 @@
           transform: translate(-50%, -30px); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
 .m2-ptr.spin svg { animation: m2-ptr-spin .8s linear infinite; }
 @keyframes m2-ptr-spin { to { transform: rotate(360deg) } }
-/* From the ground: one video centred and larger, its neighbours peeking */
-/* as wide as Live from Telegram (owner, 2026-10-17), one at a time */
-.m2-hscroll.m2-center { scroll-snap-type: x mandatory; margin: 0; padding: 0; gap: 12px; }
-.m2-hscroll.m2-center > * { width: 100%; scroll-snap-align: center; scroll-snap-stop: always; }
 .m2-why { margin: 4px 0 14px; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--gline2); background: rgba(255, 255, 255, .05);
           font-size: 14px; line-height: 1.5; color: var(--txt2); }
 .m2-why-h { font-size: 12.5px; font-weight: 600; color: var(--txt3); margin-bottom: 4px; }

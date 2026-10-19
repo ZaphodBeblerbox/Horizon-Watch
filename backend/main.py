@@ -12261,6 +12261,20 @@ async def api_telegram_feed(before: str = "", limit: int = Query(40, ge=5, le=10
     return await loop.run_in_executor(_executor, _tg.feed, before or None, limit)
 
 
+@app.get("/api/telegram/footage")
+async def api_telegram_footage(hours: int = Query(48, ge=1, le=72), limit: int = Query(40, ge=5, le=60)):
+    """Home's Live footage strip (live_footage.py): the newest Telegram videos
+    from every relevant chat, street reports and self-reported positions,
+    one card per video. Cached 20 s for every user; a fresh answer is served
+    from the event loop, a miss is built once in the executor."""
+    import live_footage as _lf
+    got = _lf.cached(hours, limit)
+    if got is not None:
+        return got
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _lf.footage, hours, limit)
+
+
 @app.get("/api/infra/features")
 async def api_infra_features(west: float, south: float, east: float, north: float, zoom: int = Query(8, ge=1, le=20)):
     """Infrastructure in view, from OpenInfraMap's vector tiles, at the

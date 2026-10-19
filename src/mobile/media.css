@@ -60,6 +60,30 @@
 @keyframes m2-mv-ripple { 0% { opacity: 0 } 15% { opacity: 1 } 70% { opacity: 1 } 100% { opacity: 0 } }
 @keyframes m2-mv-label { from { transform: scale(.85) } to { transform: none } }
 
+/* A LIST (Home's Live footage): where we are, the neighbours for a mouse,
+   and what this one is — its words, chat, time and place — over the media */
+.m2-mv-count { font-size: 12.5px; font-weight: 550; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .8); }
+.m2-mv-side { position: absolute; top: 50%; margin-top: -20px; z-index: 2; transition: opacity .28s ease; }
+.m2-mv-side.left { left: 14px; }
+.m2-mv-side.right { right: 14px; }
+.m2-mv[data-ui="hidden"] .m2-mv-side { opacity: 0; pointer-events: none; }
+@media (hover: none) { .m2-mv-side { display: none; } }
+.m2-mv-cap { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+             padding: 40px 16px calc(env(safe-area-inset-bottom, 0px) + 18px);
+             background: linear-gradient(to top, rgba(0, 0, 0, .6), rgba(0, 0, 0, 0)); text-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+             transition: opacity .28s ease, transform .38s cubic-bezier(.22, 1, .36, 1); }
+.m2-mv-cap.over-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 58px); padding-bottom: 6px; background: none; }
+.m2-mv[data-ui="hidden"] .m2-mv-cap { opacity: 0; transform: translateY(10px); pointer-events: none; }
+.m2-mv-cap-meta { font-size: 12.5px; color: rgba(255, 255, 255, .78); max-width: 680px; }
+.m2-mv-cap-t { font-size: 15.5px; font-weight: 600; line-height: 1.3; color: #fff; max-width: 680px;
+               display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.m2-mv-pill { display: inline-flex; align-items: center; gap: 6px; height: 34px; margin-top: 4px; padding: 0 14px; border-radius: 17px; cursor: pointer;
+              color: #fff; font-family: inherit; font-size: 13px; font-weight: 550; text-shadow: none;
+              border: 1px solid rgba(255, 255, 255, .16); background: rgba(22, 24, 30, .5);
+              backdrop-filter: blur(20px) saturate(1.3); -webkit-backdrop-filter: blur(20px) saturate(1.3);
+              transition: transform .18s cubic-bezier(.22, 1, .36, 1); }
+.m2-mv-pill:active { transform: scale(.96); }
+
 @media (prefers-reduced-motion: reduce) {
   .m2-mv-top, .m2-mv-bar, .m2-mv-btn, .m2-mv-big, .m2-mv-rail, .m2-mv-knob, .m2-mv-frame { transition: opacity .15s ease !important; }
   .m2-mv[data-ui="hidden"] .m2-mv-top, .m2-mv[data-ui="hidden"] .m2-mv-bar { transform: none; }

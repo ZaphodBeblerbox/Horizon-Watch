@@ -113,7 +113,11 @@ EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": 
                  # chat a post came from, the forum topic it was written in, the
                  # message it answers, and whether telegram_signals has read it.
                  "chat_kind": "TEXT", "topic_id": "INTEGER", "topic_title": "TEXT", "reply_to": "INTEGER",
-                 "intent_checked": "INTEGER"}
+                 "intent_checked": "INTEGER",
+                 # THE SAME VIDEO IN MANY CHATS (owner, 2026-10-18: one Live
+                 # footage strip): Telegram's own id of the photo or document,
+                 # which a forward keeps, and a video's length in seconds.
+                 "media_key": "TEXT", "duration": "REAL"}
 
 # What each channel is (telegram_channels.json). Unlisted = aggregator.
 CHANNELS_FILE = os.path.join(HERE, "telegram_channels.json")
@@ -445,16 +449,25 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                         thumb = name if got else None
                     except Exception:
                         thumb = None
+                media_key, duration = None, None
+                try:
+                    if media == "photo":
+                        media_key = f"p{m.media.photo.id}"
+                    elif media == "video":
+                        media_key = f"d{m.media.document.id}"
+                        duration = getattr(m.file, "duration", None)
+                except Exception:                              # noqa: BLE001
+                    media_key, duration = None, None
                 tid = topic_of(m) if kind == "forum" else None
                 reply = getattr(getattr(m, "reply_to", None), "reply_to_msg_id", None)
                 if tid and reply == tid:
                     reply = None                       # written in a topic, not an answer to someone
                 con.execute(
                     "INSERT OR IGNORE INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, media, thumb, views,"
-                    " role, party, chat_kind, topic_id, topic_title, reply_to)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " role, party, chat_kind, topic_id, topic_title, reply_to, media_key, duration)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (chan, m.id, title, m.date.isoformat(), text[:4000], media, thumb, m.views,
-                     info["role"], info["party"], kind, tid, topic_title_for(topics, tid), reply))
+                     info["role"], info["party"], kind, tid, topic_title_for(topics, tid), reply, media_key, duration))
                 new += 1
                 n_chat += 1
             now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()

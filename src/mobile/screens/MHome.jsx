@@ -4,18 +4,16 @@
  *
  *   Most urgent for you   signals near the user's assets, then the most
  *                         severe in their theaters and interests; every 30 s
- *   Live from Telegram   one post at a time, full width, a headline in the
- *                         manner of a front page, fading to the next (TelegramStory)
- *   From the ground       the three most breaking places for them, on
- *                         video (Telegram, 48 h, one per place) — swipe
- *   The brief             what happened (overnight / this morning / this
+ *   Live footage          the newest Telegram videos from every chat, street
+ *                         reports and self-reported positions, one card per
+ *                         video, swiped sideways; every 20 s (home/LiveFootage)
+ *   The brief            what happened (overnight / this morning / this
  *                         afternoon) and what may follow, the user's first;
  *                         both turn at 05, 12 and 18 (home/dayPart.js)
  */
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
 import { useEffect, useMemo, useRef, useState } from "react"
-import TelegramMedia from "../../components/TelegramMedia.jsx"
-import { captureMedia } from "../MediaViewer.jsx"
+import LiveFootage from "../../home/LiveFootage.jsx"
 import { slotOf, useFrozen } from "../../home/dayPart.js"
 import { getCurrentUser, subscribeAuth } from "../../state/authStore.js"
 import { greetingFor } from "../../data/greetings.js"
@@ -23,7 +21,7 @@ import { useMine, usePoll, arr } from "../useMine.js"
 import { Row, ScopeChips, Sheet, SignalSheet, sevColor, when, ago, Icon } from "./common.jsx"
 import { inTheater, setTheaterScope, useTheaterScope } from "../theaterScope.js"
 import OutlookExplain from "../../insight/OutlookExplain.jsx"
-import { attachDrag, attachPullToRefresh, flingMs, swallowClickAfterDrag } from "../gesture.js"
+import { attachPullToRefresh } from "../gesture.js"
 import { relevance } from "../../state/interests.js"
 import { hmZone } from "../../utils/clock.js"
 import { getSettings, subscribeSettings } from "../../state/settingsStore.js"
@@ -33,17 +31,9 @@ function useHere() {
     useEffect(() => subscribeSettings((st) => setH(st?.interests?.here || null)), [])
     return h
 }
-import API_BASE from "../../apiBase.js"
 import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 
 const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
-const HARD = { strike: 0, attack: 0, explosion: 0, clash: 1, interception: 1, unrest: 2 }
-
-function km(a, b) {
-    const r = Math.PI / 180
-    const h = Math.sin((b.lat - a.lat) * r / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin((b.lon - a.lon) * r / 2) ** 2
-    return 12742 * Math.asin(Math.sqrt(h))
-}
 
 export default function MHome({ onShowOnMap, onOpen }) {
     const mine = useMine()
@@ -52,8 +42,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
     const seed = useRef(Math.floor(Math.random() * 997)).current
     const surface = usePoll("/api/surface", 30_000, (d) => arr(d?.items ?? d))
     const notes = usePoll("/api/notifications?limit=40", 30_000, (d) => arr(d?.items ?? d))
-    // ALWAYS THE NEWEST (owner, 2026-10-18): Live from Telegram and From the
-    // ground every 30 s; only what happened earlier keeps to its turn of the day
+    // Telegram's located posts, for "For you" (the footage strip reads its own)
     const posts = usePoll("/api/telegram/posts?hours=48", 30_000, (d) => arr(d?.posts))
     const outlook = usePoll("/api/enrich/outlook", 20 * 60_000)
     const [open, setOpen] = useState(null)
@@ -80,22 +69,6 @@ export default function MHome({ onShowOnMap, onOpen }) {
             .slice(0, 8)
     }, [notes, split, tgMine])
 
-    const pick = useMemo(() => {
-        const vids = arr(posts).filter((x) => x.media === "video" && Number.isFinite(+x.lat))
-        const yours = new Set(mine.split(vids).mine.map((m) => m.id))
-        const ranked = [...vids].sort((a, b) => (yours.has(b.id) - yours.has(a.id)) || ((a.graphic ? 1 : 0) - (b.graphic ? 1 : 0))
-            || ((SEVR[a.severity_tier] ?? 4) - (SEVR[b.severity_tier] ?? 4)) || ((HARD[a.event_type] ?? 3) - (HARD[b.event_type] ?? 3))
-            || String(b.posted_at || "").localeCompare(String(a.posted_at || "")))
-        const out = []
-        for (const v of ranked) {
-            if (out.some((o) => km({ lat: +o.lat, lon: +o.lon }, { lat: +v.lat, lon: +v.lon }) < 30)) continue
-            out.push({ ...v, _mine: yours.has(v.id) })
-            if (out.length === 3) break
-        }
-        return out
-    }, [posts, mine.w]) // eslint-disable-line react-hooks/exhaustive-deps
-    const videos = pick
-
     const happenedNow = useMemo(() => {
         const base = mine.has ? split.mine : arr(surface)
         return [...base].filter((x) => !x.published_at || Date.parse(x.published_at) >= slot.since - 6 * 3600_000)
@@ -110,9 +83,6 @@ export default function MHome({ onShowOnMap, onOpen }) {
         return [...arr(outlook?.outlook)].sort((a, b) => isMine(b) - isMine(a)).slice(0, 4)
     }, [outlook, mine.w])
     const ahead = useFrozen(`m-ahead:${slot.key}`, aheadNow, (a) => mine.ready && a.length > 0)
-
-    // LE DIRECT: the newest Telegram posts, a swipe away.
-    const live = usePoll("/api/telegram/feed?limit=12", 20_000, (d) => arr(d?.posts))
 
     // FOR YOU: what is near you, your assets and in your theaters, each with why
     const here = useHere()
@@ -195,26 +165,11 @@ export default function MHome({ onShowOnMap, onOpen }) {
             <button className="m2-cta" onClick={() => onOpen?.("map")} data-testid="m2-open-map"><Icon id="g-globe" size={22} />Open the map</button>
 
             <LiveNow compact />
-            {arr(live).length > 0 && (
-                <TelegramStory posts={arr(live)} onOpen={setOpen} onAll={() => { window.__m2DeskTab = "general"; onOpen?.("desk") }} />
-            )}
-            {videos.length > 0 && (
-                <section className="m2-section" data-screen-label="Phone ground">
-                    <header><span className="m2-eyebrow">From the ground</span><span className="m2-when">{mine.has ? "for you" : "worldwide"} · renewed {slot.part === "night" ? "tonight" : `this ${slot.part}`}</span></header>
-                    <div className="m2-hscroll m2-center">
-                        {videos.map((v) => (
-                            <div key={v.id} className="m2-card" style={{ display: "flex", flexDirection: "column" }}>
-                                <div onClickCapture={captureMedia}><TelegramMedia post={v} maxHeight="300px" radius="0" /></div>
-                                <button className="m2-tap" onClick={() => setOpen(v)} style={{ textAlign: "left", border: 0, background: "transparent", padding: "10px 12px", cursor: "pointer" }}>
-                                    <span className="m2-eyebrow">{when(v.posted_at)} · {v.channel_title || v.channel}{v._mine ? " · yours" : ""}</span>
-                                    <span className="m2-t" style={{ marginTop: 4 }}>{v.headline}</span>
-                                    <span className="m2-sub">{String(v.place || "").split(",").slice(0, 2).join(",")}</span>
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            )}
+            {/* ONE STRIP OF FOOTAGE (owner, 2026-10-18), in place of Live from
+                Telegram and From the ground: the newest videos, swiped sideways */}
+            <LiveFootage variant="phone" onShowOnMap={(x) => onShowOnMap?.({
+                lat: +x.lat, lon: +x.lon, headline: x.caption, title: x.caption, location: x.place,
+                source: `Telegram · ${x.channel_title || x.channel}`, url: x.url })} />
 
             <section className="m2-section" data-screen-label="Phone brief">
                 <header><span className="m2-eyebrow">{slot.happened}</span></header>
@@ -282,97 +237,5 @@ function AlertsOffer() {
                 </span>
             </span>
         </div>
-    )
-}
-
-
-/** LIVE FROM TELEGRAM, ONE AT A TIME (owner, 2026-10-11): not a swiper —
- *  one post across the full width, its picture or video, WHEN it was posted
- *  and by whom in plain sight, and the headline set large like a front page;
- *  every few seconds it fades to the next. Tap to open it; the dots jump. */
-const STORY_MS = 7000
-function TelegramStory({ posts, onOpen, onAll }) {
-    const list = posts.slice(0, 8)
-    const [i, setI] = useState(0)
-    const [shown, setShown] = useState(true)
-    const [hold, setHold] = useState(false)
-    // A SWIPE, NOT ONLY THE DOTS (owner, 2026-10-17): the card follows the
-    // finger, thrown left the next post arrives from the right (and back)
-    const card = useRef(null)
-    const [enter, setEnter] = useState(null)
-    const go = (n, from = null) => {
-        const to = ((n % list.length) + list.length) % list.length
-        if (from) { setI(to); setEnter(from); setShown(true); return }
-        setShown(false); setTimeout(() => { setI(to); setShown(true) }, 320)
-    }
-    const iRef = useRef(i)
-    iRef.current = i
-    useEffect(() => {
-        const node = card.current
-        if (!node || list.length < 2) return undefined
-        const offClick = swallowClickAfterDrag(node)          // a swipe never opens the post
-        const off = attachDrag(node, {
-            start: (t) => !t.closest?.("video, [data-nodrag]"),
-            move: ({ dx, axis }) => {
-                if (axis !== "x") return false
-                setHold(true)
-                node.style.transition = ""
-                node.style.transform = `translateX(${dx}px)`
-                node.__dragged = true
-                return true
-            },
-            end: ({ dx, vx, axis, moved }) => {
-                setHold(false)
-                if (!moved || axis !== "x") return
-                const w = node.getBoundingClientRect().width
-                if (Math.abs(dx) > w * 0.22 || Math.abs(vx) > 0.45) {
-                    const dir = dx < 0 ? 1 : -1
-                    node.style.transition = `transform ${flingMs(w - Math.abs(dx), vx)}ms cubic-bezier(.2,.75,.3,1)`
-                    node.style.transform = `translateX(${dx < 0 ? -w - 30 : w + 30}px)`
-                    setTimeout(() => { node.style.transition = "none"; node.style.transform = ""; go(iRef.current + dir, dir > 0 ? "r" : "l") }, 220)
-                    return
-                }
-                node.style.transition = "transform .32s cubic-bezier(.22,1,.36,1)"
-                node.style.transform = ""
-            },
-        })
-        return () => { off(); offClick() }
-    }, [list.length]) // eslint-disable-line react-hooks/exhaustive-deps
-    useEffect(() => { if (!enter) return undefined; const t = setTimeout(() => setEnter(null), 420); return () => clearTimeout(t) }, [enter, i])
-    useEffect(() => {
-        if (hold || list.length < 2) return undefined
-        const t = setTimeout(() => go(i + 1), STORY_MS)
-        return () => clearTimeout(t)
-    }, [i, hold, list.length]) // eslint-disable-line react-hooks/exhaustive-deps
-    const t = list[Math.min(i, list.length - 1)]
-    if (!t) return null
-    const place = String(t.place || "").split(",").map((x) => x.trim()).filter((x) => x && !/^(none|null|unknown)$/i.test(x)).slice(0, 2).join(", ")
-    const posted = ago(t.posted_at)
-    return (
-        <section className="m2-section m2-story" data-screen-label="Phone live" data-testid="m2-telegram-story">
-            <header><span className="m2-eyebrow">Live from Telegram</span><span style={{ flex: 1 }} />
-                <button className="m2-chip" onClick={onAll}>All posts</button></header>
-            <div ref={card} className="m2-card m2-story-card" style={{ opacity: shown ? 1 : 0, touchAction: "pan-y",
-                 animation: enter ? `m2-pane-from-${enter} .38s cubic-bezier(.22,1,.36,1)` : undefined }}
-                 onTouchStart={() => setHold(true)} onTouchEnd={() => setHold(false)}>
-                <button className={`m2-story-media${t.media === "video" || t.thumb_url ? "" : " bare"}`} onClick={() => onOpen(t)} aria-label="Open this post">
-                    {t.media === "video"
-                        ? <span onClick={(e) => e.stopPropagation()} onClickCapture={captureMedia} style={{ display: "block" }}><TelegramMedia key={t.id} post={t} maxHeight="220px" radius="0" active={shown} /></span>
-                        : t.thumb_url
-                        ? <img src={`${API_BASE}${t.thumb_url}`} alt="" />
-                        : <span className="m2-story-place">{String(t.place || t.channel_title || "Telegram").split(",")[0]}</span>}
-                </button>
-                <button className="m2-story-text" onClick={() => onOpen(t)}>
-                    <span className="m2-story-when"><b>{posted && !/ago$|now/i.test(posted) ? `${posted} ago` : posted}</b><span>{t.channel_title || t.channel}</span></span>
-                    <span className="m2-story-head">{t.headline || String(t.summary_en || t.text || "").slice(0, 160)}</span>
-                    {place && <span className="m2-sub">{place}</span>}
-                </button>
-            </div>
-            {list.length > 1 && (
-                <div className="m2-story-dots" role="tablist">
-                    {list.map((p, n) => <button key={p.id} role="tab" aria-selected={n === i} aria-label={`Post ${n + 1}`} onClick={() => go(n)} />)}
-                </div>
-            )}
-        </section>
     )
 }

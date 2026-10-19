@@ -56,12 +56,48 @@ function ensureHost() {
     selfRoot.render(<MediaViewerHost self />)
 }
 
+/* A LIST, SWIPED THROUGH (owner, 2026-10-18: Home's Live footage — "swipe
+   sideways to show the latest Telegram videos"): `list` items are
+   { src, type, poster, fromEl (an element, or a function giving it when
+   needed), title, meta, ground, onMap }; the viewer opens at `index`, a
+   sideways swipe (or the arrow keys) brings the next or the previous, and
+   `onIndex(i)` lets the page bring that one's card into view so closing
+   flies back into it. */
+function itemAt(list, index, onIndex, enter = null) {
+    const it = list[index] || {}
+    const fromEl = typeof it.fromEl === "function" ? it.fromEl() : it.fromEl || null
+    return { id: ++seq, src: it.src, type: it.type || "image", poster: it.poster || null, fromEl, download: it.download || null,
+             title: it.title || null, meta: it.meta || null, ground: !!it.ground, onMap: it.onMap || null,
+             list, index, onIndex, enter }
+}
+
 /** Open a picture or a video full screen, growing from `fromEl` if given. */
-export function openMedia({ src, type = "image", poster = null, fromEl = null, download = null }) {
+export function openMedia({ src, type = "image", poster = null, fromEl = null, download = null, list = null, index = 0, onIndex = null,
+                            title = null, meta = null, onMap = null }) {
+    if (Array.isArray(list) && list.length) {
+        const i = Math.max(0, Math.min(list.length - 1, index | 0))
+        if (!list[i]?.src) return
+        ensureHost()
+        current = itemAt(list, i, onIndex)
+        emit()
+        return
+    }
     if (!src) return
     ensureHost()
-    current = { id: ++seq, src, type, poster, fromEl, download }
+    current = { id: ++seq, src, type, poster, fromEl, download, title, meta, onMap }
     emit()
+}
+
+/** The next (+1) or previous (-1) of the open list; false at either end. */
+export function stepMedia(dir) {
+    const c = current
+    if (!c?.list) return false
+    const i = c.index + dir
+    if (i < 0 || i >= c.list.length || !c.list[i]?.src) return false
+    try { c.onIndex?.(i) } catch { /* the page's business */ }
+    current = itemAt(c.list, i, c.onIndex, dir > 0 ? "r" : "l")
+    emit()
+    return true
 }
 
 /** onClickCapture for a box holding media: a tap on its <img> or <video> opens the viewer. */
@@ -96,7 +132,7 @@ export function MediaViewerHost({ self = false }) {
 /* ── the viewer ──────────────────────────────────────────────────────── */
 
 const EASE = "cubic-bezier(.22,1,.36,1)"
-const OPEN_MS = 420, CLOSE_MS = 360
+const OPEN_MS = 420, CLOSE_MS = 360, SIDE_MS = 340
 const reduced = () => typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches
 const tf = (t) => `translate(${t.tx}px, ${t.ty}px) scale(${t.s})`
 const inset = (c) => `inset(${c[0]}px ${c[1]}px ${c[2]}px ${c[3]}px)`
@@ -178,8 +214,14 @@ function Viewer({ item, onDone }) {
             el.pause()
         }
         if (p.hidden) p.hidden.style.visibility = "hidden"
-        const h = still ? null : home()
-        if (still) {
+        const h = still || item.enter ? null : home()
+        if (item.enter && !still) {
+            // the next of a list: the screen stays black, the media slides in
+            setBack(1)
+            setBox({ tx: (item.enter === "r" ? 1 : -1) * (window.innerWidth + 40), ty: 0, s: 1 }, null)
+            boxRef.current.getBoundingClientRect()
+            requestAnimationFrame(() => setBox(null, null, SIDE_MS))
+        } else if (still) {
             rootRef.current.style.opacity = "0"
             requestAnimationFrame(() => { rootRef.current.style.transition = "opacity 160ms ease"; rootRef.current.style.opacity = "1" })
         } else {
@@ -193,9 +235,33 @@ function Viewer({ item, onDone }) {
                 setBack(1, OPEN_MS * 0.8)
             })
         }
-        const t = setTimeout(() => { phase.current = "open" }, still ? 160 : OPEN_MS)
-        return () => clearTimeout(t)
+        const t = setTimeout(() => { phase.current = "open" }, still ? 160 : item.enter ? SIDE_MS : OPEN_MS)
+        return () => {
+            clearTimeout(t)
+            // gone without closing (stepped to the next): the page has its copy back
+            if (p.hidden) p.hidden.style.visibility = ""
+        }
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    /* SIDEWAYS: the next or the previous of the list. The media leaves to
+       the side it was thrown; the next one comes in from the other. */
+    const n = item.list ? item.list.length : 0
+    const canStep = (dir) => n > 1 && item.index + dir >= 0 && item.index + dir < n
+    const step = (dir, fromDx = 0, vx = 0) => {
+        if (!canStep(dir) || phase.current !== "open") return false
+        phase.current = "stepping"
+        const v = vidRef.current
+        if (v) v.pause()
+        const w = window.innerWidth
+        const ms = still ? 0 : flingMs(w - Math.abs(fromDx), vx)
+        setBox({ tx: (dir > 0 ? -1 : 1) * (w + 40), ty: 0, s: 1 }, null, ms)
+        setTimeout(() => {
+            if (page.current.hidden) page.current.hidden.style.visibility = ""
+            stepMedia(dir)
+        }, ms)
+        return true
+    }
+    const stepRef = useRef(step); stepRef.current = step
 
     // The phone turned: lay the media out again for the new screen.
     useEffect(() => {
@@ -238,7 +304,10 @@ function Viewer({ item, onDone }) {
     }, [home, isVideo, item.fromEl, onDone, still])
 
     useEffect(() => {
-        const k = (e) => { if (e.key === "Escape") { e.stopPropagation(); close() } }
+        const k = (e) => {
+            if (e.key === "Escape") { e.stopPropagation(); close() }
+            else if (e.key === "ArrowRight" || e.key === "ArrowLeft") { if (stepRef.current(e.key === "ArrowRight" ? 1 : -1)) e.stopPropagation() }
+        }
         window.addEventListener("keydown", k, true)
         return () => window.removeEventListener("keydown", k, true)
     }, [close])
@@ -361,7 +430,14 @@ function Viewer({ item, onDone }) {
         return attachDrag(node, {
             start: () => phase.current === "open",
             move: ({ dx, dy, axis }) => {
-                if (!mode) mode = zoom.current.s > 1 ? "pan" : axis === "y" && dy > 0 ? "down" : "none"
+                if (!mode) mode = zoom.current.s > 1 ? "pan" : axis === "y" && dy > 0 ? "down" : axis === "x" && n > 1 ? "side" : "none"
+                if (mode === "side") {
+                    // past either end it gives, but only a little
+                    const d = canStep(dx < 0 ? 1 : -1) ? dx : dx / 3
+                    setBox({ tx: d, ty: 0, s: 1 }, null)
+                    if (uiRef.current) setUi(false)
+                    return true
+                }
                 if (mode === "pan") {
                     const s = zoom.current.s
                     const { x, y } = clampZoom(zoom.current.bx + dx, zoom.current.by + dy, s)
@@ -375,11 +451,17 @@ function Viewer({ item, onDone }) {
                 if (uiRef.current) setUi(false)
                 return true
             },
-            end: ({ dy, vy, moved }) => {
+            end: ({ dx, dy, vx, vy, moved }) => {
                 const m = mode
                 mode = null
                 if (moved) dragEnd.current = performance.now()
                 if (m === "pan") { zoom.current.bx = zoom.current.x; zoom.current.by = zoom.current.y; return }
+                if (m === "side") {
+                    const dir = dx < 0 ? 1 : -1
+                    if ((Math.abs(dx) > window.innerWidth * 0.2 || Math.abs(vx) > 0.45) && stepRef.current(dir, dx, vx)) return
+                    setBox(null, null, still ? 0 : 320)
+                    return
+                }
                 if (m !== "down") return
                 if (dy > 110 || vy > 0.55) closeRef.current(flingMs(window.innerHeight - dy, vy))
                 else { setBox(null, null, still ? 0 : 380); setBack(1, still ? 0 : 300) }
@@ -453,6 +535,8 @@ function Viewer({ item, onDone }) {
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                 </button>
                 <span style={{ flex: 1 }} />
+                {n > 1 && <span className="m2-mv-count">{item.index + 1} / {n}</span>}
+                <span style={{ flex: 1 }} />
                 {item.download && (
                     <a className="m2-mv-btn" href={item.download.href} download={item.download.name} aria-label="Save">
                         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
@@ -466,6 +550,30 @@ function Viewer({ item, onDone }) {
                     </button>
                 )}
             </div>
+
+            {n > 1 && canStep(-1) && (
+                <button className="m2-mv-btn m2-mv-side left" aria-label="Previous" onClick={(e) => { stop(e); step(-1) }}>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 5l-7 7 7 7" /></svg>
+                </button>
+            )}
+            {n > 1 && canStep(1) && (
+                <button className="m2-mv-btn m2-mv-side right" aria-label="Next" onClick={(e) => { stop(e); step(1) }}>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+                </button>
+            )}
+
+            {(item.title || item.meta || item.onMap) && (
+                <div className={`m2-mv-cap${isVideo ? " over-bar" : ""}`} onClick={stop} data-testid="mv-caption">
+                    {(item.meta || item.ground) && <span className="m2-mv-cap-meta">{[item.meta, item.ground ? "on the ground" : null].filter(Boolean).join(" · ")}</span>}
+                    {item.title && <span className="m2-mv-cap-t">{item.title}</span>}
+                    {item.onMap && (
+                        <button className="m2-mv-pill" onClick={() => { const go = item.onMap; close(); setTimeout(go, still ? 160 : CLOSE_MS + 30) }}>
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></svg>
+                            Show on map
+                        </button>
+                    )}
+                </div>
+            )}
 
             {isVideo && !playing && !scrub && (
                 <button className="m2-mv-big" aria-label="Play" onClick={(e) => { stop(e); toggle() }}>
