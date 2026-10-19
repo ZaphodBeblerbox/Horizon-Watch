@@ -1276,7 +1276,15 @@ def read_inputs(now: _dt.datetime) -> dict:
                 places.append(learned_place(f"ep:{p.get('id')}", p.get("name") or "", p["lat"], p["lon"], dm.fold(p.get("city") or "") or None))
     except Exception as ex:                                    # noqa: BLE001
         print(f"[demo-situation] error: places: {type(ex).__name__}: {ex}", flush=True)
-    return {"posts": posts, "reports": reports, "hazards": hazards, "places": places, "intent_rows": intent_rows}
+    protests = []
+    try:
+        # the announced protests and where they stand: a call whose gathering is over goes (call_live)
+        import protest_status
+        protests = protest_status.snapshot()["protests"]
+    except Exception as ex:                                    # noqa: BLE001
+        print(f"[demo-situation] error: protests: {type(ex).__name__}: {ex}", flush=True)
+    return {"posts": posts, "reports": reports, "hazards": hazards, "places": places, "intent_rows": intent_rows,
+            "protests": protests}
 
 
 # ── routing (async, bounded, cached) ───────────────────────────────────────
@@ -1420,6 +1428,22 @@ async def situation(now: _dt.datetime | None = None, city: str | None = None) ->
     return _filter(out, city)
 
 
+def call_live(x: dict, now: _dt.datetime, protests: list[dict]) -> bool:
+    """A call still worth a target, a route and a convergence mark: not once
+    its gathering is over (Ended / No sign it happened), nor once its own
+    time has run out (owner, 2026-10-19: "Once the demonstration is over we
+    don't want the signal anymore") — protest_status.call_live."""
+    import protest_status as ps
+    when = x.get("when")
+    kind = "now" if when == "now" else "date" if (isinstance(when, str) and len(when) == 10) else "time" if when else None
+    ch, _, mid = str(x.get("post") or "").rpartition("/")
+    keys = {(ch, int(mid))} if mid.isdigit() else set()
+    pl = x.get("place") or {}
+    live, _p = ps.call_live(keys=keys, lat=pl.get("lat"), lon=pl.get("lon"), starts_utc=x.get("start_at"), when_kind=kind,
+                            posted_at=x.get("at"), act=x.get("act"), cc=x.get("country") or None, now=now, protests=protests)
+    return live
+
+
 def _filter(out: dict, city: str | None) -> dict:
     if not city:
         return out
@@ -1435,7 +1459,8 @@ async def _compute(now: _dt.datetime) -> dict:
     staged = []
     for name, c in parts["cities"].items():
         crowds = build_crowds(c["reports"], now, zone_of, parts["learned"])[:MAX_CROWDS]
-        calls = [x for x in c["calls"] if (now - (dm._utc(x.get("at")) or now)).total_seconds() / 60 <= CALL_MAX_AGE_MIN]
+        calls = [x for x in c["calls"] if (now - (dm._utc(x.get("at")) or now)).total_seconds() / 60 <= CALL_MAX_AGE_MIN
+                 and call_live(x, now, inp.get("protests") or [])]
         if not crowds and not calls:
             continue
         staged.append((name, crowds, calls, c["devs"]))

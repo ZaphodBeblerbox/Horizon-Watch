@@ -232,6 +232,9 @@ def _with_unified(con, out: list[dict], before: str, full: bool) -> list[dict]:
     try:
         import telegram_signals
         sigs = telegram_signals.signals_from(con, telegram_signals.SIGNAL_HOURS)
+        # a call whose gathering is over is gone from the feed (protest_status.call_live)
+        import protest_status
+        sigs = protest_status.live_signals(sigs)
     except Exception as e:                                  # noqa: BLE001
         print(f"[general-feed] error: unified signals: {type(e).__name__}: {e}", flush=True)
         return out

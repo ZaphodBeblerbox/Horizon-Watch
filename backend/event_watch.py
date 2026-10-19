@@ -334,6 +334,9 @@ def cards_for(uid: str, now: _dt.datetime | None = None) -> list[dict]:
             if p:
                 card["status_label"] = p["status_label"]
                 card["protest_status"] = ps.status_brief(p)
+                if p["status"]["key"] in ps.OVER:
+                    card["_over"] = True                       # its gathering is over: no longer a card
+        cards[:] = [x for x in cards if not x.pop("_over", False)]
         seen_p = set()
         for p in idx.values():
             st = p["status"]

@@ -670,7 +670,7 @@ async function loadPoliceActions({ bounds }) {
 // ── The mood on Telegram, as signals (globe/telegramMood.js) ──────────────
 async function loadTelegramMood({ bounds }) {
     const d = await getJson(`${API_BASE}${MOOD_PATH}`, { ttlMs: MOOD_REFRESH_MS / 2 })
-    return cullPoints(arr(d).map(moodPoint).filter(Boolean).map((m) => ({
+    return cullPoints(arr(d).map((a) => moodPoint(a)).filter(Boolean).map((m) => ({
         ...m, iconUri: moodIconUri(m.severity, m.precise), size: 22,
     })), normBounds(bounds))
 }

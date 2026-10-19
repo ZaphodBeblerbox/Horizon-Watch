@@ -43,9 +43,20 @@ export function moodIconUri(sev, precise = true, size = 22) {
     return uri
 }
 
+/** A call to violence says no time: after CALL_NO_TIME_H it is no longer a
+ *  signal on the map (owner, 2026-10-19: "Once the demonstration is over we
+ *  don't want the signal anymore"; backend protest_status.CALL_NO_TIME_H). */
+export const CALL_NO_TIME_H = 12
+export function callExpired(a, now = Date.now()) {
+    if (a?.alert_type !== "Telegram mood: call to violence") return false
+    const t = Date.parse(a.created_at || a.published_at || "")
+    return Number.isFinite(t) && now - t > CALL_NO_TIME_H * 3_600_000
+}
+
 /** An alert row as a map point: {id, lat, lon, precise, title, sub, severity, raw}, or null. */
-export function moodPoint(a) {
+export function moodPoint(a, now = Date.now()) {
     if (!isMoodAlert(a) || !Number.isFinite(+a?.lat) || !Number.isFinite(+a?.lon)) return null
+    if (callExpired(a, now)) return null
     let raw = a.raw_json || a.raw || null
     if (typeof raw === "string") { try { raw = JSON.parse(raw) } catch { raw = null } }
     const precise = raw?.placed ? raw.placed === "post" : a.alert_type === "Telegram mood: call to violence"

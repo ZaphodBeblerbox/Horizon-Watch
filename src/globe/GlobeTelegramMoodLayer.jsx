@@ -24,7 +24,7 @@ export default function GlobeTelegramMoodLayer({ enabled = true }) {
         let live = true
         const load = () => fetch(`${API_BASE}${MOOD_PATH}`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (live && d) setItems(safeArray(Array.isArray(d) ? d : d.alerts).map(moodPoint).filter(Boolean)) })
+            .then((d) => { if (live && d) setItems(safeArray(Array.isArray(d) ? d : d.alerts).map((a) => moodPoint(a)).filter(Boolean)) })
             .catch(() => {})
         load()
         const iv = setInterval(load, MOOD_REFRESH_MS)

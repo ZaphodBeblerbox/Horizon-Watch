@@ -1102,6 +1102,102 @@ def by_post() -> dict:
     return out
 
 
+# ── calls to gather expire with their protest ──────────────────────────────
+# Owner, 2026-10-19: "Why am I still getting signals on the map about calls
+# to gather at places that already passed? Once the demonstration is over we
+# don't want the signal anymore." Every layer and feed fed by a call (the
+# unified Telegram calls, the city situation's targets and routes, the
+# announced hazards, the notifications) asks call_live() on read: a call
+# that belongs to a protest lives as long as the protest is not Ended / No
+# sign it happened; one that belongs to none lives until its own clock runs
+# out (call_end). Nothing is deleted: the posts stay, the signal goes.
+
+CALL_NO_TIME_H = 12          # a call that says no time: 12 h after it was posted
+CALL_GRACE_MIN = 60          # a timed call: its default length, and an hour
+POSITION_H = 6               # "on est à Concorde" says nothing about tomorrow
+OVER = {"ended", "no_show"}
+LIVE = {"starting", "ongoing", "dispersing"}
+
+
+def call_end(starts_utc=None, when_kind: str | None = None, posted_at=None, act: str | None = None,
+             zone=None) -> _dt.datetime | None:
+    """When a call stops being news by the clock alone: a day without an hour
+    at the end of that day there; a time (or "now", "in 30 min") after the
+    gathering's default length and an hour; no time at all, CALL_NO_TIME_H
+    after it was posted."""
+    start, posted = _utc(starts_utc), _utc(posted_at)
+    if start and when_kind == "date":
+        z = zone or _dt.timezone.utc
+        d = start.astimezone(z).date()
+        return _dt.datetime(d.year, d.month, d.day, 23, 59, tzinfo=z)
+    if start:
+        return start + _dt.timedelta(minutes=DEFAULT_DURATION_MIN.get(kind_of(None, act), 150) + CALL_GRACE_MIN)
+    if posted:
+        return posted + _dt.timedelta(hours=CALL_NO_TIME_H)
+    return None
+
+
+def protest_of_call(keys: set, lat, lon, protests: list[dict]) -> dict | None:
+    """The protest a call stands for: one of its posts is behind the protest;
+    else a protest under way at the same place (the call is part of it)."""
+    for p in protests:
+        if any((s.get("channel"), s.get("msg_id")) in keys for s in p.get("sources") or []):
+            return p
+    if lat is not None:
+        for p in protests:
+            if (p.get("status") or {}).get("key") in LIVE and metres(p["lat"], p["lon"], lat, lon) <= SAME_M:
+                return p
+    return None
+
+
+def call_live(*, keys: set = frozenset(), lat=None, lon=None, starts_utc=None, when_kind=None, posted_at=None,
+              act=None, cc=None, now: _dt.datetime | None = None, protests: list[dict] | None = None) -> tuple[bool, dict | None]:
+    """(still news?, its protest or None)."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    p = protest_of_call(set(keys), lat, lon, protests or [])
+    if p is not None:
+        return (p.get("status") or {}).get("key") not in OVER, p
+    end = call_end(starts_utc, when_kind, posted_at, act, zone_of(cc) if when_kind == "date" else None)
+    return (end is None or now <= end), None
+
+
+def live_signals(sigs: list[dict], now: _dt.datetime | None = None, protests: list[dict] | None = None) -> list[dict]:
+    """telegram_signals' unified signals still worth showing: calls by
+    call_live (each matched one carries its protest's status), positions
+    for POSITION_H."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    if not sigs:
+        return []
+    if protests is None:
+        protests = _protests()
+    out = []
+    for s in sigs:
+        if s.get("kind") == "at":
+            last = _utc(s.get("last_at"))
+            if last and (now - last).total_seconds() <= POSITION_H * 3600:
+                out.append(s)
+            continue
+        it = s.get("intent") or {}
+        keys = {(x.get("channel"), x.get("msg_id")) for x in s.get("sources") or []}
+        live, p = call_live(keys=keys, lat=s.get("lat"), lon=s.get("lon"), starts_utc=it.get("starts_utc"),
+                            when_kind=it.get("when_kind"), posted_at=it.get("posted_at") or s.get("last_at"),
+                            act=it.get("act"), cc=s.get("country_code"), now=now, protests=protests)
+        if not live:
+            continue
+        if p is not None:
+            s = {**s, "protest_status": status_brief(p)}
+        out.append(s)
+    return out
+
+
+def _protests() -> list[dict]:
+    try:
+        return snapshot()["protests"]
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[protest-status] error: snapshot for calls: {type(e).__name__}: {e}", flush=True)
+        return []
+
+
 def status_brief(p: dict) -> dict:
     """What a feed item or a card carries of a protest."""
     return {"id": p["id"], "key": p["status"]["key"], "label": p["status_label"], "since": p["status"].get("since"),

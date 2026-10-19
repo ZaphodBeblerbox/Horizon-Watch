@@ -327,3 +327,67 @@ def test_no_vision_for_a_planned_protest(vision_db):
     p = {"id": "p4", "status": {"key": "planned"}}
     assert pm.vision_for(p, [_media(1)], start_thread=False) is None
     assert pm._q.empty()
+
+
+# ── calls to gather expire with their protest (owner, 2026-10-19) ───────────
+
+def _sig(kind="intent", when_kind="time", start_min=None, posted_min=-30, chan="grp", msg=1, lat=REP[0], lon=REP[1]):
+    return {"id": f"s{msg}", "kind": kind, "lat": lat, "lon": lon, "country_code": "fr", "last_at": _t(posted_min),
+            "intent": None if kind == "at" else {"act": "gather", "when_kind": when_kind, "posted_at": _t(posted_min),
+                                                 "starts_utc": _t(start_min) if start_min is not None else None},
+            "sources": [{"channel": chan, "msg_id": msg}]}
+
+
+def _prot(key, chan="grp", msg=1, lat=REP[0], lon=REP[1]):
+    return {"id": "p", "lat": lat, "lon": lon, "status": {"key": key}, "status_label": key,
+            "sources": [{"channel": chan, "msg_id": msg}], "tz": "Europe/Paris"}
+
+
+def test_call_end_by_clock():
+    assert ps.call_end(None, None, _t(0)) == NOW + dt.timedelta(hours=12)                    # no time said
+    assert ps.call_end(_t(60), "time", _t(0), "march") == NOW + dt.timedelta(minutes=60 + 180 + 60)
+    end = ps.call_end(_t(60 * 24), "date", _t(0), None, PARIS)                               # a day: its end, there
+    assert end.astimezone(PARIS).strftime("%Y-%m-%d %H:%M") == "2026-10-19 23:59"
+
+
+def test_call_lives_with_its_protest():
+    sigs = [_sig(start_min=-60 * 5, msg=1), _sig(start_min=-60 * 5, msg=2, chan="other")]
+    # msg 1 is behind a protest still ongoing (past its default length: reports keep it) → kept, with its status;
+    # msg 2 is at the same place as that ongoing protest → part of it
+    out = ps.live_signals(sigs, NOW, [_prot("ongoing", msg=1)])
+    assert [s["id"] for s in out] == ["s1", "s2"]
+    assert out[0]["protest_status"]["key"] == "ongoing"
+    # once it has ended, or never happened: gone (msg 2's own clock ran out too)
+    assert ps.live_signals(sigs, NOW, [_prot("ended", msg=1)]) == []
+    assert ps.live_signals(sigs, NOW, [_prot("no_show", msg=1)]) == []
+
+
+def test_calls_without_a_protest_expire_by_their_clock():
+    far = (REP[0] + 0.05, REP[1])
+    fresh = _sig(when_kind=None, posted_min=-60 * 3, msg=3, lat=far[0], lon=far[1])                 # no time, 3 h old
+    stale = _sig(when_kind=None, posted_min=-60 * 13, msg=4, lat=far[0], lon=far[1])                # no time, 13 h old
+    timed_over = _sig(start_min=-60 * 5, msg=5, lat=far[0], lon=far[1])                             # 10:00 rally, over
+    tomorrow = _sig(when_kind="date", start_min=60 * 24, posted_min=-60 * 30, msg=6, lat=far[0], lon=far[1])
+    old_pos = _sig(kind="at", posted_min=-60 * 7, msg=7)
+    new_pos = _sig(kind="at", posted_min=-20, msg=8)
+    out = ps.live_signals([fresh, stale, timed_over, tomorrow, old_pos, new_pos], NOW, [])
+    assert [s["id"] for s in out] == ["s3", "s6", "s8"]
+
+
+def test_demo_situation_calls_follow_the_lifecycle():
+    import demo_situation as ds
+    call = {"post": "grp/1", "place": {"lat": REP[0], "lon": REP[1]}, "start_at": _t(-60 * 5), "when": _t(-60 * 5),
+            "at": _t(-60 * 20), "act": "gather"}
+    assert ds.call_live(call, NOW, [_prot("ongoing")]) is True
+    assert ds.call_live(call, NOW, [_prot("ended")]) is False
+    assert ds.call_live(call, NOW, []) is False                                    # 10:00 + 2 h 30 + 1 h: over
+    assert ds.call_live({**call, "start_at": _t(30), "when": _t(30)}, NOW, []) is True
+
+
+def test_finished_protests_leave_the_hazards():
+    import demonstrations as dm
+    hz = [{"id": "tga-grp-1-0"}, {"id": "tga-grp-2-0"}, {"id": "tgs-x"}]
+    prots = [{**_prot("ended", msg=1), "starts_utc": _t(-300)}, {**_prot("ongoing", msg=2), "starts_utc": _t(-60)}]
+    out = dm.status_hazards(hz, prots)
+    assert [h["id"] for h in out] == ["tga-grp-2-0", "tgs-x"]
+    assert out[0]["protest_status"]["key"] == "ongoing"

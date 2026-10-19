@@ -416,7 +416,7 @@ def snapshot(now: _dt.datetime | None = None) -> dict:
         # their photos and videos and the crowd's size (protest_status.py)
         import protest_status as ps
         out["protests"] = ps.snapshot(now)["protests"]
-        status_hazards(out["demonstrations"], out["protests"])
+        out["demonstrations"] = status_hazards(out["demonstrations"], out["protests"])
     except Exception as ex:                                    # noqa: BLE001
         out["protests"] = []
         print(f"[demonstrations] error: protests: {type(ex).__name__}: {ex}", flush=True)
@@ -425,11 +425,13 @@ def snapshot(now: _dt.datetime | None = None) -> dict:
     return out
 
 
-def status_hazards(hazards: list[dict], protests: list[dict]) -> None:
+def status_hazards(hazards: list[dict], protests: list[dict]) -> list[dict]:
     """An announced gathering among the planner's hazards carries its
     protest's status, so its card reads "Ongoing · since 14:00", not
     "under way for 840 min" (the hazard's id is the announcement's,
-    tga-<channel>-<msg_id>-<idx>)."""
+    tga-<channel>-<msg_id>-<idx>); once its protest is over (Ended / No
+    sign it happened) it is not on this layer at all (owner, 2026-10-19)."""
+    out = []
     by_src = {}
     for p in protests:
         for s in p.get("sources") or []:
@@ -437,6 +439,7 @@ def status_hazards(hazards: list[dict], protests: list[dict]) -> None:
     for h in hazards:
         hid = str(h.get("id") or "")
         if not hid.startswith("tga-"):
+            out.append(h)
             continue
         body = hid[4:]
         p = by_src.get(body) or by_src.get(body.rsplit("-", 1)[0])
@@ -446,3 +449,7 @@ def status_hazards(hazards: list[dict], protests: list[dict]) -> None:
                                    "until": p["status"].get("until"), "starts_utc": p.get("starts_utc"),
                                    "last_report_at": p["status"].get("last_report_at"), "tz": p.get("tz"),
                                    "start_approx": p.get("start_approx"), "crowd": (p.get("crowd") or {}).get("label")}
+            if p["status"]["key"] in ("ended", "no_show"):
+                continue
+        out.append(h)
+    return out

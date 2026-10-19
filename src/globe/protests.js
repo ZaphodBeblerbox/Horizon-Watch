@@ -192,9 +192,12 @@ export function protestRaw(p, now = Date.now()) {
     }
 }
 
-/** Every protest as a map point: {id, lat, lon, iconUri, iconWidth, iconHeight, iconAnchor, size, title, sub, key, raw}. */
+/** Over: no longer a signal on the map (owner, 2026-10-19: "Once the demonstration is over we don't want the signal anymore"). */
+export const OVER = new Set(["ended", "no_show"])
+
+/** Every protest not yet over as a map point: {id, lat, lon, iconUri, iconWidth, iconHeight, iconAnchor, size, title, sub, key, raw}. */
 export function protestPoints(data, now = Date.now()) {
-    return arr(data?.protests).filter((p) => Number.isFinite(+p?.lat) && Number.isFinite(+p?.lon)).map((p) => {
+    return arr(data?.protests).filter((p) => Number.isFinite(+p?.lat) && Number.isFinite(+p?.lon) && !OVER.has(p?.status?.key)).map((p) => {
         const raw = protestRaw(p, now)
         const key = p.status?.key || "planned"
         const ic = protestIcon(key, raw.status_label.split(" (")[0])

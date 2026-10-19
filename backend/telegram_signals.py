@@ -963,6 +963,14 @@ def signals(hours: int = SIGNAL_HOURS, db_path: str | None = None) -> list[dict]
         out = signals_from(con, hours)
     finally:
         con.close()
+    # a call whose gathering is over (or whose own time ran out) is no longer
+    # a signal anywhere — map, Desk, notifications (protest_status.call_live,
+    # owner 2026-10-19); signals_from stays whole for the protests' own reading
+    try:
+        import protest_status
+        out = protest_status.live_signals(out)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[telegram-signals] error: expiry: {type(e).__name__}: {e}", flush=True)
     with _lock:
         _cache[key] = (time.time(), out)
     return out
