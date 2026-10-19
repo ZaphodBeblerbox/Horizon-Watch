@@ -223,6 +223,17 @@ def _system(db, conversation_id, text):
                        kind="system", body=text[:MAX_BODY]))
 
 
+def _notify(conversation_id: str, message_id: str):
+    """Tell the others in the chat, now rather than at the next sweep
+    (inbox_notify: the same card the notification feed carries). Never
+    the sender; never fails the send."""
+    try:
+        import inbox_notify
+        inbox_notify.after_message(conversation_id, message_id)
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[chat] notify: {type(ex).__name__}: {ex}", flush=True)
+
+
 # ── conversations ────────────────────────────────────────────────────────
 
 @router.get("/conversations")
@@ -358,18 +369,22 @@ async def update_conversation(conversation_id: str, request: Request):
 
 @router.post("/conversations/{conversation_id}/members")
 async def add_members(conversation_id: str, request: Request):
+    """Add people to a group. Group admins only (owner, 2026-10-19: the
+    group's creator and its admins edit who is in it; anybody may leave)."""
     from database import Conversation, ConversationMember, User, get_db
     me = _me(request)
     body = await request.json()
     ids = list(dict.fromkeys(str(i) for i in (body.get("user_ids") or []) if i))
     with get_db() as db:
-        _membership(db, conversation_id, me["id"])
+        mine = _membership(db, conversation_id, me["id"])
         c = db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if not c or c.kind != "group":
             # Adding a third person to a direct chat would silently change
             # what the first two thought they were in.
             raise HTTPException(status_code=400,
                                 detail="a direct chat is between two people — start a group instead")
+        if mine.role != "admin":
+            raise HTTPException(status_code=403, detail="only a group admin can add people")
         already = {r.user_id for r in db.query(ConversationMember).filter(
             ConversationMember.conversation_id == conversation_id).all()}
         fresh = [i for i in ids if i not in already]
@@ -421,6 +436,39 @@ def remove_member(conversation_id: str, user_id: str, request: Request):
         c.last_message_at = _now()
         db.commit()
     return {"ok": True}
+
+
+@router.put("/conversations/{conversation_id}/members/{user_id}")
+async def set_member_role(conversation_id: str, user_id: str, request: Request):
+    """Make somebody a group admin, or not. Body: {role: "admin"|"member"}.
+    Group admins only; the last admin cannot step down (the group would be
+    left with nobody who can edit it)."""
+    from database import Conversation, ConversationMember, get_db
+    me = _me(request)
+    body = await request.json()
+    role = (body.get("role") or "").strip().lower()
+    if role not in ("admin", "member"):
+        raise HTTPException(status_code=400, detail="role must be admin or member")
+    with get_db() as db:
+        _membership(db, conversation_id, me["id"], need_admin=True)
+        c = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if not c or c.kind != "group":
+            raise HTTPException(status_code=400, detail="only a group has admins")
+        rows = db.query(ConversationMember).filter(
+            ConversationMember.conversation_id == conversation_id).all()
+        target = next((r for r in rows if r.user_id == user_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="they are not in this group")
+        if role == "member" and target.role == "admin" and sum(r.role == "admin" for r in rows) <= 1:
+            raise HTTPException(status_code=400, detail="a group needs at least one admin")
+        if target.role != role:
+            target.role = role
+            who = _people(db, [user_id]).get(user_id, {}).get("name", "somebody")
+            by = me.get("name") or me["email"]
+            _system(db, conversation_id, f"{by} made {who} a group admin" if role == "admin"
+                    else f"{by} made {who} a member")
+        db.commit()
+        return _conversation_dict(db, c, me["id"])
 
 
 # ── messages ─────────────────────────────────────────────────────────────
@@ -517,7 +565,9 @@ async def post_message(conversation_id: str, request: Request):
         db.commit()
         # The dots become the message: clear them now, not TTL seconds later.
         note_typing(conversation_id, me["id"], "", on=False)
-        return _msg_dict(m, _people(db, [me["id"]]))
+        out = _msg_dict(m, _people(db, [me["id"]]))
+    _notify(conversation_id, out["id"])
+    return out
 
 
 @router.delete("/conversations/{conversation_id}/messages/{message_id}")
@@ -644,7 +694,9 @@ async def upload_to_chat(conversation_id: str, request: Request,
             m.body = body.strip()[:MAX_BODY]
         seat.last_read_at = _now()
         db.commit()
-        return _msg_dict(m, _people(db, [me["id"]]))
+        out = _msg_dict(m, _people(db, [me["id"]]))
+    _notify(conversation_id, out["id"])
+    return out
 
 
 @router.post("/conversations/{conversation_id}/attach-node")
@@ -702,7 +754,9 @@ async def attach_case_node(conversation_id: str, request: Request):
             m.body = text[:MAX_BODY]
         seat.last_read_at = _now()
         db.commit()
-        return _msg_dict(m, _people(db, [me["id"]]))
+        out = _msg_dict(m, _people(db, [me["id"]]))
+    _notify(conversation_id, out["id"])
+    return out
 
 
 @router.get("/conversations/{conversation_id}/messages/{message_id}/file")
@@ -837,7 +891,9 @@ async def attach_case(conversation_id: str, request: Request):
             conv.last_message_at = _now()
         seat.last_read_at = _now()
         db.commit()
-        return _msg_dict(m, _people(db, [me["id"]]))
+        out = _msg_dict(m, _people(db, [me["id"]]))
+    _notify(conversation_id, out["id"])
+    return out
 
 
 @router.get("/sendable-cases")
