@@ -103,7 +103,7 @@ describe("demonstrations — the phone's layers", () => {
     const bounds = { south: 48.7, west: 2.1, north: 49.0, east: 2.6 }
     const layer = (k) => PHONE_LAYERS.find((l) => l.key === k)
 
-    it("sit with unrest, off by default, read every 30 s", () => {
+    it("sit with unrest, off by default like every layer, read every 30 s", () => {
         const keys = PHONE_LAYERS.map((l) => l.key)
         const at = keys.indexOf("unrest")
         expect(keys.slice(at + 1, at + 4)).toEqual(["demonstrations", "demonstrations:movement", "demonstrations:situation"])
@@ -113,6 +113,8 @@ describe("demonstrations — the phone's layers", () => {
             expect(layer(k).refreshMs).toBe(30_000)
         }
         expect(layer("demonstrations:movement").label).toMatch(/reconstructed/)
+        // the street reports too: nothing is on until the user turns it on (owner, 2026-10-18)
+        expect(layer("demonstrations:police").defaultOn).toBe(false)
     })
 
     it("read one answer into points and lines in the shape the map draws", async () => {

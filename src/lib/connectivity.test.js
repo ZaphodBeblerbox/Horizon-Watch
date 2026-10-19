@@ -180,3 +180,19 @@ describe("the boot gate", () => {
         expect(bootGate({ ...base, reason: "slow", useLocalData: true, offlineLoginAvailable: false })).toBe("reconnecting")
     })
 })
+
+describe("confirmFailure — one slow request is not a slow server", () => {
+    it("keeps ok when the health probe answers", async () => {
+        const { confirmFailure } = await import("./useConnection.js")
+        expect(await confirmFailure("slow", async () => true)).toBe(null)
+        expect(await confirmFailure("server-error", async () => true)).toBe(null)
+    })
+    it("believes the failure when the probe fails too", async () => {
+        const { confirmFailure } = await import("./useConnection.js")
+        expect(await confirmFailure("slow", async () => false)).toBe("unreachable")
+    })
+    it("never second-guesses the device being offline", async () => {
+        const { confirmFailure } = await import("./useConnection.js")
+        expect(await confirmFailure("offline", async () => true)).toBe("offline")
+    })
+})

@@ -15,7 +15,8 @@
  */
 import { useEffect, useState } from "react"
 import { CACHE_EVENT } from "./offlineCache.js"
-import { deviceOffline } from "./connectivity.js"
+import { deviceOffline, probeServer } from "./connectivity.js"
+import API_BASE from "../apiBase.js"
 
 /** Pure, so it is testable: the next reading from the last and an event. */
 export function nextConnection(prev, ev) {
@@ -32,10 +33,38 @@ export function nextConnection(prev, ev) {
     return prev
 }
 
+/**
+ * ONE SLOW REQUEST IS NOT A SLOW SERVER. Every request reports its own
+ * result, so a single heavy endpoint timing out (production, 2026-10-18:
+ * /api/alerts/fusions at 121 s while /api/health/live answered in 0.2 s)
+ * put "Server slow" on screen for everyone. A failure is only believed
+ * once the server's cheapest address fails too; if that answers within
+ * PROBE_MS, the server is fine and the reading stays "ok".
+ */
+export const PROBE_MS = 5000
+
+export async function confirmFailure(reason, probe = () => probeServer({ apiBase: API_BASE, timeoutMs: PROBE_MS })) {
+    if (!reason || reason === "offline") return reason
+    const t0 = Date.now()
+    const up = await probe().catch(() => false)
+    if (up && Date.now() - t0 < PROBE_MS) return null
+    return up ? "slow" : "unreachable"
+}
+
 export default function useConnection() {
     const [state, setState] = useState(() => (deviceOffline() ? "offline" : "ok"))
     useEffect(() => {
-        const onCache = (e) => setState((p) => nextConnection(p, { type: "cache", detail: e?.detail }))
+        let probing = false
+        const onCache = (e) => {
+            const d = e?.detail || {}
+            const bad = (d.state === "cached" || d.state === "offline-empty") && d.reason && d.reason !== "offline"
+            if (!bad) { setState((p) => nextConnection(p, { type: "cache", detail: d })); return }
+            if (probing) return
+            probing = true
+            confirmFailure(d.reason).then((r) => {
+                if (r) setState((p) => nextConnection(p, { type: "cache", detail: { ...d, reason: r } }))
+            }).finally(() => { probing = false })
+        }
         const onOff = () => setState((p) => nextConnection(p, { type: "offline" }))
         const onOn = () => setState((p) => nextConnection(p, { type: "online" }))
         window.addEventListener(CACHE_EVENT, onCache)

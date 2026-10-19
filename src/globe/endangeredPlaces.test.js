@@ -60,8 +60,9 @@ describe("endangered places", () => {
     it("is on by default only while a call is within the week", () => {
         expect(defaultOnNow(Date.parse("2026-10-11T12:00:00Z"))).toBe(true)
         expect(defaultOnNow(Date.parse("2026-11-01T12:00:00Z"))).toBe(false)
+        // the phone layer itself starts off like every other (owner, 2026-10-18)
         const l = PHONE_LAYERS.find((x) => x.key === "endangered")
-        expect(typeof l.defaultOn).toBe("boolean")
+        expect(l.defaultOn).toBe(false)
     })
 })
 

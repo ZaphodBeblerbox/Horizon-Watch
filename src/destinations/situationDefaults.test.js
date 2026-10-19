@@ -12,9 +12,12 @@ import { readFileSync } from "node:fs"
 
 const SRC = readFileSync("src/destinations/Situation.jsx", "utf8")
 
-describe("default map layers", () => {
-    it("opens with news on", () => {
-        expect(SRC).toContain('g.key === "news"')
+describe("default map layers: nothing on (owner, 2026-10-18)", () => {
+    // "When a user opens the system for the first time, nothing should be
+    // on by default; they have to save to default themselves what they
+    // want on by default."
+    it("opens with every group off", () => {
+        expect(SRC).toMatch(/LAYER_GROUPS\.map\(\(g\) => \[g\.key, false\]\)/)
     })
 
     it("never shows GDELT as map signals (country risk index only)", () => {
@@ -22,16 +25,31 @@ describe("default map layers", () => {
         expect(SRC).not.toMatch(/label="Unconfirmed"/)
     })
 
-    it("opens with country risk on", () => {
-        expect(SRC).toMatch(/useState\(\{ risk: true,/)
-    })
-
-    it("opens with everything else off", () => {
+    it("opens with every context, infrastructure and track switch off", () => {
+        const ctx = /const \[contextOn, setContextOn\] = useState\(\{([^}]*)\}\)/.exec(SRC)[1]
+        expect(ctx).not.toMatch(/:\s*true/)
+        const infra = /const \[infraOn, setInfraOn\] = useState\(\{([^}]*)\}\)/.exec(SRC)[1]
+        expect(infra).not.toMatch(/:\s*true/)
+        const tracks = /const \[tracksOn, setTracksOn\] = useState\(\{([^}]*)\}\)/.exec(SRC)[1]
+        expect(tracks).not.toMatch(/:\s*true/)
         expect(SRC).toContain("const [firesOn, setFiresOn] = useState(false)")
         expect(SRC).toContain("const [theatresOn, setTheatresOn] = useState({})")
-        // No other context layer may default on.
-        const ctx = /useState\(\{ risk: true,([^}]*)\}\)/.exec(SRC)[1]
-        expect(ctx).not.toMatch(/:\s*true/)
+    })
+
+    it("opens with the stand-alone layers off (no group gates them)", () => {
+        for (const n of ["assetsOn, setAssetsOn", "teamOn, setTeamOn", "safeHousesOn, setSafeHousesOn",
+                         "endangeredOn, setEndangeredOn", "airspaceOn, setAirspaceOn", "gfwHeatOn, setGfwHeatOn"]) {
+            expect(SRC, n).toContain(`const [${n}] = useState(false)`)
+        }
+    })
+
+    it("an empty map says where to start", () => {
+        expect(SRC).toContain('data-testid="layers-empty-hint"')
+        expect(SRC).toContain("save default")
+    })
+
+    it("a default saved before then still opens as it did", () => {
+        expect(SRC).toContain("saved.v >= 2 ? {} : STANDALONE_BEFORE_2026_10_18()")
     })
 })
 
