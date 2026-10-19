@@ -874,7 +874,7 @@ def build(rows: list[dict]) -> list[dict]:
         sources = [{"channel": r["channel"], "msg_id": r["msg_id"], "posted_at": r["posted_at"],
                     "channel_title": r.get("channel_title") or r["channel"], "topic_title": r.get("topic_title"),
                     "text": (r.get("text") or "")[:280],
-                    "url": None if str(r["channel"]).startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}"}
+                    "url": None if str(r["channel"]).startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}"}
                    for r in rs]
         sig = {
             "id": f"tgu-{first['channel']}-{first['msg_id']}-{first.get('idx', 0)}", "unified": True, "kind": g["kind"],

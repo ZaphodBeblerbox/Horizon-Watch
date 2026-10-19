@@ -154,17 +154,63 @@ def over_budget() -> bool:
     return cap > 0 and spent_this_month() >= cap
 
 
+# ── the account's credit ────────────────────────────────────────────────
+# 2026-10-18: the OpenAI credit ran out and every Telegram pass kept calling
+# every 15 s, each failing with 429 insufficient_quota, while posts piled up
+# unread (0 relevant Telegram posts in two days). A spent account is not a
+# transient error: after one such answer the gate says None for
+# QUOTA_PAUSE_S, every caller takes its no-model path (rules), and the next
+# call after the pause finds out whether the owner has topped up.
+QUOTA_PAUSE_S = 15 * 60
+_QUOTA = {"until": 0.0, "since": None, "hits": 0, "last": None}
+
+
+def is_quota_error(e: BaseException) -> bool:
+    s = f"{type(e).__name__} {e}"
+    return ("insufficient_quota" in s or "credit_balance_exhausted" in s
+            or "exceeded your current quota" in s)
+
+
+def note_error(e: BaseException, now: float | None = None) -> bool:
+    """Every model caller's except block calls this. True when the error
+    means the account is out of credit (and the gate now pauses)."""
+    if not is_quota_error(e):
+        return False
+    import time as _t
+    now = now if now is not None else _t.time()
+    if _QUOTA["until"] <= now:
+        print(f"[openai] ACCOUNT OUT OF CREDIT — every model pass is paused {QUOTA_PAUSE_S // 60} min and "
+              f"rule-based reading takes over: {str(e)[:160]}", flush=True)
+    _QUOTA["until"] = now + QUOTA_PAUSE_S
+    _QUOTA["since"] = _QUOTA["since"] or datetime.now(timezone.utc).isoformat()
+    _QUOTA["hits"] += 1
+    _QUOTA["last"] = datetime.now(timezone.utc).isoformat()
+    return True
+
+
+def note_ok() -> None:
+    _QUOTA.update(until=0.0, since=None)
+
+
+def quota_paused(now: float | None = None) -> bool:
+    import time as _t
+    return _QUOTA["until"] > (now if now is not None else _t.time())
+
+
 def get_client(purpose: str, api_key: str | None = None):
     """The OpenAI client for this purpose, or None.
 
     None when: the purpose is off, no key is configured, the SDK is not
-    installed, or the month's budget is spent. Every caller treats None as
-    "do it without a model", which is the behaviour they have anyway.
+    installed, the month's budget is spent, or the account answered "no
+    credit" in the last QUOTA_PAUSE_S. Every caller treats None as "do it
+    without a model", which is the behaviour they have anyway.
     """
     if not is_enabled(purpose):
         return None
     key = api_key or os.getenv("OPENAI_API_KEY")
     if not key:
+        return None
+    if quota_paused():
         return None
     if over_budget():
         return None
@@ -189,4 +235,9 @@ def status() -> dict:
         "spent_usd": round(spent, 4),
         "remaining_usd": round(max(0.0, cap - spent), 4),
         "over_budget": over_budget(),
+        # out of credit at OpenAI (not our own cap): the owner must top up
+        "credit_exhausted": quota_paused() or bool(_QUOTA["since"]),
+        "credit_exhausted_since": _QUOTA["since"],
+        "credit_errors": _QUOTA["hits"],
+        "credit_last_error": _QUOTA["last"],
     }

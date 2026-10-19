@@ -141,6 +141,22 @@ Where precision is lost today, and the fix for each:
     `immediate`, self-reported positions).
   - **Merging:** related messages merge into one signal when read.
   - **Polling:** every 15 s while a chat is active, otherwise every 60 s.
+  - **Without the model (2026-10-19):** the OpenAI credit ran out on 2026-10-18 and 0 posts
+    became signals for two days. `openai_gate` now pauses 15 min after an
+    `insufficient_quota` answer, and `telegram_rules.py` reads the last 6 h by rule (event
+    words in en/fr/es/ar/uk/ru/he, a place after a place word, placed only on a settlement
+    in the named country). `read_by` says who read a post; rule readings are re-read by the
+    model when it is back. Calls to violence are also raised from their words
+    (`telegram_mood_alert.is_violence_call_by_rule`).
+  - **Private chats (2026-10-19):** one-to-one chats (`u/<id>`, kind `private`) and legacy
+    groups (`g/<id>`) are read like groups; never bots, the account itself or Telegram's
+    777000. `TELEGRAM_READ_PRIVATE=0` turns it off; `role: ignore` still skips a chat.
+  - **Pictures (2026-10-19, `telegram_vision.py`):** photos and three video frames go to
+    `gpt-4.1-mini` (`TG_VISION_MODEL`); the model describes, code decides (`decide()`), and
+    a picture can make a post a signal on its own. Caps: `TG_VISION_PER_HOUR` 15,
+    `TG_VISION_PER_DAY` 200, `TG_VISION_USD_DAY` 0.25, 4 videos an hour; one reading per
+    picture hash; own one-thread pool. Status: `GET /api/telegram/status` → `vision`,
+    `model`, `read_24h`. Signals carry `video_url` / `photo_url` / `media_url` and `vision`.
 - **Mood:**
   - per country/city tension trend and a Low/Elevated/High chance of demonstrations in 48 h
     (`telegram_unrest.py`)
@@ -182,6 +198,11 @@ Where precision is lost today, and the fix for each:
    there (an easy fix).
 
 ## Check on the server after this deploy
+
+- **Telegram yield (2026-10-19):** `/api/telegram/status` → `read_24h` should show `rule`
+  posts with `placed` > 0 while the credit is out (`model.credit_exhausted`), and
+  `posts_24h_by_kind` a `private` count. Once the owner tops up: `vision.read_24h` signals,
+  `vision.budget.usd_today` under 0.25, and `[tg-vision]` lines in the log.
 
 - **Telegram groups:** are groups and forum topics arriving
   (`telegram_posts.chat_kind`, `telegram_topics`)? Did the gilets jaunes groups join? Any

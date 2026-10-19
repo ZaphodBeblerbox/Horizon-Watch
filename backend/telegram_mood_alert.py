@@ -220,7 +220,7 @@ def indicator(cc: str, rows: list, now: _dt.datetime | None = None) -> dict:
         "examples": [{"id": f"{r['channel']}/{r['msg_id']}", "channel": r["channel_title"] or r["channel"],
                       "posted_at": str(r["posted_at"]),
                       "text": str(_get(r, "summary_en") or _get(r, "text") or "")[:240],
-                      "url": None if str(r["channel"]).startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}"}
+                      "url": None if str(r["channel"]).startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}"}
                      for r in picked],
     }
 
@@ -586,14 +586,17 @@ def _call_rows(since: _dt.datetime) -> list:
 
 def _post_url(r) -> str | None:
     ch = str(r["channel"] or "")
-    return None if ch.startswith("c/") else f"https://t.me/{ch}/{r['msg_id']}"
+    return None if ch.startswith(("c/", "u/", "g/")) else f"https://t.me/{ch}/{r['msg_id']}"
 
 
-def build_call_alerts(rows, now: _dt.datetime) -> list[dict]:
-    """One alert dict per distinct call (copies merged), newest first. Pure."""
+def build_call_alerts(rows, now: _dt.datetime, by_rule: bool = False) -> list[dict]:
+    """One alert dict per distinct call (copies merged), newest first. Pure.
+    by_rule: the rows were read by the words alone (is_violence_call_by_rule),
+    because the model that rates the mood was unavailable."""
     groups: dict[str, list] = {}
+    judge = (lambda r: is_violence_call_by_rule(_get(r, "text"))) if by_rule else is_violence_call
     for r in rows:
-        if is_violence_call(r):
+        if judge(r):
             groups.setdefault(_key(r), []).append(r)
     out = []
     for key, rs in groups.items():
@@ -621,13 +624,14 @@ def build_call_alerts(rows, now: _dt.datetime) -> list[dict]:
             "lat": lat, "lon": lon, "region": first["place"] or name,
             "country_code": cc.upper() or None,
             "entity_type": "country" if len(cc) == 2 else None, "entity_id": cc or None, "entity_name": name,
-            "confidence": 0.6,
+            "confidence": 0.5 if by_rule else 0.6,
             "message": (f"A post {'repeated in ' + str(len(chans)) + ' channels ' if len(chans) > 1 else ''}calls to "
                         f"confront, attack or take up arms{f' against {target}' if target else ''}: «{said[:400]}». "
                         f"First posted {str(first['posted_at'])[:16].replace('T', ' ')} UTC by {chans[0]}. Unverified: "
-                        "one channel's words, rated by a model; read the post."),
+                        + ("one chat's words, read by rule (the model was unavailable); read the post."
+                           if by_rule else "one channel's words, rated by a model; read the post.")),
             "reason": f"a call to violence about {name} on Telegram",
-            "raw": {"rule": "telegram_call_to_violence", "channels": chans, "citations": cites, "target": target,
+            "raw": {"rule": "telegram_call_to_violence_lexicon" if by_rule else "telegram_call_to_violence", "channels": chans, "citations": cites, "target": target,
                     "topic": first["mood_topic"], "placed": "post" if precise else "country centre",
                     "url": cites[0]["url"]},
         })
@@ -635,12 +639,75 @@ def build_call_alerts(rows, now: _dt.datetime) -> list[dict]:
     return out
 
 
-def detect_calls(now: _dt.datetime | None = None, rows=None, existing=None) -> list[dict]:
+RULE_CALL_ROLES = ("group", "partisan", "local")
+RULE_CALL_KINDS = ("group", "forum", "private")
+
+
+def is_violence_call_by_rule(text: str | None) -> bool:
+    """A call to act together with a violent act within a sentence of it.
+    "ils brûlent des voitures" is a report and does not count: it needs the
+    call ("on va", "allez", "tous à", "let's", "vamos a" — telegram_signals.CALL)."""
+    if not text:
+        return False
+    import telegram_signals
+    f = telegram_signals.fold(text)
+    for m in telegram_signals.CALL.finditer(f):
+        if VIOLENT_ACT.search(f[max(0, m.start() - 60): m.end() + 100]):
+            return True
+    return False
+
+
+def _rule_call_rows(since: _dt.datetime) -> list:
+    """Recent posts from groups, private chats and partisan or local
+    channels, with the country they are about (the post's, else the chat's)."""
+    import sqlite3
+    import telegram_sentiment as ts
+    con = ts._con()
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            "SELECT channel, msg_id, channel_title, posted_at, text, summary_en, headline, place, lat, lon,"
+            " COALESCE(NULLIF(mood_country, ''), country_code) AS mood_country, mood_target, mood_topic"
+            " FROM telegram_posts WHERE posted_at >= ? AND text IS NOT NULL AND text != ''"
+            f" AND (chat_kind IN {RULE_CALL_KINDS} OR role IN {RULE_CALL_ROLES})",
+            (since.strftime("%Y-%m-%dT%H:%M:%S"),)).fetchall()
+    finally:
+        con.close()
+    out = []
+    for r in rows:
+        if not is_violence_call_by_rule(r["text"]):
+            continue
+        d = dict(r)
+        if not d.get("mood_country"):
+            try:
+                import telegram_signals
+                d["mood_country"] = telegram_signals.chat_context(d["channel"]).get("country")
+            except Exception:                                  # noqa: BLE001
+                d["mood_country"] = None
+        out.append(d)
+    return out
+
+
+def detect_calls(now: _dt.datetime | None = None, rows=None, existing=None, rule_rows=None) -> list[dict]:
     """New call-to-violence alerts from the last few hours, not raised before.
     Synchronous: run it off the event loop."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     rows = rows if rows is not None else _call_rows(now - _dt.timedelta(hours=CALL_WINDOW_H))
     alerts = build_call_alerts(rows, now)
+    # BY RULE TOO (2026-10-19): the model that rates the mood ran out of
+    # credit on 2026-10-18 and no call to violence was raised for two days.
+    # A call ("on y va", "allez", "vamos a") next to a violent act ("brûler",
+    # "attaquer", "quemar") in a group, a private chat or a partisan channel
+    # is raised from its words alone; the same post read by the model keeps
+    # one alert (same id).
+    if rule_rows is None:
+        try:
+            rule_rows = _rule_call_rows(now - _dt.timedelta(hours=CALL_WINDOW_H))
+        except Exception as e:                                 # noqa: BLE001
+            print(f"[tg-mood] error: rule calls: {type(e).__name__}: {e}", flush=True)
+            rule_rows = []
+    have = {a["id"] for a in alerts}
+    alerts += [a for a in build_call_alerts(rule_rows, now, by_rule=True) if a["id"] not in have]
     if existing is None:
         from database import Alert, get_db
         ids = [a["id"] for a in alerts]

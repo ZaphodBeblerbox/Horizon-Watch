@@ -778,7 +778,7 @@ def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime |
                 "translated_by": "model" if (p.get("summary_en") or r.get("happening")) else "rule",
                 "words": r.get("words") or None, "media": media or "none",
                 "thumb_url": f"/api/telegram/media/{thumb}" if thumb else None,
-                "url": None if str(p["channel"]).startswith("c/") else f"https://t.me/{p['channel']}/{p['msg_id']}",
+                "url": None if str(p["channel"]).startswith(("c/", "u/", "g/")) else f"https://t.me/{p['channel']}/{p['msg_id']}",
                 "read_by": r.get("source"),
             })
         latest = sources[-1]

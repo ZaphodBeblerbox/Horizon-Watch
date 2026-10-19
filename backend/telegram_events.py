@@ -244,6 +244,9 @@ def read_announcements(limit: int = 60, days: int = 7) -> dict:
             res = _model(ANNOUNCE_SYSTEM, chunk)
         except Exception as e:                                 # noqa: BLE001
             print(f"[telegram-events] announcement pass failed: {type(e).__name__}: {e}", flush=True)
+            import openai_gate
+            if openai_gate.note_error(e):
+                break                      # out of credit: no point asking again this pass
             continue
         for r, x in zip(chunk, res):
             events = (x or {}).get("events") or []
@@ -335,7 +338,7 @@ def announcements(days_ahead: int = 30) -> list[dict]:
             "expect": r["expect"], "advice": r["advice"],
             "channel": r["channel"], "channel_title": r["channel_title"], "msg_id": r["msg_id"],
             "posted_at": r["posted_at"], "text": r["text"], "summary_en": r["summary_en"], "lang": r["lang"],
-            "url": None if r["channel"].startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}",
+            "url": None if r["channel"].startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}",
             "role": r["role"], "party": r["party"], "also_reported_by": [],
             "verification": "announced in advance — " + tg.ROLE_LABEL.get(r["role"] or "aggregator", tg.ROLE_LABEL["aggregator"]),
         }
@@ -445,6 +448,9 @@ def read_situations(limit: int = 40) -> dict:
             res = _model(SITUATION_SYSTEM, chunk, max_tokens=2500)
         except Exception as e:                                 # noqa: BLE001
             print(f"[telegram-events] situation pass failed: {type(e).__name__}: {e}", flush=True)
+            import openai_gate
+            if openai_gate.note_error(e):
+                break                      # out of credit: no point asking again this pass
             continue
         for r, x in zip(chunk, res):
             n = 0
@@ -485,7 +491,7 @@ def situations() -> list[dict]:
         "expect": r["expect"], "advice": r["advice"],
         "posted_at": r["posted_at"], "valid_until": r["valid_until"],
         "channel": r["channel"], "channel_title": r["channel_title"], "msg_id": r["msg_id"], "text": r["text"],
-        "url": None if r["channel"].startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}",
+        "url": None if r["channel"].startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}",
         "verification": tg.ROLE_LABEL.get(r["role"] or "aggregator", tg.ROLE_LABEL["aggregator"]),
     } for r in rows]
 
