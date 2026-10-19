@@ -1731,12 +1731,18 @@ def _cadence_label(source_id: str) -> str | None:
     return f"poll, every {secs}s" if secs < 120 else f"poll, every {secs // 60}min"
 
 @app.get("/api/health/live")
-def get_health_live():
+async def get_health_live():
     """Liveness probe for the platform healthcheck. Deliberately touches no
     database, lock, or data source — /api/health/detailed does real work, so
     when a slow query stalls the event loop the healthcheck times out and the
     container is killed, turning a slow query into a full outage. This answers
-    "is the process alive", which is the only question a restart can fix."""
+    "is the process alive", which is the only question a restart can fix.
+
+    ASYNC, ON PURPOSE (2026-10-19). As a plain def it queued for a slot in
+    the request thread pool behind every slow endpoint: with three phones
+    open it took up to 111 s inside the server, so the phone's 5 s probe
+    said "Server slow" about a pool that was full, not a process that was
+    down. It does no work, so it belongs on the loop."""
     return {"status": "ok"}
 
 
@@ -32450,7 +32456,16 @@ def api_presence_get(record_ref: str, request: Request):
     from database import User, get_db as _gdb_presence
     with _gdb_presence() as db:
         users = db.query(User).filter(User.id.in_(active_ids)).all() if active_ids else []
-        return {"users": [_user_to_dict(u) for u in users], "ttl_seconds": _PRESENCE_TTL_SECONDS}
+        return {"users": [_user_face(u) for u in users], "ttl_seconds": _PRESENCE_TTL_SECONDS}
+
+
+def _user_face(u) -> dict:
+    """What a face in a presence row needs, and nothing else. Presence sent
+    the whole profile — cover picture, settings, bio — and is polled every
+    15 s by every open app: 412 KB a poll with four people online
+    (2026-10-19, one cover alone is 370 KB), for a row of initials."""
+    d = _user_to_dict(u)
+    return {k: d[k] for k in ("id", "name", "email", "initials", "color", "avatar", "avatar_pos", "title")}
 
 
 @app.patch("/api/forge/ontology/node/{node_id}")
