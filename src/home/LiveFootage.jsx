@@ -117,8 +117,10 @@ export default function LiveFootage({ variant = "phone", onShowOnMap = null, ite
         if (pending > 0 && atStart()) apply(true)
     }
     const toStart = () => {
-        strip.current?.scrollTo?.({ left: 0, behavior: "smooth" })
         apply(true)
+        // after the new cards are in, so the strip lands on the newest
+        const go = () => strip.current?.scrollTo?.({ left: 0, behavior: "smooth" })
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(go); else go()
     }
     const page = (dir) => {
         const el = strip.current

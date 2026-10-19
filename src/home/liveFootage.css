@@ -7,7 +7,10 @@
 .lf-empty { font-size: 13px; color: var(--txt3); padding: 10px 2px; }
 .lf-wrap { position: relative; }
 
-.lf-strip { display: flex; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; scroll-snap-type: x mandatory; }
+/* overflow-anchor: none — new cards at the start must push the strip along,
+   not be scrolled past by the browser keeping the old first card in view */
+.lf-strip { display: flex; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; overflow-anchor: none;
+            scrollbar-width: none; scroll-snap-type: x mandatory; }
 .lf-strip::-webkit-scrollbar { display: none; }
 .lf-card { flex: none; display: flex; flex-direction: column; min-width: 0; scroll-snap-align: start; overflow: hidden;
            border: 1px solid var(--gline, rgba(255, 255, 255, .08)); background: rgba(255, 255, 255, .05); }
