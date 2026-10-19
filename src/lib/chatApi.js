@@ -39,6 +39,11 @@ export const addMembers = (id, userIds) =>
 export const removeMember = (id, userId) =>
     req(`/api/chat/conversations/${enc(id)}/members/${enc(userId)}`, { method: "DELETE" })
 
+/** Make somebody a group admin, or a member again (group admins only). */
+export const setMemberRole = (id, userId, role) =>
+    req(`/api/chat/conversations/${enc(id)}/members/${enc(userId)}`,
+        { method: "PUT", body: JSON.stringify({ role }) })
+
 export const listMessages = (id, { before, limit } = {}) => {
     const q = new URLSearchParams()
     if (before) q.set("before", before)

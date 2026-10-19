@@ -10,7 +10,9 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Attachment } from "../../desk/deskAttachments.jsx"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
 import API_BASE from "../../apiBase.js"
-import { createPost, listPosts, listReplies, toggleAck, uploadDeskFile } from "../../lib/deskApi.js"
+import { addDeskMembers, createPost, listDeskMembers, listPosts, listReplies, markDeskRead, removeDeskMember, toggleAck, uploadDeskFile } from "../../lib/deskApi.js"
+import { getInboxUnread, refreshInboxUnread, setViewingDesk, takeOpenDeskPost } from "../../notify/inbox.js"
+import MMembers from "./MMembers.jsx"
 import { Icon, ScopeChips, when, ago } from "./common.jsx"
 import { useMine } from "../useMine.js"
 import { inTheater, setTheaterScope, useTheaterScope } from "../theaterScope.js"
@@ -103,7 +105,7 @@ function PostCard({ p, onChanged }) {
     }
     const who = p.author || {}
     return (
-        <article className="m2-post" data-testid="m2-post">
+        <article className="m2-post" data-testid="m2-post" id={`m2-post-${p.id}`}>
             <Face who={who} />
             <div style={{ minWidth: 0 }}>
                 <div className="m2-post-head">
@@ -219,6 +221,47 @@ function TelegramFeed({ active, onShowOnMap }) {
     )
 }
 
+/* WHO IS ON THE COMPANY DESK (owner, 2026-10-19: "I want to be able to add
+   people to my company desk or remove them"). Everybody sees the list; the
+   desk's owner and admins add and remove (routers/desk.py decides). */
+export function DeskMembersBar() {
+    const [d, setD] = useState(null)
+    const [open, setOpen] = useState(false)
+    const load = () => listDeskMembers().then(setD).catch(() => setD(null))
+    useEffect(() => { load() }, [])
+    if (!d?.company) return null
+    const members = (d.members || []).map((m) => ({
+        ...m, name: m.you ? `${m.name} (you)` : m.name,
+        note: [m.owner ? "Owner" : m.manager ? "Admin" : null, m.title].filter(Boolean).join(" · ") || m.email,
+    }))
+    return (
+        <>
+            <button className="m2-card" data-testid="m2-desk-members" onClick={() => setOpen(true)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", marginBottom: 10,
+                             border: 0, color: "var(--txt)", font: "inherit", textAlign: "left", cursor: "pointer" }}>
+                <Icon id="g-user" size={18} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                    <b style={{ fontWeight: 600 }}>{d.company}</b>
+                    <span className="m2-sub" style={{ display: "block" }}>{d.members.length} {d.members.length === 1 ? "person" : "people"} on this desk</span>
+                </span>
+                <span className="m2-sub">{d.can_manage ? "Manage" : "Members"}</span>
+            </button>
+            {open && (
+                <MMembers
+                    title={`${d.company} desk`} members={members} testid="m2-desk-sheet"
+                    note={d.can_manage ? "New people see the company's posts at once; removed people stop seeing them at once."
+                        : "Only the desk's owner or an admin can add or remove people."}
+                    canAdd={d.can_manage}
+                    canRemove={(m) => d.can_manage && !m.you && !m.owner}
+                    onAdd={async (ids) => setD(await addDeskMembers(ids))}
+                    onRemove={async (m) => setD(await removeDeskMember(m.id))}
+                    onClose={() => setOpen(false)}
+                />
+            )}
+        </>
+    )
+}
+
 export default function MDesk({ active, onShowOnMap }) {
     const [tab, setTab] = useState("team")
     // Home's "All posts" opens the Telegram tab
@@ -231,6 +274,32 @@ export default function MDesk({ active, onShowOnMap }) {
         const t = setInterval(load, 30_000)
         return () => clearInterval(t)
     }, [active, tab])
+    // THE DESK IS ON SCREEN: what is on it is read, and its posts do not also
+    // pop up as notifications (notify/inbox.js; the server keeps the mark,
+    // so the desktop's count goes too)
+    const seeing = active && tab === "team"
+    useEffect(() => {
+        setViewingDesk(seeing)
+        if (!seeing) return undefined
+        const mark = () => { if (!document.hidden && getInboxUnread().desk > 0) markDeskRead().then(refreshInboxUnread).catch(() => {}) }
+        markDeskRead().then(refreshInboxUnread).catch(() => {})
+        const t = setInterval(mark, 15_000)
+        return () => { clearInterval(t); setViewingDesk(false) }
+    }, [seeing])
+    // OPENED FROM A NOTIFICATION: the team's posts, at that post
+    const [goPost, setGoPost] = useState(null)
+    useEffect(() => {
+        const take = () => { const ask = takeOpenDeskPost(); if (ask) { setTab("team"); setGoPost(ask.id) } }
+        if (active) take()
+        const h = (e) => { if (active) { takeOpenDeskPost(); setTab("team"); setGoPost(e.detail?.id || null) } }
+        window.addEventListener("plx:open-desk-post", h)
+        return () => window.removeEventListener("plx:open-desk-post", h)
+    }, [active])
+    useEffect(() => {
+        if (!goPost || !posts) return
+        const el = document.getElementById(`m2-post-${goPost}`)
+        if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); setGoPost(null) }
+    }, [goPost, posts])
     // TEAM ⇄ GENERAL BY A SWIPE, the content following the finger and the
     // next arriving from the side it was pulled from
     const body = useRef(null)
@@ -286,6 +355,7 @@ export default function MDesk({ active, onShowOnMap }) {
             </div>
             <div ref={body} key={tab} className="m2-desk-body" style={from ? { animation: `m2-pane-from-${from} .34s cubic-bezier(.22,1,.36,1)` } : undefined}>
             {tab === "team" ? (<>
+                <DeskMembersBar />
                 <Composer onPosted={load} />
                 {posts === null ? <div className="m2-empty">Loading the desk…</div>
                     : posts.length === 0 ? <div className="m2-empty">Nothing on the desk yet. What you post goes to your company unless you choose otherwise.</div>
