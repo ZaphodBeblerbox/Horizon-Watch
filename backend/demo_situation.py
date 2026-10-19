@@ -1157,7 +1157,7 @@ def gather(now: _dt.datetime, posts: list[dict], situations_reports: list[dict],
         city = city or dm.city_of(r.get("place")) or None
         zone = _zone(cc)
         post = f"{r.get('channel')}/{r.get('msg_id')}"
-        url = None if str(r.get("channel")).startswith("c/") else f"https://t.me/{r.get('channel')}/{r.get('msg_id')}"
+        url = None if str(r.get("channel")).startswith(("c/", "u/", "g/")) else f"https://t.me/{r.get('channel')}/{r.get('msg_id')}"
         base = {"post": post, "url": url, "source": f"Telegram · {r.get('channel_title') or r.get('channel')}",
                 "channel": r.get("channel"), "at": r.get("posted_at"), "text": text[:600],
                 "title": r.get("headline") or (r.get("summary_en") or "")[:120] or "Telegram post", "country": cc}

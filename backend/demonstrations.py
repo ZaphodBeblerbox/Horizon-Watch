@@ -330,7 +330,7 @@ def post_report(r) -> dict | None:
     return {"id": f"tg-{r['channel']}-{r['msg_id']}", "post": f"{r['channel']}/{r['msg_id']}", "lat": r["lat"], "lon": r["lon"], "at": r["posted_at"],
             "place": r["place"] or "", "country": r["country_code"] or "", "text": text,
             "title": r["headline"] or (r["summary_en"] or "")[:120] or "Telegram post",
-            "url": None if str(r["channel"]).startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}",
+            "url": None if str(r["channel"]).startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}",
             "source": f"Telegram · {r['channel_title'] or r['channel']}"}
 
 
@@ -343,7 +343,7 @@ def situation_report(r) -> dict | None:
     return {"id": f"tgs-{r['channel']}-{r['msg_id']}-{r['idx']}", "post": f"{r['channel']}/{r['msg_id']}", "lat": r["lat"], "lon": r["lon"], "at": r["posted_at"],
             "place": r["place"] or "", "country": r["country"] or "", "text": text,
             "title": r["happening"] or "Live development",
-            "url": None if str(r["channel"]).startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}",
+            "url": None if str(r["channel"]).startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}",
             "source": f"Telegram · {r['channel_title'] or r['channel']}"}
 
 

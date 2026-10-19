@@ -220,7 +220,7 @@ def _telegram(con, before: str, limit: int) -> list[dict]:
                     "media": r["media"], "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
                     "place": r["place"], "country_code": r["country_code"], "lat": r["lat"], "lon": r["lon"],
                     "event_type": r["event_type"], "role": r["role"], "graphic": bool(r["graphic"]),
-                    "url": f"https://t.me/{chan}/{r['msg_id']}" if not chan.startswith("c/") else None})
+                    "url": f"https://t.me/{chan}/{r['msg_id']}" if not chan.startswith(("c/", "u/", "g/")) else None})
     return _with_unified(con, out, before, len(rows) >= limit)
 
 

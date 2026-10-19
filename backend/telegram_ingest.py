@@ -113,7 +113,14 @@ EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": 
                  # chat a post came from, the forum topic it was written in, the
                  # message it answers, and whether telegram_signals has read it.
                  "chat_kind": "TEXT", "topic_id": "INTEGER", "topic_title": "TEXT", "reply_to": "INTEGER",
-                 "intent_checked": "INTEGER"}
+                 "intent_checked": "INTEGER",
+                 # WHO READ IT (2026-10-19): 'model', or 'rule' when the model was
+                 # out (telegram_rules.py) — a rule reading is re-read by the
+                 # model once it is back. And what the picture shows
+                 # (telegram_vision.py): the model's structured description, the
+                 # image's hash (one reading per picture), what code decided.
+                 "read_by": "TEXT", "vision_checked": "INTEGER", "vision_at": "TEXT", "vision_json": "TEXT",
+                 "vision_hash": "TEXT", "vision_decision": "TEXT", "vision_cost": "REAL"}
 
 # What each channel is (telegram_channels.json). Unlisted = aggregator.
 CHANNELS_FILE = os.path.join(HERE, "telegram_channels.json")
@@ -337,6 +344,33 @@ def keep_message(text: str, media: str, *, group: bool, forwarded: bool, role: s
     return True
 
 
+READ_PRIVATE = os.getenv("TELEGRAM_READ_PRIVATE", "1").strip() != "0"
+# Telegram's own service account (login codes, security notices): never read.
+SERVICE_USER_IDS = {777000, 42777}
+
+
+def private_chat_kind(d, ent) -> tuple[bool, bool]:
+    """(a person's one-to-one chat, a legacy group) for a dialog, or
+    (False, False). Bots, the account itself (Saved Messages), deleted
+    accounts and Telegram's service notices are never read; nor anything
+    private when TELEGRAM_READ_PRIVATE=0."""
+    if not READ_PRIVATE:
+        return False, False
+    if getattr(d, "is_user", False):
+        if (getattr(ent, "bot", False) or getattr(ent, "is_self", False) or getattr(ent, "deleted", False)
+                or getattr(ent, "support", False) or getattr(ent, "id", None) in SERVICE_USER_IDS):
+            return False, False
+        return True, False
+    if getattr(d, "is_group", False) and not getattr(d, "is_channel", False):
+        return False, True
+    return False, False
+
+
+def media_only(text: str | None) -> bool:
+    """A picture or video sent with a few words at most: the picture is the message."""
+    return len((text or "").strip()) < 60
+
+
 async def _collect(hours: int = LOOKBACK_HOURS) -> int:
     from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
     try:
@@ -370,14 +404,30 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
             # channel with megagroup set; a forum is a supergroup with topics.
             broadcast = d.is_channel and getattr(ent, "broadcast", False)
             group = d.is_channel and getattr(ent, "megagroup", False)
-            if not (broadcast or group):
+            # PRIVATE CHATS TOO (the owner, 2026-10-19: "even if they are
+            # private messages"). Until now a legacy (non-super) group and a
+            # one-to-one chat were skipped here: on 2026-10-19 the server read
+            # 99 channels and 10 forums and not one private chat. Read as
+            # groups are (the same chatter screen in front of any model), and
+            # named so they can never be mistaken for a public channel:
+            # "g/<id>" a legacy group, "u/<id>" a person.
+            private, basic = private_chat_kind(d, ent)
+            if not (broadcast or group or private or basic):
                 continue
-            chan = getattr(ent, "username", None) or f"c/{ent.id}"
+            if private:
+                chan = f"u/{ent.id}"
+            elif basic:
+                chan = f"g/{ent.id}"
+            else:
+                chan = getattr(ent, "username", None) or f"c/{ent.id}"
             joined.add(chan.lower())
-            info = channel_info(chan, "group" if group else "aggregator")
+            groupish = group or private or basic
+            info = channel_info(chan, "group" if groupish else "aggregator")
             if info["role"] == "ignore":
                 continue                      # joined, judged useless (telegram_channels.json)
-            kind = "forum" if getattr(ent, "forum", False) else "group" if group else "channel"
+            kind = ("forum" if getattr(ent, "forum", False) else "private" if private
+                    else "group" if (group or basic) else "channel")
+            group = groupish
             # NOTHING NEW, NOTHING ASKED: the dialog list carries each chat's
             # newest message, so a quiet chat costs no request — which is
             # what lets a pass run every HOT_POLL_S.
@@ -396,7 +446,8 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                                     " DO UPDATE SET topics_at=excluded.topics_at", (chan, time.time()))
                     except Exception as e:                     # noqa: BLE001
                         print(f"[telegram] topics of {chan}: {type(e).__name__}: {e}", flush=True)
-            title = getattr(ent, "title", chan)
+            title = getattr(ent, "title", None) or " ".join(
+                x for x in (getattr(ent, "first_name", None), getattr(ent, "last_name", None)) if x) or chan
             cue_at = None
             n_chat = 0
             async for m in client.iter_messages(ent, limit=PER_GROUP if group else PER_CHANNEL, min_id=last or 0):
@@ -423,6 +474,8 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                 text = (m.message or "").strip()
                 if (chan, m.id) in have:
                     continue
+                if kind == "private" and getattr(m, "out", False):
+                    continue                  # what this account itself sends is not a report
                 media, thumb = "none", None
                 if isinstance(m.media, MessageMediaPhoto):
                     media = "photo"
@@ -434,8 +487,11 @@ async def _collect(hours: int = LOOKBACK_HOURS) -> int:
                 if cue:
                     cue_at = m.date.isoformat()
                 # A group's pictures are mostly memes and selfies: a thumbnail
-                # only when the words say something is happening.
-                if media != "none" and (not group or cue):
+                # when the words say something is happening, or when the
+                # picture comes with (almost) no words — footage is shared
+                # bare ("", "Partagez", "Venez nombreux"), and the picture is
+                # then the whole report, read by telegram_vision.py.
+                if media != "none" and (not group or cue or media_only(text)):
                     name = f"{chan.replace('/', '_')}_{m.id}.jpg"
                     path = os.path.join(MEDIA_DIR, name)
                     try:
@@ -615,16 +671,27 @@ EVENT_CUES_ES_MY = re.compile(
 def classify(limit: int = 120) -> dict:
     con = _con()
     cols = "channel, channel_title, text, msg_id, role, party, media, posted_at, topic_id, topic_title, chat_kind"
+    import openai_gate
+    model_up = openai_gate.get_client(openai_gate.ENRICH) is not None
+    # A post read by rule while the model was out is read again by the model
+    # once it is back (its translation, claim and place are better), for
+    # RULE_REREAD_H: after that it is history.
+    reread = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=RULE_REREAD_H)).isoformat()
     rows = con.execute(f"SELECT {cols} FROM telegram_posts WHERE classified=0"
-                       " ORDER BY posted_at DESC LIMIT ?", (limit * 5,)).fetchall()
+                       + (" OR (read_by='rule' AND posted_at >= ?)" if model_up else "")
+                       + " ORDER BY posted_at DESC LIMIT ?",
+                       ((reread,) if model_up else ()) + (limit * 5,)).fetchall()
     # Group chatter with nothing to read is screened here, without a model
     # call; what is left goes to the model, newest first, `limit` a pass.
-    chatter = [r for r in rows if r[10] in ("group", "forum") and not group_worth_reading(r[2])]
-    con.executemany("UPDATE telegram_posts SET classified=1, relevant=0, unpublished_reason=? WHERE channel=? AND msg_id=?",
-                    [(GROUP_NO_CUE, r[0], r[3]) for r in chatter])
+    chatter = [r for r in rows if r[10] in ("group", "forum", "private") and not group_worth_reading(r[2])]
+    con.executemany("UPDATE telegram_posts SET classified=1, relevant=0, unpublished_reason=?, read_by='screen'"
+                    " WHERE channel=? AND msg_id=?", [(GROUP_NO_CUE, r[0], r[3]) for r in chatter])
     con.commit()
     skip = {(r[0], r[3]) for r in chatter}
-    rows = [r for r in rows if (r[0], r[3]) not in skip][:limit]
+    # NO MODEL (out of credit, over budget, or off): every chunk below comes
+    # back unread and is read by rule, so a strike, a raid or a police charge
+    # still becomes a signal — more of them a pass, since rules cost nothing.
+    rows = [r for r in rows if (r[0], r[3]) not in skip][:limit if model_up else RULE_LIMIT]
     done = kept = 0
     # The model calls run four at a time (11 s each, one after another made
     # a backlog crawl); place lookups and writes stay serial — the geocoder
@@ -632,14 +699,37 @@ def classify(limit: int = 120) -> dict:
     from concurrent.futures import ThreadPoolExecutor
     chunks = [rows[i:i + BATCH] for i in range(0, len(rows), BATCH)]
 
+    failed = {"n": 0}
+
     def run(chunk):
         try:
-            return _model_pass(chunk)
+            if openai_gate.quota_paused():
+                return None                    # another chunk just learnt the credit is gone
+            res = _model_pass(chunk)
+            if res is not None:
+                openai_gate.note_ok()
+            return res
         except Exception as e:
+            failed["n"] += 1
+            openai_gate.note_error(e)
             print(f"[telegram] model pass failed: {type(e).__name__}: {e}", flush=True)
             return None
     with ThreadPoolExecutor(max_workers=4) as pool:
         answers = list(pool.map(run, chunks))
+    # A chunk the model could not read is read by rule now, not left for a
+    # model that may not come back today; a post already read by rule keeps
+    # its reading and waits for the model.
+    unread = [r for chunk, res in zip(chunks, answers) if res is None for r in chunk]
+    fallback = {}
+    if unread:
+        # Only the last RULE_BACKLOG_H: a backlog read by rule would surface
+        # yesterday's posts as new pins and notifications; older posts wait
+        # for the model.
+        since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=RULE_BACKLOG_H)).isoformat()
+        fresh = [r for r in unread if (r[7] or "") >= since and not _read_by_rule(con, r[0], r[3])]
+        fallback = classify_by_rules(con, fresh[:RULE_LIMIT])
+        print(f"[telegram] model unavailable for {len(unread)} posts ({failed['n']} failed calls): "
+              f"{fallback.get('classified', 0)} read by rule, {fallback.get('published', 0)} placed", flush=True)
     intent_geocodes = [10]                     # the geocoder takes one request a second
     for chunk, res in zip(chunks, answers):
         if res is None:
@@ -676,7 +766,7 @@ def classify(limit: int = 120) -> dict:
             con.execute(
                 "UPDATE telegram_posts SET classified=1, relevant=?, headline=?, event_type=?, place=?, precision=?,"
                 " country_code=?, lat=?, lon=?, geocoded_as=?, unpublished_reason=?, lang=?, summary_en=?, claim=?,"
-                " first_hand=? WHERE channel=? AND msg_id=?",
+                " first_hand=?, read_by='model' WHERE channel=? AND msg_id=?",
                 (int(rel), (x.get("headline") or "")[:200], x.get("event_type"), x.get("place"), x.get("precision"),
                  (x.get("country_code") or "").lower(), hit and hit["lat"], hit and hit["lon"],
                  hit and hit.get("display_name"), why, x.get("lang"), (x.get("summary_en") or "")[:800],
@@ -694,7 +784,68 @@ def classify(limit: int = 120) -> dict:
             kept += int(hit is not None)
         con.commit()
     con.close()
-    return {"classified": done, "published": kept, "group_chatter_skipped": len(chatter)}
+    return {"classified": done + fallback.get("classified", 0), "published": kept + fallback.get("published", 0),
+            "read_by_rule": fallback.get("classified", 0), "group_chatter_skipped": len(chatter)}
+
+
+RULE_LIMIT = 400             # posts read by rule a pass (no cost; the geocoder is the limit)
+RULE_GEOCODES = 10           # geocoder calls a rule pass may make (one a second, cached)
+RULE_REREAD_H = 24
+RULE_BACKLOG_H = 6
+NO_EVENT_BY_RULE = "no event words (read by rule — the model was unavailable)"
+
+
+def _read_by_rule(con, chan: str, msg_id: int) -> bool:
+    r = con.execute("SELECT read_by FROM telegram_posts WHERE channel=? AND msg_id=?", (chan, msg_id)).fetchone()
+    return bool(r and r[0] == "rule")
+
+
+def classify_by_rules(con, rows) -> dict:
+    """Read posts by rule (telegram_rules.py) when the model is out. Same
+    columns and the same publish rule as the model's reading — a settlement
+    inside the right country — so everything downstream (map, Desk,
+    surface, notifications) treats them alike. A party's own channel is
+    taken as its claim (a statement, never a pin), as the model would.
+    Rows are classify()'s: (channel, title, text, msg_id, role, party,
+    media, posted_at, topic_id, topic_title, chat_kind)."""
+    import telegram_rules
+    import telegram_signals
+    budget = [RULE_GEOCODES]
+    done = kept = relevant = 0
+    for r in rows:
+        chan, text, mid, role, media = r[0], r[2] or "", r[3], (r[4] or "aggregator"), (r[6] or "none")
+        try:
+            cc = telegram_signals.chat_context(chan).get("country")
+        except Exception:                                      # noqa: BLE001
+            cc = None
+        x = telegram_rules.read(text, cc, role)
+        hit = place = pcc = None
+        why = NO_EVENT_BY_RULE
+        if x["relevant"]:
+            relevant += 1
+            hit, place, pcc, why = telegram_rules.resolve(x, budget)
+        elif x["event_type"]:
+            why = "talk about an event, not a report of one (read by rule)"
+        claim = int(role == "official" and bool(x["relevant"]))
+        headline = x["headline"]
+        if hit and place:
+            headline = f"{telegram_rules.LABEL.get(x['event_type'], x['event_type'])} reported — {place}"
+        con.execute(
+            "UPDATE telegram_posts SET classified=1, relevant=?, headline=?, event_type=?, place=?, precision=?,"
+            " country_code=?, lat=?, lon=?, geocoded_as=?, unpublished_reason=?, claim=?, first_hand=?, read_by='rule'"
+            " WHERE channel=? AND msg_id=?",
+            (int(bool(x["relevant"])), (headline or "")[:200], x["event_type"], place or (x["places"][0] if x["places"] else None),
+             "town" if hit else None, (pcc or (x["countries"][0] if x["countries"] else "") or "").lower(),
+             hit and hit["lat"], hit and hit["lon"], hit and hit.get("display_name"),
+             None if hit else why, claim,
+             int(media != "none" and role in ("local", "group", "official")), chan, mid))
+        done += 1
+        kept += int(hit is not None)
+    con.commit()
+    if done:
+        print(f"[telegram] read by rule: {done} posts, {relevant} events, {kept} placed "
+              f"({RULE_GEOCODES - budget[0]} geocoder calls)", flush=True)
+    return {"classified": done, "published": kept, "relevant_by_rule": relevant}
 
 
 HARD = {"strike", "attack", "explosion", "clash", "interception"}
@@ -988,6 +1139,9 @@ def read_announcements(limit: int = 90, days: int = 7) -> dict:
             res = _announce_pass(client, model, chunk)
         except Exception as e:
             print(f"[telegram] announcement pass failed: {type(e).__name__}: {e}", flush=True)
+            import openai_gate
+            if openai_gate.note_error(e):
+                break                      # out of credit: no point asking again this pass
             continue
         for r, x in zip(chunk, res):
             x = x or {}
@@ -1058,7 +1212,7 @@ def upcoming(days_ahead: int = 30) -> list[dict]:
             "lat": r["announce_lat"], "lon": r["announce_lon"],
             "channel": r["channel"], "channel_title": r["channel_title"], "msg_id": r["msg_id"],
             "posted_at": r["posted_at"], "text": r["text"], "summary_en": r["summary_en"], "lang": r["lang"],
-            "url": None if r["channel"].startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}",
+            "url": None if r["channel"].startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}",
             "role": r["role"], "party": r["party"], "also_reported_by": [],
             "verification": "announced in advance — " + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
         })
@@ -1161,15 +1315,15 @@ def published(hours: int = 72) -> list[dict]:
             if label != first["channel_title"] and label not in first["also_reported_by"]:
                 first["also_reported_by"].append(label)
             if not first["thumb_url"] and r["thumb"]:
-                first["thumb_url"] = f"/api/telegram/media/{r['thumb']}"
+                first.update(media_urls(chan, r["msg_id"], r["media"], r["thumb"]))
             continue
         out.append({
             "id": f"tg-{chan}-{r['msg_id']}", "headline": r["headline"], "text": r["text"],
             "channel": chan, "channel_title": r["channel_title"], "posted_at": r["posted_at"],
             "event_type": r["event_type"], "place": r["place"], "precision": r["precision"],
             "country_code": r["country_code"], "lat": lat, "lon": lon, "geocoded_as": r["geocoded_as"],
-            "media": r["media"], "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
-            "url": None if chan.startswith("c/") else f"https://t.me/{chan}/{r['msg_id']}",
+            "media": r["media"], **media_urls(chan, r["msg_id"], r["media"], r["thumb"]), **vision_fields(r),
+            "url": None if chan.startswith(("c/", "u/", "g/")) else f"https://t.me/{chan}/{r['msg_id']}",
             "also_reported_by": [],
             "views": r["views"], "lang": r["lang"], "summary_en": r["summary_en"],
             "role": r["role"], "party": r["party"], "claim": bool(r["claim"]),
@@ -1239,8 +1393,8 @@ def feed(before: str | None = None, limit: int = 40) -> dict:
         "channel": r["channel"], "channel_title": r["channel_title"], "posted_at": r["posted_at"],
         "event_type": r["event_type"], "place": r["place"], "lat": r["lat"], "lon": r["lon"],
         "country_code": r["country_code"], "media": r["media"],
-        "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
-        "url": None if r["channel"].startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}",
+        **media_urls(r["channel"], r["msg_id"], r["media"], r["thumb"]), **vision_fields(r),
+        "url": None if r["channel"].startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}",
         "views": r["views"], "role": r["role"], "party": r["party"], "claim": bool(r["claim"]),
         "msg_id": r["msg_id"], "severity_tier": severity_of(r), "graphic": _is_graphic(r),
         "on_map": r["lat"] is not None,
@@ -1286,8 +1440,8 @@ def statements(hours: int = 72) -> list[dict]:
             "channel": chan, "channel_title": r["channel_title"], "party": r["party"],
             "posted_at": r["posted_at"], "event_type": r["event_type"], "place": r["place"],
             "country_code": r["country_code"], "cite_lat": r["lat"], "cite_lon": r["lon"],
-            "graphic": _is_graphic(r), "media": r["media"], "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
-            "url": None if chan.startswith("c/") else f"https://t.me/{chan}/{r['msg_id']}",
+            "graphic": _is_graphic(r), "media": r["media"], **media_urls(chan, r["msg_id"], r["media"], r["thumb"]),
+            "url": None if chan.startswith(("c/", "u/", "g/")) else f"https://t.me/{chan}/{r['msg_id']}",
             "important": (r["event_type"] or "") in IMPORTANT, "msg_id": r["msg_id"], "lang": r["lang"],
             "verification": f"{r['party'] or r['channel_title']} — official statement, the party's own claim",
         })
@@ -1354,7 +1508,27 @@ def stats() -> dict:
     except Exception:                                           # noqa: BLE001
         pass
     out["next_poll_s"] = next_interval()
+    # who read the last day's posts: the model, the rules (model out), the
+    # pictures — and how many of each became a placed signal
+    since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
+    out["read_24h"] = {k or "unread": {"posts": n, "relevant": rel or 0, "placed": placed or 0} for k, n, rel, placed in con.execute(
+        "SELECT CASE WHEN classified=0 THEN NULL ELSE COALESCE(read_by, 'model') END, COUNT(*), SUM(relevant),"
+        " SUM(lat IS NOT NULL) FROM telegram_posts WHERE posted_at >= ? GROUP BY 1", (since,)).fetchall()}
+    out["posts_24h_by_kind"] = dict(con.execute("SELECT COALESCE(chat_kind, 'channel'), COUNT(*) FROM telegram_posts"
+                                                " WHERE posted_at >= ? GROUP BY 1", (since,)).fetchall())
     con.close()
+    try:
+        import openai_gate
+        g = openai_gate.status()
+        out["model"] = {k: g.get(k) for k in ("configured", "over_budget", "spent_usd", "budget_usd", "credit_exhausted",
+                                                 "credit_exhausted_since", "credit_errors", "credit_last_error")}
+    except Exception as e:                                      # noqa: BLE001
+        out["model"] = {"error": f"{type(e).__name__}: {e}"}
+    try:
+        import telegram_vision
+        out["vision"] = telegram_vision.status()
+    except Exception as e:                                      # noqa: BLE001
+        out["vision"] = {"error": f"{type(e).__name__}: {e}"}
     return out
 
 
@@ -1431,7 +1605,65 @@ def _peer(chan: str):
     if chan.startswith("c/"):
         from telethon.tl.types import PeerChannel
         return PeerChannel(int(chan[2:]))
+    if chan.startswith("u/"):                  # a person's private chat
+        from telethon.tl.types import PeerUser
+        return PeerUser(int(chan[2:]))
+    if chan.startswith("g/"):                  # a legacy group
+        from telethon.tl.types import PeerChat
+        return PeerChat(int(chan[2:]))
     return chan
+
+
+def chan_from_url(seg: str) -> str | None:
+    """A chat as a URL segment carries it back to its posts-table name:
+    "-100<id>" a channel without a username, "~u<id>" a private chat,
+    "~g<id>" a legacy group, else a username. None when malformed."""
+    m = re.fullmatch(r"-100(\d{5,15})", seg)
+    if m:
+        return f"c/{m.group(1)}"
+    m = re.fullmatch(r"~([ug])(\d{3,15})", seg)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
+    return seg if re.fullmatch(r"[A-Za-z0-9_]{3,64}", seg) else None
+
+
+def chan_to_url(chan: str) -> str:
+    if chan.startswith("c/"):
+        return f"-100{chan[2:]}"
+    if chan.startswith(("u/", "g/")):
+        return f"~{chan[0]}{chan[2:]}"
+    return chan
+
+
+def post_url(chan: str, msg_id) -> str | None:
+    """The public t.me link, for a public channel or group only."""
+    return None if "/" in chan else f"https://t.me/{chan}/{msg_id}"
+
+
+def media_urls(chan: str, msg_id, media: str | None, thumb: str | None) -> dict:
+    """What a signal carries to show its picture or video (the owner,
+    2026-10-19: "captivating" signals): a still for the card, and the real
+    photo or video to open. Relative to the API base."""
+    still = f"/api/telegram/media/{thumb}" if thumb else None
+    video = f"/api/telegram/video/{chan_to_url(chan)}/{msg_id}" if media == "video" else None
+    photo = still if media == "photo" else None
+    return {"thumb_url": still, "video_url": video, "photo_url": photo, "media_url": video or photo}
+
+
+def vision_fields(r) -> dict:
+    """What the picture shows, when telegram_vision.py has looked at it: a
+    one-line scene and the things seen, for the card under the still."""
+    try:
+        raw = r["vision_json"]
+    except (IndexError, KeyError):
+        return {}
+    if not raw:
+        return {}
+    try:
+        import telegram_vision
+        return {"vision": telegram_vision.card(json.loads(raw), r["vision_decision"])}
+    except Exception:                                          # noqa: BLE001
+        return {}
 
 
 def _video_file(chan: str, msg_id: int) -> str:
@@ -1469,7 +1701,13 @@ async def _download_video(chan: str, msg_id: int, path: str) -> str | None:
     client = side_client()
     await client.connect()
     try:
-        m = await client.get_messages(_peer(chan), ids=msg_id)
+        try:
+            m = await client.get_messages(_peer(chan), ids=msg_id)
+        except ValueError:
+            # a private chat or legacy group by id alone: this in-memory
+            # session has no access hash for it until it has seen the dialogs
+            await client.get_dialogs(limit=200)
+            m = await client.get_messages(_peer(chan), ids=msg_id)
         if not m or not m.file or not (m.file.mime_type or "").startswith("video"):
             return None
         if (m.file.size or 0) > VIDEO_MAX_MB * 1024 * 1024:

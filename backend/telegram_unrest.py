@@ -312,7 +312,7 @@ def upcoming(ann: list, now: _dt.datetime, hours: int = HORIZON_H) -> list[dict]
         out.append({"what": _get(a, "what") or "gathering", "city": city, "place": _get(a, "place"),
                     "starts_at": starts_at, "day": _day_word(starts_at, now), "organiser": _get(a, "organiser") or "",
                     "channel": _chan(a),
-                    "url": None if str(_get(a, "channel") or "").startswith("c/") else
+                    "url": None if str(_get(a, "channel") or "").startswith(("c/", "u/", "g/")) else
                     f"https://t.me/{_get(a, 'channel')}/{_get(a, 'msg_id')}"})
     out.sort(key=lambda x: x["starts_at"])
     return out
@@ -406,7 +406,7 @@ def likelihood(rows: list, ann: list, unrest: list, now: _dt.datetime, name: str
     cites = sorted(calls, key=lambda r: str(_get(r, "posted_at")), reverse=True)[:4]
     citations = [{"channel": _chan(r), "posted_at": str(_get(r, "posted_at")),
                   "text": str(_get(r, "summary_en") or _get(r, "text") or "")[:200],
-                  "url": None if str(_get(r, "channel") or "").startswith("c/") else
+                  "url": None if str(_get(r, "channel") or "").startswith(("c/", "u/", "g/")) else
                   f"https://t.me/{_get(r, 'channel')}/{_get(r, 'msg_id')}"} for r in cites]
     citations += [{"channel": u["channel"], "posted_at": None, "text": f"{u['what']} — {u['place']}, {u['starts_at']}",
                    "url": u["url"]} for u in upc[:3]]
