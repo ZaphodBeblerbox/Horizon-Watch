@@ -22,6 +22,8 @@ import { findingZoneOf, isFindingAlert, showFindings } from "../../lib/findings.
 import PlaceModel from "../../assets/PlaceModel.jsx"
 import CountryFlag from "../../components/CountryFlag.jsx"
 import { factionCountry } from "../../globe/frontlineClaims.js"
+import ProtestDetail from "../../inspector/ProtestDetail.jsx"
+import { itemStatusLabel } from "../../globe/protests.js"
 
 // Severity is an ICON's colour (a diamond, a dot), never a word's: the phone's
 // text is monochrome (m2.css v4), so these are fixed values, not the theme's.
@@ -220,7 +222,7 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
         <Sheet onClose={onClose} half={half} fromPeek={fromPeek}>
             <div className="m2-eyebrow" style={{ paddingRight: half ? 36 : 0, display: "flex", alignItems: "center", gap: 7 }}>
                 {(s.severity_tier || s.sev) && <i className="m2-sev" style={{ background: sevColor(s.severity_tier || s.sev), width: 7, height: 7, transform: "rotate(45deg)", display: "inline-block", flex: "none" }} />}
-                {[s.severity_tier || s.sev, when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
+                {[s.severity_tier || s.sev, itemStatusLabel(s) || s.status_label || when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
             </div>
             {(s.kind === "troop_movement" || s.kind === "frontline_claim") && factionCountry(s) && (
                 <div style={{ marginTop: 6 }}><CountryFlag iso2={factionCountry(s).iso2} name={factionCountry(s).name} size={22} /></div>
@@ -239,11 +241,13 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
             )}
             {/* AN ENDANGERED PLACE: its model turning slowly (never on the map; three.js loads only here) */}
             {s.kind === "endangered_place" && <div style={{ marginBottom: 12 }}><PlaceModel key={s.id} place={s} height={210} /></div>}
+            {/* AN ANNOUNCED PROTEST: where it stands, the crowd, the photos and videos from there */}
+            {s.kind === "protest" && <ProtestDetail protest={s} phone />}
             {(s.media === "video" || s.thumb_url) && s.channel && <div style={{ margin: "0 -14px 10px" }}><TelegramMedia post={s} maxHeight="46vh" radius="0" /></div>}
             {s.kind === "strike_event"
                 ? <div style={{ marginBottom: 10 }}><StrikeSourceMedia event={s} /></div>
                 : xs.map((u) => <XPost key={u} url={u} />)}
-            {(s.summary_en || s.context || s.summary || s.why || s.detail) && (
+            {s.kind !== "protest" && (s.summary_en || s.context || s.summary || s.why || s.detail) && (
                 <p style={{ fontSize: 14, lineHeight: 1.5, color: "var(--txt2, #c3c7cf)", margin: "0 0 12px" }}>{s.summary_en || s.context || s.summary || s.why || s.detail}</p>
             )}
             {isVesselThreatAlert(s, s.id) && <VesselThreatBlock s={s} onShowOnMap={onShowOnMap} onClose={onClose} />}

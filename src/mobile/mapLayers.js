@@ -42,6 +42,7 @@ import {
 import {
     DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, demoSub, demoTitle, trackSegments,
 } from "../globe/demonstrations.js"
+import { itemStatusLabel, protestPoints } from "../globe/protests.js"
 import { MOOD_PATH, MOOD_REFRESH_MS, moodIconUri, moodPoint } from "../globe/telegramMood.js"
 import { SITUATION_PATH, SITUATION_REFRESH_MS, convergenceIcon, situationFeatures } from "../globe/demoSituation.js"
 import { POLICE_PATH, POLICE_REFRESH_MS, policeFeatures, tacticIcon } from "../globe/policeActions.js"
@@ -610,7 +611,7 @@ async function loadUnrest({ bounds, hours }) {
         feats.push({
             id: a.id, lat: num(a.lat), lon: num(a.lon), iconUri: tgUnrestIcon(true), size: TG_SIZE + 2,
             title: a.headline || a.what || "Announced gathering",
-            sub: [a.when_label, a.channel_title].filter(Boolean).join(" · ") || null,
+            sub: [itemStatusLabel(a) || a.when_label, a.channel_title].filter(Boolean).join(" · ") || null,
             severity: null, raw: a,
         })
     }
@@ -625,12 +626,19 @@ const demosJson = () => getJson(`${API_BASE}${DEMOS_PATH}`, { ttlMs: DEMOS_REFRE
 async function loadDemonstrations({ bounds }) {
     const d = await demosJson()
     const now = Date.now()
-    return cullPoints(arr(d?.demonstrations).map((h) => ({
-        id: `demo-${h.id}`, lat: num(h.lat), lon: num(h.lon),
-        iconUri: demoIconUri(h, now), size: DEMO_SIZE,
-        title: demoTitle(h), sub: demoSub(h, now),
-        severity: null, raw: demoRaw(h, now),
-    })), normBounds(bounds))
+    // announced protests where they stand now ("Ongoing · since 14:00"), the
+    // card with their photos, videos and crowd (globe/protests.js); an
+    // announced gathering among the hazards is drawn once, as its protest
+    const asProtest = new Set(arr(d?.demonstrations).filter((h) => h.protest_id).map((h) => h.id))
+    return cullPoints([
+        ...arr(d?.demonstrations).filter((h) => !asProtest.has(h.id)).map((h) => ({
+            id: `demo-${h.id}`, lat: num(h.lat), lon: num(h.lon),
+            iconUri: demoIconUri(h, now), size: DEMO_SIZE,
+            title: demoTitle(h), sub: demoSub(h, now),
+            severity: null, raw: demoRaw(h, now),
+        })),
+        ...protestPoints(d, now).map((p) => ({ ...p, severity: null, raw: { ...p.raw, layerLabel: "Announced protest" } })),
+    ], normBounds(bounds))
 }
 
 async function loadDemoMovement({ bounds }) {

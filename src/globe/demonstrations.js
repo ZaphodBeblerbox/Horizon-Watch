@@ -15,6 +15,7 @@
  * Colour lives in the icons and the lines only; every word is plain.
  */
 import { hazardLine } from "../routes/view.js"
+import { itemStatusLabel } from "./protests.js"
 
 export const DEMOS_PATH = "/api/routes/demonstrations"
 export const DEMOS_REFRESH_MS = 30_000     // "follow the demonstrations in real time" (owner, 2026-10-17); the backend memoises 30 s
@@ -82,7 +83,9 @@ export function demoTitle(h) {
 
 /** "12 min ago · Telegram · Paris Luttes Info" (or "starts in 30 min …") */
 export function demoSub(h, now = Date.now()) {
-    const line = hazardLine({ ...h, label: null, place: null }, now)
+    // an announced gathering says where it stands ("Ongoing · since 14:00"),
+    // not "under way for 840 min" (backend protest_status.py)
+    const line = itemStatusLabel(h, now) || hazardLine({ ...h, label: null, place: null }, now)
     return [line, h?.source?.label].filter(Boolean).join(" · ") || null
 }
 
@@ -102,7 +105,8 @@ export function demoRaw(h, now = Date.now()) {
         ...h, kind: "demonstration", hazard_kind: h?.kind || null,
         title: demoTitle(h), sub: demoSub(h, now),
         url: h?.source?.url || null, source: h?.source?.label || null,
-        published_at: h?.at || h?.starts_utc || null, detail: demoDetail(h),
+        published_at: h?.protest_status ? null : (h?.at || h?.starts_utc || null), detail: demoDetail(h),
+        status_label: itemStatusLabel(h, now),
     }
 }
 

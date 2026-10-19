@@ -28,6 +28,8 @@ export const INSPECTOR_TYPES = new Set([
     // the old fusion_events; "surge" was not, so a click on a surge fell
     // through to the raw-html popup, which had no html and so did nothing.
     "surge",
+    // An announced protest and where it stands now (GlobeDemonstrationsLayer, globe/protests.js).
+    "protest",
     // Every type that registers through setEntity has to be listed here or
     // the click goes to the raw-html popup instead of the inspector — the
     // exact failure the "surge" line above records, repeated. These three

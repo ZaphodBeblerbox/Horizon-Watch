@@ -1473,6 +1473,38 @@ export function adaptDemonstration(data = {}) {
     }
 }
 
+/**
+ * An announced protest and where it stands now (globe/protests.js, backend
+ * protest_status.py): the status is the subtitle — "Ongoing · since 14:00
+ * (reports 3 min ago)" — never "announced N h ago". inspector/ProtestDetail.jsx
+ * adds the status, the crowd and the photos and videos above these rows.
+ */
+export function adaptProtest(data = {}) {
+    const point = pointOf(data)
+    const srcs = (Array.isArray(data.sources) ? data.sources : [])
+        .map((s) => ({ source: `Telegram · ${s.channel_title || s.channel || ""}`, url: s.url, time: s.posted_at }))
+    const st = data.status_label || data.status?.label || null
+    return {
+        identity: { title: data.title || "Announced protest", subtitle: ["Announced protest", st].filter(Boolean).join(" · "),
+                    entityType: "protest", subtype: data.status?.key || null, sanctionsStatus: null },
+        description: null,
+        attributes: compact([
+            attr("Status", st),
+            attr("Planned for", data.starts_label || null),
+            attr("Planned length", data.duration_basis ? (data.duration_basis === "stated" ? "as stated" : data.duration_basis) : null),
+            attr("Crowd", data.crowd?.label || null),
+            attr("Figures as stated", data.crowd?.by_source_label || null),
+            attr("Photos and videos", Array.isArray(data.media) && data.media.length ? String(data.media.length) : null),
+            attr("Reports from there", data.status?.n_reports ? String(data.status.n_reports) : null),
+            attr("Place", data.place || null),
+            ..._srcAttrs(srcs),
+            attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
+        ]),
+        provenance: { feed: _feed(srcs) || "Telegram", ingestedAt: null },
+        actions: { canJumpToLocation: !!point },
+    }
+}
+
 /** One hop of a crowd's movement, reconstructed from Telegram reports (demonstrations.js trackSegments). */
 export function adaptProtestTrack(data = {}) {
     const srcs = (Array.isArray(data.sources) ? data.sources : []).map((s) => ({ source: s.source || "Telegram", url: s.url, time: s.published_at }))
@@ -1592,6 +1624,7 @@ const ADAPTERS = {
     troop_movement: adaptTroopMovement,
     trajectory: adaptTrajectory,
     demonstration: adaptDemonstration,
+    protest: adaptProtest,
     protest_track: adaptProtestTrack,
     demo_crowd: adaptDemoSituation,
     demo_path: adaptDemoSituation,

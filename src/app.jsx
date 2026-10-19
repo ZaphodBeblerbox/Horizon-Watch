@@ -1136,7 +1136,8 @@ export default function App() {
                 // The reason is the whole point of showing it: an analyst who
                 // disagrees with a notification can see the rule that raised
                 // it rather than guessing at one.
-                sub: [i.reason, i.region].filter(Boolean).join(" · "),
+                // an announced protest says where it stands now (event_watch: status_label)
+                sub: [i.status_label, i.reason, i.region].filter(Boolean).join(" · "),
                 expect: i.expect || "", advice: i.advice || "",
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
                 actions: i.actions || (i.livestream_id ? ["watch"] : null), alertId: i.id, assetId: i.asset_id || null,
