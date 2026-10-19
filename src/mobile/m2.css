@@ -478,6 +478,8 @@
              animation: m2-toast-in .5s var(--m2-ease); transition: transform .2s ease, opacity .3s ease; }
 .m2-banner.leaving { opacity: 0; transform: translateY(-24px) scale(.97) !important; }
 .m2-banner-body small { color: #ff6159; font-weight: 600; }
+/* a message or a desk post is not an alarm: its label stays in the words' grey */
+.m2-banner[data-kind="message"] .m2-banner-body small, .m2-banner[data-kind="desk"] .m2-banner-body small { color: var(--txt2); }
 @keyframes m2-toast-in { from { transform: translateY(-110%) scale(.96); opacity: 0 } 60% { opacity: 1 } to { transform: none } }
 /* the mood (screens/MMood.jsx): one country large on top, the rest as rows */
 .m2-mood-top { padding: 4px 2px 6px; animation: m2-pane-from-r .4s var(--m2-ease); }

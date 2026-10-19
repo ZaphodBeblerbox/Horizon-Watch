@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { getSettings, subscribeSettings, updateSetting } from "./settingsStore.js"
+import { isOnScreen } from "../notify/inbox.js"
 /**
  * notificationStore.js — PARALLAX spec §5.
  *
@@ -60,6 +61,10 @@ export const KIND = {
     livestream: { icon: "i-feed",  name: "Live on Telegram" },
     // Unrest near you, with the safest way out (safe_route.py)
     exit:     { icon: "i-alert",   name: "Leave the area" },
+    // Personal (backend/inbox_notify.py, owner 2026-10-19): a message for
+    // you, and a new post on your desk. Never from you; gone once read.
+    message:  { icon: "i-comment", name: "Message" },
+    desk:     { icon: "i-feed",    name: "On the Desk" },
 }
 
 /** Display severity vocabulary — the same four the diamond uses everywhere. */
@@ -140,6 +145,9 @@ export function interrupts(n, now = Date.now()) {
         // warning sent to you by your team — the same as the server pushes
         // (event_watch.INTERRUPT_KINDS), so phone and desktop agree.
         || n.kind === "exit" || n.kind === "warning"
+        // A message for you, a new post on your desk — unless that
+        // conversation, or the desk, is what you are looking at.
+        || ((n.kind === "message" || n.kind === "desk") && !isOnScreen(n))
 }
 
 export function setMuted(v) {
@@ -256,6 +264,9 @@ export function pushNotification(n) {
         assetId: n.assetId || null,
         onHome: !!n.onHome,
         livestreamId: n.livestreamId || null,
+        // a message opens its conversation, a desk card its post (notify/openSignal.js)
+        conversationId: n.conversationId || null,
+        postId: n.postId || null,
         // WHAT A NOTIFICATION IS (owner, 2026-10-10): with the app closed,
         // only what the server marks `push` (event_watch.notifies) — the
         // same rule as the phone's push, so the desktop and the phone get

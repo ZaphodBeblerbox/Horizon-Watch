@@ -20,6 +20,7 @@
 import { useRef, useState } from "react"
 import PlxIcon from "./PlxIcon.jsx"
 import PlxWordmark from "./PlxWordmark.jsx"
+import { UNREAD_PILL } from "./PlxRail.jsx"
 
 const ON = "var(--accdim)"
 const OFF = "transparent"
@@ -280,16 +281,17 @@ export default function PlxTabBar({
             </nav>
 
             <button
-                onClick={onChat} title="Messages"
+                onClick={onChat} title={chatCount ? `Messages · ${chatCount} unread` : "Messages"}
+                aria-label={chatCount ? `Messages, ${chatCount} unread` : "Messages"}
                 style={{
-                    display: "flex", flexDirection: "column", alignItems: "center",
+                    position: "relative", display: "flex", flexDirection: "column", alignItems: "center",
                     justifyContent: "center", gap: 1, width: 36, height: 36, border: 0,
                     background: chatOpen ? ON : OFF, color: "var(--txt2)",
                     cursor: "pointer", borderRadius: 0,
                 }}
             >
                 <PlxIcon href="#g-comment" size={15} />
-                <span style={{ fontFamily: "var(--mz-font-mono)", fontSize: 9, lineHeight: 1 }}>{chatCount}</span>
+                {chatCount ? <span data-testid="chat-unread" style={{ ...UNREAD_PILL, position: "absolute", top: 2, right: 0 }}>{chatCount}</span> : null}
             </button>
 
             <button

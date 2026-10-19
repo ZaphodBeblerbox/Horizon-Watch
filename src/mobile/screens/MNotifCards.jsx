@@ -13,7 +13,10 @@ import { subscribeNotifications, getNotifications, dismissCard, useDnd, KIND } f
 
 const SEV = { critical: "#E5484D", high: "#F5A524", moderate: "#8FB4E8", low: "#9AA9BC" }
 
-const URGENT_KINDS = new Set(["warning", "live"])
+// a message for you and a new post on your desk show as banners too, as in
+// every messenger (owner, 2026-10-19) — the store already holds them back
+// while that conversation, or the desk, is on screen
+const URGENT_KINDS = new Set(["warning", "live", "message", "desk"])
 export const isUrgent = (n) => n?.sev === "critical" || URGENT_KINDS.has(n?.kind)
 const TOAST_MS = 6000
 
@@ -29,7 +32,7 @@ function Banner({ n, onOpen }) {
         return () => clearTimeout(t)
     }, [dy]) // eslint-disable-line react-hooks/exhaustive-deps
     return (
-        <div className={`m2-banner${leaving ? " leaving" : ""}`} role="alert" data-testid="m2-banner" style={{ transform: dy < 0 ? `translateY(${dy}px)` : undefined }}
+        <div className={`m2-banner${leaving ? " leaving" : ""}`} role="alert" data-testid="m2-banner" data-kind={n.kind} style={{ transform: dy < 0 ? `translateY(${dy}px)` : undefined }}
              onTouchStart={(e) => { y0.current = e.touches[0].clientY }}
              onTouchMove={(e) => { if (y0.current != null) setDy(Math.min(0, e.touches[0].clientY - y0.current)) }}
              onTouchEnd={() => { if (dy < -40) close(); setDy(0); y0.current = null }}>

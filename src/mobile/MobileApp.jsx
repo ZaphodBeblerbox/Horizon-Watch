@@ -42,6 +42,7 @@ import { SeaRouteSidebar } from "../routes/modes/MaritimeRoute.jsx"
 import { fetchVesselThreat } from "../state/vesselThreatStore.js"
 import { showFindings } from "../lib/findings.js"
 import { findingsForRoute } from "./openFinding.js"
+import { useInboxUnread, badgeText } from "../notify/inbox.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
@@ -55,7 +56,8 @@ export default function MobileApp() {
     const [focus, setFocus] = useState(null)
     const [assetOpen, setAssetOpen] = useState(null)
     const notes = usePoll("/api/notifications?limit=60", 60_000, (d) => arr(d?.items ?? d))
-    const unread = usePoll("/api/chat/unread", 30_000, (d) => d?.unread ?? 0)
+    // unread messages and desk posts: the same counts as the desktop's (notify/inbox.js)
+    const inbox = useInboxUnread()
     // Check in like the desktop does, so the phone counts as online and
     // keeps "last seen" current. The list itself isn't shown here.
     useOnlineUsers("phone")
@@ -89,6 +91,10 @@ export default function MobileApp() {
             setMenu(false)
             if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
             if (r.action === "asset") { go("assets", { asset: r.assetId }); return }
+            // a message: its conversation; a desk post: the desk at it (the
+            // screens take the request themselves, notify/inbox.js)
+            if (r.action === "chat") { go("messages"); return }
+            if (r.action === "desk") { go("desk"); return }
             const p = presentationFor(r, "phone")
             closeOpenedSignal()            // what the last one drew
             if (p?.map) { sigMap.current?.(r); return }
@@ -239,7 +245,9 @@ export default function MobileApp() {
                     <button key={k} aria-current={k === "more" ? (menu || inMore) : tab === k} onClick={() => (k === "more" ? setMenu(true) : go(k))}>
                         <Icon id={icon} size={22} />
                         <span>{label}</span>
-                        {k === "messages" && unread > 0 && <span className="m2-badge" style={{ top: 4, right: "calc(50% - 22px)" }}>{unread}</span>}
+                        {(k === "messages" || k === "desk") && badgeText(k === "messages" ? inbox.messages : inbox.desk) && (
+                            <span className="m2-badge" data-testid={`m2-unread-${k}`} style={{ top: 4, right: "calc(50% - 22px)" }}>
+                                {badgeText(k === "messages" ? inbox.messages : inbox.desk)}</span>)}
                     </button>
                 ))}
             </nav>

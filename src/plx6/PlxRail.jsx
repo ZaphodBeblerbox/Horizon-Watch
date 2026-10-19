@@ -62,7 +62,15 @@ export const RAIL_MODES = [
     ["work",      "My work",                                   "#g-work"],
 ]
 
-function RailButton({ label, icon, active, badge, onClick, hue = null, travel = false }) {
+/* AN UNREAD COUNT (owner, 2026-10-19): red like an alert count, the one
+   place colour is allowed on a word, in the plain sans. */
+export const UNREAD_PILL = {
+    minWidth: 14, height: 14, padding: "0 4px", borderRadius: 7, boxSizing: "border-box",
+    background: "#E5484D", color: "#fff", font: "600 9px/14px var(--font)", textAlign: "center",
+    pointerEvents: "none",
+}
+
+function RailButton({ label, icon, active, badge, unread = "", onClick, hue = null, travel = false }) {
     const ink = hue || "var(--acchi)"
     const [tip, setTip] = useState(null)
     return (
@@ -97,6 +105,8 @@ function RailButton({ label, icon, active, badge, onClick, hue = null, travel = 
             onMouseLeave={(e) => { setTip(null); if (!active) { e.currentTarget.style.background = OFF; e.currentTarget.style.opacity = hue ? "0.78" : "1" } }}
         >
             <PlxIcon href={icon} size={17} />
+            {unread ? <b data-testid={`rail-unread-${label.split(" ")[0].toLowerCase()}`}
+                         style={{ ...UNREAD_PILL, position: "absolute", top: 1, right: 0 }}>{unread}</b> : null}
             {badge ? (
                 <b style={{
                     position: "absolute", right: 2, bottom: 2,
@@ -130,6 +140,7 @@ export default function PlxRail({
     isSuperAdmin = false,
     onSettings = () => {},
     initials = "GU",
+    unread = {},             // {desk: "3"} — unread counts on a mode (notify/inbox.js)
 }) {
     // Reports stays lit while the document editor is open — they are one
     // surface with three tabs, not two destinations (A3).
@@ -163,7 +174,7 @@ export default function PlxRail({
             }}
         >
             {RAIL_MODES.map(([k, label, icon]) => (
-                <RailButton key={k} label={label} icon={icon} hue={RAIL_HUE[k]} travel
+                <RailButton key={k} label={label} icon={icon} hue={RAIL_HUE[k]} travel unread={unread[k] || ""}
                             active={isActive(k)} onClick={() => onMode(k)} />
             ))}
 

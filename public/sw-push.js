@@ -48,7 +48,9 @@ self.addEventListener('push', (event) => {
                     livestreamId: data.livestream_id || null, assetId: data.asset_id || null, headline: data.body || '',
                     routePlanId: data.route_plan_id || null,
                     // a vessel of concern opens on the vessel itself (src/notify/openSignal.js)
-                    mmsi: data.mmsi || null, alertType: data.alert_type || null },
+                    mmsi: data.mmsi || null, alertType: data.alert_type || null,
+                    // a message opens its conversation, a desk post the desk at it
+                    kind: data.kind || null, conversationId: data.conversation_id || null, postId: data.post_id || null },
         })
     })())
 })
@@ -60,7 +62,8 @@ self.addEventListener('notificationclick', (event) => {
         const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true })
         const msg = { type: 'NOTIFICATION_CLICK', eventId: d.eventId, lat: d.lat, lon: d.lon,
                       livestreamId: d.livestreamId, assetId: d.assetId, headline: d.headline, routePlanId: d.routePlanId || null,
-                      mmsi: d.mmsi || null, alertType: d.alertType || null }
+                      mmsi: d.mmsi || null, alertType: d.alertType || null,
+                      kind: d.kind || null, conversationId: d.conversationId || null, postId: d.postId || null }
         for (const w of wins) {
             if (w.url.startsWith(self.location.origin) && 'focus' in w) {
                 await w.focus()
@@ -77,6 +80,8 @@ self.addEventListener('notificationclick', (event) => {
         if (d.routePlanId) p.set('plan', d.routePlanId)
         if (d.mmsi) p.set('vessel', d.mmsi)
         if (d.alertType) p.set('type', d.alertType)
+        if (d.conversationId) p.set('chat', d.conversationId)
+        if (d.kind === 'desk' && d.postId) p.set('deskpost', d.postId)
         if (d.headline) p.set('h', d.headline.slice(0, 160))
         if (clients.openWindow) await clients.openWindow(`/${p.toString() ? `?${p}` : ''}`)
     })())

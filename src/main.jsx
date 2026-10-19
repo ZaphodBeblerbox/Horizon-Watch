@@ -110,6 +110,7 @@ try {
                     id: d.eventId || null, lat: Number.isFinite(d.lat) ? d.lat : null, lon: Number.isFinite(d.lon) ? d.lon : null,
                     livestreamId: d.livestreamId || null, assetId: d.assetId || null, title: d.headline || '',
                     mmsi: d.mmsi || null, alertType: d.alertType || null, routePlanId: d.routePlanId || null,
+                    kind: d.kind || null, conversationId: d.conversationId || null, postId: d.postId || null,
                 } }))
             })
         }).catch((e) => console.warn('[push] unavailable:', e?.message || e))
