@@ -28,6 +28,7 @@ import { videoSrc, warnFor } from "../components/TelegramMedia.jsx"
 import { agoLabel } from "../utils/formatTime.js"
 import { dedupe, durLabel, footageFromPosts, order, reconcile, shortPlace } from "./liveFootage.js"
 import "./liveFootage.css"
+import { dropStaleDemos } from "../globe/freshness.js"
 
 export const POLL_MS = 20_000
 const abs = (u) => (!u ? null : /^https?:/.test(u) ? u : `${API_BASE}${u}`)
@@ -49,14 +50,14 @@ export function useLiveFootage(everyMs = POLL_MS, enabled = true) {
                 if (!merged) {
                     const r = await getJSON("/api/telegram/footage")
                     if (r.status === 404) merged = true
-                    else if (r.ok) { const d = await r.json(); if (live && d) setItems(order(dedupe(arr(d.items)))); return }
+                    else if (r.ok) { const d = await r.json(); if (live && d) setItems(order(dedupe(dropStaleDemos(arr(d.items))))); return }
                     else return
                 }
                 const [a, b] = await Promise.all([
                     getJSON("/api/telegram/feed?limit=60").then((r) => (r.ok ? r.json() : null)).catch(() => null),
                     getJSON("/api/telegram/posts?hours=48").then((r) => (r.ok ? r.json() : null)).catch(() => null),
                 ])
-                if (live && (a || b)) setItems(footageFromPosts(arr(a?.posts), arr(b?.posts)))
+                if (live && (a || b)) setItems(footageFromPosts(dropStaleDemos(arr(a?.posts)), dropStaleDemos(arr(b?.posts))))
             } catch { /* a failed poll keeps what is on screen */ } finally { busy = false }
         }
         load()

@@ -91,6 +91,11 @@ describe("the map and the card", () => {
         const over = [{ ...PROTEST, id: "e", status: { key: "ended" } }, { ...PROTEST, id: "n", status: { key: "no_show" } }]
         expect(protestPoints({ protests: [...over, PROTEST] }, NOW).map((p) => p.raw.id)).toEqual(["pr-1"])
     })
+    it("one whose last report is a day old is not either, whatever its status says (owner, 2026-10-19)", () => {
+        const stale = { ...PROTEST, id: "s", starts_utc: T(-60 * 30),
+                        status: { key: "dispersing", since: T(-60 * 30), last_report_at: T(-60 * 25), starts_utc: T(-60 * 30) } }
+        expect(protestPoints({ protests: [stale, PROTEST] }, NOW).map((p) => p.raw.id)).toEqual(["pr-1"])
+    })
     it("a call to violence (no time said) leaves the map after 12 h", () => {
         const a = { alert_id: "1", alert_type: "Telegram mood: call to violence", lat: 48.8, lon: 2.3, title: "x" }
         expect(moodPoint({ ...a, created_at: T(-60 * 3) }, NOW)).not.toBeNull()

@@ -12,6 +12,7 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { useCoveredIds } from "./useStrikeSettings.js"
+import { dropStaleDemos } from "./freshness.js"
 
 const SIZE = 18
 let _unrest = null, _soon = null
@@ -111,7 +112,8 @@ export default function GlobeTelegramLayer({ enabled = false, unrest = false, ho
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
                 if (!live || !d) return
-                const ps = safeArray(d.posts)
+                // a demonstration a day old is off the map (freshness.js, owner 2026-10-19)
+                const ps = dropStaleDemos(safeArray(d.posts))
                 setPosts(ps)
                 if (!arrivalsRef.current) arrivalsRef.current = makeArrivalTracker()
                 const fresh = arrivalsRef.current.arrivals(ps.map((p) => p.id))

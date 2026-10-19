@@ -219,6 +219,7 @@ import SearchBar from "./search/SearchBar.jsx"
 import { decodeView, shareUrl } from "./state/shareLink.js"
 import { getCameraState as getShareCamera } from "./globe/cameraState.js"
 import { hmZone, zuluHm } from "./utils/clock.js"
+import { dropStaleDemos } from "./globe/freshness.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -1033,7 +1034,7 @@ export default function App() {
         let cancelled = false
         const load = () => fetch(`${API}/api/notifications?limit=60&hours=48`)
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (!cancelled && Array.isArray(d)) setNotifFeed(d) })
+            .then(d => { if (!cancelled && Array.isArray(d)) setNotifFeed(dropStaleDemos(d)) })
             .catch(() => {})
         load()
         // The tray is the surface people judge "is anything happening" by.
@@ -1208,7 +1209,7 @@ export default function App() {
                 if (!live || !d) return
                 const first = tgSeenRef.current === null
                 if (first) tgSeenRef.current = new Set()
-                for (const p of d.posts || []) {
+                for (const p of dropStaleDemos(d.posts || [])) {
                     if (tgSeenRef.current.has(p.id)) continue
                     tgSeenRef.current.add(p.id)
                     pushNotification({

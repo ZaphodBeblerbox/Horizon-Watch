@@ -19,6 +19,7 @@ import { captureMedia } from "../MediaViewer.jsx"
 import { itemStatusLabel } from "../../globe/protests.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { audienceLabel } from "../../desk/Desk.jsx"
+import { dropStaleDemos } from "../../globe/freshness.js"
 
 const URG = ["routine", "elevated", "high", "critical"]
 
@@ -189,13 +190,13 @@ function TelegramFeed({ active, onShowOnMap }) {
     const end = useRef(null)
     const first = async () => {
         const d = await fetch(`${API_BASE}/api/telegram/feed?limit=30`, { credentials: "include" }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
-        setItems(d?.posts || []); setNext(d?.next || null); setNewer(0)
+        setItems(dropStaleDemos(d?.posts || [])); setNext(d?.next || null); setNewer(0)
     }
     const more = async () => {
         if (!next || loading) return
         setLoading(true)
         const d = await fetch(`${API_BASE}/api/telegram/feed?limit=30&before=${encodeURIComponent(next)}`, { credentials: "include" }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
-        setItems((p) => [...(p || []), ...(d?.posts || [])]); setNext(d?.next || null); setLoading(false)
+        setItems((p) => [...(p || []), ...dropStaleDemos(d?.posts || [])]); setNext(d?.next || null); setLoading(false)
     }
     useEffect(() => { if (active && items === null) first() }, [active]) // eslint-disable-line react-hooks/exhaustive-deps
     // newer posts are counted, not inserted

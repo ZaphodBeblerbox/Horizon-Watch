@@ -18,6 +18,8 @@
  *
  * Colour lives in the icons only; every word is plain.
  */
+import { demoStale } from "./freshness.js"
+
 export const PROTEST_SIZE = 24
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 /** The status's colour, in the mark only. */
@@ -197,7 +199,8 @@ export const OVER = new Set(["ended", "no_show"])
 
 /** Every protest not yet over as a map point: {id, lat, lon, iconUri, iconWidth, iconHeight, iconAnchor, size, title, sub, key, raw}. */
 export function protestPoints(data, now = Date.now()) {
-    return arr(data?.protests).filter((p) => Number.isFinite(+p?.lat) && Number.isFinite(+p?.lon) && !OVER.has(p?.status?.key)).map((p) => {
+    return arr(data?.protests).filter((p) => Number.isFinite(+p?.lat) && Number.isFinite(+p?.lon) && !OVER.has(p?.status?.key)
+                                       && !demoStale({ ...p, kind: "protest" }, now)).map((p) => {
         const raw = protestRaw(p, now)
         const key = p.status?.key || "planned"
         const ic = protestIcon(key, raw.status_label.split(" (")[0])

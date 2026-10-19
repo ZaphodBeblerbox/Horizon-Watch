@@ -42,6 +42,7 @@ import { SeaRouteSidebar } from "../routes/modes/MaritimeRoute.jsx"
 import { fetchVesselThreat } from "../state/vesselThreatStore.js"
 import { showFindings } from "../lib/findings.js"
 import { findingsForRoute } from "./openFinding.js"
+import { dropStaleDemos } from "../globe/freshness.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
 const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
@@ -54,7 +55,7 @@ export default function MobileApp() {
     const [menu, setMenu] = useState(false)
     const [focus, setFocus] = useState(null)
     const [assetOpen, setAssetOpen] = useState(null)
-    const notes = usePoll("/api/notifications?limit=60", 60_000, (d) => arr(d?.items ?? d))
+    const notes = usePoll("/api/notifications?limit=60", 60_000, (d) => dropStaleDemos(arr(d?.items ?? d)))
     const unread = usePoll("/api/chat/unread", 30_000, (d) => d?.unread ?? 0)
     // Check in like the desktop does, so the phone counts as online and
     // keeps "last seen" current. The list itself isn't shown here.

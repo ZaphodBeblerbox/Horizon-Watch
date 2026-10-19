@@ -46,6 +46,7 @@ import { itemStatusLabel, protestPoints } from "../globe/protests.js"
 import { MOOD_PATH, MOOD_REFRESH_MS, moodIconUri, moodPoint } from "../globe/telegramMood.js"
 import { SITUATION_PATH, SITUATION_REFRESH_MS, convergenceIcon, situationFeatures } from "../globe/demoSituation.js"
 import { POLICE_PATH, POLICE_REFRESH_MS, policeFeatures, tacticIcon } from "../globe/policeActions.js"
+import { dropStaleDemos } from "../globe/freshness.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -597,7 +598,8 @@ async function loadUnrest({ bounds, hours }) {
             severity: "high", raw: a,
         })
     }
-    for (const p of arr(posts?.posts)) {
+    // a demonstration a day old is off the map (globe/freshness.js, owner 2026-10-19)
+    for (const p of dropStaleDemos(arr(posts?.posts))) {
         if (p.category !== "unrest" || p.street_report) continue      // street reports: "demonstrations:police"
         feats.push({
             id: p.id, lat: num(p.lat), lon: num(p.lon), iconUri: tgUnrestIcon(), size: TG_SIZE,
