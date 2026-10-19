@@ -102,6 +102,9 @@ def read_mood(limit: int = 75, days: int = WINDOW_DAYS) -> dict:
                     pass
         except Exception as e:                                 # noqa: BLE001
             print(f"[telegram-mood] pass failed: {type(e).__name__}: {e}", flush=True)
+            import openai_gate
+            if openai_gate.note_error(e):
+                break                      # out of credit: no point asking again this pass
             continue
         for r, x in zip(chunk, res):
             x = x or {}
@@ -188,7 +191,7 @@ def series(country: str, days: int = WINDOW_DAYS, now: _dt.datetime | None = Non
         "calls": [{"channel": r["channel_title"] or r["channel"], "posted_at": r["posted_at"], "mobilise": r["mood_mobilise"],
                    "target": r["mood_target"], "topic": r["mood_topic"], "role": r["role"],
                    "text": (r["summary_en"] or r["text"] or "")[:280],
-                   "url": None if str(r["channel"]).startswith("c/") else f"https://t.me/{r['channel']}/{r['msg_id']}"}
+                   "url": None if str(r["channel"]).startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}"}
                   for r in calls[:12]],
     }
 
