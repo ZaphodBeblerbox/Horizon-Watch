@@ -350,9 +350,11 @@ def test_query_active_only():
     assert got["near"]["nearby_calls"][0]["name"] == "Place Bellecour" and got["near"]["nearby_count"] == 1
     assert q["counts"]["active"] == 3 and q["counts"]["nearby"] == 1 and q["active_only"] is True
     assert q["nearby_km"] == ep.NEARBY_KM == 2.0
-    # without the filter every place comes back; the near one still says why it is active
+    # without the filter every place comes back but the one whose calls are over
+    # (owner, 2026-10-19); the near one still says why it is active
     allq = ep.query(data=data, now=BEFORE)
-    assert len(allq["places"]) == 5
+    assert {p["id"] for p in allq["places"]} == {"rally", "near", "far", "called"}
+    assert [p["id"] for p in ep.query(data=data, now=BEFORE, status="past")["places"]] == ["done"]
     assert next(p for p in allq["places"] if p["id"] == "near")["active"] == "nearby"
     assert "active" not in next(p for p in allq["places"] if p["id"] == "far")
     # a wider radius, clamped

@@ -1032,6 +1032,18 @@ def _when_label(start: str) -> str:
     return f"{day}, {d.strftime('%H:%M')}" if "T" in start else day
 
 
+def _protest_status(items: list[dict]) -> list[dict]:
+    """Where each announced protest stands now ("Ongoing · since 14:00"),
+    on the items that stand for one (protest_status.py) — read instead of
+    "announced 14 h ago" by the Desk, Home and the map cards."""
+    try:
+        import protest_status
+        return protest_status.annotate(items)
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[telegram] error: protest status: {type(e).__name__}: {e}", flush=True)
+        return items
+
+
 def upcoming(days_ahead: int = 30) -> list[dict]:
     """Announced gatherings that have not happened yet, soonest first; one
     per what, place and day however many channels carried it. Served from
@@ -1039,7 +1051,7 @@ def upcoming(days_ahead: int = 30) -> list[dict]:
     below is the fallback if that module fails."""
     try:
         import telegram_events
-        return telegram_events.announcements(days_ahead)
+        return _protest_status(telegram_events.announcements(days_ahead))
     except Exception as e:                                      # noqa: BLE001
         print(f"[telegram] events unavailable, one-per-post fallback: {type(e).__name__}: {e}", flush=True)
     today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
@@ -1265,6 +1277,7 @@ def feed(before: str | None = None, limit: int = 40) -> dict:
     # this page's span so paging neither repeats nor skips them.
     full = len(out) == limit
     out = with_signals(out, 72, before=before, floor=out[-1]["posted_at"] if full else "")[:limit]
+    _protest_status(out)
     return {"posts": out, "next": out[-1]["posted_at"] if out and (full or len(out) == limit) else None}
 
 

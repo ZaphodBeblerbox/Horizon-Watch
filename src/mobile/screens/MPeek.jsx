@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { attachDrag, flingMs, swallowClickAfterDrag } from "../gesture.js"
 import { ago, sevColor } from "./common.jsx"
+import { itemStatusLabel } from "../../globe/protests.js"
 
 const kindOf = (s) => s?.source || s?.channel_title || s?.layerLabel || s?.alert_type || s?.kind_label || "Signal"
 
@@ -89,6 +90,8 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
     const sev = s.severity_tier || s.sev || s.severity
     const place = s.location || s.place || s.region || s.location_name || null
     const t = s.published_at || s.posted_at || s.created_at || s.time || null
+    // an announced protest says where it stands ("Ongoing · since 14:00"), never "14 h ago"
+    const status = itemStatusLabel(s) || s.status_label || null
     const title = s.headline || s.title || "Signal"
     const host = document.querySelector(".m2") || document.body
     return createPortal(
@@ -96,7 +99,7 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
             <div className="m2-peek-grip" />
             <div className="m2-peek-meta">
                 {sev && <i style={{ background: sevColor(sev) }} />}
-                <span>{[kindOf(s), t ? ago(t) : null].filter(Boolean).join(" · ")}</span>
+                <span data-testid="m2-peek-when">{[kindOf(s), status || (t ? ago(t) : null)].filter(Boolean).join(" · ")}</span>
             </div>
             <h3>{title}</h3>
             {place && place !== title && <div className="m2-peek-place">{String(place).split(",").slice(0, 3).join(",")}</div>}

@@ -21,6 +21,11 @@
  *     ("demo_convergence"). A crowd's path covers the reconstructed tracks
  *     (and the positions people report themselves), so once the situation
  *     has answered the track hops are not drawn twice.
+ *   · ANNOUNCED PROTESTS and where they stand now (owner, 2026-10-18: "I
+ *     want to read e.g. 'Currently ongoing'"): the same answer's `protests`
+ *     (backend protest_status.py), a crowd mark ringed by status with its
+ *     words — "Ongoing · since 14:00", "Planned · starts in 3 h" — beside it
+ *     (entity type "protest"; the card has the photos, videos and crowd).
  * The drawing rules are in demonstrations.js and demoSituation.js, shared with the phone.
  */
 import { memo, useEffect, useMemo, useState } from "react"
@@ -32,6 +37,7 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 import { DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, trackSegments } from "./demonstrations.js"
 import { SITUATION_PATH, SITUATION_REFRESH_MS, situationFeatures } from "./demoSituation.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { protestPoints } from "./protests.js"
 
 const css = (c, a = 1) => Color.fromCssColorString(c).withAlpha(a)
 
@@ -66,9 +72,11 @@ export default function GlobeDemonstrationsLayer({ enabled = false }) {
     }, [enabled])
 
     const points = useMemo(() => safeArray(data?.demonstrations)
-        .filter((h) => Number.isFinite(+h?.lat) && Number.isFinite(+h?.lon))
+        // an announced gathering is drawn once, as its protest (below)
+        .filter((h) => Number.isFinite(+h?.lat) && Number.isFinite(+h?.lon) && !h.protest_id)
         .map((h) => ({ id: `demo-${h.id}`, h, raw: demoRaw(h, nowMs) })), [data, nowMs])
     const situation = useMemo(() => situationFeatures(sit, nowMs), [sit, nowMs])
+    const protests = useMemo(() => protestPoints(data, nowMs), [data, nowMs])
     const hasPaths = situation.some((f) => f.type === "demo_crowd")
     const hops = useMemo(() => (hasPaths ? [] : safeArray(data?.tracks).flatMap((t) => trackSegments(t, nowMs))
         .map((s) => ({ ...s, id: `demo-move-${s.id}` }))), [data, nowMs, hasPaths])
@@ -80,18 +88,29 @@ export default function GlobeDemonstrationsLayer({ enabled = false }) {
             if (s.marker) setEntity(`${s.id}-head`, "protest_track", s.raw)
         })
         situation.forEach((f) => setEntity(f.id, f.type, f.raw))
+        protests.forEach((p) => setEntity(p.id, "protest", p.raw))
         viewer?.scene?.requestRender?.()
         return () => {
+            protests.forEach((p) => deleteEntity(p.id))
             points.forEach((p) => deleteEntity(p.id))
             hops.forEach((s) => { deleteEntity(s.id); deleteEntity(`${s.id}-head`) })
             situation.forEach((f) => deleteEntity(f.id))
         }
-    }, [points, hops, situation, viewer])
+    }, [points, hops, situation, protests, viewer])
 
     if (!enabled || (!data && !sit)) return null
     return (
         <>
             {situation.map((f) => <SituationEntity key={f.id} f={f} />)}
+            {protests.map((p) => (
+                <Entity key={p.id} id={p.id} name={p.title} position={Cartesian3.fromDegrees(p.lon, p.lat, 0)}
+                        billboard={{ image: p.iconUri, width: p.iconWidth, height: p.iconHeight,
+                                     // the ring's centre on the place, its status to its right
+                                     pixelOffset: new Cartesian2(p.iconWidth / 2 - p.iconAnchor[0], p.iconHeight / 2 - p.iconAnchor[1]),
+                                     heightReference: HeightReference.CLAMP_TO_GROUND,
+                                     distanceDisplayCondition: new DistanceDisplayCondition(0, 3_000_000),
+                                     disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
+            ))}
             {hops.map((s) => <HopEntity key={s.id} s={s} />)}
             {points.map((p) => (
                 <Entity key={p.id} id={p.id} name={p.raw.title} position={Cartesian3.fromDegrees(+p.h.lon, +p.h.lat, 0)}

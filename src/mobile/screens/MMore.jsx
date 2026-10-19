@@ -258,7 +258,8 @@ export function MAlerts({ onShowOnMap, onOpen, focus = null }) {
                                 <button className="m2-btn" style={{ height: 34 }} onClick={() => setOpen({ ...n, headline: n.title, severity_tier: n.sev })}>Details</button>
                             </div>
                         </div>
-                    ) : <Row key={n.id} color={sevColor(n.sev)} title={n.title} sub={n.reason} when={when(n.created_at)} onClick={() => tap(n)} />))}
+                    ) : <Row key={n.id} color={sevColor(n.sev)} title={n.title} sub={[n.status_label, n.reason].filter(Boolean).join(" · ") || null}
+                             when={when(n.created_at)} onClick={() => tap(n)} />))}
             </div>
             {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
         </div>

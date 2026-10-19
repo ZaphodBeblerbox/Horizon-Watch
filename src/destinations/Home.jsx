@@ -44,6 +44,7 @@ import { announceNew } from "../home/homeNews.js"
 import { hmZone } from "../utils/clock.js"
 import { createPortal } from "react-dom"
 import OutlookExplain from "../insight/OutlookExplain.jsx"
+import { itemStatusLabel } from "../globe/protests.js"
 export { slotOf }
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -421,7 +422,8 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
             items: [...announced.map((a) => ({
                 c: "var(--amber)",
                 t: `${a.what ? a.what[0].toUpperCase() + a.what.slice(1) : "Gathering"} · ${String(a.place || "").split(",").slice(0, 2).join(",")}`,
-                sub: [a.when_label, a.cause, `announced on ${a.channel_title || a.channel}`].filter(Boolean).join(" · "),
+                // where it stands now ("Ongoing · since 14:00"), not only when it was called for
+                sub: [itemStatusLabel(a) || a.when_label, a.cause, `announced on ${a.channel_title || a.channel}`].filter(Boolean).join(" · "),
                 go: () => {
                     onOpenModule("map")
                     window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: a.lat, lon: a.lon, altitude: 30000 } }))

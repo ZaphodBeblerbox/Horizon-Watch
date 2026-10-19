@@ -888,6 +888,11 @@ def query(bbox: str | None = None, status: str | None = None, kind: str | None =
         q = a
         if want_status and q["status"] not in want_status:
             continue
+        # a place whose calls are all over is no longer a signal (owner,
+        # 2026-10-19: "Once the demonstration is over we don't want the
+        # signal anymore"); asked for by status=past, it still comes
+        if not want_status and q["status"] == "past":
+            continue
         if pid in near:
             q = {**q, "nearby_calls": near[pid][:5], "nearby_count": len(near[pid])}
         if is_active:

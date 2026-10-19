@@ -30,7 +30,7 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
             // Frontline claims, movements and trajectories (GlobeFrontlineClaimsLayer).
             "frontline_claim", "troop_movement", "trajectory",
             // Demonstrations, live (GlobeDemonstrationsLayer).
-            "demonstration", "protest_track",
+            "demonstration", "protest_track", "protest",
             // The city situation: crowds, their paths, routes, convergence points.
             "demo_crowd", "demo_path", "demo_route", "demo_convergence",
             // Street reports: tear gas, kettles, police moving in (GlobePoliceActionsLayer).

@@ -399,7 +399,7 @@ def snapshot(now: _dt.datetime | None = None) -> dict:
     if now is None and hit and time.time() - hit[0] < MEMO_S:
         return hit[1]
     t = now or _dt.datetime.now(_dt.timezone.utc)
-    out = {"generated_at": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "demonstrations": [], "tracks": [], "note": RECONSTRUCTED,
+    out = {"generated_at": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "demonstrations": [], "tracks": [], "protests": [], "note": RECONSTRUCTED,
            "linking": {"lookback_h": LOOKBACK_H, "window_h": LINK_WINDOW_H, "walk_kmh": WALK_KMH,
                        "slack_m": HOP_SLACK_M, "max_hop_m": MAX_HOP_M, "same_place_m": SAME_PLACE_M}}
     try:
@@ -411,6 +411,45 @@ def snapshot(now: _dt.datetime | None = None) -> dict:
         out["tracks"] = link_tracks(read_reports(t), t, lambda cc: te.zone_for(None, cc))
     except Exception as ex:                                    # noqa: BLE001
         print(f"[demonstrations] error: tracks: {type(ex).__name__}: {ex}", flush=True)
+    try:
+        # announced protests with where they stand now ("Ongoing · since 14:00"),
+        # their photos and videos and the crowd's size (protest_status.py)
+        import protest_status as ps
+        out["protests"] = ps.snapshot(now)["protests"]
+        out["demonstrations"] = status_hazards(out["demonstrations"], out["protests"])
+    except Exception as ex:                                    # noqa: BLE001
+        out["protests"] = []
+        print(f"[demonstrations] error: protests: {type(ex).__name__}: {ex}", flush=True)
     if now is None:
         _memo["v"] = (time.time(), out)
+    return out
+
+
+def status_hazards(hazards: list[dict], protests: list[dict]) -> list[dict]:
+    """An announced gathering among the planner's hazards carries its
+    protest's status, so its card reads "Ongoing · since 14:00", not
+    "under way for 840 min" (the hazard's id is the announcement's,
+    tga-<channel>-<msg_id>-<idx>); once its protest is over (Ended / No
+    sign it happened) it is not on this layer at all (owner, 2026-10-19)."""
+    out = []
+    by_src = {}
+    for p in protests:
+        for s in p.get("sources") or []:
+            by_src.setdefault(f"{s['channel']}-{s['msg_id']}", p)
+    for h in hazards:
+        hid = str(h.get("id") or "")
+        if not hid.startswith("tga-"):
+            out.append(h)
+            continue
+        body = hid[4:]
+        p = by_src.get(body) or by_src.get(body.rsplit("-", 1)[0])
+        if p:
+            h["protest_id"] = p["id"]
+            h["protest_status"] = {"key": p["status"]["key"], "label": p["status_label"], "since": p["status"].get("since"),
+                                   "until": p["status"].get("until"), "starts_utc": p.get("starts_utc"),
+                                   "last_report_at": p["status"].get("last_report_at"), "tz": p.get("tz"),
+                                   "start_approx": p.get("start_approx"), "crowd": (p.get("crowd") or {}).get("label")}
+            if p["status"]["key"] in ("ended", "no_show"):
+                continue
+        out.append(h)
     return out
