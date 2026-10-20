@@ -25,9 +25,11 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
-    attachmentUrl, chatPeople, getTyping, listConversations, listMessages, markRead,
-    sendMessage, setTyping, startConversation,
+    addMembers, attachmentUrl, chatPeople, getTyping, listConversations, listMessages, markRead,
+    removeMember, sendMessage, setMemberRole, setTyping, startConversation,
 } from "../../lib/chatApi.js"
+import { refreshInboxUnread, setViewingChat, takeOpenChat } from "../../notify/inbox.js"
+import MMembers from "./MMembers.jsx"
 import { createTypingPinger, typingLabel } from "../../lib/chatTyping.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { clock, deliveryState, listWhen, mergeMessages, parseTs, threadItems } from "../chatThread.js"
@@ -87,7 +89,39 @@ function chrome(hidden) {
     window.dispatchEvent(new CustomEvent("m2:chrome", { detail: { hidden } }))
 }
 
-function Thread({ conv, active, onBack }) {
+/* WHO IS IN A GROUP, AND CHANGING IT (owner, 2026-10-19: "I want to be
+   able to also edit the members of a message group"). A group admin adds,
+   removes and makes admins; anybody can leave. The server decides
+   (routers/chat.py); this hides what it would refuse. */
+function GroupMembers({ conv, meId, onConv, onLeft, onClose }) {
+    const admin = conv.my_role === "admin"
+    const members = (conv.members || []).map((m) => ({
+        ...m, name: m.id === meId ? `${m.name} (you)` : m.name,
+        note: m.role === "admin" ? "Group admin" : [m.title, m.company].filter(Boolean).join(" · "),
+    }))
+    return (
+        <MMembers
+            title={conv.title || "Group"} members={members} testid="m2-group-members"
+            note={admin ? null : "Only a group admin can add or remove people."}
+            canAdd={admin}
+            canRemove={(m) => admin && m.id !== meId}
+            onAdd={async (ids) => onConv(await addMembers(conv.id, ids))}
+            onRemove={async (m) => { await removeMember(conv.id, m.id); onConv({ ...conv, members: conv.members.filter((x) => x.id !== m.id), member_count: (conv.member_count || 1) - 1 }) }}
+            actions={(m) => (admin && m.id !== meId
+                ? [[m.role === "admin" ? "Make member" : "Make admin",
+                    async () => onConv(await setMemberRole(conv.id, m.id, m.role === "admin" ? "member" : "admin"))]]
+                : [])}
+            footer={(run) => (
+                <button className="m2-btn ghost" style={{ width: "100%" }}
+                        onClick={() => { if (window.confirm(`Leave ${conv.title}?`)) run("leave", async () => { await removeMember(conv.id, meId); onLeft() }) }}>
+                    Leave the group</button>
+            )}
+            onClose={onClose}
+        />
+    )
+}
+
+function Thread({ conv, active, onBack, onConv }) {
     const me = getCurrentUser()
     const [msgs, setMsgs] = useState(null)
     const [typing, setTypingNow] = useState([])
@@ -105,6 +139,14 @@ function Thread({ conv, active, onBack }) {
     const lastMarked = useRef(null)
     const pinger = useMemo(() => createTypingPinger((on) => setTyping(conv.id, on)), [conv.id])
     const group = conv.kind === "group"
+    const [membersOpen, setMembersOpen] = useState(false)
+    // THIS CONVERSATION IS ON SCREEN: its messages do not also pop up as
+    // notifications (notify/inbox.js)
+    useEffect(() => {
+        if (!active) return undefined
+        setViewingChat(conv.id)
+        return () => setViewingChat(null)
+    }, [conv.id, active])
 
     const load = () => listMessages(conv.id, { limit: 60 }).then((d) => {
         setMsgs((prev) => mergeMessages(d?.messages || [], prev || []).map((m) => {
@@ -118,7 +160,7 @@ function Thread({ conv, active, onBack }) {
         // Read once per new message, not once per poll: every POST /read is
         // a write, and a thread left open would otherwise write every 4 s.
         const newest = (d?.messages || []).at(-1)?.id
-        if (newest && newest !== lastMarked.current) { lastMarked.current = newest; markRead(conv.id).catch(() => {}) }
+        if (newest && newest !== lastMarked.current) { lastMarked.current = newest; markRead(conv.id).then(refreshInboxUnread).catch(() => {}) }
     }).catch(() => setMsgs((p) => p || []))
 
     useEffect(() => {
@@ -220,8 +262,17 @@ function Thread({ conv, active, onBack }) {
             <div className="mm-head">
                 <button className="mm-back" onClick={onBack} aria-label="Back"><Chevron /></button>
                 <Face p={peer} size={36} />
-                <span className="mm-who"><b>{conv.title}</b><span>{sub}</span></span>
+                {group ? (
+                    <button className="mm-who" data-testid="m2-group-head" aria-label={`${conv.title}: members`} onClick={() => setMembersOpen(true)}
+                            style={{ border: 0, background: "transparent", padding: 0, textAlign: "left", color: "inherit", font: "inherit", cursor: "pointer" }}>
+                        <b>{conv.title}</b><span>{sub}{typing.length ? "" : " · tap for members"}</span>
+                    </button>
+                ) : <span className="mm-who"><b>{conv.title}</b><span>{sub}</span></span>}
             </div>
+            {membersOpen && (
+                <GroupMembers conv={conv} meId={me?.id} onConv={(c) => onConv?.(c)} onClose={() => setMembersOpen(false)}
+                              onLeft={() => { setMembersOpen(false); onBack() }} />
+            )}
             <div className="mm-msgs" ref={scroller}
                  onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}
                  onClick={() => box.current?.blur()}>
@@ -289,10 +340,35 @@ export default function MMessages({ active }) {
         setPicking(false)
         try { const c = await startConversation({ kind: "direct", user_ids: [p.id] }); await load(); setOpen(c?.conversation || c) } catch { /* stays on the list */ }
     }
+    // A NEW GROUP, as on the desktop: pick people, name it
+    const [grouping, setGrouping] = useState(null)        // null | {ids: Set, title}
+    const startGroup = async () => {
+        const ids = [...(grouping?.ids || [])]
+        if (!ids.length) return
+        try {
+            const c = await startConversation({ kind: "group", user_ids: ids, title: (grouping.title || "").trim() || undefined })
+            setPicking(false); setGrouping(null); await load(); setOpen(c)
+        } catch { /* stays on the sheet */ }
+    }
+    // OPENED FROM A NOTIFICATION: that conversation (notify/inbox.js)
+    useEffect(() => {
+        const openId = async (id) => {
+            if (!id) return
+            const list = await listConversations().catch(() => null)
+            const all = Array.isArray(list) ? list : (list?.conversations || [])
+            setConvs(all)
+            const c = all.find((x) => x.id === id)
+            if (c) setOpen(c)
+        }
+        if (active) openId(takeOpenChat())
+        const h = () => { if (active) openId(takeOpenChat()) }
+        window.addEventListener("plx:open-chat", h)
+        return () => window.removeEventListener("plx:open-chat", h)
+    }, [active])
     const sorted = useMemo(() => [...(convs || [])].sort((a, b) =>
         (parseTs(b.last_message_at || b.created_at)?.getTime() || 0) - (parseTs(a.last_message_at || a.created_at)?.getTime() || 0)), [convs])
 
-    if (open) return <Thread conv={open} active={active} onBack={() => { setOpen(null); load() }} />
+    if (open) return <Thread key={open.id} conv={open} active={active} onBack={() => { setOpen(null); load() }} onConv={(c) => setOpen((o) => ({ ...o, ...c }))} />
     return (
         <div className="m2-scroll" data-screen-label="Phone messages">
             <div className="mm-list-head">
@@ -325,11 +401,28 @@ export default function MMessages({ active }) {
                     </div>
                 )}
             {picking && (
-                <Sheet onClose={() => setPicking(false)}>
-                    <div className="m2-eyebrow" style={{ marginBottom: 8 }}>New conversation with</div>
+                <Sheet onClose={() => { setPicking(false); setGrouping(null) }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <div className="m2-eyebrow" style={{ flex: 1 }}>{grouping ? `New group · ${grouping.ids.size} chosen` : "New conversation with"}</div>
+                        <button className="m2-btn ghost" style={{ height: 30, padding: "0 12px", fontSize: 13 }}
+                                onClick={() => setGrouping(grouping ? null : { ids: new Set(), title: "" })}>{grouping ? "Cancel" : "New group"}</button>
+                    </div>
+                    {grouping && (
+                        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                            <input className="m2-input" placeholder="Group name" value={grouping.title} style={{ flex: 1, fontSize: 16 }}
+                                   onChange={(e) => setGrouping({ ...grouping, title: e.target.value })} />
+                            <button className="m2-btn" disabled={!grouping.ids.size} onClick={startGroup}>Create</button>
+                        </div>
+                    )}
                     <div className="mm-rows" style={{ margin: 0 }}>
                         {people.filter((p) => p.id !== me?.id).map((p) => (
-                            <button key={p.id} className="mm-row" onClick={() => start(p)}>
+                            <button key={p.id} className="mm-row" aria-pressed={grouping ? grouping.ids.has(p.id) : undefined}
+                                    style={grouping?.ids.has(p.id) ? { background: "rgba(255,255,255,.08)" } : undefined}
+                                    onClick={() => {
+                                        if (!grouping) return start(p)
+                                        const ids = new Set(grouping.ids); ids.has(p.id) ? ids.delete(p.id) : ids.add(p.id)
+                                        setGrouping({ ...grouping, ids })
+                                    }}>
                                 <Face p={p} size={44} />
                                 <span className="mm-row-main">
                                     <span className="mm-name">{p.name}</span><span />

@@ -19,8 +19,9 @@ import {
     listConversations, startConversation, updateConversation, addMembers,
     removeMember, listMessages, sendMessage, deleteMessage, markRead, chatPeople,
     uploadToChat, attachCaseNode, attachmentUrl, attachableFiles,
-    attachCase, sendableCases, setTyping, getTyping,
+    attachCase, sendableCases, setTyping, getTyping, setMemberRole,
 } from "../lib/chatApi.js"
+import { refreshInboxUnread, setViewingChat, takeOpenChat } from "../notify/inbox.js"
 import { createTypingPinger, typingLabel } from "../lib/chatTyping.js"
 import { getCurrentUser } from "../state/authStore.js"
 import PersonCard, { Face } from "./PersonCard.jsx"
@@ -71,8 +72,10 @@ function dayLabel(iso) {
     return d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })
 }
 
-export default function Chat() {
+export default function Chat({ active = true } = {}) {
     const me = getCurrentUser()
+    const activeRef = useRef(active)
+    activeRef.current = active
     const [convs, setConvs] = useState(null)
     const [openId, setOpenId] = useState(null)
     const [msgs, setMsgs] = useState([])
@@ -101,8 +104,8 @@ export default function Chat() {
     /* ── loading ─────────────────────────────────────────────────────── */
 
     const refresh = useCallback(async () => {
-        try { setConvs(await listConversations()) }
-        catch (e) { setConvs([]); toast(e.message || "Could not load your chats", { icon: "i-alert" }) }
+        try { const list = await listConversations(); setConvs(list); return list }
+        catch (e) { setConvs([]); toast(e.message || "Could not load your chats", { icon: "i-alert" }); return null }
     }, [])
 
     useEffect(() => { refresh() }, [refresh])
@@ -125,16 +128,37 @@ export default function Chat() {
         if (!openId) { setMsgs([]); return }
         setInfo(false)
         loadMessages(openId)
-        markRead(openId).then(refresh).catch(() => {})
+        markRead(openId).then(() => { refresh(); refreshInboxUnread() }).catch(() => {})
     }, [openId, loadMessages, refresh])
+
+    // THIS CONVERSATION IS ON SCREEN (notify/inbox.js): its messages do not
+    // also pop up as notifications
+    useEffect(() => {
+        setViewingChat(active && openId ? openId : null)
+        return () => setViewingChat(null)
+    }, [active, openId])
+
+    // OPENED FROM A NOTIFICATION: that conversation, now or when this
+    // screen first mounts
+    useEffect(() => {
+        const take = () => { const id = takeOpenChat(); if (id) { setOpenId(id); refresh() } }
+        take()
+        window.addEventListener("plx:open-chat", take)
+        return () => window.removeEventListener("plx:open-chat", take)
+    }, [refresh])
 
     // The poll. Stops dead when the tab is hidden — see the module note.
     useEffect(() => {
         let alive = true
         const tick = async () => {
             if (!alive || document.hidden) return
-            await refresh()
+            const list = await refresh()
             if (openId) await loadMessages(openId, { quiet: true })
+            // what arrives in the conversation you are reading is read
+            if (openId && activeRef.current && (list || []).find((c) => c.id === openId)?.unread > 0) {
+                await markRead(openId).catch(() => {})
+                refreshInboxUnread(); refresh()
+            }
         }
         const t = setInterval(tick, POLL_MS)
         const onVisible = () => { if (!document.hidden) tick() }
@@ -399,8 +423,8 @@ export default function Chat() {
                                 <div style={{ flex: 1 }} />
                                 {open.kind === "group" && (
                                     <>
-                                        <button style={BTN} onClick={() => setComposing("add")}>Add people</button>
-                                        <button style={BTN} onClick={() => setInfo(!info)}>{info ? "Close" : "Group"}</button>
+                                        {open.my_role === "admin" && <button style={BTN} onClick={() => setComposing("add")}>Add people</button>}
+                                        <button style={BTN} data-testid="group-members" onClick={() => setInfo(!info)}>{info ? "Close" : "Members"}</button>
                                     </>
                                 )}
                             </div>
@@ -464,6 +488,10 @@ export default function Chat() {
                                             catch (e) { toast(e.message || "Could not rename it", { icon: "i-alert" }) }
                                         }}
                                         onAdd={() => setComposing("add")}
+                                        onRole={async (userId, role) => {
+                                            try { await setMemberRole(open.id, userId, role); await Promise.all([refresh(), loadMessages(open.id, { quiet: true })]) }
+                                            catch (e) { toast(e.message || "That did not work", { icon: "i-alert" }) }
+                                        }}
                                         onPicture={async (avatar) => {
                                             try { await updateConversation(open.id, { avatar }); await refresh() }
                                             catch (e) { toast(e.message || "Could not set the picture", { icon: "i-alert" }) }
@@ -1021,7 +1049,7 @@ function CaseShared({ att, mine }) {
     )
 }
 
-function GroupPanel({ conv, meId, onPerson, onRemove, onRename, onAdd, onPicture }) {
+function GroupPanel({ conv, meId, onPerson, onRemove, onRename, onAdd, onPicture, onRole }) {
     const [name, setName] = useState(conv.title)
     useEffect(() => { setName(conv.title) }, [conv.title])
     const amAdmin = conv.my_role === "admin"
@@ -1083,8 +1111,14 @@ function GroupPanel({ conv, meId, onPerson, onRemove, onRename, onAdd, onPicture
                 <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
                     <span style={EYE}>{conv.member_count} people</span>
                     <div style={{ flex: 1 }} />
-                    <button style={{ ...BTN, height: 21 }} onClick={onAdd}>Add</button>
+                    {/* a group admin adds and removes (routers/chat.py); anybody leaves */}
+                    {amAdmin && <button style={{ ...BTN, height: 21 }} data-testid="group-add" onClick={onAdd}>Add</button>}
                 </div>
+                {!amAdmin && (
+                    <div style={{ font: "400 10.5px var(--font)", color: "var(--txt-3)", marginBottom: 4 }}>
+                        Only a group admin can add or remove people.
+                    </div>
+                )}
                 {(conv.members || []).map((p) => (
                     <div key={p.id} style={{
                         display: "flex", alignItems: "center", gap: 8, padding: "5px 0",
@@ -1102,6 +1136,16 @@ function GroupPanel({ conv, meId, onPerson, onRemove, onRename, onAdd, onPicture
                                 <div style={{ font: "400 9.5px var(--mono)", color: "var(--txt-3)" }}>group admin</div>
                             )}
                         </div>
+                        {amAdmin && p.id !== meId && (
+                            <button
+                                onClick={() => onRole?.(p.id, p.role === "admin" ? "member" : "admin")}
+                                title={p.role === "admin" ? "Make them a member" : "Make them a group admin"}
+                                style={{
+                                    border: 0, background: "transparent", color: "var(--txt-3)",
+                                    font: "400 10.5px var(--font)", cursor: "pointer", padding: "0 2px",
+                                }}
+                            >{p.role === "admin" ? "make member" : "make admin"}</button>
+                        )}
                         {(p.id === meId || amAdmin) && (
                             <button
                                 onClick={() => onRemove(p.id)}

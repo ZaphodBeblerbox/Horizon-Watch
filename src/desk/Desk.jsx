@@ -23,7 +23,7 @@ import { attachmentFor } from "../mobile/screens/common.jsx"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
     listPosts, createPost, deletePost, toggleAck, whoAcked, listReplies,
-    postedTheaters, uploadDeskFile, deskFileUrl,
+    postedTheaters, uploadDeskFile, deskFileUrl, markDeskRead,
 } from "../lib/deskApi.js"
 import { getCurrentUser } from "../state/authStore.js"
 import { getActiveTheater, URGENCY } from "../state/filing.js"
@@ -33,6 +33,8 @@ import { chatPeople } from "../lib/chatApi.js"
 import Loading from "../ui/Loading.jsx"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import { fmtWhen } from "../utils/formatTime.js"
+import { getInboxUnread, refreshInboxUnread, setViewingDesk, takeOpenDeskPost } from "../notify/inbox.js"
+import { DeskMembersSummary } from "./DeskMembers.jsx"
 import { Attachment, SignalPicker as SignalPicker2, BriefingPicker, TelegramPicker, AssetPicker, PlacePick } from "./deskAttachments.jsx"
 
 const EYE = {
@@ -81,7 +83,7 @@ function Chip({ on, children, onClick, tint, count }) {
     )
 }
 
-export default function Desk() {
+export default function Desk({ active = true } = {}) {
     const me = getCurrentUser()
     const [posts, setPosts] = useState(null)
     const [theaters, setTheaters] = useState([])
@@ -158,6 +160,39 @@ export default function Desk() {
     // TEAM OR GENERAL (owner, 2026-10-10): the team's posts, or what is
     // generally happening — signals, verified events, Telegram — as a timeline.
     const [view, setView] = useState(() => (window.__plxDeskView === "general" ? "general" : "team"))
+
+    // THE DESK IS ON SCREEN: it is read (the server keeps the mark, so the
+    // phone's count goes too), and its posts do not also pop up as
+    // notifications (notify/inbox.js)
+    const seeing = active && view === "team"
+    useEffect(() => {
+        setViewingDesk(seeing)
+        if (!seeing) return undefined
+        markDeskRead().then(refreshInboxUnread).catch(() => {})
+        const t = setInterval(() => {
+            if (!document.hidden && getInboxUnread().desk > 0) markDeskRead().then(refreshInboxUnread).catch(() => {})
+        }, 15000)
+        return () => { clearInterval(t); setViewingDesk(false) }
+    }, [seeing])
+
+    // OPENED FROM A NOTIFICATION: the team's posts, everything shown, at that post
+    const [goPost, setGoPost] = useState(null)
+    useEffect(() => {
+        const take = () => {
+            const ask = takeOpenDeskPost()
+            if (!ask) return
+            setView("team"); setTheater(null); setUrg(new Set()); setCarries(null); setAuthor(null)
+            setGoPost(ask.id); load()
+        }
+        take()
+        window.addEventListener("plx:open-desk-post", take)
+        return () => window.removeEventListener("plx:open-desk-post", take)
+    }, [load])
+    useEffect(() => {
+        if (!goPost || !posts) return
+        const el = document.getElementById(`desk-post-${goPost}`)
+        if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); setGoPost(null) }
+    }, [goPost, posts])
     const [carries, setCarries] = useState(null)       // filter by what a post carries
     const [author, setAuthor] = useState(null)         // filter by who wrote it
     const shown = (posts || []).filter((p) =>
@@ -270,8 +305,9 @@ export default function Desk() {
                     )}
                 </main>
 
-                {/* RIGHT: who, and what was confirmed */}
+                {/* RIGHT: who is on the desk, who is writing, and what was confirmed */}
                 <aside style={{ ...SIDE, borderLeft: "1px solid var(--gline)" }}>
+                    <DeskMembersSummary />
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         <span style={{ ...EYE, marginBottom: 6 }}>On the desk</span>
                         {!people.length && <span style={{ fontSize: 12.5, color: "var(--txt3)" }}>Nobody has posted yet.</span>}

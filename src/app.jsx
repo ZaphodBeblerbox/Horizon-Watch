@@ -26,6 +26,7 @@ import { startPushPresence } from "./notify/pushPresence.js"
 import { confirmAction } from "./ui/confirm.js"
 import NotificationTray from "./components/NotificationTray.jsx"
 import { pushNotification, unreadCount as notifUnread, subscribeNotifications, getNotifications } from "./state/notificationStore.js"
+import { useInboxUnread, badgeText } from "./notify/inbox.js"
 import { subscribeLive } from "./state/liveEvents.js"
 import SessionControl from "./components/SessionControl.jsx"
 import { ensureActiveSession, startSessionAutoPersist } from "./state/sessionStore.js"
@@ -178,7 +179,7 @@ import Insight from "./destinations/Insight.jsx"
 import Analytics from "./destinations/Analytics.jsx"
 import LocationPrompt from "./components/LocationPrompt.jsx"
 import LivePlayerHost, { watchLive } from "./telegram/LivePlayer.jsx"
-import { openSignal, pinFor, setSignalSurface } from "./notify/openSignal.js"
+import { openSignal, pinFor, routeFor, setSignalSurface } from "./notify/openSignal.js"
 import { closeOpenedSignal, showSignalPin } from "./lib/signalPin.js"
 import { findingsForAlert, showFindings } from "./lib/findings.js"
 import { openVesselThreat } from "./state/vesselThreatStore.js"
@@ -634,26 +635,12 @@ export default function App() {
     // The unread count on the rail. Polled here rather than inside Chat so
     // the badge is right before you have ever opened the screen — which is
     // the only time a badge is doing any work.
-    const [unreadMessages, setUnreadMessages] = useState(0)
-    // Poll for the unread badge. Every 20 seconds, and never while the tab
-    // is hidden: a backgrounded console asking forever is how a laptop
-    // ends up warm in somebody's bag.
-    useEffect(() => {
-        let alive = true
-        const tick = async () => {
-            if (!alive || document.hidden) return
-            try {
-                const { unreadTotal } = await import("./lib/chatApi.js")
-                const d = await unreadTotal()
-                if (alive) setUnreadMessages(d?.unread || 0)
-            } catch { /* signed out, or the server is away */ }
-        }
-        tick()
-        const t = setInterval(tick, 20000)
-        const vis = () => { if (!document.hidden) tick() }
-        document.addEventListener("visibilitychange", vis)
-        return () => { alive = false; clearInterval(t); document.removeEventListener("visibilitychange", vis) }
-    }, [])
+    // Messages AND the desk (owner, 2026-10-19), one poll for the whole app
+    // shared with the phone shell (notify/inbox.js); never while the tab is
+    // hidden: a backgrounded console asking forever is how a laptop ends up
+    // warm in somebody's bag.
+    const inboxUnread = useInboxUnread()
+    const unreadMessages = inboxUnread.messages
 
     const [profile, setProfile] = useState(() => loadProfile())
     const [focusRegions, setFocusRegions] = useState(() => loadProfile()?.focusRegions || [])
@@ -1033,7 +1020,9 @@ export default function App() {
     // working record and is meant to hold everything.
     const [notifFeed, setNotifFeed] = useState([])
     useEffect(() => {
-        if (!profile) return
+        // SIGNED IN IS ENOUGH: a message for you must reach someone who never
+        // set up a watch profile (owner, 2026-10-19)
+        if (!profile && !authUser) return
         let cancelled = false
         const load = () => fetch(`${API}/api/notifications?limit=60&hours=48`)
             .then(r => r.ok ? r.json() : null)
@@ -1050,6 +1039,10 @@ export default function App() {
         // not twenty. Without this a busy minute would be a request storm
         // against the endpoint the tray depends on.
         let pending = null
+        // a new message or desk post (notify/inbox.js): its card now, not in 20 s
+        const onInbox = () => load()
+        window.addEventListener("plx:inbox-changed", onInbox)
+        const offInbox = () => window.removeEventListener("plx:inbox-changed", onInbox)
         const off = subscribeLive(() => {
             if (pending) return
             pending = setTimeout(() => { pending = null; load() }, 400)
@@ -1059,8 +1052,9 @@ export default function App() {
             clearInterval(t)
             if (pending) clearTimeout(pending)
             off()
+            offInbox()
         }
-    }, [profile])
+    }, [profile, authUser?.id])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // CONNECTIONS THE GRAPH WORKED OUT, as opposed to events that
     // happened. This is the feed behind "a link has been found between
@@ -1146,6 +1140,8 @@ export default function App() {
                 ref: (i.lat != null && i.lon != null) ? { lat: i.lat, lon: i.lon } : null,
                 actions: i.actions || (i.livestream_id ? ["watch"] : null), alertId: i.id, assetId: i.asset_id || null,
                 livestreamId: i.livestream_id || null,
+                // a message opens its conversation, a desk card the desk at its post
+                conversationId: i.conversation_id || null, postId: i.post_id || null,
                 // a vessel of concern opens on the vessel (notify/openSignal.js)
                 alertType: i.alert_type || null,
                 mmsi: i.mmsi || (i.alert_type === VESSEL_ALERT_TYPE ? i.entity_id : null) || null,
@@ -1839,6 +1835,10 @@ export default function App() {
     const openDesktopRoute = useCallback((r) => {
         if (!r) return
         if (r.action === "livestream") { watchLive(r.livestreamId, r.title || ""); return }
+        // a message: Messages, at that conversation; a desk post: the Desk,
+        // at that post (the screens take the request: notify/inbox.js)
+        if (r.action === "chat") { openTab("chat"); return }
+        if (r.action === "desk") { openTab("desk"); return }
         // what the last opened signal drew goes (its marker, its boxes and image)
         if (r.action !== "asset") closeOpenedSignal()
         if (r.action === "vessel") { openVesselRoute(r); return }
@@ -1854,7 +1854,7 @@ export default function App() {
             id: r.id, alertId: r.alertId, assetId: r.assetId || null, title: r.title || "", sub: r.sub || "", sev: r.sev || "moderate", kind: r.kind || "signal",
             ref: r.lat != null && r.lon != null ? { lat: r.lat, lon: r.lon } : null, inspect: r.inspect,
         })
-    }, [openSignalItem, openVesselRoute, openFindingRoute])
+    }, [openSignalItem, openVesselRoute, openFindingRoute, openTab])
     // the desktop console is the surface (the phone shell registers its own)
     useEffect(() => (phoneMode ? undefined : setSignalSurface(openDesktopRoute)), [phoneMode, openDesktopRoute])
 
@@ -1874,7 +1874,9 @@ export default function App() {
         if (pending && !phoneMode) {
             window.__plxPendingOpen = null
             const go = () => setTimeout(() => openFromOutside(pending), 400)
-            if (window.__plxMapReady) go()
+            // a message or a desk post needs no map to open on
+            const noMap = ["chat", "desk"].includes(routeFor(pending)?.action)
+            if (window.__plxMapReady || noMap) go()
             else window.addEventListener("plx:map-ready", go, { once: true })
         }
         return () => window.removeEventListener("plx:open-notification", h)
@@ -2383,7 +2385,7 @@ export default function App() {
                            that there is. */
                         onChat={() => openTab("chat")}
                         chatOpen={activeTabType === "chat"}
-                        chatCount={unreadMessages || ""}
+                        chatCount={badgeText(unreadMessages)}
                         themeMode={plxThemeMode}
                         hour={plxHour}
                         onCycleTheme={(next) => { setThemeMode(next); setPlxThemeMode(next) }}
@@ -2426,6 +2428,7 @@ export default function App() {
                     />
                     <PlxRail
                         mode={TAB_TYPE_TO_MODULE[activeTabType] || "home"}
+                        unread={{ desk: badgeText(inboxUnread.desk) }}
                         onMode={(key) => openTab(MODULE_TO_TAB_TYPE[key] || key)}
                         left={plxLeft}
                         onLeft={(k) => {
@@ -2817,7 +2820,7 @@ export default function App() {
                     already reading. */}
                 {tabs.some(t => t.type === "chat") && (
                     <div style={modeLayer(activeTabType === "chat")}>
-                        <Chat />
+                        <Chat active={activeTabType === "chat"} />
                     </div>
                 )}
 
@@ -2835,7 +2838,7 @@ export default function App() {
                 {/* The desk feed — observations published to everyone. */}
                 {tabs.some(t => t.type === "desk") && (
                     <div style={modeLayer(activeTabType === "desk")}>
-                        <Desk />
+                        <Desk active={activeTabType === "desk"} />
                     </div>
                 )}
 

@@ -52,6 +52,22 @@ export const postedTheaters = () => req("/api/desk/theaters")
 
 export const deskFileUrl = (postId) => `${API_BASE}/api/desk/files/${enc(postId)}`
 
+/* ── who is on the company desk, and how far I have read (2026-10-19) ──
+   The server decides who may change it (the desk's owner and admins) and
+   keeps the read mark, so the phone and the desktop agree. */
+
+export const listDeskMembers = () => req("/api/desk/members")
+
+export const addDeskMembers = (userIds) =>
+    req("/api/desk/members", { method: "POST", body: JSON.stringify({ user_ids: userIds }) })
+
+export const removeDeskMember = (userId) =>
+    req(`/api/desk/members/${enc(userId)}`, { method: "DELETE" })
+
+export const deskUnread = () => req("/api/desk/unread")
+
+export const markDeskRead = () => req("/api/desk/read", { method: "POST" })
+
 /** Multipart, so it does not go through req() — see chatApi for why. */
 export async function uploadDeskFile(file) {
     const fd = new FormData()

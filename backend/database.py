@@ -528,6 +528,37 @@ class PostAck(Base):
     __table_args__ = (UniqueConstraint("post_id", "user_id", name="uq_post_ack"),)
 
 
+class DeskMember(Base):
+    """Who a company desk's managers added or removed (owner, 2026-10-19:
+    "I want to be able to add people to my company desk or remove them").
+
+    THE COMPANY FIELD STILL DECIDES; THIS ROW OVERRIDES IT. A person whose
+    profile names the company is on its desk, as before, unless a row here
+    says they were removed — so typing the company back into a profile does
+    not undo a removal. Adding somebody writes `member` (and sets their
+    company); removing writes `removed`. `company` is the normalised key
+    (routers/desk.company_key). A new table, so create_all adds it on
+    startup and nothing existing changes.
+    """
+    __tablename__ = "desk_members"
+    id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    company    = Column(String, nullable=False, index=True)
+    user_id    = Column(String, nullable=False, index=True)
+    state      = Column(String, nullable=False, default="member")   # member | removed
+    changed_by = Column(String, nullable=True)
+    changed_at = Column(DateTime, default=datetime.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company", "user_id", name="uq_desk_member"),)
+
+
+class DeskRead(Base):
+    """How far each person has read the desk: one timestamp, like a chat
+    seat's last_read_at, kept on the server so the phone and the desktop
+    show the same unread count."""
+    __tablename__ = "desk_reads"
+    user_id      = Column(String, primary_key=True)
+    last_read_at = Column(DateTime, nullable=True)
+
+
 class Theater(Base):
     """A region somebody watches: where the camera goes, and what is on.
 
@@ -633,6 +664,7 @@ class ChatMessage(Base):
     created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     edited_at       = Column(DateTime, nullable=True)
     deleted_at      = Column(DateTime, nullable=True)
+    __table_args__ = (Index("ix_chat_messages_conv_created", "conversation_id", "created_at"),)
 
 
 class DirectMessage(Base):
@@ -2487,6 +2519,15 @@ def migrate_db():
         if 'ix_alerts_status_created' not in al_indexes:
             cur.execute('CREATE INDEX IF NOT EXISTS ix_alerts_status_created ON alerts(status, created_at)')
             print('[db-migrate] alerts: added composite index (status, created_at)')
+
+    # Unread counts per chat (routers/chat.unread_counts) read only what
+    # arrived after the last read: (conversation_id, created_at) lets SQLite
+    # seek there instead of walking each conversation's history.
+    if 'chat_messages' in tables:
+        cm_indexes = {row[1] for row in cur.execute("PRAGMA index_list(chat_messages)").fetchall()}
+        if 'ix_chat_messages_conv_created' not in cm_indexes:
+            cur.execute('CREATE INDEX IF NOT EXISTS ix_chat_messages_conv_created ON chat_messages(conversation_id, created_at)')
+            print('[db-migrate] chat_messages: added composite index (conversation_id, created_at)')
 
     conn.commit()
     conn.close()

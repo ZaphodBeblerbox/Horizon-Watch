@@ -95,6 +95,11 @@ function Card({ n, onOpen, onAcknowledge, onBasket }) {
                     {n.actions?.includes("image") && (
                         <button className="btn sm primary" onClick={() => { investigate(n); dismissCard(n.id) }}>Show the image</button>
                     )}
+                    {/* a message: its conversation; a desk post: the Desk at it */}
+                    {(n.kind === "message" || n.kind === "desk") && onOpen && (
+                        <button className="btn sm primary" onClick={() => { onOpen(n); dismissCard(n.id) }}>
+                            {n.kind === "message" ? "Open chat" : "Open on the Desk"}</button>
+                    )}
                     {!n.actions && n.ref && onOpen && (
                         <button className="btn sm primary" onClick={() => { onOpen(n); dismissCard(n.id) }}>open</button>
                     )}

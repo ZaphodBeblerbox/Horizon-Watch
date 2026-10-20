@@ -57,6 +57,9 @@ export function normalizeOpen(d) {
         assetId: d.assetId || d.asset_id || null,
         routePlanId: d.routePlanId || d.route_plan_id || null,
         livestreamId: d.livestreamId || d.livestream_id || null,
+        // a message for you (its conversation), a desk post (its id)
+        conversationId: d.conversationId || d.conversation_id || null,
+        postId: d.postId || (d.kind === "desk" ? d.post_id : null) || null,
         inspect: d.inspect !== false,
         _item: d.ref !== undefined || d.read !== undefined ? d : null,      // a tray item: the desktop opens it as itself
     }
@@ -68,6 +71,10 @@ export const EXIT_ALERT_TYPE = "Leave now"
 export function routeFor(input) {
     const n = input?._n ? input : normalizeOpen(input)
     if (!n) return null
+    // A MESSAGE OPENS ITS CONVERSATION, a desk card the desk at that post
+    // (owner, 2026-10-19) — on the phone and the desktop alike.
+    if (n.kind === "message" || n.conversationId) return { ...n, action: "chat" }
+    if (n.kind === "desk") return { ...n, action: "desk" }
     if (n.livestreamId) return { ...n, action: "livestream" }
     // LEAVE NOW (backend/exit_watch.py): unrest near someone — the safest-route view
     if (n.alertType === EXIT_ALERT_TYPE || n.kind === "exit") return { ...n, action: "exit" }
@@ -100,6 +107,7 @@ export function presentationFor(r, surface = "phone") {
     const focus = r.lat != null && r.lon != null ? { lat: +r.lat, lon: +r.lon } : null
     const panel = surface === "phone" ? "sheet" : "inspector"
     if (r.action === "livestream") return { map: false, focus: null, draw: null, panel: "player", sheet: null }
+    if (r.action === "chat" || r.action === "desk") return { map: false, focus: null, draw: null, panel: r.action, sheet: null }
     if (r.action === "asset") return { map: false, focus: null, draw: null, panel: "asset", sheet: null }
     if (r.action === "exit") return { map: true, focus, draw: "route", panel: "route", sheet: null }
     if (r.action === "vessel") return { map: true, focus, draw: "vessel", panel, sheet: "half" }
@@ -122,7 +130,8 @@ export function pinFor(r) {
 export function parseOpenParams(search) {
     const q = new URLSearchParams(search || "")
     const [lat, lon] = (q.get("focus") || "").split(",").map((x) => (x === "" ? NaN : Number(x)))
-    const has = q.get("signal") || q.get("live") || q.get("asset") || q.get("vessel") || (Number.isFinite(lat) && Number.isFinite(lon))
+    const has = q.get("signal") || q.get("live") || q.get("asset") || q.get("vessel") || q.get("chat") || q.get("deskpost")
+        || (Number.isFinite(lat) && Number.isFinite(lon))
     if (!has) return null
     const vessel = /^\d{6,}$/.test(q.get("vessel") || "") ? q.get("vessel") : null
     return {
@@ -131,6 +140,8 @@ export function parseOpenParams(search) {
         livestreamId: q.get("live") || null, assetId: q.get("asset") || null, routePlanId: q.get("plan") || null,
         mmsi: vessel, alertType: q.get("type") || (vessel ? ALERT_TYPE : null),
         title: q.get("h") || "",
+        conversationId: q.get("chat") || null, postId: q.get("deskpost") || null,
+        kind: q.get("chat") ? "message" : q.get("deskpost") ? "desk" : null,
     }
 }
 
@@ -214,6 +225,13 @@ export async function openSignal(input, { timeoutMs = 1500 } = {}) {
     if (r.action === "signal" && !r.alertType) r = routeFor(await resolve(r, timeoutMs)) || r
     // A finding whose zone the notification did not carry: the alert says.
     else if (r.action === "finding" && !r.zoneId) r = routeFor(await resolve(r, timeoutMs)) || r
+    if (r.action === "chat" || r.action === "desk") {
+        // the screen asks for it whenever it mounts (notify/inbox.js); the
+        // surface brings that screen up
+        const inbox = await import("./inbox.js")
+        if (r.action === "chat") inbox.requestOpenChat(r.conversationId)
+        else inbox.requestOpenDeskPost(r.postId)
+    }
     if (r.action === "exit") {
         // the same view on every surface: the phone's full screen, the desktop's panel over the globe
         const { openFromNotification } = await import("../routes/contexts.js")

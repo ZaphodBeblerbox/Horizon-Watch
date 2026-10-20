@@ -60,6 +60,8 @@ def _safe_seg(s: str) -> str:
 
 def _me(request: Request) -> dict:
     from main import _require_current_user
+    import people_face
+    people_face.set_base_from(request)        # the avatar URLs built in this request
     return _require_current_user(request)
 
 
@@ -85,33 +87,17 @@ def _membership(db, conversation_id: str, user_id: str, need_admin: bool = False
 
 
 def _people(db, user_ids):
-    """The display fields for a set of users, in one query.
+    """The faces for a set of users, in one query (people_face.py).
 
     Each message carries its sender's name and picture because a chat that
     renders ids and fetches forty profiles to draw one screen is a chat
-    that flickers.
+    that flickers — but only the FACE: the whole page (cover, bio) went
+    out once per member and per message and made the conversation list
+    2.4 MB in production (2026-10-19). A person's card fetches the page
+    when it is opened (GET /api/chat/profile/{id}).
     """
-    from database import User
-    from main import _user_to_dict
-    ids = [i for i in set(user_ids) if i]
-    if not ids:
-        return {}
-    rows = db.query(User).filter(User.id.in_(ids)).all()
-    out = {}
-    for u in rows:
-        d = _user_to_dict(u)
-        out[u.id] = {
-            "id": u.id, "name": d["name"] or d["email"], "email": d["email"],
-            "initials": d["initials"], "avatar": d["avatar"], "avatar_pos": d["avatar_pos"],
-            "color": d["color"], "title": d["title"], "company": d["company"],
-            # THE WHOLE PAGE, not just the row. Tapping a name in a chat
-            # opens that person's profile, and this was sending only what a
-            # list row needs — so the card drew an empty hero and said
-            # everybody had written nothing about themselves.
-            "cover": d["cover"], "cover_pos": d["cover_pos"],
-            "bio": d["bio"], "location": d["location"],
-        }
-    return out
+    import people_face
+    return people_face.faces(db, user_ids)
 
 
 def _msg_dict(m, people):
@@ -128,10 +114,11 @@ def _msg_dict(m, people):
     }
 
 
-def _conversation_dict(db, c, me_id, people=None, last=None, unread=None):
+def _conversation_dict(db, c, me_id, people=None, last=None, unread=None, members=None):
     from database import ConversationMember
-    members = db.query(ConversationMember).filter(
-        ConversationMember.conversation_id == c.id).all()
+    if members is None:
+        members = db.query(ConversationMember).filter(
+            ConversationMember.conversation_id == c.id).all()
     ids = [m.user_id for m in members]
     people = people or _people(db, ids + ([last.sender_id] if last else []))
     others = [people[i] for i in ids if i != me_id and i in people]
@@ -223,11 +210,46 @@ def _system(db, conversation_id, text):
                        kind="system", body=text[:MAX_BODY]))
 
 
+def _notify(conversation_id: str, message_id: str):
+    """Tell the others in the chat, now rather than at the next sweep
+    (inbox_notify: the same card the notification feed carries). Never
+    the sender; never fails the send."""
+    try:
+        import inbox_notify
+        inbox_notify.after_message(conversation_id, message_id)
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[chat] notify: {type(ex).__name__}: {ex}", flush=True)
+
+
 # ── conversations ────────────────────────────────────────────────────────
+
+def unread_counts(db, me_id: str) -> dict:
+    """{conversation_id: unread} for every chat I am in, in ONE grouped
+    query: messages from others since my last read (or since I joined, for
+    a chat I have never opened), deleted ones and system lines not counted.
+    It reads only what is unread, not the history (index
+    ix_chat_messages_conv_created)."""
+    from sqlalchemy import and_, func
+    from database import ChatMessage, ConversationMember
+    since = func.coalesce(ConversationMember.last_read_at, ConversationMember.joined_at)
+    rows = db.query(ChatMessage.conversation_id, func.count(ChatMessage.id)).join(
+        ConversationMember, and_(ConversationMember.conversation_id == ChatMessage.conversation_id,
+                                 ConversationMember.user_id == me_id)).filter(
+        ChatMessage.sender_id != me_id, ChatMessage.kind != "system",
+        ChatMessage.deleted_at.is_(None), ChatMessage.created_at > since,
+    ).group_by(ChatMessage.conversation_id).all()
+    return {cid: n for cid, n in rows}
+
 
 @router.get("/conversations")
 def list_conversations(request: Request):
-    """Mine, most recently spoken in first, with the unread count."""
+    """Mine, most recently spoken in first, with the unread count.
+
+    A FIXED NUMBER OF QUERIES, whatever the number of chats (2026-10-19):
+    the seats, the conversations, all their members, the newest message
+    of each, the unread counts and the faces — it was four queries per
+    conversation, polled by every open phone."""
+    from sqlalchemy import and_, func, or_
     from database import Conversation, ConversationMember, ChatMessage, get_db
     me = _me(request)
     with get_db() as db:
@@ -239,21 +261,22 @@ def list_conversations(request: Request):
         convs = db.query(Conversation).filter(Conversation.id.in_(ids)).all()
         convs.sort(key=lambda c: c.last_message_at or c.created_at, reverse=True)
 
-        seat_by = {s.conversation_id: s for s in seats}
-        out = []
-        for c in convs:
-            last = db.query(ChatMessage).filter(
-                ChatMessage.conversation_id == c.id).order_by(
-                ChatMessage.created_at.desc()).first()
-            seat = seat_by[c.id]
-            q = db.query(ChatMessage).filter(
-                ChatMessage.conversation_id == c.id,
-                ChatMessage.sender_id != me["id"],
-                ChatMessage.kind != "system")
-            if seat.last_read_at:
-                q = q.filter(ChatMessage.created_at > seat.last_read_at)
-            out.append(_conversation_dict(db, c, me["id"], last=last, unread=q.count()))
-        return out
+        members: dict = {}
+        for m in db.query(ConversationMember).filter(ConversationMember.conversation_id.in_(ids)).all():
+            members.setdefault(m.conversation_id, []).append(m)
+        newest = db.query(ChatMessage.conversation_id, func.max(ChatMessage.created_at)).filter(
+            ChatMessage.conversation_id.in_(ids)).group_by(ChatMessage.conversation_id).all()
+        lasts: dict = {}
+        if newest:
+            for m in db.query(ChatMessage).filter(or_(*[
+                    and_(ChatMessage.conversation_id == cid, ChatMessage.created_at == t) for cid, t in newest])).all():
+                lasts.setdefault(m.conversation_id, m)
+        unread = unread_counts(db, me["id"])
+        people = _people(db, [m.user_id for ms in members.values() for m in ms]
+                         + [m.sender_id for m in lasts.values()])
+        return [_conversation_dict(db, c, me["id"], people=people, last=lasts.get(c.id),
+                                   unread=unread.get(c.id, 0), members=members.get(c.id, []))
+                for c in convs]
 
 
 @router.post("/conversations")
@@ -358,18 +381,22 @@ async def update_conversation(conversation_id: str, request: Request):
 
 @router.post("/conversations/{conversation_id}/members")
 async def add_members(conversation_id: str, request: Request):
+    """Add people to a group. Group admins only (owner, 2026-10-19: the
+    group's creator and its admins edit who is in it; anybody may leave)."""
     from database import Conversation, ConversationMember, User, get_db
     me = _me(request)
     body = await request.json()
     ids = list(dict.fromkeys(str(i) for i in (body.get("user_ids") or []) if i))
     with get_db() as db:
-        _membership(db, conversation_id, me["id"])
+        mine = _membership(db, conversation_id, me["id"])
         c = db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if not c or c.kind != "group":
             # Adding a third person to a direct chat would silently change
             # what the first two thought they were in.
             raise HTTPException(status_code=400,
                                 detail="a direct chat is between two people — start a group instead")
+        if mine.role != "admin":
+            raise HTTPException(status_code=403, detail="only a group admin can add people")
         already = {r.user_id for r in db.query(ConversationMember).filter(
             ConversationMember.conversation_id == conversation_id).all()}
         fresh = [i for i in ids if i not in already]
@@ -421,6 +448,39 @@ def remove_member(conversation_id: str, user_id: str, request: Request):
         c.last_message_at = _now()
         db.commit()
     return {"ok": True}
+
+
+@router.put("/conversations/{conversation_id}/members/{user_id}")
+async def set_member_role(conversation_id: str, user_id: str, request: Request):
+    """Make somebody a group admin, or not. Body: {role: "admin"|"member"}.
+    Group admins only; the last admin cannot step down (the group would be
+    left with nobody who can edit it)."""
+    from database import Conversation, ConversationMember, get_db
+    me = _me(request)
+    body = await request.json()
+    role = (body.get("role") or "").strip().lower()
+    if role not in ("admin", "member"):
+        raise HTTPException(status_code=400, detail="role must be admin or member")
+    with get_db() as db:
+        _membership(db, conversation_id, me["id"], need_admin=True)
+        c = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if not c or c.kind != "group":
+            raise HTTPException(status_code=400, detail="only a group has admins")
+        rows = db.query(ConversationMember).filter(
+            ConversationMember.conversation_id == conversation_id).all()
+        target = next((r for r in rows if r.user_id == user_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="they are not in this group")
+        if role == "member" and target.role == "admin" and sum(r.role == "admin" for r in rows) <= 1:
+            raise HTTPException(status_code=400, detail="a group needs at least one admin")
+        if target.role != role:
+            target.role = role
+            who = _people(db, [user_id]).get(user_id, {}).get("name", "somebody")
+            by = me.get("name") or me["email"]
+            _system(db, conversation_id, f"{by} made {who} a group admin" if role == "admin"
+                    else f"{by} made {who} a member")
+        db.commit()
+        return _conversation_dict(db, c, me["id"])
 
 
 # ── messages ─────────────────────────────────────────────────────────────
@@ -517,7 +577,9 @@ async def post_message(conversation_id: str, request: Request):
         db.commit()
         # The dots become the message: clear them now, not TTL seconds later.
         note_typing(conversation_id, me["id"], "", on=False)
-        return _msg_dict(m, _people(db, [me["id"]]))
+        out = _msg_dict(m, _people(db, [me["id"]]))
+    _notify(conversation_id, out["id"])
+    return out
 
 
 @router.delete("/conversations/{conversation_id}/messages/{message_id}")
@@ -551,22 +613,51 @@ def mark_read(conversation_id: str, request: Request):
 
 @router.get("/unread")
 def unread_total(request: Request):
-    """One number, for the badge on the rail."""
-    from database import ChatMessage, ConversationMember, get_db
+    """One number, for the badge on the rail — one grouped query."""
+    from database import get_db
     me = _me(request)
     with get_db() as db:
-        seats = db.query(ConversationMember).filter(
-            ConversationMember.user_id == me["id"]).all()
-        total = 0
-        for s in seats:
-            q = db.query(ChatMessage).filter(
-                ChatMessage.conversation_id == s.conversation_id,
-                ChatMessage.sender_id != me["id"],
-                ChatMessage.kind != "system")
-            if s.last_read_at:
-                q = q.filter(ChatMessage.created_at > s.last_read_at)
-            total += q.count()
-        return {"unread": total}
+        return {"unread": sum(unread_counts(db, me["id"]).values())}
+
+
+@router.get("/avatar/{user_id}/{key}")
+def avatar_image(user_id: str, key: str):
+    """A person's picture, by a URL that names its content (people_face.py):
+    cached for good, and only known to somebody who was sent it."""
+    from fastapi.responses import Response
+    from database import User, get_db
+    import people_face
+    with get_db() as db:
+        row = db.query(User.avatar).filter(User.id == user_id).first()
+    data = row[0] if row else None
+    if not data or people_face.avatar_key(data) != key:
+        raise HTTPException(status_code=404, detail="no such picture")
+    got = people_face.decode_data_url(data)
+    if not got:
+        raise HTTPException(status_code=404, detail="no such picture")
+    body, mime = got
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=404, detail="no such picture")
+    return Response(content=body, media_type=mime,
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+@router.get("/profile/{user_id}")
+def person_profile(user_id: str, request: Request):
+    """The whole page of one person — cover, bio, where they sit — for the
+    card that opens on their name. Asked for when it is opened, never in a
+    list."""
+    from database import User, get_db
+    from main import _user_to_dict
+    import people_face
+    _me(request)
+    with get_db() as db:
+        u = db.query(User).filter(User.id == user_id, User.approved == True).first()  # noqa: E712
+        if not u:
+            raise HTTPException(status_code=404, detail="no such person")
+        d = _user_to_dict(u)
+        return {**people_face.face(u), "cover": d.get("cover"), "cover_pos": d.get("cover_pos"),
+                "bio": d.get("bio"), "location": d.get("location")}
 
 
 @router.get("/people")
@@ -644,7 +735,9 @@ async def upload_to_chat(conversation_id: str, request: Request,
             m.body = body.strip()[:MAX_BODY]
         seat.last_read_at = _now()
         db.commit()
-        return _msg_dict(m, _people(db, [me["id"]]))
+        out = _msg_dict(m, _people(db, [me["id"]]))
+    _notify(conversation_id, out["id"])
+    return out
 
 
 @router.post("/conversations/{conversation_id}/attach-node")
@@ -702,7 +795,9 @@ async def attach_case_node(conversation_id: str, request: Request):
             m.body = text[:MAX_BODY]
         seat.last_read_at = _now()
         db.commit()
-        return _msg_dict(m, _people(db, [me["id"]]))
+        out = _msg_dict(m, _people(db, [me["id"]]))
+    _notify(conversation_id, out["id"])
+    return out
 
 
 @router.get("/conversations/{conversation_id}/messages/{message_id}/file")
@@ -837,7 +932,9 @@ async def attach_case(conversation_id: str, request: Request):
             conv.last_message_at = _now()
         seat.last_read_at = _now()
         db.commit()
-        return _msg_dict(m, _people(db, [me["id"]]))
+        out = _msg_dict(m, _people(db, [me["id"]]))
+    _notify(conversation_id, out["id"])
+    return out
 
 
 @router.get("/sendable-cases")

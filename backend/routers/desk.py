@@ -43,7 +43,9 @@ from routers.case_workspace import ALLOWED_MIME as _ALLOWED_MIME
 
 def _me(request: Request) -> dict:
     from main import _require_current_user
-    return _require_current_user(request)
+    import people_face
+    people_face.set_base_from(request)        # the avatar URLs built in this request
+    return desk_identity(_require_current_user(request))
 
 
 def _now():
@@ -119,22 +121,11 @@ def _visible_post(db, post_id: str, me: dict):
 
 
 def _people(db, user_ids):
-    from database import User
-    from main import _user_to_dict
-    ids = [i for i in set(user_ids) if i]
-    if not ids:
-        return {}
-    out = {}
-    for u in db.query(User).filter(User.id.in_(ids)).all():
-        d = _user_to_dict(u)
-        out[u.id] = {
-            "id": u.id, "name": d["name"] or d["email"], "email": d["email"],
-            "initials": d["initials"], "avatar": d["avatar"], "avatar_pos": d["avatar_pos"],
-            "cover": d["cover"], "cover_pos": d["cover_pos"], "color": d["color"],
-            "title": d["title"], "company": d["company"],
-            "location": d["location"], "bio": d["bio"],
-        }
-    return out
+    """Faces only (people_face.py): the cover picture and the bio went out
+    once per post and made the feed 2.0 MB (2026-10-19). A person's card
+    fetches the whole page when it opens (GET /api/chat/profile/{id})."""
+    import people_face
+    return people_face.faces(db, user_ids)
 
 
 def _post_dict(p, people, acks, my_acks, reply_counts=None):
@@ -268,7 +259,15 @@ async def create_post(request: Request):
                  audience=audience, audience_company=company, shared_with=shared)
         db.add(p); db.commit(); db.refresh(p)
         people, acks, mine, replies = _decorate(db, [p], me["id"])
-        return _post_dict(p, people, acks, mine, replies)
+        out = _post_dict(p, people, acks, mine, replies)
+    # Tell the people it is for, now rather than at the next sweep
+    # (inbox_notify: the same card the notification feed carries).
+    try:
+        import inbox_notify
+        inbox_notify.after_post(out["id"])
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[desk] notify: {type(ex).__name__}: {ex}", flush=True)
+    return out
 
 
 def _audience_of(db, body: dict, me: dict) -> tuple:
@@ -284,6 +283,8 @@ def _audience_of(db, body: dict, me: dict) -> tuple:
         raise HTTPException(status_code=400, detail=f"audience must be one of {', '.join(AUDIENCES)}")
     if a == "company":
         if not mine:
+            if me.get("desk_removed"):
+                raise HTTPException(status_code=403, detail=f"you are no longer on the {me['desk_removed']} desk — post to everyone or to named people")
             raise HTTPException(status_code=400, detail="your account has no company — set it in Profile, or post to everyone or to named people")
         return a, mine, None
     if a == "people":
@@ -412,3 +413,230 @@ def posted_theaters(request: Request):
         counts[t] = counts.get(t, 0) + 1
     return [{"name": k, "count": v} for k, v in
             sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
+
+
+# ── who is on a company desk (owner, 2026-10-19) ─────────────────────────
+#
+# "I want to be able to add people to my company desk or remove them."
+#
+# THE COMPANY FIELD STILL DECIDES WHO IS ON A DESK; a DeskMember row
+# overrides it. Removing somebody writes state="removed" and clears their
+# company, and the row keeps them off even if they type the company back
+# into their profile. Adding somebody writes state="member" and sets their
+# company, so their own posts go to that desk too.
+#
+# WHO MAY CHANGE IT: the desk's managers — its owner (the earliest account
+# on it) and anybody on it who administers accounts (role "admin" or a
+# superadmin). Somebody on another company's desk is not pulled across:
+# they change their company themselves. Nobody removes themselves (that
+# would be a way to lock a desk out of its last manager), and the owner
+# cannot be removed.
+#
+# Removal takes effect on the next request: every desk route resolves the
+# caller through desk_identity, which reads the row.
+
+def _removed_from(db, key: str, user_id: str) -> bool:
+    from database import DeskMember
+    return db.query(DeskMember).filter(
+        DeskMember.company == key, DeskMember.user_id == user_id,
+        DeskMember.state == "removed").first() is not None
+
+
+def desk_identity(me: dict, db=None) -> dict:
+    """The caller as the desk sees them: with no company if they were
+    removed from the one their profile names."""
+    key = company_key((me or {}).get("company"))
+    if not key:
+        return me
+    if db is None:
+        from database import get_db
+        with get_db() as s:
+            gone = _removed_from(s, key, me["id"])
+    else:
+        gone = _removed_from(db, key, me["id"])
+    return {**me, "company": None, "desk_removed": me.get("company")} if gone else me
+
+
+def desk_members(db, key: str) -> list:
+    """The approved accounts on this company's desk, oldest account first."""
+    from database import DeskMember, User
+    if not key:
+        return []
+    gone = {r.user_id for r in db.query(DeskMember.user_id).filter(
+        DeskMember.company == key, DeskMember.state == "removed").all()}
+    rows = [u for u in db.query(User).filter(User.approved == True, User.company.isnot(None)).all()  # noqa: E712
+            if company_key(u.company) == key and u.id not in gone]
+    rows.sort(key=lambda u: (u.created_at or datetime.datetime.max, u.id))
+    return rows
+
+
+def desk_managers(members: list) -> set:
+    """The owner (the earliest account on the desk) and its admins."""
+    if not members:
+        return set()
+    out = {members[0].id}
+    out |= {u.id for u in members if u.is_super_admin or (u.role or "") == "admin"}
+    return out
+
+
+def _members_payload(db, me: dict) -> dict:
+    key = company_key(me.get("company"))
+    if not key:
+        return {"company": None, "removed_from": me.get("desk_removed"),
+                "members": [], "can_manage": False}
+    members = desk_members(db, key)
+    managers = desk_managers(members)
+    people = _people(db, [u.id for u in members])
+    owner = members[0].id if members else None
+    return {
+        "company": me.get("company"),
+        "members": [{**people[u.id], "manager": u.id in managers, "owner": u.id == owner,
+                     "you": u.id == me["id"]} for u in members if u.id in people],
+        "can_manage": me["id"] in managers,
+    }
+
+
+def _require_manager(db, me: dict):
+    key = company_key(me.get("company"))
+    if not key:
+        raise HTTPException(status_code=400, detail="your account is not on a company desk")
+    members = desk_members(db, key)
+    if me["id"] not in desk_managers(members):
+        raise HTTPException(status_code=403,
+                            detail="only the desk's owner or an admin can change who is on it")
+    return key, members
+
+
+@router.get("/members")
+def list_desk_members(request: Request):
+    from database import get_db
+    me = _me(request)
+    with get_db() as db:
+        return _members_payload(db, me)
+
+
+@router.post("/members")
+async def add_desk_members(request: Request):
+    """Body: {user_ids: [...]}. Managers only."""
+    from database import DeskMember, User, get_db
+    me = _me(request)
+    body = await request.json()
+    ids = list(dict.fromkeys(str(i) for i in (body.get("user_ids") or []) if i))[:MAX_SHARED]
+    if not ids:
+        raise HTTPException(status_code=400, detail="choose somebody to add")
+    with get_db() as db:
+        key, members = _require_manager(db, me)
+        on = {u.id for u in members}
+        rows = db.query(User).filter(User.id.in_(ids)).all()
+        if len(rows) != len(ids) or any(not u.approved for u in rows):
+            raise HTTPException(status_code=400, detail="one of those people is not an active account")
+        for u in rows:
+            if u.id in on:
+                continue
+            theirs = company_key(u.company)
+            if theirs and theirs != key and not _removed_from(db, theirs, u.id):
+                raise HTTPException(status_code=409,
+                                    detail=f"{u.name or u.email} is on the {u.company} desk — "
+                                           "they can change their company in their profile")
+        now = _now()
+        for u in rows:
+            if u.id in on:
+                continue
+            u.company = me.get("company")
+            r = db.query(DeskMember).filter(DeskMember.company == key, DeskMember.user_id == u.id).first()
+            if r:
+                r.state, r.changed_by, r.changed_at = "member", me["id"], now
+            else:
+                db.add(DeskMember(company=key, user_id=u.id, state="member", changed_by=me["id"], changed_at=now))
+        db.commit()
+        return _members_payload(db, me)
+
+
+@router.delete("/members/{user_id}")
+def remove_desk_member(user_id: str, request: Request):
+    """Managers only. They stop seeing the company's posts at once."""
+    from database import DeskMember, get_db
+    me = _me(request)
+    with get_db() as db:
+        key, members = _require_manager(db, me)
+        if user_id == me["id"]:
+            raise HTTPException(status_code=400, detail="you cannot remove yourself from the desk")
+        target = next((u for u in members if u.id == user_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="they are not on this desk")
+        if target.id == members[0].id:
+            raise HTTPException(status_code=403, detail="the desk's owner cannot be removed")
+        if company_key(target.company) == key:
+            target.company = None
+        now = _now()
+        r = db.query(DeskMember).filter(DeskMember.company == key, DeskMember.user_id == user_id).first()
+        if r:
+            r.state, r.changed_by, r.changed_at = "removed", me["id"], now
+        else:
+            db.add(DeskMember(company=key, user_id=user_id, state="removed", changed_by=me["id"], changed_at=now))
+        db.commit()
+        return _members_payload(db, me)
+
+
+# ── unread, and what is new for me (owner, 2026-10-19) ───────────────────
+#
+# "I want an indicator if I have any unread messages … on the desk" and "a
+# notification when someone sends a new message on the desk". ONE RULE for
+# both (unseen_posts): a post by somebody else that I can read and that
+# arrived after I last looked — every top-level post, and a reply only when
+# it is in a thread I started or answered (every reply to every post would
+# make the desk a group chat with the whole company). How far I have read
+# is one timestamp on the server, so the phone and the desktop agree.
+
+FIRST_LOOK_DAYS = 7     # somebody who has never opened the desk: the last week counts
+
+
+def read_since(db, user_id: str) -> datetime.datetime:
+    from database import DeskRead, User
+    r = db.query(DeskRead).filter(DeskRead.user_id == user_id).first()
+    if r and r.last_read_at:
+        return r.last_read_at
+    floor = _now() - datetime.timedelta(days=FIRST_LOOK_DAYS)
+    u = db.query(User).filter(User.id == user_id).first()
+    return max(floor, u.created_at) if (u and u.created_at) else floor
+
+
+def unseen_posts(db, me: dict, since: datetime.datetime, limit: int = 200) -> list:
+    """Posts by others, readable by me, after `since`, newest first."""
+    from database import Post
+    rows = _readable(db.query(Post), me).filter(
+        Post.author_user_id != me["id"], Post.deleted_at.is_(None),
+        Post.created_at > since).order_by(Post.created_at.desc()).limit(limit).all()
+    parents = {p.parent_id for p in rows if p.parent_id}
+    if parents:
+        mine = {i for (i,) in db.query(Post.id).filter(
+            Post.id.in_(parents), Post.author_user_id == me["id"]).all()}
+        mine |= {i for (i,) in db.query(Post.parent_id).filter(
+            Post.parent_id.in_(parents), Post.author_user_id == me["id"]).all()}
+        rows = [p for p in rows if not p.parent_id or p.parent_id in mine]
+    return rows
+
+
+@router.get("/unread")
+def desk_unread(request: Request):
+    from database import get_db
+    me = _me(request)
+    with get_db() as db:
+        since = read_since(db, me["id"])
+        n = len(unseen_posts(db, me, since))
+    return {"unread": n, "since": since.isoformat()}
+
+
+@router.post("/read")
+def desk_mark_read(request: Request):
+    """I have looked at the desk now."""
+    from database import DeskRead, get_db
+    me = _me(request)
+    with get_db() as db:
+        r = db.query(DeskRead).filter(DeskRead.user_id == me["id"]).first()
+        if r:
+            r.last_read_at = _now()
+        else:
+            db.add(DeskRead(user_id=me["id"], last_read_at=_now()))
+        db.commit()
+    return {"ok": True}
