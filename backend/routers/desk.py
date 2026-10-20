@@ -43,6 +43,8 @@ from routers.case_workspace import ALLOWED_MIME as _ALLOWED_MIME
 
 def _me(request: Request) -> dict:
     from main import _require_current_user
+    import people_face
+    people_face.set_base_from(request)        # the avatar URLs built in this request
     return desk_identity(_require_current_user(request))
 
 
@@ -119,22 +121,11 @@ def _visible_post(db, post_id: str, me: dict):
 
 
 def _people(db, user_ids):
-    from database import User
-    from main import _user_to_dict
-    ids = [i for i in set(user_ids) if i]
-    if not ids:
-        return {}
-    out = {}
-    for u in db.query(User).filter(User.id.in_(ids)).all():
-        d = _user_to_dict(u)
-        out[u.id] = {
-            "id": u.id, "name": d["name"] or d["email"], "email": d["email"],
-            "initials": d["initials"], "avatar": d["avatar"], "avatar_pos": d["avatar_pos"],
-            "cover": d["cover"], "cover_pos": d["cover_pos"], "color": d["color"],
-            "title": d["title"], "company": d["company"],
-            "location": d["location"], "bio": d["bio"],
-        }
-    return out
+    """Faces only (people_face.py): the cover picture and the bio went out
+    once per post and made the feed 2.0 MB (2026-10-19). A person's card
+    fetches the whole page when it opens (GET /api/chat/profile/{id})."""
+    import people_face
+    return people_face.faces(db, user_ids)
 
 
 def _post_dict(p, people, acks, my_acks, reply_counts=None):

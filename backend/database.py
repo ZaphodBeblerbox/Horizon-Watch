@@ -664,6 +664,7 @@ class ChatMessage(Base):
     created_at      = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     edited_at       = Column(DateTime, nullable=True)
     deleted_at      = Column(DateTime, nullable=True)
+    __table_args__ = (Index("ix_chat_messages_conv_created", "conversation_id", "created_at"),)
 
 
 class DirectMessage(Base):
@@ -2518,6 +2519,15 @@ def migrate_db():
         if 'ix_alerts_status_created' not in al_indexes:
             cur.execute('CREATE INDEX IF NOT EXISTS ix_alerts_status_created ON alerts(status, created_at)')
             print('[db-migrate] alerts: added composite index (status, created_at)')
+
+    # Unread counts per chat (routers/chat.unread_counts) read only what
+    # arrived after the last read: (conversation_id, created_at) lets SQLite
+    # seek there instead of walking each conversation's history.
+    if 'chat_messages' in tables:
+        cm_indexes = {row[1] for row in cur.execute("PRAGMA index_list(chat_messages)").fetchall()}
+        if 'ix_chat_messages_conv_created' not in cm_indexes:
+            cur.execute('CREATE INDEX IF NOT EXISTS ix_chat_messages_conv_created ON chat_messages(conversation_id, created_at)')
+            print('[db-migrate] chat_messages: added composite index (conversation_id, created_at)')
 
     conn.commit()
     conn.close()

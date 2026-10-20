@@ -12,14 +12,27 @@
  * sender's display fields for exactly this reason; opening a card must not
  * be a round trip.
  */
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
+import API_BASE from "../apiBase.js"
 
 const EYE = {
     font: "500 10px var(--mono)", letterSpacing: ".14em",
     textTransform: "uppercase", color: "var(--txt-3)",
 }
 
-export default function PersonCard({ person, onClose, onMessage = null, isMe = false }) {
+export default function PersonCard({ person: given, onClose, onMessage = null, isMe = false }) {
+    // Lists carry only a face (backend/people_face.py); the whole page —
+    // cover, bio, where they sit — is asked for when the card opens.
+    const [page, setPage] = useState(null)
+    useEffect(() => {
+        setPage(null)
+        if (!given?.id) return undefined
+        let live = true
+        fetch(`${API_BASE}/api/chat/profile/${encodeURIComponent(given.id)}`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d) setPage(d) }).catch(() => {})
+        return () => { live = false }
+    }, [given?.id])
+    const person = given ? { ...given, ...(page || {}) } : given
     useEffect(() => {
         const k = (e) => { if (e.key === "Escape") onClose() }
         window.addEventListener("keydown", k)

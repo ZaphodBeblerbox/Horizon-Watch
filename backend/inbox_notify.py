@@ -94,7 +94,8 @@ def chat_cards(db, uid: str, hours: int = 48) -> list[dict]:
     unread: dict = {}
     for m in rows:
         seat = by_conv[m.conversation_id]
-        if seat.last_read_at and m.created_at <= seat.last_read_at:
+        since = seat.last_read_at or seat.joined_at      # the same rule as chat.unread_counts
+        if since and m.created_at <= since:
             continue
         unread.setdefault(m.conversation_id, []).append(m)
     if not unread:
