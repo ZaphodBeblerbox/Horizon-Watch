@@ -108,6 +108,10 @@ def atom_of(row: dict) -> dict | None:
     act = v.get("act") or r.get("act")
     if act not in li.ACTS:
         return None
+    if act == "police_intervention":
+        import force_context                      # war reporting is troops, never police (derived on read: old rows too)
+        if force_context.is_military(row.get("text"), row.get("country_code")):
+            act = "troops_sighted"
     ev = li.parse_utc(row.get("event_time"))
     if ev is None:
         return None

@@ -137,13 +137,16 @@ def _fold(s: str) -> str:
 # The police, as people write them. French slang first (keufs, condés,
 # schmitts, la BAC, les bleus …), then Spanish (Venezuela: GNB, PNB,
 # colectivos, la guardia, los verdes), English, Burmese (စစ်ကောင်စီ the
-# junta's forces, စစ်တပ် the army, စစ်သား soldiers, ရဲ police).
+# junta's forces, စစ်တပ် the army, စစ်သား soldiers are NOT police; ရဲ police).
 POLICE = (r"(?:\bcrs\b|\bbac\b|\bbrav-?m\b|\bbrigades? de repression|\bgendarm\w*|\bgm\b|\bflics?\b|\bkeufs?\b|\bkisdes?\b|"
           r"\bcondes?\b|\bpoulets\b|\bschmitts?\b|\bbleus\b|\bpolic(?:e|iers?|ieres?)\b|\bforces de l'ordre\b|\bfdo\b|"
-          r"\bcops?\b|\briot police\b|\bofficers\b|\btroops?\b|\bsoldiers\b|\bmilitaires?\b|\bfourgons?\b|\bcamions de crs\b|"
+          r"\bcops?\b|\briot police\b|\bofficers\b|\bfourgons?\b|\bcamions de crs\b|"
           r"\bgnb\b|\bpnb\b|\bguardia(?:s| nacional)?\b|\bpolicias?\b|\bpolicia nacional\b|\bcolectivos?\b|\bsebin\b|\bdgcim\b|"
-          r"\bfaes\b|\blos verdes\b|\btanquetas?\b|\bmotorizados\b|\befectivos\b|\bfuncionarios\b|"
-          r"စစ်ကောင်စီ|စစ်တပ်|စစ်သား|စစ်ကား|ရဲတပ်|ရဲများ|ရဲ)")
+          r"\bfaes\b|\blos verdes\b|\btanquetas?\b|\bmotorizados\b|"
+          r"ရဲတပ်|ရဲများ|ရဲ)")
+# NOT the military (owner, 2026-10-23: Ukrainian army movement was shown as "Police moving in"): troops,
+# soldiers, militaires and the Burmese army words left this list; force_context.is_military() drops a war
+# report from the street-report path altogether.
 
 T = {
     "tear_gas": (
@@ -571,9 +574,12 @@ def exits_for(place: dict | None, lat: float, lon: float) -> tuple[list[dict], s
 
 # ── one post → reports ──────────────────────────────────────────────────────
 
+# The model's live situations that are police acts. 'advance' and 'withdrawal' are a front's words and never
+# police; 'reinforcements', 'checkpoint' and 'clashes' are police only when the text names the police in a
+# civil context (force_context.is_police), never in war reporting (southfronteng/64842, 2026-10-22).
 SITUATION_KIND = {"kettle": "kettle", "tear_gas": "tear_gas", "charge": "charge", "water_cannon": "water_cannon",
-                  "reinforcements": "police_arrival", "advance": "police_arrival", "checkpoint": "police_arrival",
-                  "clashes": "charge"}
+                  "reinforcements": "police_arrival", "checkpoint": "police_arrival", "clashes": "charge"}
+NEEDS_POLICE_WORDS = {"reinforcements", "checkpoint", "clashes"}
 PRECISE = {"site", "street", "district"}
 
 
@@ -585,8 +591,14 @@ def read_post(post: dict, situations: list[dict] | None = None, *, chat_city: st
     the model's live events read out of it (telegram_situations rows)."""
     text = post.get("text") or ""
     t = fold(text)
+    import force_context as fc
+    cc = (post.get("country_code") or next((s.get("country") for s in situations or [] if s.get("country")), None) or "")
+    if fc.is_military(" ".join(x for x in (text, post.get("summary_en")) if x), str(cc)[:2]):
+        return []                     # war reporting: troops and the front, never a police act (force_context.py)
     found = tactics(text)
-    model = [s for s in (situations or []) if SITUATION_KIND.get(s.get("kind") or "")]
+    police_words = fc.is_police(text, str(cc)[:2])
+    model = [s for s in (situations or []) if SITUATION_KIND.get(s.get("kind") or "")
+             and (s.get("kind") not in NEEDS_POLICE_WORDS or police_words)]
     if NOT_NOW.search(t) and not model:
         return []
     media = (post.get("media") or "none") in ("photo", "video")

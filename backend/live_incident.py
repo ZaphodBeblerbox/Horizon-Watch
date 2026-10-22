@@ -411,6 +411,11 @@ def rule_decide(text: str | None, posted_at: str | None, now: _dt.datetime | Non
     if not hit:
         out["why"] = "no act of the vocabulary named by words"
         return out
+    if hit[0] == "police_intervention":
+        import force_context
+        if force_context.is_military(body):
+            out["why"] = "police words in war reporting: troops, not police (force_context)"
+            return out
     out.update(ok=True, act=hit[0], quote=hit[1], why="act named, present-tense cue, no earlier time, recent post")
     return out
 
@@ -545,6 +550,12 @@ def verify(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
     et = raw.get("event_type")
     if et not in ACTS:
         bad.append(f"event type '{et}' is not one of the signal acts")
+    # POLICE IS NOT THE MILITARY (owner, 2026-10-23; force_context.py): a police act read out of war
+    # reporting is troops, never police — the model's word is checked against the text
+    if et == "police_intervention":
+        import force_context
+        if force_context.is_military(text):
+            et = "troops_sighted"
     cert = raw.get("certainty")
     if cert not in ("verified", "unverified"):
         bad.append("certainty missing")
