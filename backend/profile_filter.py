@@ -53,6 +53,44 @@ def bare(items: list, user, response=None, key: Callable | None = None, sc: uc.S
     return kept
 
 
+def filled(user, fetch: Callable, limit: int, response=None, key: Callable | None = None,
+           max_pages: int = 5, wide: int = 500) -> list:
+    """A bare list read with a SQL `limit`, filtered and still `limit` long.
+
+    /api/alerts and /api/signals cut the newest `limit` rows in SQL and
+    filtered after, so a Paris-only profile got 3 of 100. `fetch(offset,
+    size)` -> rows (newest first), or (rows, rows_read) when the reader drops
+    some rows itself; a filtered read takes `wide` rows a page and keeps
+    reading (bounded) until `limit` are kept or the rows end.
+    limit <= 0 means "every row": one read, filtered."""
+    def read(off, size):
+        got = fetch(off, size)
+        if isinstance(got, tuple):
+            return list(got[0] or []), got[1]
+        got = list(got or [])
+        return got, len(got)
+
+    sc = scope(user)
+    if not limit or limit <= 0:
+        return bare(read(0, 0)[0], user, response, key, sc=sc)
+    if not sc.active:
+        return bare(read(0, limit)[0], user, response, key, sc=sc)
+    size = max(limit, wide)
+    kept, hidden, off = [], 0, 0
+    for _ in range(max_pages):
+        rows, n = read(off, size)
+        k, h = sc.filter(rows, key)
+        kept += k
+        hidden += h
+        off += n
+        if len(kept) >= limit or n < size:
+            break
+    if response is not None:
+        response.headers["X-Profile-Filtered"] = "1"
+        response.headers["X-Profile-Hidden"] = str(hidden)
+    return kept[:limit]
+
+
 def paged(user, fetch: Callable, before, limit: int, list_key: str, max_pages: int = 6, wide: int = 100) -> dict:
     """A paged feed, filtered. A page the filter empties would stop the
     reader, so more pages are read (bounded) until `limit` kept or the end.

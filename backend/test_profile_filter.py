@@ -127,6 +127,32 @@ def test_paged_reads_on_until_a_page_is_filled():
     assert len(out["posts"]) == 2 and out["next"] is None and out["profile"]["hidden"] == 10
 
 
+def test_filled_applies_the_limit_after_the_filter():
+    """/api/alerts and /api/signals cut `limit` in SQL before the filter: a Berlin-only
+    profile got 2 of the newest 100. filled() reads wider pages until `limit` are kept."""
+    u = _profile("j", theaters=[_theater("Berlin", BERLIN)])
+    rows = ([sig(PARIS)] * 98 + [sig(BERLIN)] * 2) * 10           # 1000 rows, 20 in Berlin
+    calls = []
+
+    def fetch(off, n):
+        calls.append((off, n))
+        return rows[off:off + n]
+    out = pf.filled(u, fetch, 15, wide=200)
+    assert len(out) == 15 and all(r["lat"] == BERLIN[0] for r in out)
+    assert calls[0] == (0, 200) and len(calls) <= 5
+    # no profile: one read of exactly `limit`, as before
+    calls.clear()
+    assert len(pf.filled(_profile("new"), fetch, 15)) == 15 and calls == [(0, 15)]
+    # a reader that drops rows itself says how many it read, so the end is not misjudged
+    calls.clear()
+    got = pf.filled(u, lambda off, n: (fetch(off, n)[1:], len(rows[off:off + n])), 15, wide=200)
+    assert len(got) == 15 and calls[1][0] == 200
+    # bounded: a profile nothing matches stops after max_pages
+    calls.clear()
+    assert pf.filled(_profile("t", theaters=[_theater("Tokyo", (35.68, 139.69))]), fetch, 15, wide=100, max_pages=3) == []
+    assert len(calls) == 3
+
+
 def test_notifications_keep_personal_cards_and_filter_the_rest():
     u = _profile("j", theaters=[_theater("Berlin", BERLIN)])
     cards = [{"id": "a", "kind": "signal", "sev": "high", "lat": PARIS[0], "lon": PARIS[1], "title": "Paris"},

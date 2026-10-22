@@ -29544,22 +29544,31 @@ def api_get_alerts(
         if severity:
             q = q.filter(_AlertModel.severity == severity)
         q = q.order_by(_AlertModel.created_at.desc())
-        rows = (q.limit(limit) if limit and limit > 0 else q).all()
-        # A smoke plume today's rules withdraw is no longer an imagery
-        # signal on the map (imagery_verdict; the alert row is untouched).
-        try:
-            import imagery_verdict as _iv
-            _gone = _iv.withdrawn_alerts(_db, rows)
-            rows = [r for r in rows if r.alert_id not in _gone]
-        except Exception as _ive:                                # noqa: BLE001
-            print(f"[alerts] error: imagery verdicts unavailable, all shown: {type(_ive).__name__}: {_ive}", flush=True)
+
+        def _read(off, n):
+            rows = (q.offset(off).limit(n) if n and n > 0 else q).all()
+            read = len(rows)
+            # A smoke plume today's rules withdraw is no longer an imagery
+            # signal on the map (imagery_verdict; the alert row is untouched).
+            try:
+                import imagery_verdict as _iv
+                _gone = _iv.withdrawn_alerts(_db, rows)
+                rows = [r for r in rows if r.alert_id not in _gone]
+            except Exception as _ive:                            # noqa: BLE001
+                print(f"[alerts] error: imagery verdicts unavailable, all shown: {type(_ive).__name__}: {_ive}", flush=True)
+            return rows, read
+
         # ONLY WHAT CONCERNS THE ASKING USER (user_concern.py), on the rows
-        # already read: no per-user query, no rebuild.
+        # read: no per-user rebuild. The SQL limit is applied AFTER the
+        # filter (wider pages read until `limit` are kept), else a narrow
+        # profile got a handful of the newest 100.
         if request is not None:
             import profile_filter as _pf
-            rows = _pf.bare(rows, _get_current_user(request), response,
-                            key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code,
-                                           "severity": r.severity, "title": r.title, "alert_type": r.alert_type})
+            rows = _pf.filled(_get_current_user(request), _read, limit, response,
+                              key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code,
+                                             "severity": r.severity, "title": r.title, "alert_type": r.alert_type})
+        else:
+            rows = _read(0, limit)[0]
         return [
             {
                 "alert_id":    r.alert_id, "source": r.source, "alert_type": r.alert_type,
@@ -30327,12 +30336,16 @@ def api_get_signals(
             q = q.filter(_SignalModel.domain == domain)
         if region:
             q = q.filter(_SignalModel.region == region)
-        rows = q.order_by(_SignalModel.created_at.desc()).limit(limit).all()
+        q = q.order_by(_SignalModel.created_at.desc())
         if request is not None:
+            # the limit after the profile filter, not before it (see /api/alerts)
             import profile_filter as _pf
-            rows = _pf.bare(rows, _get_current_user(request), response,
-                            key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code, "title": r.title,
-                                           "type": r.signal_type})
+            rows = _pf.filled(_get_current_user(request), lambda off, n: q.offset(off).limit(n).all(),
+                              limit, response,
+                              key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code, "title": r.title,
+                                             "type": r.signal_type})
+        else:
+            rows = q.limit(limit).all()
         return [
             {
                 "signal_id":   r.signal_id, "domain": r.domain, "signal_type": r.signal_type,
