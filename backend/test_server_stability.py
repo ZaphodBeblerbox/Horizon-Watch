@@ -71,3 +71,24 @@ def test_asset_list_answers_before_the_exposure_is_built(monkeypatch):
     time.sleep(2.2)
     second = asyncio.run(ma.list_assets(object()))["assets"]
     assert all(not a["building"] and a["exposure"] == "elevated" and a["signal_count"] == 1 for a in second)
+
+
+def test_asset_exposure_cache_is_bounded(monkeypatch):
+    """_EXPO kept one entry per (asset, position, identifiers) forever: every edit and every
+    deleted asset stayed in memory. One entry per asset id, an age limit and a size cap."""
+    from routers import my_assets as ma
+    ma._EXPO.clear()
+    monkeypatch.setattr(ma, "EXPO_MAX", 50)
+    a = {"id": "OA-1", "lat": 1.0, "lon": 2.0, "radius_km": 5, "kind": "site", "identifiers": {}}
+    ma._expo_put(ma._expo_key(a), {"exposure": "low"})
+    ma._expo_put(ma._expo_key({**a, "lat": 1.5}), {"exposure": "high"})
+    assert len(ma._EXPO) == 1 and next(iter(ma._EXPO.values()))[1]["exposure"] == "high"
+    for i in range(200):
+        ma._expo_put(ma._expo_key({**a, "id": f"OA-x{i}"}), {"exposure": "low"}, now=1000.0 + i)
+    assert len(ma._EXPO) <= 50
+    # an entry older than the age limit is gone at the next write
+    ma._EXPO.clear()
+    ma._expo_put(("old",), {}, now=0.0)
+    ma._expo_put(("new",), {}, now=ma.EXPO_MAX_AGE_S + 10.0)
+    assert list(ma._EXPO) == [("new",)]
+    ma._EXPO.clear()

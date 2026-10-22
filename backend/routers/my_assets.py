@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import datetime as _dt
 import sqlite3
 import threading
@@ -525,6 +526,26 @@ _EXPO: dict = {}                     # key -> (built_at, {exposure, signal_count
 _EXPO_LOCK = threading.Lock()
 _EXPO_WARMING: set = set()
 EXPO_TTL_S = 120
+# Bounded: the key carries the asset's position and identifiers, so every edit
+# (and every deleted asset) used to leave an entry behind for the life of the
+# process. One entry per asset id, nothing older than EXPO_MAX_AGE_S, and at
+# most EXPO_MAX entries (oldest dropped first).
+EXPO_MAX = int(os.getenv("ASSET_EXPO_MAX", "2000"))
+EXPO_MAX_AGE_S = 6 * 3600
+
+
+def _expo_put(k: tuple, val: dict, now: float | None = None) -> None:
+    """Store one assessment; caller holds no lock."""
+    now = time.time() if now is None else now
+    with _EXPO_LOCK:
+        for old in [o for o in _EXPO if o[0] == k[0] and o != k]:
+            _EXPO.pop(old, None)
+        _EXPO[k] = (now, val)
+        for old in [o for o, (t, _) in _EXPO.items() if now - t > EXPO_MAX_AGE_S]:
+            _EXPO.pop(old, None)
+        if len(_EXPO) > EXPO_MAX:
+            for old, _ in sorted(_EXPO.items(), key=lambda kv: kv[1][0])[:len(_EXPO) - EXPO_MAX]:
+                _EXPO.pop(old, None)
 
 
 def _expo_key(a: dict) -> tuple:
@@ -545,8 +566,7 @@ def _expo_warm(assets: list[dict]) -> None:
         try:
             s = situation(a)
             val = {"exposure": s["exposure"], "signal_count": len(s["signals"]), "top": s["signals"][0] if s["signals"] else None}
-            with _EXPO_LOCK:
-                _EXPO[k] = (time.time(), val)
+            _expo_put(k, val)
         except Exception as e:                                    # noqa: BLE001
             print(f"[my-assets] error: exposure of {a.get('id')}: {type(e).__name__}: {e}", flush=True)
         finally:
