@@ -5356,15 +5356,19 @@ async def api_frontline_changes(days: int = 30):
 
 
 @app.get("/api/warmap/{theatre}/changes")
-async def api_warmap_changes(theatre: str, days: int = 30):
+async def api_warmap_changes(request: Request, theatre: str, days: int = 30):
     """Towns that changed hands in one war, from the map's own history.
 
     A wiki keeps revisions, and a control map's revisions are a record of
     ground changing hands — with the editor's own note and citation.
+    The list is the shared cached answer, filtered per user (a copy).
     """
     import wiki_warmaps as _wm
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _wm.changes, theatre, days)
+    user = await _profile_user(request)
+    data = await loop.run_in_executor(_executor, _wm.changes, theatre, days)
+    return _pf.lists(data, user, "changes") if isinstance(data, dict) else data
 
 
 @app.get("/api/warmap/{theatre}/timeline")
@@ -12588,13 +12592,17 @@ async def api_telegram_upcoming(request: Request, days: int = Query(30, ge=1, le
 
 
 @app.get("/api/telegram/statements")
-async def api_telegram_statements(lat: float, lon: float, hours: int = Query(72, ge=1, le=720),
+async def api_telegram_statements(request: Request, lat: float, lon: float, hours: int = Query(72, ge=1, le=720),
                                   km: float = 75, country: str | None = None):
     """What the parties say about a place: official statements located
-    within `km`, or naming the country."""
+    within `km`, or naming the country. Only those that concern the asking
+    user (user_concern.py), after the shared read."""
     import telegram_ingest as _tg
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
-    return {"statements": await loop.run_in_executor(_executor, lambda: _tg.statements_near(lat, lon, hours, km, country))}
+    user = await _profile_user(request)
+    got = await loop.run_in_executor(_executor, lambda: _tg.statements_near(lat, lon, hours, km, country))
+    return _pf.statements({"statements": got}, user)
 
 
 @app.get("/api/telegram/video/{chan}/{msg_id}")
@@ -12620,18 +12628,22 @@ _INSIGHT_CHANGES_CACHE: dict = {}
 
 
 @app.get("/api/insight/changes")
-async def api_insight_changes(range: str = "7d"):
+async def api_insight_changes(request: Request, range: str = "7d"):
     """What changed: this window against the one before it, per country and
-    kind of evidence, adjusted for what we were collecting (insight_changes.py)."""
+    kind of evidence, adjusted for what we were collecting (insight_changes.py).
+    Built once for everybody; each user gets a filtered copy (profile_filter)."""
     import insight_changes as _ic
+    import profile_filter as _pf
     if range not in _ic.RANGES:
         raise HTTPException(400, "range is 24h, 7d or 30d")
+    user = await _profile_user(request)
     hit = _INSIGHT_CHANGES_CACHE.get(range)
     if hit and time.time() - hit[0] < 300:
-        return hit[1]
-    out = await asyncio.get_event_loop().run_in_executor(_executor, _ic.changes, range)
-    _INSIGHT_CHANGES_CACHE[range] = (time.time(), out)
-    return out
+        out = hit[1]
+    else:
+        out = await asyncio.get_event_loop().run_in_executor(_executor, _ic.changes, range)
+        _INSIGHT_CHANGES_CACHE[range] = (time.time(), out)
+    return _pf.insight_changes(out, user)
 
 
 def _require_super_admin(request: Request) -> dict:
@@ -29786,16 +29798,23 @@ def api_get_notifications(
     """The notification feed for whoever is asking — see _notification_feed."""
     _u = _get_current_user(request)
     _uid = str(_u.get("id")) if _u and _u.get("id") else None
-    items = _notification_feed(_uid, limit=limit, hours=hours, include_silent=include_silent)
     # THE SAME PROFILE AS THE MAPS AND LISTS (user_concern.py): a card about
     # a place outside what this user watches is not theirs. Cards made for
     # them (their assets, their events, messages, warnings, the desk) are
-    # personal and stay.
+    # personal and stay. A filtered feed is read wider and cut to `limit`
+    # after the filter, or a narrow profile got a few of the 40.
+    import profile_filter as _pf
     try:
-        import profile_filter as _pf
-        items = _pf.notifications(items, _u)
+        _active = _pf.scope(_u).active
+    except Exception:                                       # noqa: BLE001
+        _active = False
+    items = _notification_feed(_uid, limit=min(400, max(limit, limit * 4)) if _active else limit,
+                               hours=hours, include_silent=include_silent)
+    try:
+        items = _pf.notifications(items, _u)[:limit]
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] profile filter: {type(ex).__name__}: {ex}", flush=True)
+        items = items[:limit]
     # WHAT A NOTIFICATION IS, decided once (event_watch.notifies): `push`
     # marks what reaches a closed app — the phone's push and the desktop
     # app's macOS notification alike — so the two devices cannot disagree.

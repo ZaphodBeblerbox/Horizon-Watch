@@ -134,6 +134,50 @@ def situation(answer: dict, user) -> dict:
     return lists(answer, user, "cities")
 
 
+# ── what changed (insight_changes) ──────────────────────────────────────────
+
+def _country_row(sc: uc.Scope, row: dict) -> bool:
+    """A per-country row: the country named in words, or one of its located
+    examples, concerns the user."""
+    if sc.concerns({"region": row.get("country")})[0]:
+        return True
+    return any(sc.concerns(e)[0] for e in (row.get("examples") or []) if e.get("lat") is not None)
+
+
+def insight_changes(answer: dict, user) -> dict:
+    """'What changed' (Home and Insight): escalating / calmer countries, newly
+    lit-up cells and changes of control, kept by the user's profile; the
+    headline sentences are rebuilt from what is kept (a Paris-only Home read
+    "Ukraine front moved ..."). The shared answer is copied, never touched."""
+    sc = scope(user)
+    if not sc.active or not isinstance(answer, dict):
+        return {**answer, "profile": sc.block(0)} if isinstance(answer, dict) else answer
+    out = dict(answer)
+    hidden = 0
+    for k in ("escalating", "calmer"):
+        rows = list(out.get(k) or [])
+        kept = [r for r in rows if _country_row(sc, r)]
+        hidden += len(rows) - len(kept)
+        out[k] = kept
+    for k in ("lit_up", "frontlines"):
+        if isinstance(out.get(k), list):
+            out[k], n = sc.filter(out[k])
+            hidden += n
+    try:
+        import insight_changes as ic
+        out["headline"] = ic.headline(out, ic.RANGES.get(out.get("range"), 168))
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[profile-filter] error: what-changed headline: {type(e).__name__}: {e}", flush=True)
+        out["headline"] = []
+    out["profile"] = sc.block(hidden)
+    return out
+
+
+def statements(answer: dict, user) -> dict:
+    """Official statements near a place (/api/telegram/statements)."""
+    return lists(answer, user, "statements")
+
+
 # ── notifications ───────────────────────────────────────────────────────────
 
 # Cards made for one person or one team, not about "the world": they are

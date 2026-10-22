@@ -308,7 +308,9 @@ def changes(range_key: str = "7d", now: _dt.datetime | None = None) -> dict:
     result = compare(cur, prev)
     try:
         import live_notifications as ln
+        # `region` names the country in words (the profile filter reads it)
         result["frontlines"] = [{"title": f.get("title"), "sub": f.get("reason") or f.get("sub"), "lat": f.get("lat"), "lon": f.get("lon"),
+                                 "region": f.get("region"),
                                  "when": f.get("published_at") or f.get("created_at")}
                                 for f in ln.frontline_items(days=max(1, hours // 24), limit=12)]
     except Exception:                                         # noqa: BLE001
