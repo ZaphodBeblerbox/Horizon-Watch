@@ -111,10 +111,12 @@ def test_only_the_quoted_place_and_its_quoted_context_go_to_the_geocoder():
 
     def geo(q):
         asked.append(q)
-        return [city("Rue Saint-Maur", 48.8675, 2.3638, typ="residential", cls="highway", rank=26)]
+        return [city("Rue Saint-Maur", 48.8675, 2.3638, typ="residential", cls="highway", rank=26, display_name="Rue Saint-Maur, Paris, France")]
     hit, why, info = li.resolve_place("Rue Saint-Maur", "street", ["Paris", "France"], "charge rue Saint-Maur à Paris, France", geocode=geo)
     assert why is None and hit["lat"] == 48.8675
-    assert asked == ["Rue Saint-Maur, Paris, France"]                    # never the channel's city or country
+    # the place and its quoted context, then the context alone (to check the street lies in that city):
+    # never the channel's city or country
+    assert asked[0] == "Rue Saint-Maur, Paris, France" and set(asked) <= {"Rue Saint-Maur, Paris, France", "Paris", "France"}
 
 
 def test_no_context_in_the_text_means_none_is_added():
@@ -170,6 +172,78 @@ def test_an_answer_that_does_not_carry_the_name_is_a_mismatch():
     assert hit is None and "another level" in why
     # non-Latin names are not compared: the answer is in the local language
     assert li.resolve_place("بيتونيا", "city", [], "x", geocode=lambda q: [city("بيتونيا‎", 31.9, 35.17)])[0] is not None
+
+
+def test_the_query_is_the_places_own_name_plus_context_the_text_quotes():
+    t = "frappes israéliennes sur la ville de Nabatieh, dans le sud du Liban"
+    assert li.query_plan("ville de Nabatieh", None, ["dans le sud du Liban"], t) == ["Nabatieh, Liban"]
+    assert li.query_plan("central Kharkiv", "Kharkiv", ["Ukraine"], "explosions in central Kharkiv, Ukraine") == ["Kharkiv, Ukraine"]
+    # a dictionary form the text does not support is ignored: the model cannot bring a place in
+    assert li.query_plan("Châtelet", "Paris Châtelet", [], "à Châtelet") == ["Châtelet"]
+    assert li.query_plan("Харкові", "Харків", [], "Зараз у Харкові лунають вибухи") == ["Харків"]
+    assert li.query_plan("Белгороде", "Белгород", [], "в Белгороде работает ПВО") == ["Белгород"]
+    assert li.query_plan("Курске", "Москва", [], "сейчас в Курске слышны взрывы") == ["Курске"]
+    # with context given the bare name is never asked
+    assert "Georgetown" not in li.query_plan("Georgetown", None, ["Guyana"], "Georgetown, Guyana")
+    # the channel's city never appears
+    assert all("Paris" not in q for q in li.query_plan("Rue Saint-Maur", None, [], "charge rue Saint-Maur"))
+
+
+def test_a_clear_leader_by_importance_is_not_a_guess_but_equals_are_ambiguous():
+    paris = [city("Paris, France", 48.85, 2.35, importance=0.9), city("Paris, Texas", 33.66, -95.55, importance=0.53)]
+    hit, why, info = li.resolve_place("Paris", "city", [], "shots in Paris", geocode=lambda q: paris)
+    assert why is None and hit["lat"] == 48.85 and "clear leader" in info["dominance"]
+    close = [city("Springfield, IL", 39.8, -89.6, importance=0.613), city("Springfield, MA", 42.1, -72.6, importance=0.611)]
+    assert li.resolve_place("Springfield", "city", [], "x", geocode=lambda q: close)[0] is None
+    kursk = [city("Курск", 51.7, 36.2, importance=0.64), city("Курск village", 59.3, 29.1, typ="village", rank=19, importance=0.37)]
+    assert li.resolve_place("Курск", "city", [], "x", geocode=lambda q: kursk)[0]["lat"] == 51.7
+
+
+def test_a_city_state_is_a_city_and_an_oblast_is_a_region():
+    tbilisi = {"class": "boundary", "type": "administrative", "place_rank": 8, "address": {"city": "თბილისი", "country": "x"}}
+    oblast = {"class": "boundary", "type": "administrative", "place_rank": 8, "address": {"state": "Харківська область"}}
+    assert li.hit_level(tbilisi) == "city" and li.hit_level(oblast) == "region"
+    assert li.hit_level({"class": "boundary", "type": "administrative", "place_rank": 16, "address": {"city": "Lyon", "county": "Rhône"}}) == "city"
+    assert li.hit_level({"class": "boundary", "type": "administrative", "place_rank": 15, "address": {"suburb": "x", "city": "Paris"}}) == "neighborhood"
+    assert li.hit_level({"class": "shop", "type": "supermarket", "place_rank": 30}) == "venue"
+
+
+def test_coarser_fallback_is_off_by_default_and_audited_when_on(monkeypatch):
+    def geo(q):
+        return [city("Tbilisi", 41.7, 44.8, address={"city": "Tbilisi"}, cls="boundary", typ="administrative", rank=8)] if q == "Tbilisi" else []
+    text = "protesters are blocking the main avenue in Tbilisi, Georgia"
+    hit, why, _ = li.resolve_place("main avenue", "street", ["Tbilisi", "Georgia"], text, geocode=geo)
+    assert hit is None
+    monkeypatch.setattr(li, "COARSER_FALLBACK", True)
+    hit, why, info = li.resolve_place("main avenue", "street", ["Tbilisi", "Georgia"], text, geocode=geo)
+    assert hit["lat"] == 41.7 and "city level" in info["fallback"] and info["fallback_level"] == "city"
+
+
+def test_the_context_must_show_in_a_comparable_answer():
+    """A street named like one in another city is not the street of the text."""
+    dnipro = city("Дніпро", 48.46, 35.04, display_name="Дніпро, Україна")
+    street = lambda lat, lon: city("Y", lat, lon, typ="residential", cls="highway", rank=26, display_name="проспект Яворницького")
+    text = "у Дніпрі, на проспекті Яворницького"
+
+    def geo(lat, lon):
+        return lambda q: [dnipro] if q == "Дніпрі" else [street(lat, lon)]
+    hit, why, info = li.resolve_place("проспекті Яворницького", "street", ["у Дніпрі"], text, geocode=geo(47.84, 35.14), geocoder_name="Яворницького")
+    assert hit is None and "from Дніпрі" in why and info["context_check"]           # a street of that name 70 km away
+    assert li.resolve_place("проспекті Яворницького", "street", ["у Дніпрі"], text, geocode=geo(48.46, 35.05), geocoder_name="Яворницького")[0]["lat"] == 48.46
+    # a context that resolves to no city leaves nothing to compare with
+    assert li.resolve_place("проспекті Яворницького", "street", ["у Дніпрі"], text, geocode=lambda q: [] if q == "Дніпрі" else [street(47.8, 35.1)],
+                            geocoder_name="Яворницького")[0] is not None
+    # another script: cannot be compared, the geocoder's reading of the query stands
+    tbilisi = {"class": "boundary", "type": "administrative", "place_rank": 8, "address": {"city": "თბილისი", "ISO3166-2-lvl4": "GE-TB"},
+               "display_name": "თბილისი, საქართველო", "lat": 41.7, "lon": 44.8}
+    assert li.resolve_place("Tbilisi", "city", ["Georgia"], "x", geocode=lambda q: [tbilisi])[0] is not None
+
+
+def test_the_dictionary_form_must_come_from_the_place_as_written_not_from_the_context():
+    """Red Square → 'Москва' would pin a venue called Moscow: the model may only shorten the place it copied."""
+    t = "Сейчас на Красной площади в Москве задерживают участников"
+    assert li.query_plan("Красной площади", "Москва", ["в Москве"], t) == ["Красной площади, Москве"]
+    assert li.query_plan("Красной площади", None, [], t) == ["Красной площади"]
 
 
 def test_geocoder_budget_and_empty_answers():
@@ -246,7 +320,7 @@ def test_a_live_answer_is_pinned_and_audited(db):
         return good(event_type="explosion", location={"name_as_written": "Kharkiv", "level": "city", "context_as_written": ["Ukraine"]},
                     evidence_quote_place="central Kharkiv, Ukraine"), 0.0007
     out = li.run_once(now=NOW, extract_fn=ext,
-                      geocode=lambda q: [city("Kharkiv", 49.99, 36.23, country_code="ua")])
+                      geocode=lambda q: [city("Kharkiv", 49.99, 36.23, country_code="ua", display_name="Kharkiv, Ukraine")])
     assert out["live"] == 1 and calls[0][1] == PUB
     r = _row(db, 1)
     assert (r["live_verdict"], r["event_time"], r["precision"], r["event_type"], r["lat"]) == ("live", "2026-10-22T13:57:00+00:00", "city", "explosion", 49.99)
@@ -480,3 +554,19 @@ def test_the_model_path_drops_warnings_it_would_have_pinned(rdb, monkeypatch):
     tg.classify()
     r = sqlite3.connect(rdb).execute("SELECT lat, unpublished_reason FROM telegram_posts").fetchone()
     assert r[0] is None and "alert" in r[1]
+
+
+def test_the_rule_path_does_not_place_a_settlement_name_the_country_has_twice(monkeypatch):
+    import geocode_utils
+    import telegram_rules as tr
+    two = [{"lat": 10.2, "lon": -64.6, "class": "place", "type": "city", "country_code": "ve", "importance": 0.4},
+           {"lat": 10.7, "lon": -62.5, "class": "place", "type": "village", "country_code": "ve", "importance": 0.38}]
+    monkeypatch.setattr(geocode_utils, "geocode_cached", lambda q, codes=None, *a, **k: two)
+    monkeypatch.setattr(tg, "locate", lambda p, pr, cc: ({"lat": 10.7, "lon": -62.5, "display_name": p, "class": "place", "type": "village"}, None))
+    x = tr.read("⚡️ Explosion at the refinery in Puerto La Cruz, Venezuela")
+    hit, place, cc, why = tr.resolve(x, [5])
+    assert hit is None and "different places" in why
+    # a clear leader is placed
+    two[1]["importance"] = 0.1
+    two[0]["importance"] = 0.5
+    assert tr.resolve(x, [5])[0] is not None

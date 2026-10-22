@@ -97,11 +97,16 @@ SCHEMA_NOTES = f"""
 ALLOWED event_type VALUES: {", ".join(EVENT_TYPES)}.
 ALLOWED location.level VALUES: {", ".join(LEVELS)}.
 SCHEMA FIELDS: is_live; event_type; event_time (ISO 8601 UTC, or null); certainty ("verified" or "unverified");
-location {{name_as_written, level, context_as_written}} or null; other_places_mentioned (names as written);
+location {{name_as_written, name_for_geocoder, level, context_as_written}} or null; other_places_mentioned (names as written);
 ambiguity_note; evidence_quote_time; evidence_quote_place; reject_reason.
 location.name_as_written is the place copied exactly from the text. location.context_as_written lists, copied
 exactly from the text, the words that say which place that is (the city, region or country the text itself gives
 for it); empty when the text gives none. Never put a city or country there that the text does not contain.
+location.name_for_geocoder is only the proper name of that same place, without qualifiers ("central Kharkiv" ->
+"Kharkiv", "ville de Nabatieh" -> "Nabatieh", "port of Odesa" -> "Odesa"), in its dictionary form when the text inflects it
+("Харкові" -> "Харків"); null when name_as_written already is that. It adds no place the text does not name.
+A rumor or an unverified claim that otherwise meets every rule above is is_live = true with certainty "unverified"
+(never "verified"); it is not a reason to reject.
 Fields that do not apply are null (or [] for lists)."""
 
 SYSTEM_PROMPT = SPEC + "\n" + SCHEMA_NOTES
@@ -124,9 +129,10 @@ SCHEMA = {
         "location": {
             "type": ["object", "null"],
             "additionalProperties": False,
-            "required": ["name_as_written", "level", "context_as_written"],
+            "required": ["name_as_written", "name_for_geocoder", "level", "context_as_written"],
             "properties": {
                 "name_as_written": {"type": "string"},
+                "name_for_geocoder": {"type": ["string", "null"]},
                 "level": {"type": "string", "enum": list(LEVELS)},
                 "context_as_written": {"type": "array", "items": {"type": "string"}},
             },
@@ -214,6 +220,9 @@ PAST_CUES = re.compile(
     r"ayer|anoche|anteayer|hace \d+|esta manana|"
     r"\d{1,2}(?:er)?\s+(?:" + _MONTHS + r")|(?:" + _MONTHS + r")\s+\d{1,2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b)\b"
     r"|вчера|вчора|позавчера|позавчора|сегодня утром|сьогодні вранці|вранці|утром|ночью|назад\b|на днях|"
+    r"\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря|січня|лютого|березня|квітня|"
+    r"травня|червня|липня|серпня|вересня|жовтня|листопада|грудня)|"
+    r"\d{1,2}\s+(?:يناير|فبراير|مارس|أبريل|ابريل|مايو|يونيو|يوليو|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر|تشرين|كانون)|"
     r"أمس|البارحة|الليلة الماضية|صباح اليوم|قبل \d+|قبل (?:ساعة|ساعات|يوم|أيام)|"
     r"אתמול|לפני", re.I)
 PRESENT_CUES = re.compile(
@@ -254,6 +263,16 @@ def rule_live(text: str | None, posted_at: str | None, now: _dt.datetime | None 
 DRONE_CUES = re.compile(r"бпла|шахед|дрон\w*|ракет\w*|\bdrones?\b|\buavs?\b|\bmissiles?\b|\brockets?\b|مسيرة|مسيّرة|صاروخ|صواريخ", re.I)
 
 
+# more of what an incident is called than telegram_rules reads (it was written for strikes and unrest)
+INCIDENT_WORDS = re.compile(
+    r"gunm[ae]n|shooter|shots? fired|gunfire|\bfir(?:ing|ed) (?:on|at)\b|stabb\w*|hostage\w*|\bbomb\w*|\bstriking\b|\bstrikes?\b|"
+    r"\braid\w*|\barrest\w*|\bdetain\w*|\bevacuat\w*|\bblock(?:ing|ade)\w*|\bclash\w*|\bfire\b|\bblaze\b|"
+    r"\btirs?\b|coups? de feu|fusillade|prise d.otages?|interpell\w*|arrestation\w*|incendie|"
+    r"\bbalacera|disparos|balazos|detenid\w*|incendio|"
+    r"задерж\w*|арест\w*|перестрел\w*|стрельб\w*|обстрел\w*|пожар\w*|стріляни\w*|пожеж\w*|"
+    r"اعتقال|اشتباك|حريق|إطلاق نار|تفجير|اقتحام|محاصر\w*|ضربة|ضربات|يعتقل", re.I)
+
+
 def prefilter(text: str | None) -> tuple[bool, bool]:
     """(worth a model call, drone/missile track only). The same cheap cues the
     rest of the pipeline uses: an event word in any of the channels' languages,
@@ -264,11 +283,13 @@ def prefilter(text: str | None) -> tuple[bool, bool]:
         return False, False
     import telegram_rules
     ft = telegram_rules.fold(t)
-    if telegram_rules.ALERT_ONLY.search(ft) and not telegram_rules.HARD_HIT.search(ft):
+    if telegram_rules.ALERT_ONLY.search(ft) and not telegram_rules.HARD_HIT.search(ft) and not INCIDENT_WORDS.search(t):
         return False, False
     kind, _m = telegram_rules.event_of(t)
-    if kind:
+    if kind or INCIDENT_WORDS.search(t):
         return True, False
+    if len(t) >= 40 and PRESENT_CUES.search(t) and not telegram_rules.ALERT_ONLY.search(ft):
+        return True, False                       # it says it is happening now: let the model read the rest
     try:
         import telegram_ingest as ti
         if ti.UNREST_WORDS.search(t) or ti.EVENT_CUES_ES_MY.search(t) or ti.street_cue(t):
@@ -321,7 +342,7 @@ def verify(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
      certainty}. `ok` only when every check holds; `reasons` says which failed."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     v = {"ok": False, "reasons": [], "event_time": None, "level": None, "name": None, "context": [],
-         "event_type": None, "certainty": None}
+         "event_type": None, "certainty": None, "geocoder_name": None}
     if not isinstance(raw, dict):
         v["reasons"].append("no answer from the model")
         return v
@@ -376,8 +397,10 @@ def verify(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
     pc = past_cue(tq) if tq else None
     if pc:
         bad.append(f"the time quote points to an earlier time ('{pc}')")
+    gname = (loc or {}).get("name_for_geocoder") if isinstance(loc, dict) else None
     v.update(event_time=iso(min(ev, pub)) if ev and pub else (iso(ev) if ev else None), level=level, name=name,
-             context=ctx, event_type=et, certainty=cert, age_min=None if age is None else round(age, 1))
+             context=ctx, event_type=et, certainty=cert, age_min=None if age is None else round(age, 1),
+             geocoder_name=gname if isinstance(gname, str) else None)
     v["ok"] = not bad
     return v
 
@@ -392,10 +415,18 @@ _VENUE_CLASSES = {"amenity", "building", "shop", "tourism", "historic", "leisure
                   "public_transport", "landuse", "natural", "waterway", "barrier"}
 
 
+_ADDR_LEVELS = (("neighborhood", ("suburb", "city_district", "neighbourhood", "quarter", "borough", "city_block")),
+                ("city", ("city", "town", "village", "municipality", "hamlet")),
+                ("region", ("county", "state_district", "state", "province", "region")))
+
+
 def hit_level(h: dict) -> str | None:
     """What a geocoder answer IS, as one of LEVELS (or None when unclear).
-    Class and type first; place_rank (Nominatim: 4 country, 8 state, 16 city,
-    ~20 suburb, 26 street, 30 a venue) when the answer carries one."""
+    Class and type first; for an administrative boundary the finest address
+    part it carries says what it is (Tbilisi and Berlin are city-states at
+    rank 7-8 with a 'city' part; Kharkiv oblast has only a 'state');
+    place_rank (Nominatim: 4 country, 8 state, 16 city, ~20 suburb, 26
+    street, 30 a venue) when nothing else is known."""
     cls, typ = (h.get("class") or "").lower(), (h.get("type") or "").lower()
     rank = h.get("place_rank")
     try:
@@ -408,15 +439,17 @@ def hit_level(h: dict) -> str | None:
         return "street"
     if cls == "place" and typ in _HOOD_TYPES:
         return "neighborhood"
-    if cls == "boundary" and typ == "administrative" and rank is not None and 18 <= rank <= 24:
-        return "neighborhood"
     if cls == "place" and typ in _REGION_TYPES:
-        return "region"
-    if cls == "boundary" and typ == "administrative" and rank is not None and rank <= 12:
         return "region"
     if cls == "place" and typ in _PLACE_TYPES:
         return "city"
-    if cls == "boundary" and typ == "administrative" and (rank is None or 13 <= rank <= 17):
+    if cls == "boundary" and typ == "administrative":
+        addr = h.get("address") or {}
+        for level, keys in _ADDR_LEVELS:
+            if any(k in addr for k in keys):
+                return level
+        if rank is not None:
+            return "region" if rank <= 12 else ("city" if rank <= 17 else "neighborhood" if rank <= 24 else None)
         return "city"
     if cls in _VENUE_CLASSES or (cls == "place" and typ in ("house", "building")) or (rank is not None and rank >= 28):
         return "venue"
@@ -424,14 +457,9 @@ def hit_level(h: dict) -> str | None:
 
 
 def level_matches(hit: dict, stated: str) -> bool:
-    got = hit_level(hit)
-    if got is None:
-        return False
-    if got == stated:
-        return True
-    # a town named at "city" level is a town; a venue named at "street" is a
-    # place on a street the geocoder only knows as a point: not the same level
-    return False
+    """The answer must be the kind of thing the text said — not a coarser
+    place standing in for a finer one, not a venue standing in for a city."""
+    return hit_level(hit) == stated
 
 
 def _km(a: dict, b: dict) -> float:
@@ -447,19 +475,58 @@ def _name_tokens(name: str) -> list[str]:
     return [t for t in re.split(r"[^\w]+", fold(name)) if len(t) >= 4 and not t.isdigit()]
 
 
+def _script(s: str) -> str:
+    for c in s or "":
+        if c.isalpha():
+            n = unicodedata.name(c, "")
+            for k in ("LATIN", "CYRILLIC", "ARABIC", "HEBREW", "GEORGIAN", "ARMENIAN", "GREEK"):
+                if n.startswith(k):
+                    return k
+            return "OTHER"
+    return ""
+
+
 def _name_consistent(name: str, hit: dict) -> bool:
-    """A Latin-script name must show in the answer (its display name or any
-    address part); other scripts are not compared (the answer is in the
-    local language there)."""
-    if not re.search(r"[A-Za-zÀ-ɏ]", name or ""):
+    """A Latin-script name must show in the answer's display name; other
+    scripts are not compared (the answer is in the local language there)."""
+    disp = hit.get("display_name") or ""
+    if _script(name) != "LATIN" or _script(disp) != "LATIN":
         return True
     toks = _name_tokens(name)
     if not toks:
         return True
-    hay = fold(" ".join([hit.get("display_name") or ""] + [str(v) for v in (hit.get("address") or {}).values()]))
-    if not re.search(r"[A-Za-zÀ-ɏ]", hay):
-        return True
+    hay = fold(" ".join([disp] + [str(v) for k, v in (hit.get("address") or {}).items() if "ISO" not in k and k != "country_code"]))
     return any(t in hay for t in toks)
+
+
+NEAR_CONTEXT_KM = 40.0
+
+
+def _near_context(hit: dict, context_cores: list[str], geocode, budget: list | None) -> tuple[bool, str | None]:
+    """A street, a venue or a neighbourhood is small and its name is common
+    (every town has a main avenue): it must lie near the city the text puts it
+    in. The context is geocoded as a city (cached); when none of it resolves
+    to a city there is nothing to compare and the geocoder's own reading of
+    the query stands. (ok, why)."""
+    centres = []
+    for c in context_cores:
+        if budget is not None:
+            if budget[0] <= 0:
+                break
+            budget[0] -= 1
+        try:
+            hits = geocode(c) or []
+        except Exception:                                      # noqa: BLE001
+            hits = []
+        cc = [h for h in hits if hit_level(h) == "city" and _name_consistent(c, h)]
+        if cc:
+            centres.append((c, cc[0]))
+    if not centres:
+        return True, None
+    for c, ch in centres:
+        if _km(hit, ch) <= NEAR_CONTEXT_KM:
+            return True, None
+    return False, f"the answer lies {int(min(_km(hit, ch) for _c, ch in centres))} km from {centres[0][0]}, the place the text puts it in"
 
 
 def local_hits(name: str, text: str) -> list[dict]:
@@ -476,49 +543,166 @@ def local_hits(name: str, text: str) -> list[dict]:
              "type": p["kind"], "local": True}]
 
 
-def resolve_place(name: str, level: str, context: list[str], text: str, *, geocode=None,
-                  budget: list | None = None) -> tuple[dict | None, str | None, dict]:
-    """(hit, None, info) or (None, why, info). Geocodes the quoted place and
-    the context the text itself quotes, nothing else. `info` is the audit:
-    query, candidates, the ambiguity note."""
-    info = {"query": None, "candidates": []}
-    if level not in PIN_LEVELS:
-        return None, f"stated level '{level}' is too coarse to pin", info
-    seen, parts = set(), []
-    for p in [name] + list(context or []):
-        k = norm(p)
-        if k and k not in seen:
-            seen.add(k)
-            parts.append(p.strip())
-    query = ", ".join(parts)
-    info["query"] = query
-    local = local_hits(name, text) if level in ("venue", "street", "neighborhood") else []
-    if local:
-        info["candidates"] = [{"name": local[0]["display_name"], "lat": local[0]["lat"], "lon": local[0]["lon"], "level": level}]
-        return local[0], None, info
-    if geocode is None:
-        from geocode_utils import geocode_place as geocode
-    if budget is not None:
-        if budget[0] <= 0:
-            return None, "geocoder budget spent this pass", info
-        budget[0] -= 1
-    hits = geocode(query) or []
-    info["candidates"] = [{"name": (h.get("display_name") or "")[:90], "lat": h.get("lat"), "lon": h.get("lon"),
-                           "class": h.get("class"), "type": h.get("type"), "level": hit_level(h)} for h in hits]
-    if not hits:
-        return None, f"'{query}' did not resolve", info
-    fit = [h for h in hits if level_matches(h, level) and _name_consistent(name, h)]
-    if not fit:
-        got = ", ".join(sorted({hit_level(h) or "?" for h in hits}))
-        return None, f"geocoder answered at another level ({got}), the text stated {level}", info
+# The words that say which way or what kind, not which place ("dans le sud du
+# Liban", "جنوب لبنان", "the port of", "ville de"): dropped from the QUERY only,
+# never from what is stored or checked against the text.
+_QUALIFIERS = {
+    "dans", "le", "la", "les", "du", "de", "des", "au", "aux", "sud", "nord", "est", "ouest", "centre", "ville", "village", "port", "commune",
+    "the", "of", "in", "south", "north", "east", "west", "southern", "northern", "eastern", "western", "central", "city", "town", "near", "outskirts",
+    "جنوب", "شمال", "شرق", "غرب", "وسط", "جنوبي", "شمالي", "شرقي", "غربي", "في", "مدينة", "بلدة", "قرية", "مخيم", "حي", "منطقة", "ضاحية",
+    "en", "el", "los", "las", "del", "ciudad", "pueblo", "sur", "norte", "oeste",
+    "в", "у", "на", "місто", "город", "село", "селище", "область", "обл",
+}
+
+
+def core_words(s: str | None) -> str:
+    toks = [t for t in re.split(r"[\s,;()]+", (s or "").strip()) if t]
+    keep = [t for t in toks if fold(t).strip(".") not in _QUALIFIERS]
+    return " ".join(keep) or (s or "").strip()
+
+
+def stem_of_text(candidate: str | None, text: str | None) -> bool:
+    """Is `candidate` (the model's dictionary form of the place) the place the
+    text names? Yes when it occurs in the text, or shares a long stem with a
+    word of it (Харкові → Харків, Белгороде → Белгород). A name the text does
+    not support is ignored, so the model cannot smuggle a place in."""
+    c = fold(candidate or "").strip()
+    if len(c) < 3:
+        return False
+    t = fold(text)
+    if c in t:
+        return True
+    for w in re.split(r"[^\w]+", t):
+        n = min(len(w), len(c))
+        if n < 4:
+            continue
+        common = 0
+        for a, b in zip(w, c):
+            if a != b:
+                break
+            common += 1
+        if common >= 4 and common >= 0.6 * n and abs(len(w) - len(c)) <= 3:
+            return True
+    return False
+
+
+def query_plan(name: str, geocoder_name: str | None, context: list[str], text: str = "") -> list[str]:
+    """The questions put to the geocoder, in order, made only of the place the
+    text names (its dictionary form when the text supports it) and the
+    context the text itself quotes. Never the channel's city or country, and
+    never the bare name once the text gave context for it."""
+    # the model may give the place's bare / dictionary form only if it is a part of the place AS WRITTEN
+    # ("central Kharkiv" -> "Kharkiv", "Харкові" -> "Харків"), never another place the text happens to name
+    base = geocoder_name if stem_of_text(geocoder_name, name) else core_words(name)
+    base = (base or name).strip()
+    ctx = []
+    for c in context or []:
+        cc = core_words(c)
+        if cc and norm(cc) not in {norm(x) for x in ctx} and norm(cc) != norm(base):
+            ctx.append(cc)
+    plan = []
+    if ctx:
+        plan.append(", ".join([base] + ctx))
+        for c in reversed(ctx):                      # the country comes last in a text: try it first
+            q = f"{base}, {c}"
+            if q not in plan:
+                plan.append(q)
+    else:
+        plan.append(base)
+    return plan[:3]
+
+
+DOMINANCE_GAP = float(os.getenv("LIVE_INCIDENT_DOMINANCE_GAP", "0.25") or 0.25)
+# Off by default (the spec: "accept a result only if its precision matches the
+# stated level"). On, a street or venue the geocoder cannot find falls back to
+# the place the text says it is IN, at that place's own (coarser) level.
+COARSER_FALLBACK = os.getenv("LIVE_INCIDENT_COARSER_FALLBACK", "0").strip() == "1"
+
+
+def _pick(fit: list[dict], name: str) -> tuple[dict | None, str | None, str | None]:
+    """(hit, None, note) | (None, why, None). One answer — or several that are
+    the same place — or a clear leader by Nominatim's importance; otherwise the
+    name is ambiguous and the text does not say which: rejected, never the
+    famous one by default."""
     distinct = [fit[0]]
     for h in fit[1:]:
         if all(_km(h, d) > AMBIGUITY_KM for d in distinct):
             distinct.append(h)
-    if len(distinct) > 1:
-        info["ambiguity_note"] = f"{len(distinct)} different places called '{name}', and the text does not say which"
-        return None, info["ambiguity_note"], info
-    return fit[0], None, info
+    if len(distinct) == 1:
+        return fit[0], None, None
+    imp = sorted(((float(h.get("importance") or 0), i) for i, h in enumerate(distinct)), reverse=True)
+    if imp[0][0] > 0 and imp[0][0] - imp[1][0] >= DOMINANCE_GAP:
+        top = distinct[imp[0][1]]
+        return top, None, f"clear leader among {len(distinct)} places called '{name}' (importance {imp[0][0]:.2f} vs {imp[1][0]:.2f})"
+    return None, f"{len(distinct)} different places called '{name}', and the text does not say which", None
+
+
+def resolve_place(name: str, level: str, context: list[str], text: str, *, geocode=None,
+                  budget: list | None = None, geocoder_name: str | None = None) -> tuple[dict | None, str | None, dict]:
+    """(hit, None, info) or (None, why, info). Geocodes the quoted place and
+    the context the text itself quotes, nothing else. `info` is the audit:
+    the questions asked, the candidates, the ambiguity note."""
+    info = {"queries": [], "query": None, "candidates": []}
+    if level not in PIN_LEVELS:
+        return None, f"stated level '{level}' is too coarse to pin", info
+    local = local_hits(name, text) if level in ("venue", "street", "neighborhood") else []
+    if local:
+        info["query"] = name
+        info["candidates"] = [{"name": local[0]["display_name"], "lat": local[0]["lat"], "lon": local[0]["lon"], "level": level}]
+        return local[0], None, info
+    if geocode is None:
+        from geocode_utils import geocode_place as geocode
+    last_why = "did not resolve"
+    for query in query_plan(name, geocoder_name, context, text):
+        if budget is not None:
+            if budget[0] <= 0:
+                return None, "geocoder budget spent this pass", info
+            budget[0] -= 1
+        info["queries"].append(query)
+        info["query"] = query
+        hits = geocode(query) or []
+        info["candidates"] = [{"name": (h.get("display_name") or "")[:90], "lat": h.get("lat"), "lon": h.get("lon"),
+                               "class": h.get("class"), "type": h.get("type"), "level": hit_level(h),
+                               "importance": h.get("importance")} for h in hits]
+        if not hits:
+            last_why = f"'{query}' did not resolve"
+            continue
+        fit = [h for h in hits if level_matches(h, level) and _name_consistent(query.split(",")[0], h)]
+        if not fit:
+            got = ", ".join(sorted({hit_level(h) or "?" for h in hits}))
+            last_why = f"geocoder answered at another level ({got}), the text stated {level}"
+            continue
+        hit, why, note = _pick(fit, name)
+        if hit is None:
+            info["ambiguity_note"] = why
+            return None, why, info
+        if level in ("venue", "street", "neighborhood"):
+            near, far = _near_context(hit, [x.strip() for x in query.split(",")[1:] if x.strip()], geocode, budget)
+            if not near:
+                info["context_check"] = far
+                last_why = far
+                continue
+        if note:
+            info["dominance"] = note
+        return hit, None, info
+    if COARSER_FALLBACK and context and level in ("venue", "street", "neighborhood"):
+        # the incident is IN a place the text names: pin that place, at its own level
+        inner = [geocoder_name] if geocoder_name and stem_of_text(geocoder_name, name) and norm(geocoder_name) != norm(name) else []
+        for c in inner + list(reversed([core_words(x) for x in context if core_words(x)])):
+            if budget is not None:
+                if budget[0] <= 0:
+                    break
+                budget[0] -= 1
+            hits = geocode(c) or []
+            fit = [h for h in hits if hit_level(h) == "city" and _name_consistent(c, h)]
+            if fit:
+                hit, why, note = _pick(fit, c)
+                if hit is not None:
+                    info["fallback"] = f"'{name}' not found at {level} level: pinned at {c} (city level), which the text names"
+                    info["query"] = c
+                    info["fallback_level"] = "city"
+                    return hit, None, info
+    return None, last_why, info
 
 
 # ── the post's row ──────────────────────────────────────────────────────────
@@ -532,7 +716,7 @@ def decide(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
     None), level, event_time, event_type, certainty, name, why, audit}. Pure
     but for the geocoder passed in."""
     v = verify(raw, text, published_at, now)
-    audit = {"model": raw, "verify": {k: v[k] for k in ("ok", "reasons", "event_time", "level", "name", "context")}}
+    audit = {"model": raw, "verify": {k: v[k] for k in ("ok", "reasons", "event_time", "level", "name", "context", "geocoder_name")}}
     out = {"ok": False, "pin": None, "audit": audit, "verdict": None, "event_time": None, "why": None,
            "event_type": v["event_type"], "certainty": v["certainty"], "name": v["name"], "level": v["level"]}
     if not v["ok"]:
@@ -541,8 +725,11 @@ def decide(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
         return out
     out["ok"] = True
     out["event_time"] = v["event_time"]
-    hit, why, info = resolve_place(v["name"], v["level"], v["context"], text, geocode=geocode, budget=budget)
+    hit, why, info = resolve_place(v["name"], v["level"], v["context"], text, geocode=geocode, budget=budget,
+                                   geocoder_name=v.get("geocoder_name"))
     audit["geocode"] = info
+    if info.get("fallback_level"):
+        out["level"] = info["fallback_level"]
     if hit is None:
         # the incident is live and its place is stated, but cannot be pinned
         # with confidence: live, unplaced — and rejected where ambiguous

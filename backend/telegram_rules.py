@@ -264,8 +264,32 @@ def resolve(reading: dict, budget: list | None = None) -> tuple[dict | None, str
             place = f"{name}, {COUNTRY_NAME.get(cc, cc.upper())}"
             hit, _why = telegram_ingest.locate(place, "town", cc)
             if hit and _settlement(hit):
-                return hit, place, cc, None
+                amb, leader = _disambiguate(place, cc)
+                if amb:
+                    return None, None, None, amb + " (read by rule)"
+                return leader or hit, place, cc, None
     return None, None, None, f"'{reading['places'][0]}' did not resolve to a settlement (read by rule)"
+
+
+def _disambiguate(place: str, cc: str) -> tuple[str | None, dict | None]:
+    """(why, None) when two settlements of that name in the country, far
+    apart, are all the post leaves to choose from: not placed; (None, leader)
+    when one is clearly the larger (live_incident._pick: importance); else
+    (None, None) and locate's answer stands. Read from the geocoder's own
+    cached answer: nothing is asked here."""
+    try:
+        import geocode_utils
+        import live_incident
+        hits = geocode_utils.geocode_cached(place, [cc])
+        if not hits:
+            return None, None
+        cities = [h for h in hits if (h.get("country_code") or cc).lower() == cc and live_incident.hit_level(h) == "city"]
+        if len(cities) < 2:
+            return None, None
+        hit, why, _note = live_incident._pick(cities, place.split(",")[0])
+        return (None, hit) if hit is not None else (why, None)
+    except Exception:                                          # noqa: BLE001
+        return None, None
 
 
 def _settlement(hit: dict) -> bool:
