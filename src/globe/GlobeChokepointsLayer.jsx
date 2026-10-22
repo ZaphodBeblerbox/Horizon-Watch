@@ -116,7 +116,7 @@ export default function GlobeChokepointsLayer({ enabled }) {
                             width:           26,
                             height:          26,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.2, 8_000_000, 0.25),
+                            
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 10_000_000),
                         }}
                         polygon={polyPositions.length >= 3 ? {
@@ -136,7 +136,7 @@ export default function GlobeChokepointsLayer({ enabled }) {
                             outlineWidth:     2,
                             style:            2,
                             pixelOffset:      new Cartesian2(0, -14),
-                            scaleByDistance:           new NearFarScalar(1000, 1.0, 5_000_000, 0.3),
+                            
                             distanceDisplayCondition:  new DistanceDisplayCondition(0, 4_000_000),
                             showBackground:   true,
                             backgroundColor:  Color.fromCssColorString("#0F1721").withAlpha(0.85),

@@ -83,22 +83,10 @@ describe("arrival tracking", () => {
 })
 
 describe("arrivalScale", () => {
-    it("emphasises briefly and then settles by itself", () => {
+    it("never swells a mark: constant on-screen size", () => {
         const now = Date.now()
-        expect(arrivalScale(now, now)).toBeGreaterThan(1.5)
-        expect(arrivalScale(now - ARRIVAL_MS, now)).toBe(1)
-        expect(arrivalScale(now - 10 * 60000, now)).toBe(1)
-    })
-
-    it("spends most of the emphasis in the first seconds", () => {
-        const now = Date.now()
-        const early = arrivalScale(now - 0.1 * ARRIVAL_MS, now)
-        const late = arrivalScale(now - 0.8 * ARRIVAL_MS, now)
-        expect(early - 1).toBeGreaterThan((late - 1) * 4)
-    })
-
-    it("leaves nothing permanently emphasised", () => {
-        const now = Date.now()
-        expect(arrivalScale(now - 3 * ARRIVAL_MS, now)).toBe(1)
+        expect(arrivalScale(now, now)).toBe(1)
+        expect(arrivalScale(now - 1000, now)).toBe(1)
+        expect(arrivalScale(undefined, now)).toBe(1)
     })
 })

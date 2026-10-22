@@ -6,7 +6,9 @@ NOW = dt.datetime(2026, 10, 18, 12, tzinfo=dt.timezone.utc)
 
 
 def row(ch, mid, text, mob=3, ten=2, cc="fr", lat=None, lon=None, target=None, t_="2026-10-18T11:00:00"):
-    return {"channel": ch, "msg_id": mid, "channel_title": ch.title(), "posted_at": t_, "text": text, "summary_en": text,
+    if lat is None:
+        lat, lon = 48.87, 2.31
+    return {"live_verdict": "live", "channel": ch, "msg_id": mid, "channel_title": ch.title(), "posted_at": t_, "text": text, "summary_en": text,
             "headline": None, "place": "Paris" if lat else None, "lat": lat, "lon": lon, "mood_country": cc,
             "mood_tension": ten, "mood_mobilise": mob, "mood_target": target, "mood_topic": "protest"}
 

@@ -25,7 +25,7 @@ export default function GlobeMeLayer() {
     return (
         <Entity name={me.live ? "You (live)" : "You"} position={Cartesian3.fromDegrees(me.lon, me.lat, 0)}
                 billboard={{ image: GLOW, width: 40, height: 40, heightReference: HeightReference.CLAMP_TO_GROUND,
-                             disableDepthTestDistance: MARKER_DEPTH_TEST_M, scaleByDistance: new NearFarScalar(2e5, 1.15, 2e7, 0.75),
+                             disableDepthTestDistance: MARKER_DEPTH_TEST_M, 
                              color: me.live ? Color.WHITE : Color.WHITE.withAlpha(0.85) }}
                 description={me.live ? "Where you are now (shared live)" : `Where you said you are${me.label ? `: ${me.label}` : ""}`} />
     )

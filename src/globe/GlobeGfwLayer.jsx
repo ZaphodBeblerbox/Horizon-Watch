@@ -131,7 +131,7 @@ export default function GlobeGfwLayer({ enabled = false, kinds = [], days = 14, 
                                 disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                                 distanceDisplayCondition:
                                     new DistanceDisplayCondition(0, MARKER_MAX_CAMERA_M),
-                                scaleByDistance: new NearFarScalar(1e5, 1.0, 2e7, 0.75),
+                                
                             }}
                         />
                     )

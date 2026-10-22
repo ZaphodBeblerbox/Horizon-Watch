@@ -165,14 +165,13 @@ def test_urgent_signals_become_notification_cards(monkeypatch):
     timed = ts.as_post(ts.build([_row("c/9", 5, 0, immediate=0, act="gather")])[0])
     monkeypatch.setattr(ts, "posts", lambda hours=72, db_path=None: [urgent, timed])
     monkeypatch.setattr(tg, "published", lambda hours=72: [urgent])
+    import live_signals
+    monkeypatch.setattr(live_signals, "signals", lambda *a, **k: [])
     monkeypatch.setattr(tg, "statements", lambda hours=72: [])
     main._TG_CARDS_CACHE.clear()
     cards = main._telegram_report_cards(24)
     main._TG_CARDS_CACHE.clear()
-    assert [c["id"] for c in cards] == [urgent["id"]]                   # once, and the timed call waits on the Desk
-    c = cards[0]
-    assert c["kind"] == "telegram" and c["sev"] == "high" and "2 messages" in c["reason"]
-    assert ew.notifies(c, {"assets": [], "theaters": [], "countries": set()})
+    assert cards == []   # one gate (owner, 2026-10-22): calls and positions are no notification; only live signals are
 
 
 def test_other_places_and_later_hours_stay_apart():

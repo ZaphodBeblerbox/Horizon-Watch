@@ -25,6 +25,7 @@
  * Ground rule: never invent a field. If something isn't in `data`, omit it.
  */
 
+import { stripEmoji } from "../lib/liveSignals.js"
 import { resolveSanctionsStatus } from "../globe/entityIcons.js"
 import { vesselShipType, acClassify } from "../globe/iconUtils.js"
 import { extentOf } from "../utils/extent.js"
@@ -681,6 +682,22 @@ const LANG_NAME = { ar: "Arabic", he: "Hebrew", ru: "Russian", uk: "Ukrainian", 
 
 function adaptTelegram(data = {}) {
     const point = pointOf(data)
+    // A LIVE SIGNAL (backend/live_signals.py) or a cluster of them: one plain sentence, one source line, nothing else.
+    // The footage is the card's media (InspectorPanel), the post text is not dumped in.
+    if (data.kind === "live_signal" || data.kind === "live_cluster") {
+        const cluster = data.kind === "live_cluster"
+        return {
+            identity: { title: stripEmoji(data.headline || data.title || "Signal"),
+                        subtitle: cluster ? "Tap one on the map, or zoom in, to separate them" : stripEmoji(data.status_label || ""),
+                        entityType: "telegram", subtype: null, sanctionsStatus: null },
+            description: (cluster ? (data.cluster || []).map((c) => [c.title, c.line].filter(Boolean).join(". "))
+                                  : data.card_lines || []).map(stripEmoji).filter(Boolean).join("\n") || null,
+            attributes: compact([attr("Position", point ? fmtCoord(point.lat, point.lon) : null),
+                                 attr("Source", !cluster ? data.sources?.[0]?.channel_title || data.channel_title : null)]),
+            provenance: { feed: "Telegram, live signal", ingestedAt: null },
+            actions: { canJumpToLocation: !!point },
+        }
+    }
     // An announced gathering (telegram_events.announcements) or a live
     // development (telegram_events.situations): what is likely and what to
     // do lead, because that is why it is on the map.

@@ -41,7 +41,7 @@ function Person({ p, me }) {
         <Entity id={`team-${p.user_id}`} name={name} position={position}
                 description={`${name} — ${coarseOf(p) ? "city level, from their connection" : p.accuracy_m != null ? `within ${Math.round(p.accuracy_m)} m` : "live location"}`}
                 billboard={{ image: ICONS[`${live ? 1 : 0}|${coarseOf(p) ? 1 : 0}`], width: 30, height: 30, heightReference: HeightReference.CLAMP_TO_GROUND,
-                             disableDepthTestDistance: MARKER_DEPTH_TEST_M, scaleByDistance: new NearFarScalar(2e4, 1.1, 8e6, 0.7) }}
+                             disableDepthTestDistance: MARKER_DEPTH_TEST_M, }}
                 label={{ text, font: "600 12.5px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                          style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 14),
                          heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M,

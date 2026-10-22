@@ -169,7 +169,7 @@ const StrikeEntity = memo(function StrikeEntity({ e, atMs }) {
                 image, width, height, verticalOrigin: VerticalOrigin.BOTTOM,
                 heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 12_000_000),
-                scaleByDistance: new NearFarScalar(150_000, 1.0, 8_000_000, 0.6),
+                
                 eyeOffset: new Cartesian3(0, 0, -80),
             }} />
     )

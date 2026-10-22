@@ -88,7 +88,7 @@ def test_out_of_credit_posts_are_read_by_rule_and_placed(db, monkeypatch):
     insufficient_quota and every post stayed unread. Now the gate pauses,
     and the same pass reads them by rule."""
     con = tg._con()
-    _post(con, "me_observer_TG", 1, "⚡️ Artillery shelling targets the town of Mansouri, southern Lebanon")
+    _post(con, "me_observer_TG", 1, "BREAKING: Artillery shelling targets the town of Mansouri, southern Lebanon")
     _post(con, "me_observer_TG", 2, "⚡️ Liberman: I understand that it is very comfortable for President Trump")
     con.commit()
     con.close()
@@ -143,12 +143,14 @@ def test_call_to_violence_is_raised_by_rule_without_the_mood_model():
     now = dt.datetime(2026, 10, 19, 20, 0, tzinfo=dt.timezone.utc)
     rows = [{"channel": "LeGrandQG", "msg_id": 7, "channel_title": "GJ2026 | Le Grand QG", "posted_at": now.isoformat(),
              "text": "Allez tous à Répu ce soir, on attaque les CRS", "summary_en": None, "headline": None, "place": None,
-             "lat": None, "lon": None, "mood_country": "fr", "mood_target": None, "mood_topic": None},
+             "lat": 48.87, "lon": 2.36, "live_verdict": "live", "mood_country": "fr", "mood_target": None, "mood_topic": None},
             {"channel": "LeGrandQG", "msg_id": 8, "channel_title": "GJ2026 | Le Grand QG", "posted_at": now.isoformat(),
              "text": "Ils brûlent des voitures à Nantes", "summary_en": None, "headline": None, "place": None,
              "lat": None, "lon": None, "mood_country": "fr", "mood_target": None, "mood_topic": None}]
     alerts = tma.detect_calls(now=now, rows=[], existing=set(), rule_rows=rows)
     assert [a["id"] for a in alerts] == ["TGC-LeGrandQG-7"]
+    # one gate (owner, 2026-10-22): the same call the extractor did not pass as a live act at a place is no signal
+    assert tma.detect_calls(now=now, rows=[], existing=set(), rule_rows=[{**rows[0], "live_verdict": None, "lat": None}]) == []
     a = alerts[0]
     assert a["raw"]["rule"] == "telegram_call_to_violence_lexicon"
     # context, never a bare id: the country, the words, the chat

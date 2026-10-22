@@ -4,6 +4,21 @@ Written for the next session (an engineer or a Claude agent) so it can carry on
 without re-reading the long chat of 2026-10-13 → 18. Checked against the repo
 on 2026-10-18. Older sections below still hold where this one doesn't override them.
 
+## Live signals, one gate (2026-10-22/23, branch worktree-agent-ab28602cc81641ae8, not pushed)
+
+Owner: "signals are still not live". Root causes (production rows): (a) GJ2026IDF/1404, a witness's story of Saturday night, pinned
+as "Arrest / LBD at Rue Rivoli" by the old classifier + street_reports lexicon (the "17:41" is the forwarded header's clock);
+(b) telegram_announcements row place "Place, France" geocoded to a hamlet called Place; (c) street_reports read "République" inside
+"président de la République" and any captioned photo as "Footage from Place de la République" (AlertesInfos/10427, a Macron photo);
+(d) street reports read crowd words with no act check; (e) alert TGC-LeGrandQG-6347, an opinion about the RN's founders, raised by
+telegram_mood_alert with mood_mobilise 3 and no place, put at the country centre ("unnamed place").
+Now: `backend/live_incident.py` is the only gate (nine acts, three verbatim quotes, header clock and past stories rejected, opinion class,
+bare "place" rejected; rule path `rule_decide` under the same discipline); `backend/live_signals.py` derives the signals on read
+(one marker per event, corroboration, media only as attachment) at `/api/telegram/signals/live`; maps, notifications, Home footage and calls
+to violence read only that. Client: `src/lib/liveSignals.js`, `src/lib/mapIcons.js` (one icon style), `src/globe/GlobeLiveSignalsLayer.jsx`,
+phone layer `liveSignals` in `src/mobile/mapLayers.js`. Evaluation: `backend/eval_live_signals.py` over `data/live_signal_fixtures.json`.
+Needs in production: `live_incident` in HW_OPENAI_PURPOSES, OPENAI_BUDGET_USD >= 40 (already set per owner).
+
 ## Live incidents (2026-10-22, branch worktree-agent-a37bebda413eb0f6e, not pushed)
 
 `backend/live_incident.py` is the strict extractor that decides whether a Telegram post is a LIVE pinned

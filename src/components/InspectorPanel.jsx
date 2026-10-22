@@ -846,13 +846,13 @@ export default function InspectorPanel({
                 {entityType === "protest" && <ProtestDetail protest={data} />}
                 {/* A STREET REPORT (or a post standing for several): the pictures and
                     videos behind it, each opening the real thing (ReportMedia.jsx) */}
-                {(entityType === "police_action" || (entityType === "telegram" && data?.street_report)) && <ReportMedia item={data} />}
+                {(entityType === "police_action" || (entityType === "telegram" && (data?.street_report || data?.kind === "live_signal"))) && <ReportMedia item={data} />}
                 {(entityType === "frontline_claim" || entityType === "troop_movement" || entityType === "trajectory")
                     && <FrontlineClaimDetail type={entityType} data={data} />}
 
                 {/* A Telegram post's picture or video, in our own frame:
                     autoplaying, paused by a click (TelegramMedia.jsx). */}
-                {entityType === "telegram" && !data?.street_report && (data?.thumb_url || data?.media === "video") && (
+                {entityType === "telegram" && !data?.street_report && data?.kind !== "live_signal" && data?.kind !== "live_cluster" && (data?.thumb_url || data?.media === "video") && (
                     <div style={{ marginBottom: "var(--space-4)" }}><TelegramMedia post={data} /></div>
                 )}
                 {/* The X posts this record cites, in our own frame: author, text,

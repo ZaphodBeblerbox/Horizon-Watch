@@ -62,10 +62,20 @@ PER_PASS = int(os.getenv("LIVE_INCIDENT_PER_PASS", "24") or 24)
 GEOCODES_PER_PASS = int(os.getenv("LIVE_INCIDENT_GEOCODES_PER_PASS", "12") or 12)
 AMBIGUITY_KM = 25.0                   # two city-level answers further apart than this are two places
 
-# The event types the app already uses (telegram_ingest.KINETIC + unrest).
+# THE OWNER'S VOCABULARY (2026-10-22): the only things that are drawn as a signal.
 # "other" is not one of them: an item that fits none is not live.
-EVENT_TYPES = ("strike", "attack", "clash", "movement", "seizure", "explosion", "interception",
-               "infrastructure_damage", "maritime", "aviation", "unrest")
+ACTS = ("arrest", "shots_fired", "explosion", "strike", "missile_launch", "missile_impact", "crowd_movement",
+        "troops_sighted", "police_intervention")
+EVENT_TYPES = ACTS                    # what the model may answer in `event_type`
+# the posts table's own event_type column (the rest of the app reads it), by act
+ACT_EVENT_TYPE = {"arrest": "unrest", "shots_fired": "attack", "explosion": "explosion", "strike": "strike",
+                  "missile_launch": "strike", "missile_impact": "strike", "crowd_movement": "unrest",
+                  "troops_sighted": "movement", "police_intervention": "unrest"}
+# acts whose wrong pin does harm: shown muted until corroborated (live_signals.py)
+HIGH_IMPACT = {"arrest", "shots_fired", "explosion", "strike", "missile_launch", "missile_impact"}
+# why the model refused, as a class (the owner's list of what is NOT a signal)
+REJECT_CLASSES = ("opinion", "statement", "recap", "past_story", "planned", "footage_only", "news", "air_raid",
+                  "not_on_the_ground", "no_place", "other")
 LEVELS = ("venue", "street", "neighborhood", "city", "region", "country")
 # the levels that are a point on the map (telegram_ingest.PRECISE words)
 PIN_LEVELS = {"venue": "site", "street": "street", "neighborhood": "district", "city": "city"}
@@ -93,12 +103,41 @@ RULES
 5. OUTPUT
 - Return only JSON matching the schema. In reject_reason, state in one short sentence why the item was rejected when is_live = false."""
 
-SCHEMA_NOTES = f"""
+VOCABULARY = """
+WHAT A SIGNAL IS (the owner's whole vocabulary, 2026-10-22; event_type is exactly one of these, nothing else is a signal):
+- arrest: person(s) arrested or detained, at a place.
+- shots_fired: gunfire at a place.
+- explosion: an explosion at a place.
+- strike: an air, artillery or drone strike that hit a place.
+- missile_launch: a missile or drone seen launched from a place.
+- missile_impact: a missile or drone that landed at a place.
+- crowd_movement: a protest, rally or march that is ON THE GROUND NOW at a place (set `direction` when the text says where it moves).
+- troops_sighted: troops, armed forces or military vehicles seen at a place.
+- police_intervention: police acting at a place: tear gas, a charge, LBD or rubber bullets, a kettle, an eviction under way.
+NOT SIGNALS (is_live = false, and say which in reject_class): opinion (a view, a comment, an insult, politics talk, a
+slogan, an editorial, an analysis; even when it uses violent words), statement (what an official or a party says or
+threatens), recap (a summary of past days, a toll, statistics), past_story (a story told in the past tense by a
+witness: "samedi j'etais ..." / "yesterday I saw ..." / "cette nuit" is NOT live even if the post is recent), planned
+(a protest or event announced for later), footage_only (a photo or video with no act and no place named by the words),
+news (generic news, a court case, a press review), air_raid (a warning or an all-clear), not_on_the_ground (no one says
+they are there or sees it), no_place (the text names no place for the act).
+TIME TRAPS: a time at the very start of a message that follows a channel or city name ("Ile de France 17:41", "Paris 18:20")
+is the forwarded message's header, the time it was posted: it is NOT the time of the event. A clock time alone proves nothing.
+The post's own time is not the event's time. A witness telling what happened on another day is not live.
+PLACE TRAPS: a name that appears only in a channel's signature, footer, "subscribe" line, hashtag or @handle ("Вибух  SUMY GO • ...") is not a place stated by the post; copy the place exactly as written; a bare word for a kind of place ("la place", "rue", "the square", "downtown",
+"the city") is NOT a place. If the text names only such a word, location is null and is_live is false.
+EVIDENCE: evidence_quote_act is the shortest exact quote that names the act itself ("tir de LBD", "ils arretent", "tear gas").
+first_hand: true only when the writer says they are there or see it themselves ("je vois", "on est a", "sous mes yeux", "I can see").
+"""
+
+SCHEMA_NOTES = f"""{VOCABULARY}
 ALLOWED event_type VALUES: {", ".join(EVENT_TYPES)}.
 ALLOWED location.level VALUES: {", ".join(LEVELS)}.
+ALLOWED reject_class VALUES: {", ".join(REJECT_CLASSES)} (null when is_live is true).
 SCHEMA FIELDS: is_live; event_type; event_time (ISO 8601 UTC, or null); certainty ("verified" or "unverified");
 location {{name_as_written, name_for_geocoder, level, context_as_written}} or null; other_places_mentioned (names as written);
-ambiguity_note; evidence_quote_time; evidence_quote_place; reject_reason.
+ambiguity_note; evidence_quote_time; evidence_quote_place; evidence_quote_act; first_hand; reject_class; reject_reason;
+direction {{as_written, toward_place}} or null (crowd_movement only: the words that say where it moves, and the place as written they name).
 location.name_as_written is the place copied exactly from the text. location.context_as_written lists, copied
 exactly from the text, the words that say which place that is (the city, region or country the text itself gives
 for it); empty when the text gives none. Never put a city or country there that the text does not contain.
@@ -120,7 +159,8 @@ SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["is_live", "event_type", "event_time", "certainty", "location", "other_places_mentioned",
-                 "ambiguity_note", "evidence_quote_time", "evidence_quote_place", "reject_reason"],
+                 "ambiguity_note", "evidence_quote_time", "evidence_quote_place", "evidence_quote_act", "first_hand",
+                 "reject_class", "reject_reason", "direction"],
     "properties": {
         "is_live": {"type": "boolean"},
         "event_type": {"type": ["string", "null"], "enum": list(EVENT_TYPES) + [None]},
@@ -141,7 +181,16 @@ SCHEMA = {
         "ambiguity_note": _nullable("string"),
         "evidence_quote_time": _nullable("string"),
         "evidence_quote_place": _nullable("string"),
+        "evidence_quote_act": _nullable("string"),
+        "first_hand": {"type": ["boolean", "null"]},
+        "reject_class": {"type": ["string", "null"], "enum": list(REJECT_CLASSES) + [None]},
         "reject_reason": _nullable("string"),
+        "direction": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "required": ["as_written", "toward_place"],
+            "properties": {"as_written": {"type": "string"}, "toward_place": {"type": ["string", "null"]}},
+        },
     },
 }
 
@@ -238,25 +287,138 @@ def past_cue(text: str | None) -> str | None:
     return m.group(0) if m else None
 
 
-def rule_live(text: str | None, posted_at: str | None, now: _dt.datetime | None = None) -> tuple[bool, str]:
-    """The rule path's liveness (the model is out): the text says it is
-    happening now (a present-tense cue), says nothing of an earlier time, and
-    the post itself is inside the window. (live, why)."""
+def _f(text: str | None) -> str:
+    return fold((text or "").replace("’", "'").replace("`", "'"))
+
+
+# A story told in the past by someone who was there ("samedi j'étais sur Paris et j'ai assisté au pillage")
+# is not live, however recent the post (owner, 2026-10-22, the rue de Rivoli post).
+STORY_CUES = re.compile(
+    r"\bj'(?:etais|avais|ai (?:assiste|vu|entendu|ete|filme|recu|croise|pris|fui|du|insulte|decouvert|reussi))\b|"
+    r"\bje (?:suis (?:passe|alle|reste|rentre|sorti)|me suis|l'ai (?:vu|insulte|decouvert))\b|\bnous (?:etions|avons (?:vu|assiste))\b|"
+    r"\bon (?:etait|a (?:vu|assiste|ete))\b|\bi (?:was|saw|heard|witnessed|watched|filmed|got|had)\b|\bwe (?:were|saw|went)\b|"
+    r"\byo (?:estaba|vi|estuve|fui)\b|\bestuvimos\b|\bvimos\b|"
+    r"я (?:был|была|видел|видела)\b|ми (?:були|бачили)\b|я бачив\b|я бачила\b|رأيت|كنت\b|شاهدت")
+# another day than today, named
+OTHER_DAY_CUES = re.compile(
+    r"\b(?:yesterday|last night|the day before|day before yesterday|hier|avant-hier|hier soir|la veille|cette nuit|"
+    r"ayer|anoche|anteayer|(?:on |last )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
+    r"(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)(?: dernier| soir| matin)?|"
+    r"(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo))\b|вчера|вчора|позавчера|أمس|البارحة", re.I)
+# the words that say it is now, in a quote or in a text
+NOW_WORDS = re.compile(
+    r"\b(?:maintenant|en ce moment|a l'instant|en cours|now|right now|just now|currently|ongoing|in progress|ahora|"
+    r"ahora mismo|en este momento|en directo|en direct|actuellement|il y a [1-9]\d?\s*min|\d{1,2}\s*min(?:ute)?s? ago|"
+    r"on voit|on est|je vois|i can see|we are)\b|сейчас|зараз|только что|щойно|الآن|للتو", re.I)
+# opinion, politics talk, insult, slogan: never a signal (owner, 2026-10-22)
+OPINION_CUES = re.compile(
+    r"\b(?:nique|encule\w*|fdp|ntm|va te faire|putain de|merde|vive le|vive la|a mort|honte|scandale|"
+    r"je pense que|je crois que|selon moi|a mon avis|il faut (?:les |tous )?(?:combattre|battre|virer|degager)|"
+    r"i think|in my opinion|imo|fuck|should be|must be stopped|opinion|editorial|tribune|analyse|analysis|"
+    r"co-?fonde|fondateurs?|founders?)\b", re.I)
+
+
+def story_cue(text: str | None) -> str | None:
+    """Why the text is a story from another time, or None. A present-tense
+    marker (NOW_WORDS, PRESENT_CUES) anywhere in the text is what lets a
+    witness's account of an hour ago stand; without one it is a story."""
+    t = _f(text)
+    m = STORY_CUES.search(t) or OTHER_DAY_CUES.search(t)
+    if not m:
+        return None
+    if NOW_WORDS.search(t) or PRESENT_CUES.search(t):
+        return None
+    return m.group(0)
+
+
+def opinion_cue(text: str | None) -> str | None:
+    m = OPINION_CUES.search(_f(text))
+    return m.group(0) if m else None
+
+
+# The act, by words (the rule path, and a check on the model's answer). Gravest first.
+_MISSILE = r"(?:missiles?|drones?|rockets?|roquettes?|uavs?|шахед\w*|бпла|дрон\w*|ракет\w*|مسيرة|مسيّرة|صاروخ|صواريخ)"
+ACT_WORDS: list[tuple[str, re.Pattern]] = [(a, re.compile(p, re.I)) for a, p in [
+    ("shots_fired", r"coups? de feu|\btirs? (?:de|a)\b|\btirs\b|fusillade|shots? fired|gunfire|opened fire|ouvr\w+ le feu|disparos|"
+                    r"tiroteo|balacera|стрельб\w*|стріляни\w*|إطلاق نار|اطلاق نار"),
+    ("missile_impact", rf"{_MISSILE}.{{0,40}}(?:landed|impact\w*|hit\b|struck|tombe\w*|s'est ecras\w*|atterri\w*|прилет\w*|приліт\w*|سقط\w*)|"
+                       rf"(?:landed|impact of|hit by|tombe\w*|прилет\w*|приліт\w*).{{0,40}}{_MISSILE}"),
+    ("missile_launch", rf"{_MISSILE}.{{0,40}}(?:launched|fired|lances?\b|lancee?s?\b|tires?\b|запущ\w*|пуск\w*|إطلاق|اطلاق)|"
+                       rf"(?:launch(?:ed|es)?|lancement|tir de|fired|запуск\w*|пуск\w*).{{0,40}}{_MISSILE}"),
+    ("explosion", r"\bexplosions?\b|\bblasts?\b|\bexploded\b|вибух\w*|взрыв\w*|انفجار|انفجارات|\bdetonation"),
+    ("strike", r"\bair ?strikes?\b|\bfrappes? (?:aerienne|israelienne|russe|americaine)s?\b|\bbombard\w*|\bshelling\b|\bshelled\b|"
+               r"\bobus\b|غارة|غارات|قصف|авіаудар\w*|\bудар по\b|обстріл\w*|обстрел\w*"),
+    ("arrest", r"\binterpell\w*|\barrestations?\b|\bmenotte\w*|\bgarde a vue\b|\bunder arrest\b|\barrest(?:ed|s|ing)?\b|"
+               r"\bdetain(?:ed|s|ing)\b|\bdetenid\w*|\barrestad\w*|задерж\w*|затрим\w*|اعتقال|اعتقلت|يعتقل|\bembarqu\w*"),
+    ("police_intervention", r"\blacrymo\w*|\btear ?gas\b|\blbd\b|\bflashball\b|grenades? (?:de desencerclement|assourdissantes?)|"
+                            r"\bcharge(?:nt|r|s)? (?:de |des |sur |policiere)|\bpolice charge\b|\bnasse\b|\bkettl\w*|\bcanons? a eau\b|"
+                            r"\bwater cannons?\b|\bles crs?\b|\bca gaze\b|\bgazent\b|\bgazes\b|\bgaze\b|"
+                            r"مسيل للدموع|сльозогінн\w*|слезоточив\w*"),
+    ("crowd_movement", r"\bcortege\b|\bmanifestants?\b|\bmanifestantes\b|\bfoule\b|\bcrowd\b|\bmarchent\b|\bmarching\b|\bprotesters?\b|"
+                       r"\bdemonstrators?\b|\bmanifestation\b|\bmanifestacion\b|متظاهر\w*|مظاهرة|мітинг\w*|митинг\w*|протестуюч\w*"),
+    ("troops_sighted", r"\bsoldats?\b|\btroops?\b|\bmilitary convoy\b|\bconvoi militaire\b|\btanks?\b|\bchars? d'assaut\b|\bblindes?\b|"
+                       r"\barmored vehicles?\b|\bmilitary vehicles?\b|\btropas\b|\bejercito\b|\bвойск\w*|\bтанк\w*|\bколон\w* техніки|جنود|دبابات|آليات عسكرية"),
+]]
+
+
+def act_by_words(text: str | None) -> tuple[str, str] | None:
+    """(act, the words) for the gravest act the text's words name, or None."""
+    t = _f(text)
+    for act, rx in ACT_WORDS:
+        m = rx.search(t)
+        if m:
+            return act, m.group(0)
+    return None
+
+
+def rule_decide(text: str | None, posted_at: str | None, now: _dt.datetime | None = None) -> dict:
+    """The rule path's whole judgement (the model is out): {ok, act, quote, why}.
+    The same discipline as the extractor, as far as code can: an act of the owner's
+    vocabulary named by words; not an opinion; not a story from another day or told in
+    the past; the text says it is happening now (a present-tense cue); the post itself
+    is inside the window. When unsure, no pin."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
+    out = {"ok": False, "act": None, "quote": None, "why": None}
     p = parse_utc(posted_at)
     if p is None:
-        return False, "no post time"
+        out["why"] = "no post time"
+        return out
     age = (now - p).total_seconds() / 60
     if age > LIVE_WINDOW_MIN:
-        return False, f"post is {int(age)} min old (live window {LIVE_WINDOW_MIN})"
+        out["why"] = f"post is {int(age)} min old (live window {LIVE_WINDOW_MIN})"
+        return out
     if age < -SKEW_S / 60:
-        return False, "post time is in the future"
-    pc = past_cue(text)
+        out["why"] = "post time is in the future"
+        return out
+    from textclean import strip_emoji
+    body = strip_emoji(text)
+    oc = opinion_cue(body)
+    if oc:
+        out["why"] = f"opinion, not a report ('{oc}')"
+        return out
+    pc = past_cue(body)
     if pc:
-        return False, f"the text points to an earlier time ('{pc}')"
-    if not PRESENT_CUES.search(fold(text)) and not PRESENT_CUES.search(text or ""):
-        return False, "no present-tense cue (breaking, now, عاجل, срочно ...)"
-    return True, "present-tense cue, no earlier time, recent post"
+        out["why"] = f"the text points to an earlier time ('{pc}')"
+        return out
+    sc = story_cue(body)
+    if sc:
+        out["why"] = f"a story from another time ('{sc}')"
+        return out
+    if not PRESENT_CUES.search(_f(body)) and not NOW_WORDS.search(_f(body)):
+        out["why"] = "no present-tense cue (breaking, now, عاجل, срочно ...)"
+        return out
+    hit = act_by_words(body)
+    if not hit:
+        out["why"] = "no act of the vocabulary named by words"
+        return out
+    out.update(ok=True, act=hit[0], quote=hit[1], why="act named, present-tense cue, no earlier time, recent post")
+    return out
+
+
+def rule_live(text: str | None, posted_at: str | None, now: _dt.datetime | None = None) -> tuple[bool, str]:
+    """(live, why): rule_decide's verdict, kept for callers that want the pair."""
+    d = rule_decide(text, posted_at, now)
+    return d["ok"], d["why"]
 
 
 # ── prefilter (cost control) ────────────────────────────────────────────────
@@ -286,7 +448,7 @@ def prefilter(text: str | None) -> tuple[bool, bool]:
     if telegram_rules.ALERT_ONLY.search(ft) and not telegram_rules.HARD_HIT.search(ft) and not INCIDENT_WORDS.search(t):
         return False, False
     kind, _m = telegram_rules.event_of(t)
-    if kind or INCIDENT_WORDS.search(t):
+    if kind or INCIDENT_WORDS.search(t) or act_by_words(t):
         return True, False
     if len(t) >= 40 and PRESENT_CUES.search(t) and not telegram_rules.ALERT_ONLY.search(ft):
         return True, False                       # it says it is happening now: let the model read the rest
@@ -336,32 +498,64 @@ def extract(text: str, published_at: str, source_name: str | None, source_region
 
 # ── the code's verdict (pure) ───────────────────────────────────────────────
 
+_CLOCK = re.compile(r"\b(\d{1,2})\s*(?:[:hH])\s*(\d{2})\b")
+
+
+def header_clock(text: str | None) -> str | None:
+    """The forwarded message's header time: a clock right after a channel or
+    city name at the very start of the text ("Île de France 17:41. Bonjour ..."),
+    which is when it was posted and never when the event happened."""
+    t = (text or "").lstrip()
+    t = re.sub(r"^[^\w\d]+", "", t)                 # a leading flag or bolt is not a word
+    m = re.match(r"^[^\d\n]{1,45}?\s(\d{1,2}\s*[:hH]\s*\d{2})\b", t)
+    if not m:
+        return None
+    # "At 01:31 local time" is the writer's own time, not a channel's header: a header is a NAME then a clock
+    if re.match(r"(?i)^(?:at|on|in|around|about|since|from|until|à|vers|depuis|dès|a las|a|en|в|о|на|у)\b", t):
+        return None
+    mm = _CLOCK.search(m.group(1))
+    return f"{int(mm.group(1)):02d}:{mm.group(2)}" if mm else None
+
+
+def _clocks(s: str | None) -> set[str]:
+    return {f"{int(a):02d}:{b}" for a, b in _CLOCK.findall(s or "")}
+
+
 def verify(raw: dict | None, text: str, published_at: str, now: _dt.datetime | None = None) -> dict:
     """What the code makes of the model's answer, before any geocoding.
-    {ok, reasons, event_time, age_min, level, name, context, event_type,
-     certainty}. `ok` only when every check holds; `reasons` says which failed."""
+    {ok, reasons, event_time, age_min, level, name, context, event_type, act,
+     certainty, first_hand, direction}. `ok` only when every check holds;
+    `reasons` says which failed."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     v = {"ok": False, "reasons": [], "event_time": None, "level": None, "name": None, "context": [],
-         "event_type": None, "certainty": None, "geocoder_name": None}
+         "event_type": None, "act": None, "certainty": None, "geocoder_name": None, "first_hand": False,
+         "direction": None, "reject_class": None}
     if not isinstance(raw, dict):
         v["reasons"].append("no answer from the model")
         return v
     if not raw.get("is_live"):
-        v["reasons"].append("model: " + (str(raw.get("reject_reason") or "not live")[:160]))
+        rc = raw.get("reject_class") if raw.get("reject_class") in REJECT_CLASSES else None
+        v["reject_class"] = rc
+        v["reasons"].append("model: " + (f"[{rc}] " if rc else "") + (str(raw.get("reject_reason") or "not live")[:160]))
         return v
     bad = v["reasons"]
+    if raw.get("reject_class"):
+        bad.append(f"model says it is not a signal ({raw.get('reject_class')})")
+        v["reject_class"] = raw.get("reject_class")
     et = raw.get("event_type")
-    if et not in EVENT_TYPES:
-        bad.append(f"event type '{et}' is not an allowed type")
+    if et not in ACTS:
+        bad.append(f"event type '{et}' is not one of the signal acts")
     cert = raw.get("certainty")
     if cert not in ("verified", "unverified"):
         bad.append("certainty missing")
-    # (a) both quotes, verbatim
-    tq, pq = raw.get("evidence_quote_time"), raw.get("evidence_quote_place")
+    # (a) the three quotes, verbatim: when, where, what
+    tq, pq, aq = raw.get("evidence_quote_time"), raw.get("evidence_quote_place"), raw.get("evidence_quote_act")
     if not in_text(tq, text):
         bad.append("time quote is not in the text")
     if not in_text(pq, text):
         bad.append("place quote is not in the text")
+    if not in_text(aq, text):
+        bad.append("act quote is not in the text")
     # (b) the place, as written, and every word of context
     loc = raw.get("location")
     name = (loc or {}).get("name_as_written") if isinstance(loc, dict) else None
@@ -374,6 +568,9 @@ def verify(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
             bad.append("place as written is not in the text")
         if level not in LEVELS:
             bad.append(f"level '{level}' is not an allowed level")
+        from textclean import is_generic_place
+        if is_generic_place(name):
+            bad.append(f"'{name}' is a kind of place, not a place")
         for c in ctx:
             if not in_text(c, text):
                 bad.append(f"context '{c[:30]}' is not in the text")
@@ -397,10 +594,29 @@ def verify(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
     pc = past_cue(tq) if tq else None
     if pc:
         bad.append(f"the time quote points to an earlier time ('{pc}')")
+    # (c2) the traps the owner found (2026-10-22): a forwarded header's clock is not the event's time;
+    # a story told in the past is not live; an opinion is not an event
+    hc = header_clock(text)
+    if hc and tq and _clocks(tq) and _clocks(tq) <= {hc} and not NOW_WORDS.search(_f(tq)):
+        bad.append(f"the only time quoted ({hc}) is the forwarded message's header, not the event's")
+    sc = story_cue(text)
+    if sc:
+        bad.append(f"a story from another time ('{sc}')")
+    oc = opinion_cue(text)
+    if oc and not act_by_words(text):
+        bad.append(f"opinion, not a report ('{oc}')")
     gname = (loc or {}).get("name_for_geocoder") if isinstance(loc, dict) else None
+    # a crowd's direction: the words that say it must be in the text
+    direction = None
+    d = raw.get("direction")
+    if et == "crowd_movement" and isinstance(d, dict) and in_text(d.get("as_written"), text):
+        tp = d.get("toward_place")
+        direction = {"as_written": d.get("as_written"), "toward_place": tp if isinstance(tp, str) and in_text(tp, text) else None}
     v.update(event_time=iso(min(ev, pub)) if ev and pub else (iso(ev) if ev else None), level=level, name=name,
-             context=ctx, event_type=et, certainty=cert, age_min=None if age is None else round(age, 1),
-             geocoder_name=gname if isinstance(gname, str) else None)
+             context=ctx, event_type=et, act=et if et in ACTS else None, certainty=cert,
+             age_min=None if age is None else round(age, 1),
+             geocoder_name=gname if isinstance(gname, str) else None, first_hand=bool(raw.get("first_hand")),
+             direction=direction)
     v["ok"] = not bad
     return v
 
@@ -716,9 +932,11 @@ def decide(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
     None), level, event_time, event_type, certainty, name, why, audit}. Pure
     but for the geocoder passed in."""
     v = verify(raw, text, published_at, now)
-    audit = {"model": raw, "verify": {k: v[k] for k in ("ok", "reasons", "event_time", "level", "name", "context", "geocoder_name")}}
+    audit = {"model": raw, "verify": {k: v[k] for k in ("ok", "reasons", "event_time", "level", "name", "context", "geocoder_name",
+                                                         "act", "first_hand", "direction", "reject_class")}}
     out = {"ok": False, "pin": None, "audit": audit, "verdict": None, "event_time": None, "why": None,
-           "event_type": v["event_type"], "certainty": v["certainty"], "name": v["name"], "level": v["level"]}
+           "event_type": v["event_type"], "act": v["act"], "certainty": v["certainty"], "name": v["name"],
+           "level": v["level"], "first_hand": v["first_hand"], "direction": None}
     if not v["ok"]:
         out["why"] = "; ".join(v["reasons"])[:300]
         out["verdict"] = "rejected: " + out["why"]
@@ -742,6 +960,18 @@ def decide(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
         return out
     out["pin"] = hit
     out["verdict"] = "live"
+    # a crowd's heading: the place its words name, found near the crowd (the same 40 km rule as a street)
+    d = v.get("direction")
+    if d and d.get("toward_place"):
+        try:
+            h2, _why2, _i2 = resolve_place(d["toward_place"], "neighborhood", v["context"], text, geocode=geocode,
+                                           budget=budget)
+            if h2 is not None and _km(hit, h2) <= NEAR_CONTEXT_KM and _km(hit, h2) > 0.03:
+                d = {**d, "lat": h2["lat"], "lon": h2["lon"]}
+        except Exception:                                      # noqa: BLE001
+            pass
+    out["direction"] = d
+    audit["direction_resolved"] = d
     return out
 
 
@@ -752,10 +982,38 @@ def ensure_columns(con) -> None:
             con.execute(f"ALTER TABLE telegram_posts ADD COLUMN {col} {typ}")
 
 
-EVENT_LABEL = {"strike": "Strike", "attack": "Attack", "clash": "Clashes", "movement": "Military movement",
-               "seizure": "Seizure", "explosion": "Explosion", "interception": "Interception",
-               "infrastructure_damage": "Infrastructure damage", "maritime": "Maritime incident",
-               "aviation": "Aviation incident", "unrest": "Unrest"}
+ACT_LABEL = {"arrest": "Arrest", "shots_fired": "Shots fired", "explosion": "Explosion", "strike": "Strike",
+             "missile_launch": "Missile launch", "missile_impact": "Missile impact", "crowd_movement": "Crowd",
+             "troops_sighted": "Troops sighted", "police_intervention": "Police intervention"}
+_POLICE_KINDS = [(re.compile(r"lacrymo|tear ?gas|gaze|gazent|مسيل للدموع|сльозогінн|слезоточив", re.I), "Tear gas"),
+                 (re.compile(r"\blbd\b|flashball|rubber bullet|balles? en caoutchouc", re.I), "Rubber bullets"),
+                 (re.compile(r"nasse|kettl|encercl", re.I), "Kettle"),
+                 (re.compile(r"canons? a eau|water cannon", re.I), "Water cannon"),
+                 (re.compile(r"charge", re.I), "Police charge")]
+
+
+def act_label(act: str | None, quote: str | None = None) -> str:
+    """The card's name for the act ('Tear gas', 'Police charge', 'Arrest')."""
+    if act == "police_intervention" and quote:
+        q = fold(quote)
+        for rx, label in _POLICE_KINDS:
+            if rx.search(q):
+                return label
+    return ACT_LABEL.get(act or "", "Incident")
+
+
+def card_headline(act: str | None, quote: str | None, name: str | None, context=None, direction=None) -> str:
+    """'Arrest at rue de Rivoli, Paris' — the act, the place as written, the city the text gives. No emoji."""
+    from textclean import strip_emoji
+    place = strip_emoji(name or "")
+    ctx = [strip_emoji(c) for c in (context or []) if isinstance(c, str)]
+    ctx = [c for c in ctx if c and fold(c) not in fold(place)]
+    where = ", ".join([place] + ctx[:1]) if place else ""
+    head = f"{act_label(act, quote)} at {where}" if where else act_label(act, quote)
+    to = (direction or {}).get("toward_place") if isinstance(direction, dict) else None
+    if act == "crowd_movement" and to:
+        head = f"Crowd at {where}, moving toward {strip_emoji(to)}" if where else f"Crowd moving toward {strip_emoji(to)}"
+    return head
 
 
 def is_live_now(row: dict, now: _dt.datetime | None = None) -> bool:
@@ -833,11 +1091,13 @@ def _write(con, row: dict, d: dict, raw: dict | None, cost: float, now: _dt.date
         if d["level"] == "city":
             t = (pin.get("type") or "")
             prec = t if t in ("village", "town") else "city"
-        sets.update({"relevant": 1, "event_type": d["event_type"], "place": d["name"], "precision": prec,
-                     "country_code": ((pin.get("country_code") or "") or None), "lat": pin["lat"], "lon": pin["lon"],
-                     "geocoded_as": (pin.get("display_name") or "")[:300], "unpublished_reason": None})
-        if not (row.get("headline") or "").strip():
-            sets["headline"] = f"{EVENT_LABEL.get(d['event_type'], 'Incident')} — {d['name']}"[:200]
+        sets.update({"relevant": 1, "event_type": ACT_EVENT_TYPE.get(d["act"], d["event_type"]), "place": d["name"],
+                     "precision": prec, "country_code": ((pin.get("country_code") or "") or None),
+                     "lat": pin["lat"], "lon": pin["lon"],
+                     "geocoded_as": (pin.get("display_name") or "")[:300], "unpublished_reason": None,
+                     # the card's words, short and plain (owner, 2026-10-22): no emoji, no 'report', no channel
+                     "headline": card_headline(d["act"], (raw or {}).get("evidence_quote_act"), d["name"],
+                                               (d["audit"].get("verify") or {}).get("context"), d.get("direction"))[:200]})
     elif d["ok"]:
         sets["unpublished_reason"] = f"live, not pinned: {d['why']}"[:300]
     elif (row.get("live_verdict") or "") == "rule-live" or (row.get("read_by") == "rule" and row.get("lat") is not None):
@@ -922,6 +1182,20 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
                 _bump("skipped_prefilter")
                 con.execute("UPDATE telegram_posts SET live_checked=1, live_at=?, live_verdict=? WHERE channel=? AND msg_id=?",
                             (iso(now), "skipped: no incident words (prefilter)", r["channel"], r["msg_id"]))
+                continue
+            # no model call for what the code would reject anyway (verify() holds the same two checks)
+            why_not = None
+            sc = story_cue(r["text"])
+            if sc:
+                why_not = f"a story from another time ('{sc}')"
+            elif opinion_cue(r["text"]) and not act_by_words(r["text"]):
+                why_not = "opinion, not a report"
+            if why_not:
+                out["rejected"] += 1
+                _bump("rejected")
+                _reject_count(why_not)
+                con.execute("UPDATE telegram_posts SET live_checked=1, live_at=?, live_verdict=? WHERE channel=? AND msg_id=?",
+                            (iso(now), f"rejected: {why_not} (before the model)", r["channel"], r["msg_id"]))
                 continue
             r["_drone"] = drone
             r["_hash"] = text_hash(r["text"])

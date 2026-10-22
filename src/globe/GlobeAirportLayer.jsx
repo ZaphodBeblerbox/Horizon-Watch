@@ -101,7 +101,7 @@ export default function GlobeAirportLayer({ enabled, viewBounds }) {
                             width:           sz,
                             height:          sz,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.2, 10_000_000, 0.2),
+                            
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 12_000_000),
                             eyeOffset: new (Cartesian3)(0, 0, -80),
                         }}

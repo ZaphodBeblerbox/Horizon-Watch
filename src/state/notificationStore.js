@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { getSettings, subscribeSettings, updateSetting } from "./settingsStore.js"
 import { isOnScreen } from "../notify/inbox.js"
+import { stripEmoji } from "../lib/liveSignals.js"
 /**
  * notificationStore.js — PARALLAX spec §5.
  *
@@ -246,8 +247,9 @@ export function pushNotification(n) {
         ts,
         kind: KIND[n.kind] ? n.kind : "signal",
         sev: SEV_ORDER.includes(n.sev) ? n.sev : "moderate",
-        title: n.title || "",
-        sub: n.sub || "",
+        // no emoji in a Telegram-derived card (owner, 2026-10-22); the server strips too, this is the guard
+        title: n.kind === "telegram" ? stripEmoji(n.title) : (n.title || ""),
+        sub: n.kind === "telegram" ? stripEmoji(n.sub) : (n.sub || ""),
         // What is likely to happen there, and what to do — each names the
         // place (telegram_events.py drops them otherwise).
         expect: n.expect || "",

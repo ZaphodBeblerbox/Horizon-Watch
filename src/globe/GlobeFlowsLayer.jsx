@@ -211,7 +211,7 @@ export default function GlobeFlowsLayer({ enabled = false, onStatus = null }) {
                             outlineWidth: 2,
                             style: 2,
                             pixelOffset: new Cartesian2(0, -10),
-                            scaleByDistance: new NearFarScalar(500_000, 1.0, 20_000_000, 0.55),
+                            
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 30_000_000),
                             showBackground: true,
                             backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.72),

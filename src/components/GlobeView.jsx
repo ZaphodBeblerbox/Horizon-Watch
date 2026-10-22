@@ -25,11 +25,8 @@ import GlobeChokepointsLayer    from "../globe/GlobeChokepointsLayer.jsx"
 import GlobeDerivedAlertsLayer  from "../globe/GlobeDerivedAlertsLayer.jsx"
 import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
-import GlobeTelegramLayer        from "../globe/GlobeTelegramLayer.jsx"
-import GlobeDemonstrationsLayer  from "../globe/GlobeDemonstrationsLayer.jsx"
-import GlobePoliceActionsLayer   from "../globe/GlobePoliceActionsLayer.jsx"
+import GlobeLiveSignalsLayer     from "../globe/GlobeLiveSignalsLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
-import GlobeTelegramMoodLayer from "../globe/GlobeTelegramMoodLayer.jsx"
 import GlobeEndangeredPlacesLayer from "../globe/GlobeEndangeredPlacesLayer.jsx"
 import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
 import GlobeAssetsLayer          from "../globe/GlobeAssetsLayer.jsx"
@@ -160,12 +157,8 @@ export default function GlobeView({
     // GDELT machine-coded news events — separate from geoConfirmedEnabled
     // on purpose, see GlobeGdeltLayer.jsx.
     gdeltEnabled = false,
-    telegramEnabled = false,
-    unrestEnabled   = false,
-    // What "Get me out" avoids, and the crowd's movement reconstructed from
-    // Telegram reports (GlobeDemonstrationsLayer).
-    demonstrationsEnabled = false,
-    telegramMoodEnabled = false,
+    // THE signal layer (owner, 2026-10-22): the nine acts, live only, one marker per event
+    liveSignalsEnabled = false,
     // Strikes & control (GlobeStrikesLayer), and the frontline claims,
     // movements and trajectories drawn from the same events.
     strikesEnabled  = false,
@@ -1254,12 +1247,7 @@ export default function GlobeView({
                 />
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} limit={1500} />
-                <GlobeTelegramLayer enabled={telegramEnabled} unrest={unrestEnabled} hours={Math.max(48, signalWindowHours || 48)} />
-                <GlobeDemonstrationsLayer enabled={demonstrationsEnabled} />
-                {/* street reports (tear gas, kettles, police moving in): with the
-                    demonstrations layer, and with unrest (on by default), whose pins they replace */}
-                <GlobePoliceActionsLayer enabled={demonstrationsEnabled || unrestEnabled} />
-                <GlobeTelegramMoodLayer enabled={telegramMoodEnabled} />
+                <GlobeLiveSignalsLayer enabled={liveSignalsEnabled} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
                 <GlobeEndangeredPlacesLayer enabled={endangeredEnabled} />
                 {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}

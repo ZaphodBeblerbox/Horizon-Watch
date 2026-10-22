@@ -35,6 +35,7 @@ import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
 import { closeOpenedSignal } from "../../lib/signalPin.js"
+import { declutterAll } from "../../lib/liveSignals.js"
 import { setTheaterScope } from "../theaterScope.js"
 import CountryFlag from "../../components/CountryFlag.jsx"
 import { trackCountry } from "../../lib/icaoCountry.js"
@@ -90,13 +91,14 @@ const scaled = (f, dw = 16) => {
 // close together on screen are drawn as one count until zoom 11; what is
 // yours (assets, people, safe houses), places with their own grouping and
 // anything critical are never folded away.
-const CLUSTER_LAYERS = new Set(["geoConfirmed", "telegram", "unrest", "demonstrations", "strikes", "imagerySignals", "fires", "derivedAlerts",
+const CLUSTER_LAYERS = new Set(["geoConfirmed", "strikes", "imagerySignals", "fires", "derivedAlerts",
                                 "ports", "airports", "facMilitary", "facMedical", "facSecurity", "power:sites"])
 const CLUSTER_PX = 46
+const CLUSTER_PX_SIZE = 30
 const CLUSTER_UNTIL = 11
 const CLUSTER_MIN = 3
 const clusterIcon = (n) => {
-    const d = n >= 100 ? 44 : n >= 20 ? 38 : 32
+    const d = CLUSTER_PX_SIZE                  // one constant on-screen size, whatever the count
     return L.divIcon({ className: "", iconSize: [d, d], iconAnchor: [d / 2, d / 2], html: `<div class="m2-cluster">${n > 999 ? "999+" : n}</div>` })
 }
 const pickedIcon = L.divIcon({ className: "", iconSize: [40, 40], iconAnchor: [20, 20], html: '<div class="m2-picked"></div>' })
@@ -280,7 +282,6 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         if (!me?.live) return
         const trail = myTrail().filter((p) => Date.now() - p.at < 6 * 3600_000).map((p) => [p.lat, p.lon])
         if (trail.length > 1) L.polyline(trail, { color: "#3b8cff", weight: 3, opacity: 0.7, interactive: false, className: "m2-me-trail" }).addTo(g)
-        if (me.accuracy > 20 && me.accuracy < 3000) L.circle([me.lat, me.lon], { radius: me.accuracy, color: "#3b8cff", weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false }).addTo(g)
     }, [me])
 
     // THE TRACK on show (an asset's or a person's): coloured by age, its
@@ -379,7 +380,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             ;(feats[l.key] || []).forEach((f, i) => {
                 const key = `${l.key}:${f.id ?? i}`
                 if (l.key === "assets" && liveAssets.has(f.raw?.id)) return    // moved by a phone: a live marker
-                if ((l.key === "telegram" || l.key === "geoConfirmed") && covered.has(f.id)) return
+                if (l.key === "geoConfirmed" && covered.has(f.id)) return
                 // A PERSON'S OWN "(live)" ASSET is that person: drawn once, as the
                 // person (the blue dot for you, the team marker for others), never twice
                 if (l.key === "assets" && f.raw?.kind === "person" && f.raw?.identifiers?.user_id && on.people) return
@@ -423,13 +424,40 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 }
             })
         }
+        // LIVE SIGNALS NEVER OVERLAP (owner, 2026-10-22: "three different icons at the Sorbonne, all on top of
+        // each other"): in screen pixels at this zoom, any markers whose boxes touch become ONE cluster that
+        // opens a list; nothing is nudged or fanned out. At every zoom, so zooming in separates them.
+        const z0 = m.getZoom()
+        const collide = points.filter((p) => p.f.collide)
+        if (collide.length) {
+            const groups = declutterAll(collide.map((p) => {
+                const q = m.project([p.lat, p.lon], z0)
+                return { id: p.key, x: q.x, y: q.y, size: scaled(p.f).w, sev: p.f.severity || null, _p: p }
+            }))
+            for (const g of groups) {
+                if (!g.cluster) {
+                    const p = g.members[0]._p, { w, h, a } = scaled(p.f)
+                    want.set(`p:${p.key}`, { sig: `${p.f.iconUri}|${w}|${h}|${p.lat}|${p.lon}`, make: () => L.marker([p.lat, p.lon], {
+                        icon: L.icon({ iconUrl: p.f.iconUri, iconSize: [w, h], iconAnchor: a }), keyboard: false,
+                    }).on("click", tap(p.f, p.l, p.key)) })
+                    continue
+                }
+                const list = g.members.map((mm) => mm._p)
+                const lat = list.reduce((x, p) => x + p.lat, 0) / list.length, lon = list.reduce((x, p) => x + p.lon, 0) / list.length
+                const key = `lc:${list.map((p) => p.key).sort().join("|")}`
+                want.set(key, { sig: `${list.length}|${lat.toFixed(5)}|${lon.toFixed(5)}`, make: () => L.marker([lat, lon], { icon: clusterIcon(list.length), keyboard: false, zIndexOffset: 300 })
+                    .on("click", () => setOpen({ kind: "live_cluster", headline: `${list.length} signals here`, title: `${list.length} signals here`, lat, lon, _key: key,
+                                                  cluster: list.map((p) => ({ title: p.f.title, line: p.f.sub })) })) })
+            }
+        }
+        const pointsFree = points.filter((p) => !p.f.collide)
         // GROUP what crowds the screen, in a grid of the screen at this zoom
         // (stable as the map pans, so a pan never reshuffles the groups)
         const z = m.getZoom()
         const loose = []
         if (z < CLUSTER_UNTIL) {
             const cells = new Map()
-            for (const p of points) {
+            for (const p of pointsFree) {
                 if (!p.fold) { loose.push(p); continue }
                 const q = m.project([p.lat, p.lon], z)
                 const c = `${Math.floor(q.x / CLUSTER_PX)}:${Math.floor(q.y / CLUSTER_PX)}`
@@ -445,7 +473,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         m.flyToBounds(L.latLngBounds(list.map((p) => [p.lat, p.lon])), { padding: [70, 70], maxZoom: Math.min(z + 4, 15), duration: 0.6 })
                     }) })
             }
-        } else loose.push(...points)
+        } else loose.push(...pointsFree)
         for (const p of loose) {
             const { w, h, a } = scaled(p.f)
             want.set(`p:${p.key}`, { sig: `${p.f.iconUri}|${w}|${h}|${p.lat}|${p.lon}`, make: () => L.marker([p.lat, p.lon], {

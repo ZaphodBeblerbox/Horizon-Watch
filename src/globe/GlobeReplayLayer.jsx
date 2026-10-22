@@ -56,10 +56,7 @@ export default function GlobeReplayLayer({ viewerRef, isVisible }) {
         const ent = viewer.entities.add({
             position: cartesian,
             point: {
-                pixelSize: new CallbackProperty(() => {
-                    const t = Math.min(1, (performance.now() - start) / PING_MS)
-                    return 6 + easeOutCubic(t) * 40
-                }, false),
+                pixelSize: 10,                       // constant on-screen size: it fades, it does not swell
                 color: new CallbackProperty(() => {
                     const t = Math.min(1, (performance.now() - start) / PING_MS)
                     return color.withAlpha(1 - easeOutCubic(t))

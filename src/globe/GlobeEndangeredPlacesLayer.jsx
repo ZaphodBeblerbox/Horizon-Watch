@@ -79,7 +79,7 @@ const PlaceEntity = memo(function PlaceEntity({ p, far = false }) {
                 // calls (and, with "Active only", places near one) from
                 // continent scale; listed-only places from region scale
                 distanceDisplayCondition: new DistanceDisplayCondition(0, hasCall || (far && p.active) ? 9_000_000 : 1_800_000),
-                scaleByDistance: new NearFarScalar(200_000, 1.0, 6_000_000, 0.7),
+                
                 eyeOffset: new Cartesian3(0, 0, hasCall ? -60 : -20),
             }} />
     )

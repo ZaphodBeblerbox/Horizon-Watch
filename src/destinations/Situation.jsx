@@ -414,17 +414,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // only what had been verified could not have it.
     const [geoConfirmedOn, setGeoConfirmedOn] = useState(true)
     const [gdeltOn, setGdeltOn] = useState(false)      // GDELT: country risk index only, never map signals (owner, 2026-10-13)
-    const [telegramOn, setTelegramOn] = useState(true)
-    // Riots, protests and civil unrest, and the gatherings announced for
-    // the coming days — kept apart from the fighting by their own toggle.
-    const [unrestOn, setUnrestOn] = useState(true)
-    // What the route planner ("Get me out") avoids, and the crowd's movement
-    // reconstructed from Telegram reports (GlobeDemonstrationsLayer): on,
-    // with News (owner, 2026-10-18: "protest movements have not been added
-    // to desktop" — off by default, nobody found it). Draws only where a
-    // demonstration is current.
-    const [demonstrationsOn, setDemonstrationsOn] = useState(true)
-    const [telegramMoodOn, setTelegramMoodOn] = useState(true)
+    // THE signal layer (owner, 2026-10-22): the nine acts the owner named, live only, one marker per event
+    // (GlobeLiveSignalsLayer). It replaced the Telegram, Unrest & protests, Protests & crowds and Mood
+    // layers. With News, like the others: News itself is off until chosen.
+    const [liveSignalsOn, setLiveSignalsOn] = useState(true)
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
@@ -494,10 +487,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         gpsInterference: [gpsInterferenceOn, setGpsInterferenceOn],
         geoConfirmed: [geoConfirmedOn, setGeoConfirmedOn],
         gdelt: [gdeltOn, setGdeltOn],
-        telegram: [telegramOn, setTelegramOn],
-        unrest: [unrestOn, setUnrestOn],
-        demonstrations: [demonstrationsOn, setDemonstrationsOn],
-        telegramMood: [telegramMoodOn, setTelegramMoodOn],
+        liveSignals: [liveSignalsOn, setLiveSignalsOn],
         strikes: [strikesOn, setStrikesOn],
         frontlineClaims: [claimsOn, setClaimsOn],
         movements: [movementsOn, setMovementsOn],
@@ -1276,10 +1266,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         imagery_signals: [imagerySignalsOn, setImagerySignalsOn, "imagery"],
         satellite_image: [satImageOn, setSatImageOn, "imagery"],
         gdelt: [gdeltOn, setGdeltOn, "news"],
-        telegram: [telegramOn, setTelegramOn, "news"],
-        unrest: [unrestOn, setUnrestOn, "news"],
-        demonstrations: [demonstrationsOn, setDemonstrationsOn, "news"],
-        telegram_mood: [telegramMoodOn, setTelegramMoodOn, "news"],
+        live_signals: [liveSignalsOn, setLiveSignalsOn, "news"],
         strikes: [strikesOn, setStrikesOn, "news"],
         geoconfirmed: [geoConfirmedOn, setGeoConfirmedOn, "news"],
         gps_interference: [gpsInterferenceOn, setGpsInterferenceOn, "air"],
@@ -1545,31 +1532,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             )}
                             {g.key === "news" && (
                                 <SubLayerRow
-                                    label="Telegram"
-                                    hint="Channels you joined · AI-screened for relevance · pinned only where the post names a precise place · unverified"
-                                    on={telegramOn} parentOn={groupsOn.news}
-                                    onToggle={() => setTelegramOn((v) => !v)} />
-                            )}
-                            {g.key === "news" && (
-                                <SubLayerRow
-                                    label="Unrest & protests"
-                                    hint="Riots, protests and clashes with police filmed and posted on Telegram, and the gatherings announced for the coming days (hollow pins) · unverified"
-                                    on={unrestOn} parentOn={groupsOn.news}
-                                    onToggle={() => setUnrestOn((v) => !v)} />
-                            )}
-                            {g.key === "news" && (
-                                <SubLayerRow
-                                    label="Protests & crowds, live"
-                                    hint="Every demonstration and happening the route planner (Get me out) avoids right now, and the crowd's movement reconstructed from Telegram reports: a line through the places it was reported, older hops fainter, the arrow on the latest and when it was last reported · reconstructed, not tracked · read every minute"
-                                    on={demonstrationsOn} parentOn={groupsOn.news}
-                                    onToggle={() => setDemonstrationsOn((v) => !v)} />
-                            )}
-                            {g.key === "news" && (
-                                <SubLayerRow
-                                    label="Mood & calls to violence"
-                                    hint="The mood on Telegram as signals: calls for conflict rising in a country, demonstrations likely, tension rising sharply, and each single post calling to violence, quoted, with its channel and link · solid ring where the post placed it, dashed at the country's centre · unverified, rated by a model · read every minute"
-                                    on={telegramMoodOn} parentOn={groupsOn.news}
-                                    onToggle={() => setTelegramMoodOn((v) => !v)} />
+                                    label="Live signals"
+                                    hint="What is happening on the ground now, read from Telegram and checked by an AI reader that must quote the act, the place and the time: arrests, shots, explosions and strikes, missiles, crowds on the move, troops, police action · one marker per event, gone an hour after it · each says how it is sourced (eyewitness, corroborated by several, or one unverified source)"
+                                    on={liveSignalsOn} parentOn={groupsOn.news}
+                                    onToggle={() => setLiveSignalsOn((v) => !v)} />
                             )}
                             {g.key === "news" && (
                                 <SubLayerRow
@@ -2137,10 +2103,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         eventsEnabled={groupsOnV.news} precisionEventsEnabled={groupsOnV.news && geoConfirmedOn}
                         geoConfirmedEnabled={groupsOnV.news && geoConfirmedOn}
                         gdeltEnabled={groupsOnV.news && gdeltOn}
-                        telegramEnabled={groupsOnV.news && telegramOn}
-                        unrestEnabled={groupsOnV.news && unrestOn}
-                        demonstrationsEnabled={groupsOnV.news && demonstrationsOn}
-                        telegramMoodEnabled={groupsOnV.news && telegramMoodOn}
+                        liveSignalsEnabled={groupsOnV.news && liveSignalsOn}
                         strikesEnabled={groupsOnV.news && strikesOn}
                         frontlineClaimsEnabled={groupsOnV.news && claimsOn}
                         movementsEnabled={groupsOnV.news && movementsOn}

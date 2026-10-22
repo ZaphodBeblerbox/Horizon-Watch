@@ -20,6 +20,8 @@
  */
 import { safeHouseIcon, placesLabel } from "../evacuation/safeHouseIcon.js"
 import API_BASE from "../apiBase.js"
+import { actIcon, cardText, liveSignalDrawn, mediaSources, ICON_PX } from "../lib/liveSignals.js"
+import { imageryIcon } from "../lib/mapIcons.js"
 import { myPosition } from "../location/liveShare.js"
 import { getCurrentUser } from "../state/authStore.js"
 import {
@@ -39,15 +41,6 @@ import {
     claimRing, claimStyle, claimSummary, milSymbol, movementArrow, movementLabel, movementStyle, movementSummary,
     movementSymbolPoint, overlayUrl, sideColour, trajectoryPath, trajectorySummary, FRONTLINE_LAYERS,
 } from "../globe/frontlineClaims.js"
-import {
-    DEMOS_PATH, DEMOS_REFRESH_MS, DEMO_SIZE, TRACK_COLOUR, demoIconUri, demoRaw, demoSub, demoTitle, trackSegments,
-} from "../globe/demonstrations.js"
-import { itemStatusLabel, protestPoints } from "../globe/protests.js"
-import { MOOD_PATH, MOOD_REFRESH_MS, moodIconUri, moodPoint } from "../globe/telegramMood.js"
-import { SITUATION_PATH, SITUATION_REFRESH_MS, convergenceIcon, situationFeatures } from "../globe/demoSituation.js"
-import { POLICE_PATH, POLICE_REFRESH_MS, policeFeatures, tacticIcon } from "../globe/policeActions.js"
-import { dropStaleDemos } from "../globe/freshness.js"
-import { isLive as isLiveIncident } from "../lib/liveIncident.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -168,7 +161,7 @@ export function cullOrCluster(features, bounds, zoom, { noun = "points", prefix 
             const sev = list.map((f) => f.severity).filter(Boolean)
                 .sort((a, b) => (SIG_RANK[a] ?? 9) - (SIG_RANK[b] ?? 9))[0] || null
             const alarm = sev === "critical" || sev === "high" ? "red" : sev === "medium" ? "amber" : "grey"
-            const size = list.length >= 50 ? 36 : list.length >= 10 ? 32 : 28
+            const size = 30
             const named = list.slice(0, 8).map((f) => f.title).filter(Boolean)
             out.push({
                 id: `${prefix}-cl-${z}-${px}-${k}`, lat, lon, iconUri: clusterIconUri({ count: list.length, alarm, size }), size,
@@ -295,59 +288,8 @@ function fireColourFor(k) {
     return "var(--sev-medium, #c9a227)"                    // warm, common
 }
 
-// ── Imagery signals (globe/GlobeImagerySignalsLayer.jsx icon, verbatim) ───
-const IMG_SEV = { critical: "#E5484D", high: "#F5A524", moderate: "#8FB4E8", medium: "#8FB4E8", low: "#9AA9BC" }
-const _imgIcons = {}
-function imagerySignalIcon(sev) {
-    const c = IMG_SEV[sev] || IMG_SEV.moderate
-    if (_imgIcons[c]) return _imgIcons[c]
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect x="5" y="5" width="22" height="22" fill="${c}" stroke="#0b1220" stroke-width="2.5"/>
-      <path d="M16 9v14M9 16h14" stroke="#0b1220" stroke-width="2.4"/><circle cx="16" cy="16" r="4" fill="none" stroke="#0b1220" stroke-width="2.2"/></svg>`
-    _imgIcons[c] = `data:image/svg+xml;base64,${btoa(svg)}`
-    return _imgIcons[c]
-}
-
-// ── Telegram (globe/GlobeTelegramLayer.jsx icons, verbatim) ───────────────
-const TG_SIZE = 18
-let _tgUnrest = null, _tgSoon = null, _tgNow = null, _tgIcon = null
-function tgUnrestIcon(announced = false) {
-    if (announced ? _tgSoon : _tgUnrest) return announced ? _tgSoon : _tgUnrest
-    const svg = announced
-        ? `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect x="7" y="7" width="18" height="18" transform="rotate(45 16 16)" fill="#0b1220" stroke="#F5A524" stroke-width="3"/>
-      <circle cx="16" cy="16" r="4.6" fill="none" stroke="#F5A524" stroke-width="1.8"/><path d="M16 13.6V16l1.8 1.2" stroke="#F5A524" stroke-width="1.6" fill="none"/></svg>`
-        : `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect x="7" y="7" width="18" height="18" transform="rotate(45 16 16)" fill="#F5A524" stroke="#0b1220" stroke-width="2.5"/>
-      <g fill="#0b1220"><circle cx="12.5" cy="14" r="1.7"/><circle cx="16" cy="13" r="1.9"/><circle cx="19.5" cy="14" r="1.7"/><path d="M10.5 19c.4-2 1.2-3 2-3s1.6 1 2 3zM14 19c.4-2.3 1.2-3.4 2-3.4s1.6 1.1 2 3.4zM17.5 19c.4-2 1.2-3 2-3s1.6 1 2 3z"/></g></svg>`
-    const uri = `data:image/svg+xml;base64,${btoa(svg)}`
-    if (announced) _tgSoon = uri; else _tgUnrest = uri
-    return uri
-}
-function tgNowIcon() {
-    if (_tgNow) return _tgNow
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect x="7" y="7" width="18" height="18" transform="rotate(45 16 16)" fill="#E5484D" stroke="#0b1220" stroke-width="2.5"/>
-      <path d="M16 10.5v6.8" stroke="#0b1220" stroke-width="2.6"/><circle cx="16" cy="21" r="1.6" fill="#0b1220"/></svg>`
-    _tgNow = `data:image/svg+xml;base64,${btoa(svg)}`
-    return _tgNow
-}
-function tgIcon() {
-    if (_tgIcon) return _tgIcon
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect x="7" y="7" width="18" height="18" transform="rotate(45 16 16)" fill="#229ED9" stroke="#0b1220" stroke-width="2.5"/></svg>`
-    _tgIcon = `data:image/svg+xml;base64,${btoa(svg)}`
-    return _tgIcon
-}
-
-/**
- * The desktop draws a live development (telegram/situations) whenever
- * EITHER Telegram or Unrest is on. On the phone each is its own layer, so
- * a development is filed under the one its kind belongs to — crowd and
- * police actions under unrest, the rest under the front — rather than
- * drawn twice when both are on.
- */
-const UNREST_SITUATION_KINDS = new Set(["kettle", "charge", "tear_gas", "water_cannon", "clashes", "closure"])
+// ── Imagery signals: the shared icon style (lib/mapIcons.js), the same module as the globe ──
+const imagerySignalIcon = imageryIcon
 
 // ── Our assets (globe/GlobeAssetsLayer.jsx icon, verbatim) ────────────────
 const ASSET_GLYPH = {
@@ -553,130 +495,30 @@ async function loadGdelt({ bounds }) {
     })), normBounds(bounds))
 }
 
-const tgHours = (hours) => Math.max(48, Number(hours) || 48)
+// ── Live signals: the one Telegram family (backend/live_signals.py, src/lib/liveSignals.js) ──
+// Owner, 2026-10-22: signals are the nine acts, live only, one marker per event, the same on the phone and
+// the desktop. Footage, announced protests, opinions, "calls to violence" and street-report words are not
+// signals and have no layer; a picture or video is only the attachment of a signal's card.
+export const LIVE_SIGNALS_PATH = "/api/telegram/signals/live"
+export const LIVE_SIGNALS_REFRESH_MS = 30_000
+const LS_SIZE = ICON_PX
 
-async function loadTelegram({ bounds, hours }) {
-    const [posts, sit] = await Promise.all([
-        getJson(`${API_BASE}/api/telegram/posts?hours=${tgHours(hours)}&pins=1`),
-        getJson(`${API_BASE}/api/telegram/situations`),
-    ])
-    const feats = []
-    for (const a of arr(sit?.situations)) {
-        if (UNREST_SITUATION_KINDS.has(a.kind)) continue
-        feats.push({
-            id: a.id, lat: num(a.lat), lon: num(a.lon), iconUri: tgNowIcon(), size: TG_SIZE + 4,
-            title: a.happening || a.place || "Live development",
-            sub: [a.place, a.channel_title].filter(Boolean).join(" · ") || null,
-            severity: "high", raw: a,
-        })
-    }
-    for (const p of arr(posts?.posts)) {
-        if (p.category === "unrest") continue
-        feats.push({
-            // a signal the strict extractor vouched for, inside its 60 minutes: the "now" mark
-            id: p.id, lat: num(p.lat), lon: num(p.lon), iconUri: isLiveIncident(p) ? tgNowIcon() : tgIcon(), size: TG_SIZE,
-            title: p.headline || p.summary_en || "Telegram post",
-            sub: [p.place, p.channel_title].filter(Boolean).join(" · ") || null,
-            severity: p.severity_tier || null,
-            raw: { ...p, thumb_url: p.thumb_url ? `${API_BASE}${p.thumb_url}` : null },
-        })
-    }
-    return cullPoints(feats, normBounds(bounds))
+export function liveSignalFeatures(d, now = Date.now()) {
+    return arr(d?.signals).filter((s) => finite(s.lat, s.lon) && liveSignalDrawn(s, now)).map((s) => {
+        const c = cardText(s, now)
+        return {
+            id: s.id, lat: num(s.lat), lon: num(s.lon), size: LS_SIZE, collide: true,
+            iconUri: actIcon(s.act, { muted: !!s.muted, bearing: s.direction?.bearing }),
+            title: c.title, sub: c.line, severity: s.muted ? null : (s.high_impact ? "high" : null),
+            raw: { ...s, kind: "live_signal", headline: c.title, title: c.title, status_label: c.line, card_lines: c.lines,
+                   sources: mediaSources(s), thumb_url: null, layerLabel: "Live signal" },
+        }
+    })
 }
 
-async function loadUnrest({ bounds, hours }) {
-    const [posts, sit, up] = await Promise.all([
-        getJson(`${API_BASE}/api/telegram/posts?hours=${tgHours(hours)}&pins=1`),
-        getJson(`${API_BASE}/api/telegram/situations`),
-        getJson(`${API_BASE}/api/telegram/upcoming?days=14`, { ttlMs: 60_000 }),
-    ])
-    const feats = []
-    for (const a of arr(sit?.situations)) {
-        if (!UNREST_SITUATION_KINDS.has(a.kind)) continue
-        feats.push({
-            id: a.id, lat: num(a.lat), lon: num(a.lon), iconUri: tgNowIcon(), size: TG_SIZE + 4,
-            title: a.happening || a.place || "Live development",
-            sub: [a.place, a.channel_title].filter(Boolean).join(" · ") || null,
-            severity: "high", raw: a,
-        })
-    }
-    // a demonstration a day old is off the map (globe/freshness.js, owner 2026-10-19)
-    for (const p of dropStaleDemos(arr(posts?.posts))) {
-        if (p.category !== "unrest" || p.street_report) continue      // street reports: "demonstrations:police"
-        feats.push({
-            id: p.id, lat: num(p.lat), lon: num(p.lon), iconUri: tgUnrestIcon(), size: TG_SIZE,
-            title: p.headline || p.summary_en || "Unrest",
-            sub: [p.place, p.channel_title].filter(Boolean).join(" · ") || null,
-            severity: p.severity_tier || null,
-            raw: { ...p, thumb_url: p.thumb_url ? `${API_BASE}${p.thumb_url}` : null },
-        })
-    }
-    for (const a of arr(up?.upcoming)) {
-        feats.push({
-            id: a.id, lat: num(a.lat), lon: num(a.lon), iconUri: tgUnrestIcon(true), size: TG_SIZE + 2,
-            title: a.headline || a.what || "Announced gathering",
-            sub: [itemStatusLabel(a) || a.when_label, a.channel_title].filter(Boolean).join(" · ") || null,
-            severity: null, raw: a,
-        })
-    }
-    return cullPoints(feats, normBounds(bounds))
-}
-
-// ── Demonstrations, live (globe/GlobeDemonstrationsLayer.jsx, globe/demonstrations.js) ──
-// What "Get me out" avoids, the world over, and the crowd's movement
-// reconstructed from Telegram reports: one answer for both rows.
-const demosJson = () => getJson(`${API_BASE}${DEMOS_PATH}`, { ttlMs: DEMOS_REFRESH_MS / 2 })
-
-async function loadDemonstrations({ bounds }) {
-    const d = await demosJson()
-    const now = Date.now()
-    // announced protests where they stand now ("Ongoing · since 14:00"), the
-    // card with their photos, videos and crowd (globe/protests.js); an
-    // announced gathering among the hazards is drawn once, as its protest
-    const asProtest = new Set(arr(d?.demonstrations).filter((h) => h.protest_id).map((h) => h.id))
-    return cullPoints([
-        ...arr(d?.demonstrations).filter((h) => !asProtest.has(h.id)).map((h) => ({
-            id: `demo-${h.id}`, lat: num(h.lat), lon: num(h.lon),
-            iconUri: demoIconUri(h, now), size: DEMO_SIZE,
-            title: demoTitle(h), sub: demoSub(h, now),
-            severity: null, raw: demoRaw(h, now),
-        })),
-        ...protestPoints(d, now).map((p) => ({ ...p, severity: null, raw: { ...p.raw, layerLabel: "Announced protest" } })),
-    ], normBounds(bounds))
-}
-
-async function loadDemoMovement({ bounds }) {
-    const d = await demosJson()
-    const now = Date.now()
-    return cullLines(arr(d?.tracks).flatMap((t) => trackSegments(t, now)).map((f) => ({ ...f, id: `demo-move-${f.id}` })),
-                     normBounds(bounds))
-}
-
-// The city situation (globe/demoSituation.js, backend/demo_situation.py):
-// crowds' last known places fading with age, their paths, dashed walking
-// routes toward the probable convergence points, and those points, ringed —
-// one "lines" layer, a point being a zero-length line carrying its marker.
-async function loadDemoSituation({ bounds, zoom }) {
-    const d = await getJson(`${API_BASE}${SITUATION_PATH}`, { ttlMs: SITUATION_REFRESH_MS / 2 })
-    // a crowd's reach ring only from street level (its minZoom)
-    const z = Number.isFinite(+zoom) ? +zoom : 99
-    return cullLines(situationFeatures(d, Date.now()).filter((f) => !(f.minZoom > z)), normBounds(bounds))
-}
-
-// Street reports (globe/policeActions.js, backend/street_reports.py): tear
-// gas as an area's edge, a kettle as police lines across the square's exits,
-// police moving in as an arrow, each with its mark — one "lines" layer.
-async function loadPoliceActions({ bounds }) {
-    const d = await getJson(`${API_BASE}${POLICE_PATH}`, { ttlMs: POLICE_REFRESH_MS / 2 })
-    return cullLines(policeFeatures(d, Date.now()), normBounds(bounds))
-}
-
-// ── The mood on Telegram, as signals (globe/telegramMood.js) ──────────────
-async function loadTelegramMood({ bounds }) {
-    const d = await getJson(`${API_BASE}${MOOD_PATH}`, { ttlMs: MOOD_REFRESH_MS / 2 })
-    return cullPoints(arr(d).map((a) => moodPoint(a)).filter(Boolean).map((m) => ({
-        ...m, iconUri: moodIconUri(m.severity, m.precise), size: 22,
-    })), normBounds(bounds))
+async function loadLiveSignals({ bounds }) {
+    const d = await getJson(`${API_BASE}${LIVE_SIGNALS_PATH}`, { ttlMs: LIVE_SIGNALS_REFRESH_MS / 2 })
+    return cullPoints(liveSignalFeatures(d), normBounds(bounds))
 }
 
 async function loadImagerySignals({ bounds, zoom }) {
@@ -1453,43 +1295,9 @@ export const PHONE_LAYERS = [
     },
     // GDELT is not a map signal (owner, 2026-10-13): the country risk index only
     {
-        key: "telegram", label: "Telegram", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
-        legendIcon: tgIcon(), load: loadTelegram,
-    },
-    {
-        key: "unrest", label: "Unrest & protests", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
-        legendIcon: tgUnrestIcon(), load: loadUnrest,
-    },
-    // What the route planner ("Get me out") avoids, as a layer, and the
-    // crowd's movement reconstructed from Telegram reports beside it; off by
-    // default. refreshMs: read again every 30 s while on.
-    {
-        key: "demonstrations", label: "Protests & crowds, live", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
-        refreshMs: DEMOS_REFRESH_MS, legendIcon: demoIconUri({ kind: "march" }), load: loadDemonstrations,
-    },
-    {
-        key: "demonstrations:movement", label: "Protester movement (reconstructed from reports)", group: G.news,
-        defaultOn: false, kind: "lines", minZoom: 0, refreshMs: DEMOS_REFRESH_MS,
-        legendIcon: lineSwatch(TRACK_COLOUR), load: loadDemoMovement,
-    },
-    // Owner, 2026-10-17: "last known locations, probable points of
-    // convergence … Movements displayed in real time" — read every 30 s while on.
-    {
-        key: "demonstrations:situation", label: "Crowds now & likely convergence (estimate)", group: G.news,
-        defaultOn: false, kind: "lines", minZoom: 0, refreshMs: SITUATION_REFRESH_MS,
-        legendIcon: convergenceIcon("").uri, load: loadDemoSituation,
-    },
-    // Owner, 2026-10-18: "ça gaze à Répu", "ça nasse à Répu" on the map —
-    // read every 30 s while on.
-    {
-        key: "demonstrations:police", label: "Street reports: tear gas, kettles, police", group: G.news,
-        defaultOn: false, kind: "lines", minZoom: 0, refreshMs: POLICE_REFRESH_MS,
-        legendIcon: tacticIcon("kettle").uri, load: loadPoliceActions,
-    },
-    {
-        // spikes in the mood, and each single call to violence (owner, 2026-10-18)
-        key: "telegramMood", label: "Mood & calls to violence", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
-        legendIcon: moodIconUri("high"), load: loadTelegramMood, refreshMs: MOOD_REFRESH_MS,
+        // ONE signal layer (owner, 2026-10-22): the nine acts, live only, one marker per event
+        key: "liveSignals", label: "Live signals", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
+        refreshMs: LIVE_SIGNALS_REFRESH_MS, legendIcon: actIcon("police_intervention"), load: loadLiveSignals,
     },
     {
         key: "strikes", label: "Strikes & control", group: G.news, defaultOn: false, kind: "points", minZoom: 0,

@@ -133,7 +133,7 @@ export default function GlobeInfraLayer({ enabled = false }) {
                     }
                 } else {
                     points.add({ position: Cartesian3.fromDegrees(f.lon, f.lat), image: iconFor(f), width: POINT_SIZE[f.kind] || 16,
-                                 height: POINT_SIZE[f.kind] || 16, id: pickId, scaleByDistance: new NearFarScalar(5e3, 1.25, 2e6, 0.6),
+                                 height: POINT_SIZE[f.kind] || 16, id: pickId, 
                                  disableDepthTestDistance: 5e4 })
                     if (zoom >= 11 && f.props?.name && (f.kind === "power_plant" || f.kind === "substation" || f.kind === "data_center" || f.kind === "petroleum_site")) {
                         labels.add({ position: Cartesian3.fromDegrees(f.lon, f.lat), text: String(f.title).slice(0, 40), font: "600 12px sans-serif",
