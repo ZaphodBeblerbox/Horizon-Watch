@@ -1396,7 +1396,7 @@ def _pin_time(r) -> _dt.datetime | None:
     return None
 
 
-def published(hours: int = 72, pins: bool = False) -> list[dict]:
+def _published_build(hours: int, pins: bool) -> list[dict]:
     """Located posts. pins=True is what the MAPS draw: a pin is dated by its
     event (else its post) and is gone PIN_MAX_H after it — derived on read,
     nothing is deleted; lists, statistics and the Desk keep their own window."""
@@ -1476,6 +1476,18 @@ def published(hours: int = 72, pins: bool = False) -> list[dict]:
     if pins:
         return demo_freshness.keep(out)            # no unified signals / street reports among a map's pins
     return demo_freshness.keep(with_signals(out, hours, located_only=True))
+
+
+from shared_cache import SharedCache  # noqa: E402
+# One build serves every caller (the map, Home, the Desk, notifications all poll it every
+# 30-60 s): recomputed per request it took 7-14 s under load on 2026-10-23.
+_PUB = SharedCache("telegram-published", ttl=10, max_stale=180)
+
+
+def published(hours: int = 72, pins: bool = False) -> list[dict]:
+    """Located posts (see _published_build). Built once for everybody, served stale
+    while one thread rebuilds; callers copy before they change anything."""
+    return _PUB.get((_db_path(), hours, bool(pins)), lambda: _published_build(hours, pins))
 
 
 def live_incidents(now: _dt.datetime | None = None) -> list[dict]:

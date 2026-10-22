@@ -27,6 +27,7 @@ Pure functions, no I/O except `resolve` (the geocoder, via locate).
 """
 from __future__ import annotations
 
+import functools
 import re
 import unicodedata
 
@@ -73,13 +74,19 @@ ALERT_ONLY = re.compile(r"тривог\w*|загроз\w*|відбій|укри�
                         r"صفارات الإنذار|אזעק\w*|\bwarning\b", re.I)
 HARD_HIT = re.compile(r"вибух\w*|взрыв\w*|приліт\w*|прилет\w*|влучан\w*|\bexplosion|\bimpact\b|\bhit\b", re.I)
 
+
+@functools.lru_cache(maxsize=20000)
+def _warning_only(text: str) -> bool:
+    t = fold(text)
+    return bool(t.strip()) and bool(ALERT_ONLY.search(t)) and not HARD_HIT.search(t)
+
+
 def is_warning_only(text: str | None) -> bool:
     """An air-raid alert, an all-clear, a threat warning: it names no hit.
     Ukraine's alert channels post one per district every few minutes, and the
     model reads them as 'unrest' with a place (2026-10-22), so the model's
     reading is screened by the same words."""
-    t = fold(text)
-    return bool(t.strip()) and bool(ALERT_ONLY.search(t)) and not HARD_HIT.search(t)
+    return _warning_only(text or "")
 
 
 # Talk about an event is not one: a statement, a threat, an analysis.
