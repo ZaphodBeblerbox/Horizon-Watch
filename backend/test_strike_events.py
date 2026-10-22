@@ -185,3 +185,36 @@ def test_map_entity_ids_of_sources():
     assert se.map_entity_id("tg:rybar:1234") == "tg-rybar-1234"
     assert se.map_entity_id("gc:abc-1") == "geoconfirmed-abc-1"
     assert se.map_entity_id("al:ALT-1") is None
+
+
+def test_telegram_reaches_strikes_only_through_the_live_gate():
+    """2026-10-23: Strikes & control read any located Telegram post with a fighting
+    event_type — channel-region places, country centres, opinions. Only posts the
+    strict extractor passed and pinned ('live' / 'rule-live') are read, at the event's time."""
+    import sqlite3
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.execute("CREATE TABLE telegram_posts (channel TEXT, msg_id INT, channel_title TEXT, posted_at TEXT, event_time TEXT,"
+                " headline TEXT, summary_en TEXT, event_type TEXT, place TEXT, precision TEXT, lat REAL, lon REAL, media TEXT,"
+                " thumb TEXT, graphic INT, live_verdict TEXT)")
+    rows = [
+        ("c", 1, "C", "2026-10-22T10:05:00", "2026-10-22T10:01:00Z", "Strike at Kupiansk", "", "strike", "Kupiansk", "city", 49.71, 37.61,
+         None, None, 0, "live"),
+        ("c", 2, "C", "2026-10-22T10:06:00", None, "Strike at Kharkiv region", "", "strike", "Kharkiv oblast", "region", 49.5, 36.5,
+         None, None, 0, "rejected: model: [opinion] commentary"),
+        ("c", 3, "C", "2026-10-22T10:07:00", None, "Drone attack", "", "attack", "Ukraine", "city", 49.0, 31.0, None, None, 0, None),
+        ("c", 4, "C", "2026-10-22T10:08:00", "2026-10-22T10:08:00Z", "Explosion at Sumy", "", "explosion", "Sumy", "city", 50.91, 34.8,
+         None, None, 0, "rule-live"),
+        ("c", 5, "C", "2026-10-22T10:09:00", None, "Strike at Odesa", "", "strike", "Odesa", "city", 46.48, 30.72,
+         None, None, 0, "live, unplaced: ambiguous"),
+    ]
+    con.executemany("INSERT INTO telegram_posts VALUES (%s)" % ",".join("?" * 16), rows)
+    got = se._collect_telegram(con, datetime(2026, 10, 21, tzinfo=timezone.utc))
+    assert sorted(r["rid"] for r in got) == ["tg:c:1", "tg:c:4"]
+    assert next(r for r in got if r["rid"] == "tg:c:1")["time"] == "2026-10-22T10:01:00Z"       # the event's time
+    # a table without the gate's columns gives nothing, never ungated posts
+    bare = sqlite3.connect(":memory:")
+    bare.row_factory = sqlite3.Row
+    bare.execute("CREATE TABLE telegram_posts (channel TEXT, msg_id INT, posted_at TEXT, lat REAL, lon REAL, event_type TEXT)")
+    bare.execute("INSERT INTO telegram_posts VALUES ('c', 9, '2026-10-22T10:00:00', 49, 37, 'strike')")
+    assert se._collect_telegram(bare, datetime(2026, 10, 21, tzinfo=timezone.utc)) == []

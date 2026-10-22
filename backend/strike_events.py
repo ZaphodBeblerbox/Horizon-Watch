@@ -696,15 +696,32 @@ def _graphic(r) -> bool:
         return True             # unknown: shown behind the warning, never unwarned
 
 
+# THROUGH THE ONE GATE (2026-10-23). Telegram reaches Strikes & control only
+# as a post the strict extractor (live_incident.py: the model quotes act, time
+# and place and the code verifies them and geocodes the quoted place; the rule
+# path 'rule-live' when the model is out) passed AND pinned. The old reader
+# took any post with a lat and a fighting event_type, so a place resolved from
+# the channel's region, a country's centre or an opinion piece drew a strike.
+# The time is the event's (event_time), not the post's.
+GATE_VERDICTS = ("live", "rule-live")
+
+
 def _collect_telegram(con, since: datetime) -> list[dict]:
     out = []
-    q = ("SELECT channel, msg_id, channel_title, posted_at, headline, summary_en, event_type, place, precision, "
-         "lat, lon, media, thumb, graphic FROM telegram_posts WHERE posted_at >= ? AND lat IS NOT NULL AND event_type IN (%s)"
-         % ",".join("?" * (len(_TG_TYPES) + len(_TG_GROUND_TYPES))))
-    for r in con.execute(q, (since.strftime("%Y-%m-%dT%H:%M:%S"), *_TG_TYPES, *_TG_GROUND_TYPES)).fetchall():
+    q = ("SELECT channel, msg_id, channel_title, posted_at, event_time, headline, summary_en, event_type, place, precision, "
+         "lat, lon, media, thumb, graphic FROM telegram_posts WHERE posted_at >= ? AND lat IS NOT NULL AND lon IS NOT NULL "
+         "AND live_verdict IN (%s) AND event_type IN (%s)"
+         % (",".join("?" * len(GATE_VERDICTS)), ",".join("?" * (len(_TG_TYPES) + len(_TG_GROUND_TYPES)))))
+    try:
+        rows = con.execute(q, (since.strftime("%Y-%m-%dT%H:%M:%S"), *GATE_VERDICTS, *_TG_TYPES, *_TG_GROUND_TYPES)).fetchall()
+    except sqlite3.OperationalError as ex:
+        # no gate columns yet: nothing ungated is drawn
+        print(f"[strikes] error: telegram gate columns missing, no Telegram strikes: {ex}", flush=True)
+        return out
+    for r in rows:
         out.append({"rid": f"tg:{r['channel']}:{r['msg_id']}", "source": f"Telegram · {r['channel_title'] or r['channel']}",
                     "title": r["headline"] or "", "text": (r["summary_en"] or "")[:400], "lat": r["lat"], "lon": r["lon"],
-                    "time": r["posted_at"], "place": r["place"] or "", "precision": precision_from(r["precision"]),
+                    "time": r["event_time"] or r["posted_at"], "place": r["place"] or "", "precision": precision_from(r["precision"]),
                     "hint": r["event_type"], "url": f"https://t.me/{r['channel']}/{r['msg_id']}",
                     "ground_only": r["event_type"] if r["event_type"] in _TG_GROUND_TYPES else None,
                     # what TelegramMedia.jsx needs to play the post's own video or photo
