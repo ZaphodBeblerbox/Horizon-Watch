@@ -43,129 +43,14 @@ CAPS = {"announcement": 8, "reminder": 6, "live": 10}
 
 _lock = threading.Lock()
 _events_cache: dict = {"at": 0.0, "ann": [], "now": []}
-_concern_cache: dict[str, tuple[float, dict]] = {}
 EVENTS_TTL_S = 60
-CONCERN_TTL_S = 60          # a new theater or interest counts within a minute
 
 
-def km(a_lat, a_lon, b_lat, b_lon) -> float:
-    r = math.radians
-    h = (math.sin(r(b_lat - a_lat) / 2) ** 2
-         + math.cos(r(a_lat)) * math.cos(r(b_lat)) * math.sin(r(b_lon - a_lon) / 2) ** 2)
-    return 12742 * math.asin(math.sqrt(min(1.0, h)))
-
-
-def theater_reach_km(view: dict) -> float:
-    return max(350.0, float(view.get("height") or 2_000_000) / 1000 * 0.9)
-
-
-# ── what concerns a user ────────────────────────────────────────────────────
-
-def concern_of(uid: str) -> dict:
-    """{assets: [...], theaters: [...], countries: {lowercase names}}."""
-    with _lock:
-        hit = _concern_cache.get(uid)
-        if hit and time.time() - hit[0] < CONCERN_TTL_S:
-            return hit[1]
-    c = {"assets": [], "theaters": [], "countries": set()}
-    try:
-        import owned_assets as oa
-        for a in oa.list_for(uid):
-            if a.get("lat") is not None and a.get("lon") is not None:
-                c["assets"].append({"lat": float(a["lat"]), "lon": float(a["lon"]),
-                                    "radius": max(5.0, float(a.get("radius_km") or 25)),
-                                    "name": a.get("name") or "asset",
-                                    "label": (a.get("kind_label") or "asset").lower()})
-    except Exception as e:                                     # noqa: BLE001
-        print(f"[event_watch] assets for {uid}: {type(e).__name__}: {e}", flush=True)
-    try:
-        from database import Theater, User, get_db
-        with get_db() as db:
-            for t in db.query(Theater).filter(Theater.owner_user_id == uid).all():
-                v = t.view or {}
-                if v.get("lat") is not None and v.get("lon") is not None:
-                    c["theaters"].append({"lat": float(v["lat"]), "lon": float(v["lon"]),
-                                          "reach": theater_reach_km(v), "name": t.name})
-            u = db.query(User).filter(User.id == uid).first()
-            interests = ((u.settings or {}).get("interests") or {}) if u else {}
-            c["countries"] = {str(x).strip().lower() for x in (interests.get("countries") or []) if x}
-            # where the user is (asked once in the app): watched like an asset
-            here = interests.get("here") or {}
-            try:
-                c["assets"].append({"lat": float(here["lat"]), "lon": float(here["lon"]),
-                                    "radius": max(5.0, float(here.get("radius_km") or 30)),
-                                    "name": "where you are", "label": "", "me": True})
-            except (KeyError, TypeError, ValueError):
-                pass
-            regions = regions_table()
-            for r in interests.get("regions") or []:
-                c["countries"] |= {x.lower() for x in regions.get(r, [])}
-    except Exception as e:                                     # noqa: BLE001
-        print(f"[event_watch] profile for {uid}: {type(e).__name__}: {e}", flush=True)
-    with _lock:
-        _concern_cache[uid] = (time.time(), c)
-    return c
-
-
-_REGIONS: dict | None = None
-
-
-def regions_table() -> dict:
-    """The one-click regions of Settings › Your interests: the copy in
-    backend/seed (production deploys backend/ only), kept equal to the
-    frontend's src/state/interests.js REGIONS by test_seed_copies.py."""
-    global _REGIONS
-    if _REGIONS is None:
-        import json as _json
-        from paths import SEED_DIR
-        try:
-            _REGIONS = _json.loads((SEED_DIR / "interest_regions.json").read_text(encoding="utf-8"))["regions"]
-        except Exception as e:                                 # noqa: BLE001
-            print(f"[event_watch] regions table unreadable: {type(e).__name__}: {e}", flush=True)
-            _REGIONS = {}
-    return _REGIONS
-
-
-def _country_name(code: str | None) -> str | None:
-    if not code:
-        return None
-    try:
-        from location_extract import country_name_from_code
-        return country_name_from_code(code)
-    except Exception:                                          # noqa: BLE001
-        return None
-
-
-def why(ev: dict, c: dict) -> tuple[str, str] | None:
-    """(reason, strength) when this event concerns the user, else None.
-    strength: "asset" (closest), "theater", "country"."""
-    lat, lon = ev.get("lat"), ev.get("lon")
-    if lat is None or lon is None:
-        return None
-    near = []
-    for a in c["assets"]:
-        d = km(a["lat"], a["lon"], lat, lon)
-        if d <= a["radius"]:
-            near.append((d, a))
-    if near:
-        near.sort(key=lambda x: x[0])
-        d, a = near[0]
-        dist = "under 1 km" if d < 1 else f"{round(d)} km"
-        if len(near) == 1:
-            if a.get("me"):
-                return f"{dist} from where you are", "asset"
-            return f"{dist} from your {a['label']} {a['name']}", "asset"
-        # several assets at one place: one card naming them all
-        names = [x[1]["name"] for x in near]
-        listed = ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) <= 4 else f"{', '.join(names[:3])} and {len(names) - 3} more"
-        return f"{dist} from your assets {listed}", "asset"
-    for t in c["theaters"]:
-        if km(t["lat"], t["lon"], lat, lon) <= t["reach"]:
-            return f"in your theater {t['name']}", "theater"
-    name = _country_name(ev.get("country_code"))
-    if name and name.lower() in c["countries"]:
-        return f"{name} — a country you watch", "country"
-    return None
+# The rule itself — what concerns a user — lives in user_concern.py, shared
+# with the per-user filter on the maps and lists (owner, 2026-10-22), so the
+# two cannot drift. Re-exported here: callers and tests use these names.
+from user_concern import (CONCERN_TTL_S, _concern_cache, concern_of, km, regions_table,  # noqa: E402,F401
+                          theater_reach_km, why)
 
 
 # ── the events ──────────────────────────────────────────────────────────────
