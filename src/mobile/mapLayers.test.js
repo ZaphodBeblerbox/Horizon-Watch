@@ -37,7 +37,7 @@ describe("phone map layer registry", () => {
 
     it("carries every desktop sub-layer that draws points or areas", () => {
         const keys = new Set(PHONE_LAYERS.map((l) => l.key))
-        for (const k of ["geoConfirmed", "telegram", "unrest", "fires", "imagerySignals",
+        for (const k of ["geoConfirmed", "liveSignals", "fires", "imagerySignals",
                          "assets", "airspace", "gpsInterference",
                          "gfw:encounters", "gfw:gaps", "gfw:loitering", "gfw:port-visits"]) {
             expect(keys.has(k), k).toBe(true)
@@ -69,5 +69,32 @@ describe("aois — fresh findings", () => {
         expect(aoiFresh({})).toBeNull()
         expect(aoiFresh({ findings: { fresh: null } })).toBeNull()
         expect(aoiFresh({ findings: { fresh: { count: 3, text: "radar change" } } })).toEqual({ count: 3, text: "radar change" })
+    })
+
+    it("has ONE Telegram signal layer; the yellow protest squares, planned-protest circles, footage, street-report and mood marks are gone", () => {
+        const keys = PHONE_LAYERS.map((l) => l.key)
+        expect(keys.filter((k) => k === "liveSignals")).toHaveLength(1)
+        for (const k of ["telegram", "unrest", "demonstrations", "demonstrations:movement", "demonstrations:situation",
+                         "demonstrations:police", "telegramMood"]) expect(keys, k).not.toContain(k)
+        const l = PHONE_LAYERS.find((x) => x.key === "liveSignals")
+        expect(l.label).toBe("Live signals")
+        expect(l.defaultOn).toBe(false)
+    })
+
+    it("draws a live signal as one badge with its act's icon, plain card text, the footage only as the card's media", async () => {
+        const { liveSignalFeatures } = await import("./mapLayers.js")
+        const now = Date.parse("2026-10-22T16:00:00Z")
+        const d = { signals: [
+            { id: "ls-a-1", act: "police_intervention", title: "Police charge at Sorbonne, Paris", lat: 48.848, lon: 2.343, muted: false, high_impact: false,
+              event_time: "2026-10-22T15:52:00Z", corroboration: { line: "Eyewitness, unverified" }, lines: [{ text: "Arrest at Sorbonne, Paris" }],
+              all_media: [{ kind: "video", thumb_url: "/t.jpg", video_url: "/v", channel: "A", msg_id: 3 }] },
+            { id: "ls-old", act: "arrest", title: "Arrest at X", lat: 48.9, lon: 2.3, event_time: "2026-10-22T14:00:00Z", corroboration: { line: "1 source, unverified" } },
+        ] }
+        const f = liveSignalFeatures(d, now)
+        expect(f.map((x) => x.id)).toEqual(["ls-a-1"])                       // the 2 h old one is off the map
+        expect(f[0].title).toBe("Police charge at Sorbonne, Paris")
+        expect(f[0].sub).toBe("Eyewitness, unverified, 8 min ago")
+        expect(f[0].raw.sources[0]).toMatchObject({ media: "video", video_url: "/v" })
+        expect(f[0].iconUri).toMatch(/^data:image\/svg\+xml/)
     })
 })

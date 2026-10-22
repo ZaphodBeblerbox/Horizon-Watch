@@ -1,9 +1,8 @@
-import { describe, it, expect, vi, afterEach } from "vitest"
+import { describe, it, expect } from "vitest"
 import {
     arrowBarbs, demoFamily, demoIconUri, demoRaw, demoSub, demoTitle, lastReportedIcon, trackRgba, segmentAlpha,
     trackSegments, RECONSTRUCTED,
 } from "./demonstrations.js"
-import { PHONE_LAYERS, _clearLayerCache } from "../mobile/mapLayers.js"
 import { demonstrationsNear } from "../routes/demonstrations.js"
 
 const NOW = Date.parse("2026-10-17T14:00:00Z")
@@ -96,55 +95,5 @@ describe("demonstrations — reconstructed movement", () => {
         expect(near.demonstrations.map((h) => h.id)).toEqual(["tgs-c-1-0"])
         expect(near.tracks).toEqual([])                       // its last place, Nation, is 2 km off
         expect(demonstrationsNear({ demonstrations: [kettle], tracks: [track] }, NAT.lat, NAT.lon, 1).tracks).toHaveLength(1)
-    })
-})
-
-describe("demonstrations — the phone's layers", () => {
-    afterEach(() => { vi.unstubAllGlobals(); _clearLayerCache() })
-    const bounds = { south: 48.7, west: 2.1, north: 49.0, east: 2.6 }
-    const layer = (k) => PHONE_LAYERS.find((l) => l.key === k)
-
-    it("sit with unrest, off by default like every layer, read every 30 s", () => {
-        const keys = PHONE_LAYERS.map((l) => l.key)
-        const at = keys.indexOf("unrest")
-        expect(keys.slice(at + 1, at + 4)).toEqual(["demonstrations", "demonstrations:movement", "demonstrations:situation"])
-        for (const k of ["demonstrations", "demonstrations:movement", "demonstrations:situation"]) {
-            expect(layer(k).defaultOn).toBe(false)
-            expect(layer(k).group).toBe(layer("unrest").group)
-            expect(layer(k).refreshMs).toBe(30_000)
-        }
-        expect(layer("demonstrations:movement").label).toMatch(/reconstructed/)
-        // the street reports too: nothing is on until the user turns it on (owner, 2026-10-18)
-        expect(layer("demonstrations:police").defaultOn).toBe(false)
-    })
-
-    it("read one answer into points and lines in the shape the map draws", async () => {
-        const fetchMock = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ demonstrations: [kettle, march], tracks: [track] }) }))
-        vi.stubGlobal("fetch", fetchMock)
-        const pts = await layer("demonstrations").load({ bounds, zoom: 13, hours: 24 })
-        const lines = await layer("demonstrations:movement").load({ bounds, zoom: 13, hours: 24 })
-        expect(fetchMock).toHaveBeenCalledTimes(1)          // one request for both rows
-        expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/api\/routes\/demonstrations$/)
-        expect(pts.map((p) => p.id)).toEqual(["demo-tgs-c-1-0", "demo-tga-c-2-0"])
-        for (const p of pts) {
-            expect(p.iconUri).toMatch(/^data:image\/svg\+xml/)
-            expect(typeof p.size).toBe("number")
-            expect(p.title && p.raw.title && p.raw.published_at).toBeTruthy()
-        }
-        expect(lines.map((l) => l.id)).toEqual(["demo-move-pt-r1-0", "demo-move-pt-r1-1"])
-        for (const l of lines) {
-            expect(l.coords.length).toBeGreaterThanOrEqual(2)
-            expect(l.color).toMatch(/^rgba\(245,165,36,/)
-            expect(typeof l.weight).toBe("number")
-            expect(l.title && l.raw.url && l.raw.published_at).toBeTruthy()
-        }
-        expect(lines[1].marker).toMatchObject({ lat: NAT.lat, lon: NAT.lon })
-    })
-
-    it("out of view, nothing", async () => {
-        vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ demonstrations: [kettle], tracks: [track] }) })))
-        const far = { south: 40, west: 10, north: 41, east: 11 }
-        expect(await layer("demonstrations").load({ bounds: far, zoom: 10 })).toEqual([])
-        expect(await layer("demonstrations:movement").load({ bounds: far, zoom: 10 })).toEqual([])
     })
 })

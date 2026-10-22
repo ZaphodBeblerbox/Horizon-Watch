@@ -22,7 +22,9 @@ import { ago, sevColor } from "./common.jsx"
 import { itemStatusLabel, mediaItems } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
 import ReportMedia from "../../components/ReportMedia.jsx"
+import { stripEmoji } from "../../lib/liveSignals.js"
 
+const arr = (v) => (Array.isArray(v) ? v : [])
 const kindOf = (s) => s?.source || s?.channel_title || s?.layerLabel || s?.alert_type || s?.kind_label || "Signal"
 
 export default function MPeek({ s, onClose, onDetails, onStep, index = null, count = null, returning = false }) {
@@ -96,8 +98,31 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
     // a signal whose EVENT time the server established says "Live · 12 min ago" or "Happened 3 h ago"
     // (the event's age, not the post's: lib/liveIncident.js)
     const status = itemStatusLabel(s) || (s.event_time ? ageLabel(s) : null) || s.status_label || null
-    const title = s.headline || s.title || "Signal"
+    const title = stripEmoji(s.headline || s.title || "Signal")
     const host = document.querySelector(".m2") || document.body
+    // A LIVE SIGNAL'S CARD (owner, 2026-10-22): the act and the place in one plain sentence, one source line
+    // with its age, other acts of the same event as short lines, the attached footage as the card's media.
+    // A cluster of signals opens as a list. Nothing else: no "footage from", no channel list, no post text.
+    if (s.kind === "live_signal" || s.kind === "live_cluster") {
+        const cl = s.kind === "live_cluster"
+        return createPortal(
+            <div ref={el} className={`m2-peek ${enter}`} role="dialog" aria-label={title} data-testid="m2-peek">
+                <div className="m2-peek-grip" />
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <h3 data-testid="m2-peek-title">{title}</h3>
+                        {!cl && <div className="m2-peek-place" data-testid="m2-peek-line">{stripEmoji(s.status_label || "")}</div>}
+                        {!cl && arr(s.card_lines).map((t, i) => <div key={i} className="m2-peek-place">{stripEmoji(t)}</div>)}
+                        {cl && arr(s.cluster).map((c, i) => <div key={i} className="m2-peek-place" data-testid="m2-peek-item">{stripEmoji(c.title)}{c.line ? `. ${stripEmoji(c.line)}` : ""}</div>)}
+                    </div>
+                    {!cl && arr(s.sources).length > 0 && <ReportMedia item={{ sources: s.sources }} compact />}
+                </div>
+                <div className="m2-peek-acts">
+                    <button className="m2-btn ghost" aria-label="Put away" onClick={() => onClose?.()}>Close</button>
+                    {count > 1 && index != null && <span className="m2-peek-count">{index + 1} / {count}</span>}
+                </div>
+            </div>, host)
+    }
     return createPortal(
         <div ref={el} className={`m2-peek ${enter}`} role="dialog" aria-label={title} data-testid="m2-peek">
             <div className="m2-peek-grip" />

@@ -172,14 +172,10 @@ export const SUB_LAYERS = [
     { key: "satImage",        label: "Satellite base image",     parent: "imagery" },
     { key: "gpsInterference", label: "Nav interference",         parent: "air" },
     { key: "geoConfirmed",    label: "Confirmed",                parent: "news" },
-    { key: "telegram",        label: "Telegram",                 parent: "news" },
-    { key: "unrest",          label: "Unrest & protests",        parent: "news" },
-    // What the route planner ("Get me out") avoids, and the crowd's movement
-    // reconstructed from Telegram reports (globe/GlobeDemonstrationsLayer.jsx).
-    { key: "demonstrations",  label: "Protests & crowds, live",  parent: "news",
-      hint: "Demonstrations happening now, where their crowds have been and are heading, pieced together from Telegram reports" },
-    // The mood on Telegram as signals: spikes and each call to violence (globe/GlobeTelegramMoodLayer.jsx).
-    { key: "telegramMood",    label: "Mood & calls to violence", parent: "news" },
+    // THE signal layer (owner, 2026-10-22; globe/GlobeLiveSignalsLayer.jsx): it replaced Telegram, Unrest &
+    // protests, Protests & crowds, live, and Mood & calls to violence.
+    { key: "liveSignals",     label: "Live signals",             parent: "news",
+      hint: "What is happening on the ground now: arrests, shots, explosions, strikes, missiles, crowds, troops, police action; one marker per event, gone an hour after it" },
     // Strikes, bombings, assaults and ground taken, read out of the same
     // reporting (globe/GlobeStrikesLayer.jsx) — so it lives, and switches
     // off, with News rather than as a group of its own.
@@ -203,7 +199,7 @@ export const SUB_LAYERS = [
 export const DEFAULT_SUBS = {
     imagery: ["imagerySignals"],
     // GDELT is not a map signal (owner, 2026-10-13): it feeds the country risk index only
-    news: ["geoConfirmed", "telegram", "unrest", "demonstrations", "telegramMood", "strikes", "frontlineClaims", "trajectories"],
+    news: ["geoConfirmed", "liveSignals", "strikes", "frontlineClaims", "trajectories"],
     air: [],
 }
 

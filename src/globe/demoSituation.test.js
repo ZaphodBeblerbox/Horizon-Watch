@@ -1,9 +1,8 @@
-import { describe, it, expect, vi, afterEach } from "vitest"
+import { describe, it, expect } from "vitest"
 import {
     ageLabel, convergenceDetail, convergenceIcon, crowdAlpha, crowdDetail, crowdIcon, scoreLabel, situationFeatures,
     developmentLines, SITUATION_PATH, groundCircle,
 } from "./demoSituation.js"
-import { PHONE_LAYERS, _clearLayerCache } from "../mobile/mapLayers.js"
 import { normalizeEntity } from "../inspector/adapters.js"
 import { getCityNow } from "../routes/demonstrations.js"
 
@@ -163,37 +162,5 @@ describe("demo situation — where a crowd probably is now", () => {
         expect((north - CON.lat) * 111_320).toBeCloseTo(800, -1)
         const c = groundCircle(0, 0, 1000, 4)
         expect(c).toHaveLength(5)
-    })
-})
-
-describe("demo situation — the phone's layer", () => {
-    afterEach(() => { vi.unstubAllGlobals(); _clearLayerCache() })
-    const layer = PHONE_LAYERS.find((l) => l.key === "demonstrations:situation")
-
-    it("reads the situation every 30 s into lines with markers", async () => {
-        expect(layer.refreshMs).toBe(30_000)
-        expect(layer.kind).toBe("lines")
-        const fetchMock = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(data) }))
-        vi.stubGlobal("fetch", fetchMock)
-        const out = await layer.load({ bounds: { south: 48.7, west: 2.1, north: 49.0, east: 2.6 }, zoom: 13 })
-        expect(String(fetchMock.mock.calls[0][0])).toMatch(new RegExp(`${SITUATION_PATH}$`))
-        expect(out.length).toBe(7)
-        expect(out.filter((f) => f.marker).every((f) => f.marker.iconUri.startsWith("data:image/svg+xml"))).toBe(true)
-        expect(await layer.load({ bounds: { south: 40, west: -5, north: 41, east: -4 }, zoom: 10 })).toEqual([])
-    })
-
-    it("drops a crowd's reach ring below street level", async () => {
-        const withReach = { ...data, cities: [{ ...data.cities[0], crowds: [{ ...crowdCon, reach_m: 800 }, crowdOld] }] }
-        vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(withReach) })))
-        const b = { south: 48.7, west: 2.1, north: 49.0, east: 2.6 }
-        expect((await layer.load({ bounds: b, zoom: 13 })).some((f) => f.id === "sit-reach-crowd-a")).toBe(true)
-        _clearLayerCache()
-        expect((await layer.load({ bounds: b, zoom: 11 })).some((f) => f.id === "sit-reach-crowd-a")).toBe(false)
-    })
-
-    it("asks for one city's summary", async () => {
-        const f = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ cities: [] }) }))
-        await getCityNow("Paris", f)
-        expect(String(f.mock.calls[0][0])).toMatch(/\/api\/routes\/demonstrations\/now\?city=Paris$/)
     })
 })
