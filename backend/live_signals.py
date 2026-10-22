@@ -129,6 +129,7 @@ def atom_of(row: dict) -> dict | None:
             "lat": float(row["lat"]), "lon": float(row["lon"]), "text": text, "first_hand": first_hand,
             "certainty": (a.get("model") or {}).get("certainty"), "direction": a.get("direction_resolved") or v.get("direction"),
             "media": row.get("media") or "none", "thumb": row.get("thumb"), "read_by": row.get("read_by"),
+            "summary_en": row.get("summary_en"),
             "country_code": row.get("country_code")}
 
 
@@ -185,8 +186,10 @@ def source_line(level: str, n: int, with_media: bool) -> str:
     return "1 source, unverified"
 
 
-def build(atoms: list[dict], media_by_atom: dict | None = None, now: _dt.datetime | None = None) -> list[dict]:
-    """Signals (newest event first) from live posts' atoms. Pure."""
+def build(atoms: list[dict], media_by_atom: dict | None = None, now: _dt.datetime | None = None,
+          live_only: bool = True) -> list[dict]:
+    """Signals (newest event first) from live posts' atoms. Pure. live_only=False keeps the events that are no
+    longer live too (the Protests layer's "Today", protests.py), each with `live` said honestly."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     media_by_atom = media_by_atom or {}
     out: list[dict] = []
@@ -202,9 +205,9 @@ def build(atoms: list[dict], media_by_atom: dict | None = None, now: _dt.datetim
         if age_last < -li.SKEW_S / 60:
             continue
         crowd = primary_act == "crowd_movement"
-        if age_last > LIVE_WINDOW_MIN or (not crowd and (now - primary["event_time"]).total_seconds() / 60 > LIVE_WINDOW_MIN):
-            continue
-        if crowd and age_first > CROWD_MAX_MIN:
+        is_live = not (age_last > LIVE_WINDOW_MIN or (not crowd and (now - primary["event_time"]).total_seconds() / 60 > LIVE_WINDOW_MIN)
+                       or (crowd and age_first > CROWD_MAX_MIN))
+        if live_only and not is_live:
             continue
         # corroboration, per member then the best of them
         n_best, hand = 1, any(a["first_hand"] for a in grp)
@@ -244,7 +247,11 @@ def build(atoms: list[dict], media_by_atom: dict | None = None, now: _dt.datetim
             "country_code": (primary.get("country_code") or "").lower() or None,
             "lat": primary["lat"], "lon": primary["lon"],
             "event_time": li.iso(last["event_time"]), "first_event_time": li.iso(first["event_time"]),
-            "posted_at": last["posted_at"], "live": True,
+            "posted_at": last["posted_at"], "live": is_live,
+            "messages": [{"posted_at": a["posted_at"], "event_time": li.iso(a["event_time"]), "channel_title": a["channel_title"],
+                          "text": a.get("summary_en") or a["text"], "translated": bool(a.get("summary_en")),
+                          "url": _post_url(a["channel"], a["msg_id"])}
+                         for a in sorted(grp, key=lambda x: x["event_time"], reverse=True)][:5],
             "corroboration": {"level": level, "n_sources": n_best, "first_hand": hand, "with_media": bool(media),
                               "line": line},
             "muted": muted, "high_impact": primary_act in li.HIGH_IMPACT,
@@ -301,6 +308,29 @@ def attach_media(con, atoms: list[dict]) -> dict:
         if got:
             out[key] = got
     return out
+
+
+def _post_url(channel, msg_id):
+    return None if str(channel).startswith(("c/", "u/", "g/")) else f"https://t.me/{channel}/{msg_id}"
+
+
+def read_atoms(con, since: _dt.datetime) -> list[dict]:
+    """The atoms of every live-gated post whose event is after `since`."""
+    prev = con.row_factory
+    con.row_factory = sqlite3.Row
+    try:
+        cols = {r[1] for r in con.execute("PRAGMA table_info(telegram_posts)")}
+        if "live_verdict" not in cols or "event_time" not in cols:
+            return []
+        want = ["channel", "msg_id", "channel_title", "topic_id", "posted_at", "text", "summary_en", "media", "thumb", "lat", "lon",
+                "place", "country_code", "event_time", "live_verdict", "live_json", "first_hand", "read_by"]
+        sel = ", ".join(c if c in cols else f"NULL AS {c}" for c in want)
+        rows = [dict(r) for r in con.execute(
+            f"SELECT {sel} FROM telegram_posts WHERE live_verdict IN ('live','rule-live') AND event_time >= ?"
+            " AND lat IS NOT NULL AND COALESCE(role,'') != 'ignore' ORDER BY event_time DESC LIMIT 3000", (li.iso(since),))]
+    finally:
+        con.row_factory = prev
+    return [a for a in (atom_of(r) for r in rows) if a]
 
 
 def read(con, now: _dt.datetime | None = None) -> list[dict]:
