@@ -258,9 +258,11 @@ def decide(c: dict, item: dict) -> tuple[bool, str]:
         except Exception as e:                                  # noqa: BLE001
             print(f"[user_concern] error: country-level concern: {type(e).__name__}: {e}", flush=True)
     if lat is None and not cc:
-        named = str(item.get("location_country") or "").strip().lower()    # surface items name it in words
-        if named and named in (c.get("countries") or ()):
-            return True, f"{item['location_country']} — a country you watch"
+        # surface items name it in words (location_country); a frontline or risk card by `region`
+        for k in ("location_country", "region"):
+            named = str(item.get(k) or "").strip().lower()
+            if named and named in (c.get("countries") or ()):
+                return True, f"{item[k]} — a country you watch"
     if sev == "critical" and c.get("topics"):
         t = _text(item)
         for k in c["topics"]:

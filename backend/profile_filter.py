@@ -53,20 +53,23 @@ def bare(items: list, user, response=None, key: Callable | None = None, sc: uc.S
     return kept
 
 
-def paged(user, fetch: Callable, before, limit: int, list_key: str, max_pages: int = 6) -> dict:
+def paged(user, fetch: Callable, before, limit: int, list_key: str, max_pages: int = 6, wide: int = 100) -> dict:
     """A paged feed, filtered. A page the filter empties would stop the
     reader, so more pages are read (bounded) until `limit` kept or the end.
-    `fetch(before)` -> {list_key: [...], "next": cursor}. The cursor is the
-    last page READ, so nothing repeats and nothing is skipped."""
+    `fetch(before, size)` -> {list_key: [...], "next": cursor}; a filtered
+    read takes `wide` rows a page, since most of a page is not the user's.
+    The cursor is the last page READ, so nothing repeats and nothing is
+    skipped."""
     sc = scope(user)
-    res = fetch(before)
     if not sc.active:
+        res = fetch(before, limit)
         return {**res, "profile": sc.block(0)}
+    res = fetch(before, max(limit, wide))
     kept, hidden = sc.filter(res.get(list_key))
     for _ in range(max_pages - 1):
         if len(kept) >= limit or not res.get("next"):
             break
-        res = fetch(res["next"])
+        res = fetch(res["next"], max(limit, wide))
         k, h = sc.filter(res.get(list_key))
         kept += k
         hidden += h
@@ -97,7 +100,7 @@ def situation(answer: dict, user) -> dict:
 
 # Cards made for one person or one team, not about "the world": they are
 # theirs whatever the place says.
-PERSONAL_KINDS = {"message", "desk", "warning", "asset", "exit", "assign", "rfi", "escalate", "livestream"}
+PERSONAL_KINDS = {"message", "desk", "warning", "asset", "exit", "assign", "rfi", "livestream"}
 
 
 def personal(card: dict) -> bool:

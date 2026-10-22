@@ -93,6 +93,8 @@ def test_unlocated_items_are_not_let_through_for_lacking_a_place():
     sc = uc.scope_for(u)
     assert not sc.concerns({"headline": "Calls to gather", "severity": "high"})[0]
     assert sc.concerns({"headline": "x", "country_code": "de"})[0]                      # a watched country
+    assert sc.concerns({"title": "front moved", "region": "Germany"})[0]               # a card that names it in words
+    assert not sc.concerns({"title": "front moved", "region": "Ukraine", "kind": "escalate"})[0]
     assert not sc.concerns({"headline": "x", "country_code": "fr"})[0]
     assert sc.concerns({"headline": "Ransomware outage hits banks", "severity": "critical"})[0]   # critical + topic
     assert not sc.concerns({"headline": "Ransomware outage hits banks", "severity": "moderate"})[0]
@@ -121,7 +123,7 @@ def test_paged_reads_on_until_a_page_is_filled():
     u = _profile("j", theaters=[_theater("Berlin", BERLIN)])
     pages = {None: {"posts": [sig(PARIS)] * 5, "next": "p2"}, "p2": {"posts": [sig(PARIS)] * 5, "next": "p3"},
              "p3": {"posts": [sig(BERLIN)] * 2, "next": None}}
-    out = pf.paged(u, lambda b: pages[b], None, 5, "posts")
+    out = pf.paged(u, lambda b, n: pages[b], None, 5, "posts")
     assert len(out["posts"]) == 2 and out["next"] is None and out["profile"]["hidden"] == 10
 
 
