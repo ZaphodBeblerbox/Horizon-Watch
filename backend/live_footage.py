@@ -188,8 +188,20 @@ def _rows(hours: int) -> list[dict]:
             " AND COALESCE(role,'') != 'ignore' ORDER BY posted_at DESC LIMIT ?", (cutoff, ROWS)).fetchall()
     finally:
         con.close()
+    # FOOTAGE IS NOT A SIGNAL (owner, 2026-10-22): the strip shows only the picture or video attached to a
+    # live signal (live_signals.py: the signal's own post, or the captionless media right after it), never
+    # a post with a picture that merely passed relevance ("Footage from Place de la République" was a
+    # photo of Macron under a news flash).
+    try:
+        import live_signals
+        keys = {(m["channel"], m["msg_id"]) for s in live_signals.signals() for m in (s.get("all_media") or [])}
+    except Exception as e:                                      # noqa: BLE001
+        print(f"[live-footage] error: live signals: {type(e).__name__}: {e}", flush=True)
+        keys = set()
     out = []
     for r in rows:
+        if (r["channel"], r["msg_id"]) not in keys:
+            continue
         d = dict(r)
         d["graphic"] = tg._is_graphic(r)
         out.append(d)

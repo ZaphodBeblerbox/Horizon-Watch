@@ -441,11 +441,30 @@ def _hits_in(t: str) -> tuple:
     hits = []
     for p in _PLACES:
         for rx, ln in p["pats"]:
-            m = rx.search(t)
+            m = next((m for m in rx.finditer(t) if not _part_of_another_name(t, m, ln)), None)
             if m:
                 hits.append((p, m.start(), ln))
                 break
     return tuple(hits)
+
+
+# "président de la République", "Banque de la République d'Haïti", "au large de l'Italie": the alias of a
+# square inside a longer name is not the square (owner, 2026-10-22: every "Footage from Place de la
+# République" was a post about the republic). A square is named with its own word ("place de la
+# République", "Pl. d'Italie", "métro République", "bd Voltaire") or bare, never after "de la".
+_AFTER_OF = re.compile(r"\b(?:de|du|des)\s+(?:la\s+|l')?$|\bd'$|\bde l'$|\bl'$")
+_OWN_WORD = re.compile(r"\b(?:place|pl\.?|square|esplanade|rond-point|metro|station|gare|bd|boulevard|avenue|av|rue|quai|pont|"
+                       r"parvis|porte|carrefour)\s+(?:de |du |des |d')?(?:la |l')?$")
+_OF_THE_STATE = re.compile(r"^[\s,]*(?:d'|de |du |des )(?:haiti|france|guinee|congo|cote|tunisie|italie|etat|l'etat)")
+
+
+def _part_of_another_name(t: str, m, alias_len: int = 0) -> bool:
+    body_at = max(0, m.end() - alias_len) if alias_len else m.start()     # where the alias itself starts, past any "à"/"de"
+    before = t[max(0, body_at - 24):body_at]
+    if _AFTER_OF.search(before) and not _OWN_WORD.search(before):
+        return True
+    after = t[m.end():m.end() + 14]
+    return bool(_OF_THE_STATE.match(after)) and "republique" in m.group(0)
 
 
 def place_in(text: str | None, city: str | None = None, after: int = 0, exclude: set | None = None) -> dict | None:
@@ -573,9 +592,8 @@ def read_post(post: dict, situations: list[dict] | None = None, *, chat_city: st
     media = (post.get("media") or "none") in ("photo", "video")
     fr0 = came_from(text)
     gaz = place_in(text, chat_city, found[0]["start"] if found else 0, exclude={fr0["id"]} if fr0 else None)
-    # footage: a picture or a video, captioned with a place, from a protest chat or about one
-    if not found and media and gaz and (protest_chat or PROTEST_WORDS.search(t) or _POLICE.search(t)):
-        found = [{"kind": "footage", "start": 0, "end": 0, "words": ""}]
+    # FOOTAGE IS NOT A SIGNAL (owner, 2026-10-22: "EVERY footage mark on the map is wrong"): a picture or a
+    # video is shown only as the attachment of a real act (live_signals.py), never read as one itself
     # a crowd needs a place that is a point, not a word
     found = [f for f in found if f["kind"] != "crowd" or gaz]
     if not found and not model:
@@ -705,6 +723,11 @@ def gloss(kind: str, place_name: str | None, vague: bool = False) -> str:
 
 # ── signals ─────────────────────────────────────────────────────────────────
 
+def _noemoji(s):
+    from textclean import strip_emoji
+    return strip_emoji(s)
+
+
 def _t(iso: str) -> _dt.datetime:
     d = _dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
     return d if d.tzinfo else d.replace(tzinfo=_dt.timezone.utc)
@@ -823,7 +846,7 @@ def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime |
             sources.append({
                 "channel": p["channel"], "channel_title": p.get("channel_title") or p["channel"], "msg_id": p["msg_id"],
                 "posted_at": p["posted_at"], "hhmm": _t(p["posted_at"]).astimezone(zone).strftime("%H:%M"),
-                "text": (p.get("text") or "")[:400],
+                "text": _noemoji((p.get("text") or "")[:400]),
                 "translation": (p.get("summary_en") or "").strip() or r.get("happening") or gloss(kind, a.get("place_name"), r.get("vague")),
                 "translated_by": "model" if (p.get("summary_en") or r.get("happening")) else "rule",
                 "words": r.get("words") or None, "media": media or "none",
@@ -836,7 +859,7 @@ def build(posts: list[dict], situations: dict | None = None, now: _dt.datetime |
         latest = sources[-1]
         span = f"at {first_hhmm}" if first_hhmm == hhmm else f"between {first_hhmm} and {hhmm}"
         count = f"{n} message{'s' if n != 1 else ''}" + (f" in {len(chans)} chats" if len(chans) > 1 else f" in {titles[0]}")
-        quote = (latest["text"] or "").replace("\n", " ").strip()
+        quote = _noemoji((latest["text"] or "").replace("\n", " ").strip())
         summary = (f"{title} — reported {span} local time ({count}); unverified. "
                    f"Latest, {latest['channel_title']} at {latest['hhmm']}: “{quote[:160]}{'…' if len(quote) > 160 else ''}” "
                    f"— {latest['translation']}")
@@ -936,11 +959,22 @@ def read(con, hours: float = LOOKBACK_H, now: _dt.datetime | None = None) -> lis
         if not cols:
             return []
         want = ["channel", "msg_id", "channel_title", "posted_at", "text", "media", "thumb", "summary_en", "lat", "lon",
-                "precision", "place", "country_code", "role", "reply_to"]
+                "precision", "place", "country_code", "role", "reply_to", "live_verdict"]
         sel = ", ".join(c if c in cols else f"NULL AS {c}" for c in want)
         rows = [dict(r) for r in con.execute(
             f"SELECT {sel} FROM telegram_posts WHERE posted_at >= ? AND COALESCE(role,'') != 'ignore'"
             " ORDER BY posted_at DESC LIMIT 20000", (cutoff,))]
+        # ONE GATE (owner, 2026-10-22): a street report is read only out of a post the strict extractor
+        # passed as a live act at a named place (live_incident.py); the captionless picture or video that
+        # follows such a post comes with it. Everything the word lexicon alone "found" is no longer a report.
+        live_keys = {(r["channel"], r["msg_id"]) for r in rows if (r.get("live_verdict") or "") in ("live", "rule-live")}
+
+        def _gated(r):
+            if (r["channel"], r["msg_id"]) in live_keys:
+                return True
+            return (not (r.get("text") or "").strip() and (r.get("media") or "none") != "none"
+                    and any((r["channel"], r["msg_id"] - k) in live_keys for k in (1, 2, 3)))
+        rows = [r for r in rows if _gated(r)]
         # the cheap screen first: most posts say nothing of the street
         keep = [r for r in rows if _screened(r.get("text") or "", (r.get("media") or "none") != "none")]
         sits: dict = {}

@@ -20,10 +20,11 @@ TEXT = "BREAKING: police are charging protesters right now at Place de la Répub
 
 
 def good(**kw):
-    a = {"is_live": True, "event_type": "unrest", "event_time": "2026-10-22T13:57:00Z", "certainty": "verified",
+    a = {"is_live": True, "event_type": "police_intervention", "event_time": "2026-10-22T13:57:00Z", "certainty": "verified",
          "location": {"name_as_written": "Place de la République", "level": "street", "context_as_written": ["Paris", "France"]},
          "other_places_mentioned": [], "ambiguity_note": None, "evidence_quote_time": "right now",
-         "evidence_quote_place": "at Place de la République in Paris", "reject_reason": None}
+         "evidence_quote_place": "at Place de la République in Paris", "evidence_quote_act": "police are charging",
+         "first_hand": False, "reject_class": None, "direction": None, "reject_reason": None}
     a.update(kw)
     return a
 
@@ -262,7 +263,7 @@ def test_decide_end_to_end():
     amb = [city("Springfield", 1, 1), city("Springfield", 40, 40)]
     t = "Police charge protesters right now in Springfield"
     a = good(location={"name_as_written": "Springfield", "level": "city", "context_as_written": []},
-             evidence_quote_place="in Springfield", evidence_quote_time="right now")
+             evidence_quote_place="in Springfield", evidence_quote_time="right now", evidence_quote_act="Police charge")
     d = li.decide(a, t, PUB, NOW, geocode=lambda q: amb)
     assert d["verdict"].startswith("rejected: 2 different places") and not d["ok"] and "does not say which" in d["audit"]["geocode"]["ambiguity_note"]
 
@@ -318,7 +319,7 @@ def test_a_live_answer_is_pinned_and_audited(db):
     def ext(text, pub, name, region):
         calls.append((text, pub, name, region))
         return good(event_type="explosion", location={"name_as_written": "Kharkiv", "level": "city", "context_as_written": ["Ukraine"]},
-                    evidence_quote_place="central Kharkiv, Ukraine"), 0.0007
+                    evidence_quote_place="central Kharkiv, Ukraine", evidence_quote_act="explosions"), 0.0007
     out = li.run_once(now=NOW, extract_fn=ext,
                       geocode=lambda q: [city("Kharkiv", 49.99, 36.23, country_code="ua", display_name="Kharkiv, Ukraine")])
     assert out["live"] == 1 and calls[0][1] == PUB
@@ -477,7 +478,7 @@ def test_the_request_has_the_spec_and_the_strict_schema():
     assert seen["response_format"]["json_schema"]["strict"] is True
     sysmsg = seen["messages"][0]["content"]
     assert "A wrong signal is far worse than a missing signal. When in doubt, reject." in sysmsg
-    assert "source_region (context only, NOT evidence of the event location)" in sysmsg and "strike, attack, clash" in sysmsg
+    assert "source_region (context only, NOT evidence of the event location)" in sysmsg and "police_intervention" in sysmsg and "NOT SIGNALS" in sysmsg
     user = json.loads(seen["messages"][1]["content"])
     assert user["published_at"] == PUB and user["source_region"] == "Paris, France"
     sch = li.SCHEMA
@@ -488,7 +489,7 @@ def test_the_request_has_the_spec_and_the_strict_schema():
 
 def test_rule_live_needs_present_tense_no_earlier_time_and_a_recent_post():
     fresh = (NOW - dt.timedelta(minutes=5)).isoformat()
-    assert li.rule_live("⚡️ Artillery shelling targets the town of Mansouri", fresh, NOW)[0]
+    assert li.rule_live("BREAKING: Artillery shelling targets the town of Mansouri", fresh, NOW)[0]
     assert li.rule_live("عاجل | طيران الاحتلال يشن غارة على بلدة برعشيت", fresh, NOW)[0]
     assert li.rule_live("Срочно: обстрел Белгорода", fresh, NOW)[0]
     assert not li.rule_live("Artillery shelling targets the town of Mansouri", fresh, NOW)[0]          # no cue
@@ -522,7 +523,7 @@ def _rule_pass(path, monkeypatch, texts, at=None, locator=None):
 
 
 def test_with_the_model_out_a_present_tense_post_with_its_place_is_pinned_live(rdb, monkeypatch):
-    got = _rule_pass(rdb, monkeypatch, ["⚡️ Artillery shelling targets the town of Mansouri, southern Lebanon"])
+    got = _rule_pass(rdb, monkeypatch, ["BREAKING: Artillery shelling targets the town of Mansouri, southern Lebanon"])
     assert got[1][0] == 33.2 and got[1][1] == "rule-live" and got[1][2]
     p = [x for x in tg.published(24)][0]
     assert p["live"] is True and p["live_basis"] == "rule" and p["event_time"] == got[1][2]
@@ -530,14 +531,14 @@ def test_with_the_model_out_a_present_tense_post_with_its_place_is_pinned_live(r
 
 def test_with_the_model_out_a_recap_or_old_post_is_read_not_pinned(rdb, monkeypatch):
     got = _rule_pass(rdb, monkeypatch, ["Artillery shelling targets the town of Mansouri, southern Lebanon",       # no cue
-                                        "⚡️ Artillery shelling hit the town of Mansouri, southern Lebanon yesterday"])  # earlier time
+                                        "BREAKING: Artillery shelling hit the town of Mansouri, southern Lebanon yesterday"])  # earlier time
     assert got[1][0] is None and "not live by rule" in got[1][3]
     assert got[2][0] is None and "earlier time" in got[2][3]
 
 
 def test_with_the_model_out_a_post_older_than_the_window_is_read_not_pinned(rdb, monkeypatch):
     old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=120)).isoformat()
-    got = _rule_pass(rdb, monkeypatch, ["⚡️ Artillery shelling targets the town of Mansouri, southern Lebanon"], at=old)
+    got = _rule_pass(rdb, monkeypatch, ["BREAKING: Artillery shelling targets the town of Mansouri, southern Lebanon"], at=old)
     assert got[1][0] is None and "min old" in got[1][3]
 
 
@@ -570,22 +571,26 @@ def test_the_model_path_drops_warnings_it_would_have_pinned(rdb, monkeypatch):
     assert r[0] is None and "alert" in r[1]
 
 
-def test_the_notification_card_carries_the_events_time_and_says_live_only_when_it_is(monkeypatch):
-    """Phone and desktop read the same server card: its time is the event's, its context the channel and the place."""
+def test_the_notification_cards_are_the_live_signals_and_nothing_else(monkeypatch):
+    """Phone and desktop read the same server card: the live signals (live_signals.py), with the act and the place
+    as the title and the honest source line as the reason. A Telegram post that is not a signal is no card."""
     import main
-    import telegram_signals
+    import live_signals
     main._TG_CARDS_CACHE.clear()
-    posts = [{"id": "tg-a-1", "headline": "Explosion — Kharkiv", "channel_title": "Kharkiv Watch", "place": "Kharkiv", "role": "aggregator",
-              "posted_at": "2026-10-22T13:58:00+00:00", "event_time": "2026-10-22T13:50:00+00:00", "live": True},
-             {"id": "tg-b-2", "headline": "Paris riots: 557 held", "channel_title": "Fdesouche", "place": "Paris", "role": "aggregator",
-              "posted_at": "2026-10-22T13:58:00+00:00", "live": False}]
-    monkeypatch.setattr(tg, "published", lambda hours: posts)
-    monkeypatch.setattr(tg, "statements", lambda hours: [])
-    monkeypatch.setattr(telegram_signals, "posts", lambda hours: [])
-    cards = {c["id"]: c for c in main._telegram_report_cards(24)}
+    sig = {"id": "ls-a-1", "act": "arrest", "title": "Arrest at rue de Rivoli, Paris", "place": "rue de Rivoli", "lat": 48.86, "lon": 2.33,
+           "country_code": "fr", "event_time": "2026-10-22T13:50:00+00:00", "muted": False, "high_impact": True,
+           "corroboration": {"level": "eyewitness", "n_sources": 1, "line": "Eyewitness, unverified"},
+           "sources": [{"url": "https://t.me/a/1"}], "media": None, "channel": "a", "msg_id": 1}
+    monkeypatch.setattr(live_signals, "signals", lambda *a, **k: [sig])
+    monkeypatch.setattr(tg, "published", lambda *a, **k: pytest.fail("the notification feed no longer reads the old pins"))
+    cards = main._telegram_report_cards(24)
     main._TG_CARDS_CACHE.clear()
-    assert cards["tg-a-1"]["reason"] == "Live · Kharkiv Watch · Kharkiv" and cards["tg-a-1"]["created_at"] == "2026-10-22T13:50:00+00:00"
-    assert cards["tg-b-2"]["reason"] == "Fdesouche · Paris" and cards["tg-b-2"]["created_at"] == "2026-10-22T13:58:00+00:00"
+    assert [c["id"] for c in cards] == ["ls-a-1"]
+    assert cards[0]["title"] == "Arrest at rue de Rivoli, Paris" and cards[0]["reason"] == "Eyewitness, unverified"
+    assert cards[0]["created_at"] == "2026-10-22T13:50:00+00:00" and cards[0]["sev"] == "high"
+    assert not main._ungated_telegram_card(cards[0])
+    for bad in ({"id": "TGC-LeGrandQG-6347"}, {"id": "tg-x-1", "kind": "telegram"}, {"id": "now:abc"}, {"id": "a", "alert_type": "Telegram mood: rise"}):
+        assert main._ungated_telegram_card(bad)
 
 
 def test_the_rule_path_does_not_place_a_settlement_name_the_country_has_twice(monkeypatch):
@@ -616,8 +621,8 @@ def test_pins_leave_the_map_after_a_day_and_warnings_never_pin(tmp_path, monkeyp
     def row(mid, hours_ago, text, event_hours=None):
         ts = (now - dt.timedelta(hours=hours_ago)).isoformat()
         ev = (now - dt.timedelta(hours=event_hours)).isoformat() if event_hours is not None else None
-        con.execute("INSERT INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, lat, lon, place, event_type, headline, role, event_time) "
-                    "VALUES ('c', ?, 'C', ?, ?, 48.85, 2.35, 'Paris', 'conflict', ?, 'aggregator', ?)", (mid, ts, text, f"h{mid}", ev))
+        con.execute("INSERT INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, lat, lon, place, event_type, headline, role, event_time, live_verdict) "
+                    "VALUES ('c', ?, 'C', ?, ?, 48.85, 2.35, 'Paris', 'conflict', ?, 'aggregator', ?, ?)", (mid, ts, text, f"h{mid}", ev, "live" if mid in (1, 3, 4) else None))
     row(1, 2, "Explosion at the depot, fire spreading")
     row(2, 30, "Explosion at the depot, fire spreading")                   # posted 30 h ago
     row(3, 2, "Strike earlier, now over", event_hours=40)                  # posted 2 h ago about an event 40 h old

@@ -858,6 +858,7 @@ def classify_by_rules(con, rows) -> dict:
         hit = place = pcc = None
         why = NO_EVENT_BY_RULE
         verdict = event_time = None
+        rule_act = rule_quote = None
         if x["relevant"]:
             relevant += 1
             hit, place, pcc, why = telegram_rules.resolve(x, budget)
@@ -867,11 +868,15 @@ def classify_by_rules(con, rows) -> dict:
             # time, and is itself recent. Otherwise it is read, not pinned.
             if hit:
                 import live_incident
-                is_live, live_why = live_incident.rule_live(text, r[7])
-                if is_live:
+                import textclean
+                rd = live_incident.rule_decide(text, r[7])
+                if rd["ok"] and textclean.is_generic_place(place):
+                    rd = {**rd, "ok": False, "why": f"'{place}' is a kind of place, not a place"}
+                if rd["ok"]:
                     verdict, event_time = "rule-live", r[7]
+                    rule_act, rule_quote = rd["act"], rd["quote"]
                 else:
-                    hit, place, pcc, why = None, None, None, f"not live by rule: {live_why}"
+                    hit, place, pcc, why = None, None, None, f"not live by rule: {rd['why']}"
         elif x["event_type"]:
             why = "talk about an event, not a report of one (read by rule)"
         if telegram_rules.is_warning_only(text):
@@ -882,18 +887,26 @@ def classify_by_rules(con, rows) -> dict:
             continue
         claim = int(role == "official" and bool(x["relevant"]))
         headline = x["headline"]
-        if hit and place:
-            headline = f"{telegram_rules.LABEL.get(x['event_type'], x['event_type'])} reported — {place}"
+        ev_type = x["event_type"]
+        live_json = None
+        if hit and place and rule_act:
+            import live_incident
+            headline = live_incident.card_headline(rule_act, rule_quote, place.split(",")[0])
+            ev_type = live_incident.ACT_EVENT_TYPE.get(rule_act, ev_type)
+            live_json = json.dumps({"rule": {"act": rule_act, "quote": rule_quote, "place": place},
+                                    "verify": {"ok": True, "act": rule_act, "name": place.split(",")[0], "context": [],
+                                               "first_hand": False, "direction": None, "event_time": event_time}},
+                                   ensure_ascii=False)
         con.execute(
             "UPDATE telegram_posts SET classified=1, relevant=?, headline=?, event_type=?, place=?, precision=?,"
             " country_code=?, lat=?, lon=?, geocoded_as=?, unpublished_reason=?, claim=?, first_hand=?, read_by='rule',"
-            " live_verdict=?, event_time=?"
+            " live_verdict=?, event_time=?, live_json=COALESCE(?, live_json)"
             " WHERE channel=? AND msg_id=?",
-            (int(bool(x["relevant"])), (headline or "")[:200], x["event_type"], place or (x["places"][0] if x["places"] else None),
+            (int(bool(x["relevant"])), (headline or "")[:200], ev_type, place or (x["places"][0] if x["places"] else None),
              "town" if hit else None, (pcc or (x["countries"][0] if x["countries"] else "") or "").lower(),
              hit and hit["lat"], hit and hit["lon"], hit and hit.get("display_name"),
              None if hit else why, claim,
-             int(media != "none" and role in ("local", "group", "official")), verdict, event_time, chan, mid))
+             int(media != "none" and role in ("local", "group", "official")), verdict, event_time, live_json, chan, mid))
         done += 1
         kept += int(hit is not None)
     con.commit()
@@ -1395,6 +1408,7 @@ def published(hours: int = 72, pins: bool = False) -> list[dict]:
     con.close()
     out, seen = [], {}
     import live_incident
+    from textclean import strip_emoji as _strip_emoji
     now = _dt.datetime.now(_dt.timezone.utc)
     for r in rows:
         chan = r["channel"]
@@ -1410,6 +1424,11 @@ def published(hours: int = 72, pins: bool = False) -> list[dict]:
         except Exception:                                       # noqa: BLE001
             pass
         if pins:
+            # ONE GATE (owner, 2026-10-22): what a map draws from Telegram text is what the strict
+            # extractor (or, model out, its rule twin) passed as live, and nothing the older
+            # classification pinned by itself (live_signals.py is the maps' own feed)
+            if (r["live_verdict"] or "") not in ("live", "rule-live"):
+                continue
             t = _pin_time(r)
             if t is not None and (now - t) > _dt.timedelta(hours=PIN_MAX_H):
                 continue
@@ -1426,7 +1445,7 @@ def published(hours: int = 72, pins: bool = False) -> list[dict]:
                 first.update(media_urls(chan, r["msg_id"], r["media"], r["thumb"]))
             continue
         out.append({
-            "id": f"tg-{chan}-{r['msg_id']}", "headline": r["headline"], "text": r["text"],
+            "id": f"tg-{chan}-{r['msg_id']}", "headline": _strip_emoji(r["headline"]), "text": r["text"],
             "channel": chan, "channel_title": r["channel_title"], "posted_at": r["posted_at"],
             # WHEN IT HAPPENED, NOT WHEN IT WAS POSTED (live_incident.py): event_time
             # only when a reading established it; live is derived now and false
@@ -1450,6 +1469,8 @@ def published(hours: int = 72, pins: bool = False) -> list[dict]:
     # a demonstration's post whose last activity is over 24 h old is off the
     # map and the notifications (demo_freshness.py; statistics read the table)
     import demo_freshness
+    if pins:
+        return demo_freshness.keep(out)            # no unified signals / street reports among a map's pins
     return demo_freshness.keep(with_signals(out, hours, located_only=True))
 
 

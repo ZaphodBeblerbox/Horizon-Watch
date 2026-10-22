@@ -173,11 +173,25 @@ def test_video_with_a_caption_in_a_protest_chat_is_a_report():
     assert s["tactic"] == "police_arrival" and s["media"] == "video" and s["thumb_url"] == "/api/telegram/media/GJ2026IDF_1.jpg"
 
 
-def test_video_captioned_only_with_a_place_is_footage():
-    s = sr.build([_post("République là maintenant 🔥", media="video")], now=NOW, chats=PARIS)
-    assert s == [] or s[0]["tactic"] == "footage"
-    s = sr.build([_post("Répu là maintenant 🔥", media="video")], now=NOW, chats=PARIS)[0]
-    assert s["tactic"] == "footage" and s["title"] == "Footage from Place de la République (Paris)"
+def test_footage_is_not_a_signal():
+    """Owner, 2026-10-22: every 'Footage from ...' mark was wrong. A picture or a video with a place in its
+    caption is not a report; it is only ever the attachment of a real act."""
+    assert sr.build([_post("République là maintenant 🔥", media="video")], now=NOW, chats=PARIS) == []
+    assert sr.build([_post("Répu là maintenant 🔥", media="video")], now=NOW, chats=PARIS) == []
+
+
+@pytest.mark.parametrize("text", [
+    "Emmanuel Macron porte une atteinte grave à la liberté de manifester, après les déclarations du président de la République",
+    "La Banque de la République d'Haïti calcule le taux de référence du jour",
+    "Tunisie : un pêcheur est secouru au large de l'Italie",
+])
+def test_an_alias_inside_a_longer_name_is_not_the_square(text):
+    assert sr.place_in(text, "Paris") is None
+
+
+def test_the_square_itself_is_still_found():
+    assert sr.place_in("lacrymo place de la République", "Paris")["id"] == "republique"
+    assert sr.place_in("ça gaze à Répu", "Paris")["id"] == "republique"
 
 
 def test_captionless_video_right_after_a_report_joins_it():
@@ -320,11 +334,13 @@ def test_signals_without_any_model_reading(monkeypatch):
     monkeypatch.setattr(sr, "chat_contexts", lambda chans: {c: {"city": "Paris", "protest": True} for c in chans})
     con = sqlite3.connect(":memory:")
     con.execute("CREATE TABLE telegram_posts (channel TEXT, msg_id INTEGER, channel_title TEXT, posted_at TEXT, text TEXT,"
-                " media TEXT, thumb TEXT, role TEXT, classified INTEGER DEFAULT 0)")
-    rows = [("GJ2026IDF", 1, "GJ IDF", (NOW - dt.timedelta(minutes=3)).isoformat(), "ça nasse à Répu", "none", None, "group"),
-            ("GJ2026IDF", 2, "GJ IDF", (NOW - dt.timedelta(minutes=2)).isoformat(), "mdr", "none", None, "group")]
-    con.executemany("INSERT INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, media, thumb, role)"
-                    " VALUES (?,?,?,?,?,?,?,?)", rows)
+                " media TEXT, thumb TEXT, role TEXT, classified INTEGER DEFAULT 0, live_verdict TEXT)")
+    rows = [("GJ2026IDF", 1, "GJ IDF", (NOW - dt.timedelta(minutes=3)).isoformat(), "ça nasse à Répu", "none", None, "group", "live"),
+            ("GJ2026IDF", 2, "GJ IDF", (NOW - dt.timedelta(minutes=2)).isoformat(), "mdr", "none", None, "group", None),
+            # a word the lexicon reads but the extractor did not pass is not a report (one gate, 2026-10-22)
+            ("GJ2026IDF", 3, "GJ IDF", (NOW - dt.timedelta(minutes=2)).isoformat(), "ça gaze à Bastoche", "none", None, "group", None)]
+    con.executemany("INSERT INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, media, thumb, role, live_verdict)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)", rows)
     sigs = sr.read(con, now=NOW)
     assert [s["title"] for s in sigs] == ["Kettle at Place de la République (Paris) — exits blocked"]
     assert sigs[0]["sources"][0]["translated_by"] == "rule"

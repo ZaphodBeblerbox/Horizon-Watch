@@ -12268,6 +12268,18 @@ async def api_telegram_live_incidents():
     return {"incidents": await loop.run_in_executor(_executor, _tg.live_incidents)}
 
 
+@app.get("/api/telegram/signals/live")
+async def api_telegram_live_signals():
+    """THE signals of the map and the notifications (live_signals.py, owner 2026-10-22): the owner's acts at
+    a place the post names, read as happening now by the strict extractor, one marker per event, with
+    corroboration, an attached media when the same post/thread has one, and card text without emoji.
+    Derived on read from the stored extractor answers; cached a few seconds for everyone."""
+    import live_signals as _ls
+    loop = asyncio.get_event_loop()
+    sigs = await loop.run_in_executor(_executor, _ls.signals)
+    return {"signals": sigs, "window_min": _ls.LIVE_WINDOW_MIN, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
 @app.get("/api/telegram/feed")
 async def api_telegram_feed(before: str = "", limit: int = Query(40, ge=5, le=100)):
     """Every relevant Telegram post, newest first, paged by `before`
@@ -29725,72 +29737,21 @@ _TG_CARDS_CACHE: dict = {}
 
 
 def _telegram_report_cards(hours: int, cap: int = 25) -> list:
-    """Fresh located Telegram reports as notification cards, the same for
-    everyone, so cached briefly (the push sweep asks per user)."""
+    """Telegram notification cards: ONLY the live signals (live_signals.py, owner 2026-10-22), the same
+    list as the map's "Live signals" layer, so phone and desktop cannot disagree and a notification is
+    never a post the map would not draw. The card's title is the act and the place ("Arrest at rue de
+    Rivoli, Paris"), its reason the honest source line ("Eyewitness, unverified", "Corroborated by 3
+    sources"). No footage card, no call to violence, no official statement, no announced protest, no
+    bare id: those were the 'signals' that were not live. Cached briefly (the push sweep asks per user)."""
     hit = _TG_CARDS_CACHE.get(hours)
-    if hit and time.monotonic() - hit[0] < 15:      # 15 s: a call to act now is news for minutes, not hours
+    if hit and time.monotonic() - hit[0] < 15:
         return [dict(c) for c in hit[1]]
-    import telegram_ingest as _tg
-    import notification_context as _nc
     cards = []
-    # UNIFIED SIGNALS (telegram_signals.py, the owner 2026-10-17): a call to
-    # act or a crowd's position, many messages in one card. Only the urgent
-    # ones are cards — an immediate call to attack or occupy a named place
-    # is high at least, so it takes the screen and reaches the phone
-    # (event_watch.notifies); a timed call or a lone position waits on the
-    # Desk. Unlocated ones too: "on va à l'Élysée maintenant" needs no pin.
     try:
-        import telegram_signals as _tsig
-        for p in _tsig.posts(hours):
-            if p.get("signal_severity") not in ("high", "critical"):
-                continue
-            cards.append({
-                "id": p["id"], "kind": "telegram", "sev": p["signal_severity"],
-                "title": _nc.plain(p.get("headline") or "Telegram call to act"),
-                "reason": " · ".join(x for x in (p.get("channel_title"), p.get("topic_title"),
-                                                  f"{p['n_messages']} messages" if p.get("n_messages", 1) > 1 else None) if x),
-                "lat": p.get("lat"), "lon": p.get("lon"), "country_code": p.get("country_code"),
-                "region": p.get("place"), "created_at": p.get("posted_at"), "source": "telegram",
-                "url": p.get("url"), "intent": p.get("intent"),
-            })
+        import live_signals as _ls
+        cards = _ls.notification_cards(cap=cap)
     except Exception as ex:                                 # noqa: BLE001
-        print(f"[notifications] error: telegram signals: {type(ex).__name__}: {ex}", flush=True)
-    for p in _tg.published(hours)[:cap]:
-        if p.get("unified"):
-            continue                                        # carded above, by its own severity
-        official = p.get("role") == "official"
-        cards.append({
-            "id": p["id"], "kind": "telegram",
-            "sev": "critical" if p.get("severity_tier") == "critical" else "high" if official else "moderate",
-            "title": _nc.plain(p.get("headline") or "Telegram report"),
-            # "Live" only when the strict extractor vouched for the event (live_incident.py) and it is
-            # inside its 60 minutes; the card's time is the EVENT's when known, not when it was posted
-            "reason": " · ".join(x for x in ("Live" if p.get("live") else None, p.get("channel_title") or p.get("channel"), p.get("place")) if x),
-            "lat": p.get("lat"), "lon": p.get("lon"), "country_code": p.get("country_code"),
-            "region": p.get("place"), "created_at": p.get("event_time") or p.get("posted_at"), "source": "telegram",
-            # its picture or video, so the card shows the footage, not only its words (owner, 2026-10-19)
-            "media": p.get("media"), "thumb_url": p.get("thumb_url"), "channel": p.get("channel"),
-            "msg_id": p.get("msg_id"), "graphic": p.get("graphic"), "category": p.get("category"),
-        })
-    # OFFICIAL STATEMENTS, as the desktop raises them: a claimed strike,
-    # attack, interception or seizure, at most one per party every 12 hours
-    last_by_party: dict = {}
-    for st in sorted(_tg.statements(hours), key=lambda x: str(x.get("posted_at") or "")):
-        if not st.get("important"):
-            continue
-        party = st.get("party") or st.get("channel")
-        ts = _parse_iso_loose(st.get("posted_at"))
-        prev = last_by_party.get(party)
-        if ts is None or (prev is not None and (ts - prev).total_seconds() < 12 * 3600):
-            continue
-        last_by_party[party] = ts
-        cards.append({
-            "id": st["id"], "kind": "telegram", "sev": "critical",
-            "title": _nc.plain(st.get("headline") or "Official statement"),
-            "reason": " · ".join(x for x in (f"{party} — official statement", st.get("place")) if x),
-            "lat": st.get("cite_lat"), "lon": st.get("cite_lon"), "country_code": st.get("country_code"),
-            "region": st.get("place"), "created_at": st.get("posted_at"), "source": "telegram",
-        })
+        print(f"[notifications] error: live signals: {type(ex).__name__}: {ex}", flush=True)
     _TG_CARDS_CACHE[hours] = (time.monotonic(), cards)
     return [dict(c) for c in cards]
 
@@ -30029,6 +29990,18 @@ def _notification_alert_cards(limit: int, hours: int, include_silent: bool, _tim
 _NOTIF_ALERTS_LOCK_BUILD = threading.Lock()
 
 
+def _ungated_telegram_card(c: dict) -> bool:
+    """A notification card read out of Telegram text that did not pass the live-signal gate."""
+    if c.get("live_signal"):
+        return False
+    cid = str(c.get("id") or "")
+    if cid.startswith(("TGC-", "TGM-", "TGU-", "ann:", "soon:", "now:")):
+        return True
+    if str(c.get("alert_type") or "").startswith("Telegram"):
+        return True
+    return c.get("kind") == "telegram" or c.get("source") == "telegram"
+
+
 def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, include_silent: bool = False) -> list:
     """Alerts that have earned an interruption, with titles a human can read.
 
@@ -30172,6 +30145,12 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
     if _total > 2.0:
         print(f"[notifications] SLOW {_total:.1f}s {_timings}")
 
+    # ONE GATE FOR TELEGRAM (owner, 2026-10-22): from Telegram only the live signals notify
+    # (live_signals.py). The mood and unrest alerts ("Call to violence on Telegram at an unnamed
+    # place"), an announced protest, a live development read by the old situations pass and any
+    # Telegram card that is not a live signal are not notifications; they stay on the Desk.
+    out = [c for c in out if not _ungated_telegram_card(c)]
+
     # ── a fair merge, not a global sort ──────────────────────────────────
     #
     # Sorting everything by timestamp and truncating hands the whole tray
@@ -30205,8 +30184,8 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
         # Pinned points (a GeoConfirmed pin, a fire pixel) cluster within a
         # few km, not a city's 40.
         _ev = [{**o, "precise": o.get("kind") == "confirm" or o.get("alert_type") in ("Heat", "Imagery signal")}
-               for o in out if (o.get("kind") or "signal") in _CLUSTER_KINDS]
-        _keep = [o for o in out if (o.get("kind") or "signal") not in _CLUSTER_KINDS]
+               for o in out if (o.get("kind") or "signal") in _CLUSTER_KINDS and not o.get("live_signal")]
+        _keep = [o for o in out if (o.get("kind") or "signal") not in _CLUSTER_KINDS or o.get("live_signal")]
         _ev = _ec.cluster(_ev, at="created_at", text=("title",), sev="sev", prefer="first",
                           source_of=lambda d: _notif_source_label(d))
         for o in _ev:
@@ -30234,6 +30213,12 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
     leftovers.sort(key=lambda o: str(o.get("created_at") or ""), reverse=True)
     merged.extend(leftovers[:max(0, limit - len(merged))])
     merged.sort(key=lambda o: str(o.get("created_at") or ""), reverse=True)
+    # no emoji in a notification's words (owner, 2026-10-22); the clients guard again
+    from textclean import strip_emoji as _strip_emoji
+    for o in merged:
+        for k in ("title", "reason", "region"):
+            if isinstance(o.get(k), str):
+                o[k] = _strip_emoji(o[k])
     return merged[:limit]
 
 

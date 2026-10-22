@@ -577,7 +577,7 @@ def _call_rows(since: _dt.datetime) -> list:
     try:
         return con.execute(
             "SELECT channel, msg_id, channel_title, posted_at, text, summary_en, headline, place, lat, lon,"
-            " mood_country, mood_tension, mood_mobilise, mood_target, mood_topic"
+            " live_verdict, mood_country, mood_tension, mood_mobilise, mood_target, mood_topic"
             " FROM telegram_posts WHERE mood_checked=1 AND (mood_mobilise >= 3 OR mood_tension >= 3) AND posted_at >= ?",
             (since.strftime("%Y-%m-%dT%H:%M:%S"),)).fetchall()
     finally:
@@ -589,13 +589,15 @@ def _post_url(r) -> str | None:
     return None if ch.startswith(("c/", "u/", "g/")) else f"https://t.me/{ch}/{r['msg_id']}"
 
 
-def build_call_alerts(rows, now: _dt.datetime, by_rule: bool = False) -> list[dict]:
+def build_call_alerts(rows, now: _dt.datetime, by_rule: bool = False, require_live: bool = False) -> list[dict]:
     """One alert dict per distinct call (copies merged), newest first. Pure.
     by_rule: the rows were read by the words alone (is_violence_call_by_rule),
     because the model that rates the mood was unavailable."""
     groups: dict[str, list] = {}
     judge = (lambda r: is_violence_call_by_rule(_get(r, "text"))) if by_rule else is_violence_call
     for r in rows:
+        if require_live and not _passes_live_gate(r):
+            continue
         if judge(r):
             groups.setdefault(_key(r), []).append(r)
     out = []
@@ -607,10 +609,11 @@ def build_call_alerts(rows, now: _dt.datetime, by_rule: bool = False) -> list[di
         name = country_name(cc) if len(cc) == 2 else (first["place"] or "an unnamed place")
         lat, lon = first["lat"], first["lon"]
         precise = lat is not None and lon is not None
-        if not precise and len(cc) == 2:
+        if not precise and len(cc) == 2 and not require_live:
             ctr = centroid(cc)
             lat, lon = (ctr[0], ctr[1]) if ctr else (None, None)
-        said = str(first["summary_en"] or first["headline"] or first["text"] or "").strip().replace("\n", " ")
+        from textclean import strip_emoji as _se
+        said = _se(str(first["summary_en"] or first["headline"] or first["text"] or "").strip().replace("\n", " "))
         quote = said[:140] + ("…" if len(said) > 140 else "")
         target = first["mood_target"]
         title = (f"Call to violence on Telegram{f' against {target}' if target else ''} — {name}: «{quote}» "
@@ -643,6 +646,18 @@ RULE_CALL_ROLES = ("group", "partisan", "local")
 RULE_CALL_KINDS = ("group", "forum", "private")
 
 
+def _passes_live_gate(r) -> bool:
+    """A call to violence is a signal only as the owner's gate has it (2026-10-22: "Call to violence on
+    Telegram at an unnamed place" was an opinion about the founders of the RN, placed at a country's centre):
+    the strict extractor passed the post as a live act at a place the post names, and it is no opinion."""
+    if (_get(r, "live_verdict") or "") not in ("live", "rule-live"):
+        return False
+    if _get(r, "lat") is None or _get(r, "lon") is None:
+        return False
+    import live_incident
+    return not live_incident.opinion_cue(_get(r, "text") or "")
+
+
 def is_violence_call_by_rule(text: str | None) -> bool:
     """A call to act together with a violent act within a sentence of it.
     "ils brûlent des voitures" is a report and does not count: it needs the
@@ -666,7 +681,7 @@ def _rule_call_rows(since: _dt.datetime) -> list:
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(
-            "SELECT channel, msg_id, channel_title, posted_at, text, summary_en, headline, place, lat, lon,"
+            "SELECT channel, msg_id, channel_title, posted_at, text, summary_en, headline, place, lat, lon, live_verdict,"
             " COALESCE(NULLIF(mood_country, ''), country_code) AS mood_country, mood_target, mood_topic"
             " FROM telegram_posts WHERE posted_at >= ? AND text IS NOT NULL AND text != ''"
             f" AND (chat_kind IN {RULE_CALL_KINDS} OR role IN {RULE_CALL_ROLES})",
@@ -693,7 +708,7 @@ def detect_calls(now: _dt.datetime | None = None, rows=None, existing=None, rule
     Synchronous: run it off the event loop."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     rows = rows if rows is not None else _call_rows(now - _dt.timedelta(hours=CALL_WINDOW_H))
-    alerts = build_call_alerts(rows, now)
+    alerts = build_call_alerts(rows, now, require_live=True)
     # BY RULE TOO (2026-10-19): the model that rates the mood ran out of
     # credit on 2026-10-18 and no call to violence was raised for two days.
     # A call ("on y va", "allez", "vamos a") next to a violent act ("brûler",
@@ -707,7 +722,7 @@ def detect_calls(now: _dt.datetime | None = None, rows=None, existing=None, rule
             print(f"[tg-mood] error: rule calls: {type(e).__name__}: {e}", flush=True)
             rule_rows = []
     have = {a["id"] for a in alerts}
-    alerts += [a for a in build_call_alerts(rule_rows, now, by_rule=True) if a["id"] not in have]
+    alerts += [a for a in build_call_alerts(rule_rows, now, by_rule=True, require_live=True) if a["id"] not in have]
     if existing is None:
         from database import Alert, get_db
         ids = [a["id"] for a in alerts]
