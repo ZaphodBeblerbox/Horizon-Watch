@@ -178,6 +178,9 @@ def test_endpoint(monkeypatch):
             raise HTTPException(401, "authentication required")
         return {"id": "anna"}
     monkeypatch.setattr(routes, "_me", me)
+    # this tests the endpoint, not the per-user profile filter (test_profile_filter.py)
+    import profile_filter as pf, user_concern as uc
+    monkeypatch.setattr(pf, "scope", lambda user: uc.Scope(None))
     monkeypatch.setattr(dm, "current", lambda now=None: [{"id": "k", "kind": "kettle"}])
     monkeypatch.setattr(dm, "read_reports", lambda now=None, hours=dm.LOOKBACK_H: paris_march())
     dm._memo.clear()
