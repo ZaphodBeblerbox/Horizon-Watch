@@ -25,6 +25,7 @@ import json
 import datetime as _dt
 import sqlite3
 import threading
+import time
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
@@ -516,6 +517,43 @@ def kinds():
     return {"kinds": [{"key": k, **v} for k, v in oa.KINDS.items()], "importance": list(oa.IMPORTANCE)}
 
 
+# The list must answer at once: the exposure of every asset (gather + rank +
+# analogues) took 54 s on a cold server and the app gave up, so the registry
+# showed nothing (owner, 2026-10-22). The list serves the last assessment of
+# each asset and warms the missing or stale ones on one background thread.
+_EXPO: dict = {}                     # key -> (built_at, {exposure, signal_count, top, position})
+_EXPO_LOCK = threading.Lock()
+_EXPO_WARMING: set = set()
+EXPO_TTL_S = 120
+
+
+def _expo_key(a: dict) -> tuple:
+    return (a["id"], a.get("lat"), a.get("lon"), a.get("radius_km"), a.get("kind"), json_key(a.get("identifiers")))
+
+
+def json_key(v) -> str:
+    try:
+        import json as _j
+        return _j.dumps(v, sort_keys=True, default=str)
+    except Exception:                                             # noqa: BLE001
+        return str(v)
+
+
+def _expo_warm(assets: list[dict]) -> None:
+    for a in assets:
+        k = _expo_key(a)
+        try:
+            s = situation(a)
+            val = {"exposure": s["exposure"], "signal_count": len(s["signals"]), "top": s["signals"][0] if s["signals"] else None}
+            with _EXPO_LOCK:
+                _EXPO[k] = (time.time(), val)
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[my-assets] error: exposure of {a.get('id')}: {type(e).__name__}: {e}", flush=True)
+        finally:
+            with _EXPO_LOCK:
+                _EXPO_WARMING.discard(k)
+
+
 @router.get("")
 async def list_assets(request: Request):
     user = _me(request)
@@ -523,16 +561,29 @@ async def list_assets(request: Request):
 
     def run():
         import position_stream as ps
-        out = []
+        out, todo = [], []
+        now = time.time()
         for a in oa.list_for(_uid(user)):
             # a person's live asset is shared, but where a person is shows only
             # to who may see them (position_stream.can_see): never strangers
             linked = (a.get("identifiers") or {}).get("user_id")
             if linked and a["owner_id"] != _uid(user) and not ps.can_see_user(user, str(linked)):
                 continue
-            s = situation(a)
-            out.append({**a, "position": s["position"], "exposure": s["exposure"], "signal_count": len(s["signals"]),
-                        "top": s["signals"][0] if s["signals"] else None, "mine": a["owner_id"] == _uid(user)})
+            k = _expo_key(a)
+            with _EXPO_LOCK:
+                hit = _EXPO.get(k)
+                stale = hit is None or now - hit[0] > EXPO_TTL_S
+                if stale and k not in _EXPO_WARMING:
+                    _EXPO_WARMING.add(k)
+                    todo.append(a)
+            e = hit[1] if hit else {"exposure": "unknown", "signal_count": 0, "top": None}
+            try:
+                at = oa.position(a, _live_vessel, _live_aircraft)
+            except Exception:                                     # noqa: BLE001
+                at = None
+            out.append({**a, "position": at, **e, "building": hit is None, "mine": a["owner_id"] == _uid(user)})
+        if todo:
+            threading.Thread(target=_expo_warm, args=(todo,), name="asset-exposure", daemon=True).start()
         return out
     return {"assets": await loop.run_in_executor(None, run)}
 

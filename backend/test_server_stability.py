@@ -48,3 +48,26 @@ def test_five_phones_p95_does_not_regress():
                        capture_output=True, text=True, timeout=600)
     print(r.stdout)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_asset_list_answers_before_the_exposure_is_built(monkeypatch):
+    """The registry must not wait for each asset's threat assessment (54 s on a cold server):
+    the list answers at once, 'building' until the background pass has filled the exposure."""
+    import asyncio, time
+    from routers import my_assets as ma
+    assets = [{"id": f"OA-{i}", "owner_id": "u1", "name": f"A{i}", "kind": "site", "lat": 48.0, "lon": 2.0,
+               "radius_km": 5, "identifiers": {}} for i in range(3)]
+    monkeypatch.setattr(ma.oa, "list_for", lambda uid: assets)
+    monkeypatch.setattr(ma, "_me", lambda r: {"id": "u1", "email": "a@b"})
+    monkeypatch.setattr(ma.oa, "position", lambda a, *x: {"lat": 48.0, "lon": 2.0})
+    def slow(a):
+        time.sleep(0.5)
+        return {"exposure": "elevated", "signals": [{"title": "t"}]}
+    monkeypatch.setattr(ma, "situation", slow)
+    ma._EXPO.clear(); ma._EXPO_WARMING.clear()
+    t = time.time()
+    first = asyncio.run(ma.list_assets(object()))["assets"]
+    assert time.time() - t < 0.4 and len(first) == 3 and all(a["building"] and a["exposure"] == "unknown" for a in first)
+    time.sleep(2.2)
+    second = asyncio.run(ma.list_assets(object()))["assets"]
+    assert all(not a["building"] and a["exposure"] == "elevated" and a["signal_count"] == 1 for a in second)
