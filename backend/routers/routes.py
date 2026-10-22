@@ -270,9 +270,11 @@ async def hazards(request: Request, lat: float, lon: float, km: float = 3.0, pro
 async def demonstrations(request: Request):
     """The map's "Demonstrations, live" layer: the planner's own hazards
     (military kinds left out) and the crowd tracks linked from reports."""
-    _me(request)
+    user = _me(request)
     import demonstrations as dm
-    return await asyncio.to_thread(dm.snapshot)
+    import profile_filter as pf
+    # the shared memo is built once; each user gets a filtered COPY (their profile)
+    return pf.demonstrations(await asyncio.to_thread(dm.snapshot), user)
 
 
 @router.get("/demonstrations/situation")
@@ -281,9 +283,10 @@ async def demonstrations_situation(request: Request, city: str | None = None):
     estimate, labelled so). Routing is bounded and cached; a cold call
     answers with straight-line estimates within ~1.5 s and the next poll
     has the routes (demo_situation.py)."""
-    _me(request)
+    user = _me(request)
     import demo_situation as ds
-    return await ds.situation(None, city)
+    import profile_filter as pf
+    return pf.situation(await ds.situation(None, city), user)
 
 
 @router.get("/demonstrations/street")
@@ -291,9 +294,10 @@ async def demonstrations_street(request: Request, hours: float = 6):
     """Street reports read out of casual Telegram posts ("ça gaze à Répu",
     "ça nasse à Répu", "la GNB llegó a Plaza Venezuela"): typed, located,
     each quoting its posts with their translation (street_reports.py)."""
-    _me(request)
+    user = _me(request)
     import street_reports as srp
-    return await asyncio.to_thread(srp.snapshot, max(0.5, min(24.0, hours)))
+    import profile_filter as pf
+    return pf.street(await asyncio.to_thread(srp.snapshot, max(0.5, min(24.0, hours))), user)
 
 
 @router.get("/demonstrations/now")

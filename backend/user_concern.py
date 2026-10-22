@@ -34,6 +34,7 @@ Derived on read: nothing here is stored per item.
 """
 from __future__ import annotations
 
+import functools
 import math
 import re
 import threading
@@ -136,6 +137,7 @@ def regions_table() -> dict:
     return _REGIONS
 
 
+@functools.lru_cache(maxsize=512)
 def _country_name(code: str | None) -> str | None:
     if not code:
         return None
@@ -223,7 +225,8 @@ def _point(item: dict):
 
 
 def _sev(item: dict) -> str:
-    return str(_first(item, "sev", "severity", "signal_severity", "severity_tier") or "").lower()
+    vals = [str(item.get(k) or "").lower() for k in ("sev", "severity", "signal_severity", "severity_tier")]
+    return "critical" if "critical" in vals else next((v for v in vals if v), "")
 
 
 def _text(item: dict) -> str:
@@ -245,6 +248,19 @@ def decide(c: dict, item: dict) -> tuple[bool, str]:
         name = _country_name(cc)
         if name and name.lower() in (c.get("countries") or ()):
             return True, f"{name} — a country you watch"
+        # a country-level row (a mood reading): an asset, a theater or the
+        # user's position inside it counts, as it does for the mood alert
+        try:
+            import telegram_mood_alert as _tma
+            r = _tma.concern_reason(cc, c)
+            if r:
+                return True, r
+        except Exception as e:                                  # noqa: BLE001
+            print(f"[user_concern] error: country-level concern: {type(e).__name__}: {e}", flush=True)
+    if lat is None and not cc:
+        named = str(item.get("location_country") or "").strip().lower()    # surface items name it in words
+        if named and named in (c.get("countries") or ()):
+            return True, f"{item['location_country']} — a country you watch"
     if sev == "critical" and c.get("topics"):
         t = _text(item)
         for k in c["topics"]:

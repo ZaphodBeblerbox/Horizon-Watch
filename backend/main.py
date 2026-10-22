@@ -12246,49 +12246,73 @@ async def _escalation_loop():
         await asyncio.sleep(6 * 3600)
 
 
+async def _profile_user(request: Request):
+    """Whose profile filters this answer (user_concern.py): the session's
+    user with their settings, or None (no session: nothing is filtered).
+    Off the event loop: it reads the user row."""
+    try:
+        return await asyncio.to_thread(_get_current_user, request)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[profile-filter] error: user: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
 @app.get("/api/telegram/posts")
-async def api_telegram_posts(hours: int = Query(72, ge=1, le=720), statements: bool = False, pins: bool = False):
+async def api_telegram_posts(request: Request, hours: int = Query(72, ge=1, le=720), statements: bool = False, pins: bool = False):
     """Telegram posts that passed relevance and precise geolocation
     (telegram_ingest.py). Unverified by nature; each says so. With
-    statements=1, official channels' own claims come too (never pins)."""
+    statements=1, official channels' own claims come too (never pins).
+    Only what concerns the asking user (their theaters, assets, interests:
+    user_concern.py) unless they turned that off; derived on read."""
     import telegram_ingest as _tg
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
+    user = await _profile_user(request)
     out = {"posts": await loop.run_in_executor(_executor, functools.partial(_tg.published, hours, pins=pins))}
     if statements:
         out["statements"] = await loop.run_in_executor(_executor, _tg.statements, hours)
-    return out
+    return _pf.lists(out, user, "posts", "statements")
 
 
 @app.get("/api/telegram/incidents/live")
-async def api_telegram_live_incidents():
+async def api_telegram_live_incidents(request: Request):
     """The LIVE set (live_incident.py): pinned incidents whose event_time is
-    within the last 60 minutes — event time, not post time; derived now."""
+    within the last 60 minutes — event time, not post time; derived now.
+    Only those that concern the asking user (user_concern.py)."""
     import telegram_ingest as _tg
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
-    return {"incidents": await loop.run_in_executor(_executor, _tg.live_incidents)}
+    user = await _profile_user(request)
+    return _pf.lists({"incidents": await loop.run_in_executor(_executor, _tg.live_incidents)}, user, "incidents")
 
 
 @app.get("/api/telegram/feed")
-async def api_telegram_feed(before: str = "", limit: int = Query(40, ge=5, le=100)):
+async def api_telegram_feed(request: Request, before: str = "", limit: int = Query(40, ge=5, le=100)):
     """Every relevant Telegram post, newest first, paged by `before`
-    (telegram_ingest.feed) — the phone's chronological feed."""
+    (telegram_ingest.feed) — the phone's chronological feed. Only what
+    concerns the asking user (user_concern.py); a page the filter empties
+    reads on, so paging neither stops early nor repeats."""
     import telegram_ingest as _tg
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _tg.feed, before or None, limit)
+    user = await _profile_user(request)
+    return await loop.run_in_executor(_executor, lambda: _pf.paged(user, lambda b: _tg.feed(b, limit), before or None, limit, "posts"))
 
 
 @app.get("/api/telegram/footage")
-async def api_telegram_footage(hours: int = Query(48, ge=1, le=72), limit: int = Query(40, ge=5, le=60)):
+async def api_telegram_footage(request: Request, hours: int = Query(48, ge=1, le=72), limit: int = Query(40, ge=5, le=60)):
     """Home's Live footage strip (live_footage.py): the newest Telegram videos
     from every relevant chat, street reports and self-reported positions,
     one card per video. Cached 20 s for every user; a fresh answer is served
     from the event loop, a miss is built once in the executor."""
     import live_footage as _lf
+    import profile_filter as _pf
+    user = await _profile_user(request)
     got = _lf.cached(hours, limit)
-    if got is not None:
-        return got
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _lf.footage, hours, limit)
+    if got is None:
+        loop = asyncio.get_event_loop()
+        got = await loop.run_in_executor(_executor, _lf.footage, hours, limit)
+    return _pf.lists(got, user, "items")          # a copy: the shared answer is never touched
 
 
 @app.get("/api/infra/features")
@@ -12359,7 +12383,7 @@ async def _conflict_context_loop():
 
 
 @app.get("/api/telegram/mood")
-def api_telegram_mood(country: str = "", days: int = Query(14, ge=7, le=60)):
+async def api_telegram_mood(request: Request, country: str = "", days: int = Query(14, ge=7, le=60)):
     """The mood on Telegram (telegram_sentiment.py): without a country, every
     country with enough rated posts, sharpest rise first; with one, its daily
     index, the change, whom it is aimed at, and the posts calling to act.
@@ -12368,9 +12392,13 @@ def api_telegram_mood(country: str = "", days: int = Query(14, ge=7, le=60)):
     claim); one country carries `unrest`: both in full, its cities or
     regions, and the backtest (telegram_unrest.py, owner 2026-10-17)."""
     import telegram_sentiment as _ts
+    import profile_filter as _pf
     if country.strip():
-        return _ts.series(country.strip().lower()[:2], days)
-    return {"countries": _ts.countries(days)}
+        return await asyncio.to_thread(_ts.series, country.strip().lower()[:2], days)
+    user = await _profile_user(request)
+    # the list of countries is filtered by the user's profile (user_concern.py);
+    # asking for one country by name is always answered
+    return _pf.lists({"countries": await asyncio.to_thread(_ts.countries, days)}, user, "countries")
 
 
 @app.get("/api/indicators/strike-timing")
@@ -12429,14 +12457,15 @@ def api_analytics_day(date: str, country: str = "", kind: str = ""):
 
 
 @app.get("/api/general")
-def api_general(before: str = "", limit: int = Query(40, ge=5, le=100), kinds: str = "signal,geoconfirmed,telegram"):
+def api_general(request: Request, before: str = "", limit: int = Query(40, ge=5, le=100), kinds: str = "signal,geoconfirmed,telegram"):
     """What is generally happening, newest first (general_feed.py): our own
     alerts, GeoConfirmed's verified events with their X posts and Telegram
     posts, one card per event. NO NEWS (owner, 2026-10-11): news belongs to
     a country's page, never to the General desk. `next` pages on."""
     import general_feed as _gf
     want = tuple(k for k in kinds.split(",") if k in _gf.KINDS) or _gf.KINDS
-    return _gf.feed(_akili_db_path(), before or None, limit, want)
+    import profile_filter as _pf
+    return _pf.paged(_get_current_user(request), lambda b: _gf.feed(_akili_db_path(), b, limit, want), before or None, limit, "items")
 
 
 @app.get("/api/telegram/live")
@@ -12474,13 +12503,16 @@ def api_telegram_live_segment(stream_id: str, segment: str):
 
 
 @app.get("/api/telegram/situations")
-async def api_telegram_situations():
+async def api_telegram_situations(request: Request):
     """Developments on the ground read from Telegram that are still live — a
     kettle forming, reinforcements sent, a withdrawal — each at its place,
-    with what is likely to follow and what to do there."""
+    with what is likely to follow and what to do there. Only those that
+    concern the asking user (user_concern.py)."""
     import telegram_events as _te
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
-    return {"situations": await loop.run_in_executor(_executor, _te.situations)}
+    user = await _profile_user(request)
+    return _pf.lists({"situations": await loop.run_in_executor(_executor, _te.situations)}, user, "situations")
 
 
 async def _event_watch_loop():
@@ -12492,7 +12524,7 @@ async def _event_watch_loop():
     while True:
         try:
             import event_watch as _ew
-            n = await asyncio.to_thread(_ew.sweep, _send_push, lambda uid: _notification_feed(uid, limit=60, hours=6))
+            n = await asyncio.to_thread(_ew.sweep, _send_push, lambda uid: _profile_cards(uid, _notification_feed(uid, limit=60, hours=6)))
             if n:
                 print(f"[event-watch] pushed {n}", flush=True)
         except Exception as e:                              # noqa: BLE001
@@ -12532,12 +12564,15 @@ async def _exit_watch_loop():
 
 
 @app.get("/api/telegram/upcoming")
-async def api_telegram_upcoming(days: int = Query(30, ge=1, le=120)):
+async def api_telegram_upcoming(request: Request, days: int = Query(30, ge=1, le=120)):
     """Gatherings and collective actions announced on Telegram that have not
-    happened yet — where, when, what about, and who announced them."""
+    happened yet — where, when, what about, and who announced them. Only
+    those that concern the asking user (user_concern.py)."""
     import telegram_ingest as _tg
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
-    return {"upcoming": await loop.run_in_executor(_executor, _tg.upcoming, days)}
+    user = await _profile_user(request)
+    return _pf.lists({"upcoming": await loop.run_in_executor(_executor, _tg.upcoming, days)}, user, "upcoming")
 
 
 @app.get("/api/telegram/statements")
@@ -14183,6 +14218,7 @@ def _calculate_overall_threat_level(alerts):
 
 @app.get("/api/alerts/recent")
 async def get_recent_alerts(
+    request: Request,
     rule_name: str = Query(None, description="Filter by rule_name"),
     hours: int = Query(6, description="Lookback window in hours"),
     user=None,
@@ -14196,6 +14232,9 @@ async def get_recent_alerts(
     recent = [a for a in _forge_alerts if a.get('timestamp', '') > cutoff and not a.get('dismissed')]
     if rule_name:
         recent = [a for a in recent if a.get('rule_name') == rule_name or a.get('rule_trigger') == rule_name]
+    import profile_filter as _pf
+    recent_all = recent
+    recent = await asyncio.to_thread(lambda: _pf.scope(_get_current_user(request)).filter(recent_all)[0])
     return {
         "count": len(recent),
         "alerts": recent[-50:],
@@ -17599,11 +17638,13 @@ async def _gdelt_loop():
 
 
 @app.get("/api/alerts/new")
-def get_new_alerts(since: str = Query(None)):
+def get_new_alerts(request: Request, since: str = Query(None)):
     """Return real-time alerts pushed after the given ISO timestamp.
     If `since` is omitted, return the last 20 alerts."""
     with _ALERTS_QUEUE_LOCK:
         queue = list(_ALERTS_QUEUE)
+    import profile_filter as _pf
+    queue = _pf.scope(_get_current_user(request)).filter(queue)[0]
     if not since:
         return {"alerts": queue[-20:], "count": len(queue[-20:])}
     try:
@@ -17615,8 +17656,9 @@ def get_new_alerts(since: str = Query(None)):
 
 
 @app.get("/api/surface")
-def get_surface_pool(response: FastAPIResponse):
-    """Return the current ranked surface pool (top 15 scored items), with any auto-briefs attached."""
+def get_surface_pool(request: Request, response: FastAPIResponse):
+    """Return the current ranked surface pool (top 15 scored items), with any auto-briefs attached.
+    Only what concerns the asking user (user_concern.py), after the shared pool is built."""
     global _SURFACE_POOL_UPDATED_AT
     started = time.perf_counter()
     cache_status = "hit"
@@ -17679,8 +17721,14 @@ def get_surface_pool(response: FastAPIResponse):
             enriched = enriched + _tg.as_surface_items(24)
     except Exception as e:
         _loop_error("surface-telegram", e)
+    # THE USER'S OWN PROFILE (owner, 2026-10-22): the pool is built once for
+    # everybody; this is a cheap filter over its copy (user_concern.py).
+    import profile_filter as _pf
+    _sc = _pf.scope(_get_current_user(request))
+    enriched, _hidden = _sc.filter(enriched)
     return {
         "items": enriched,
+        "profile": _sc.block(_hidden),
         "updated_at": updated,
         "count": len(enriched),
         "filtered_general": dropped,
@@ -29076,7 +29124,7 @@ def api_fusions_delete(fusion_id: str):
 
 
 @app.get("/api/signals/recent")
-def api_signals_recent(limit: int = 50):
+def api_signals_recent(request: Request, response: FastAPIResponse, limit: int = 50):
     if not _fusion_engine:
         return []
     sigs = _fusion_engine.get_recent_signals()
@@ -29095,7 +29143,8 @@ def api_signals_recent(limit: int = 50):
             **sig,
             "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
         })
-    return list(reversed(result))
+    import profile_filter as _pf
+    return _pf.bare(list(reversed(result)), _get_current_user(request), response)
 
 
 _fusion_settings: dict = {
@@ -29453,6 +29502,8 @@ def api_get_alerts(
     limit: int = 100,
     since_hours: float | None = None,
     current_user=None,
+    request: Request = None,
+    response: FastAPIResponse = None,
 ):
     """Alerts, newest first. limit=0 returns every row (bound it with
     since_hours): the imagery-signal layers ask for the whole week rather
@@ -29490,6 +29541,13 @@ def api_get_alerts(
             rows = [r for r in rows if r.alert_id not in _gone]
         except Exception as _ive:                                # noqa: BLE001
             print(f"[alerts] error: imagery verdicts unavailable, all shown: {type(_ive).__name__}: {_ive}", flush=True)
+        # ONLY WHAT CONCERNS THE ASKING USER (user_concern.py), on the rows
+        # already read: no per-user query, no rebuild.
+        if request is not None:
+            import profile_filter as _pf
+            rows = _pf.bare(rows, _get_current_user(request), response,
+                            key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code,
+                                           "severity": r.severity, "title": r.title, "alert_type": r.alert_type})
         return [
             {
                 "alert_id":    r.alert_id, "source": r.source, "alert_type": r.alert_type,
@@ -29708,6 +29766,15 @@ def api_get_notifications(
     _u = _get_current_user(request)
     _uid = str(_u.get("id")) if _u and _u.get("id") else None
     items = _notification_feed(_uid, limit=limit, hours=hours, include_silent=include_silent)
+    # THE SAME PROFILE AS THE MAPS AND LISTS (user_concern.py): a card about
+    # a place outside what this user watches is not theirs. Cards made for
+    # them (their assets, their events, messages, warnings, the desk) are
+    # personal and stay.
+    try:
+        import profile_filter as _pf
+        items = _pf.notifications(items, _u)
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] profile filter: {type(ex).__name__}: {ex}", flush=True)
     # WHAT A NOTIFICATION IS, decided once (event_watch.notifies): `push`
     # marks what reaches a closed app — the phone's push and the desktop
     # app's macOS notification alike — so the two devices cannot disagree.
@@ -30265,6 +30332,8 @@ def api_get_signals(
     region: str = None,
     limit: int = 100,
     current_user=None,
+    request: Request = None,
+    response: FastAPIResponse = None,
 ):
     from database import Signal as _SignalModel, get_db as _gdb_api
     with _gdb_api() as _db:
@@ -30274,6 +30343,11 @@ def api_get_signals(
         if region:
             q = q.filter(_SignalModel.region == region)
         rows = q.order_by(_SignalModel.created_at.desc()).limit(limit).all()
+        if request is not None:
+            import profile_filter as _pf
+            rows = _pf.bare(rows, _get_current_user(request), response,
+                            key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code, "title": r.title,
+                                           "type": r.signal_type})
         return [
             {
                 "signal_id":   r.signal_id, "domain": r.domain, "signal_type": r.signal_type,
@@ -31587,7 +31661,44 @@ async def api_patch_own_settings(request: Request):
     merged = await asyncio.to_thread(_write)
     if merged is None:
         raise HTTPException(status_code=404, detail="user not found")
+    if "interests" in body:
+        import user_concern as _uc
+        _uc.forget(user["id"])                  # the profile changed: the filter sees it now, not in a minute
     return merged
+
+
+def _profile_cards(uid: str, items: list) -> list:
+    """The push sweep's feed held to the user's profile (user_concern.py),
+    so a closed app is told what the open one would show."""
+    try:
+        import profile_filter as _pf
+        return _pf.notifications(items, uid)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[profile-filter] error: push feed: {type(e).__name__}: {e}", flush=True)
+        return items
+
+
+@app.get("/api/profile/scope")
+async def api_profile_scope(request: Request):
+    """Whether the profile filter is on for the asking user, why, and how much
+    it holds back right now (Settings › Your interests). Derived on read from
+    the shared Telegram pins and the shared surface pool; nothing stored."""
+    user = _require_current_user(request)
+    import profile_filter as _pf
+    import telegram_ingest as _tg
+    sc = _pf.scope(user)
+    counts: dict = {}
+    if sc.active:
+        loop = asyncio.get_event_loop()
+        try:
+            posts = await loop.run_in_executor(_executor, functools.partial(_tg.published, 24, pins=True))
+            counts["telegram"] = sc.filter(posts)[1]
+        except Exception as e:                               # noqa: BLE001
+            print(f"[profile-filter] error: scope telegram: {type(e).__name__}: {e}", flush=True)
+        with _SURFACE_POOL_LOCK:
+            pool = list(_SURFACE_POOL)
+        counts["signals"] = sc.filter(pool)[1]
+    return {**sc.block(sum(counts.values())), "counts": counts}
 
 
 # How large a stored avatar may be, as a data URL. 256x256 JPEG at a
