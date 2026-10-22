@@ -1,0 +1,485 @@
+{
+ "_doc": "Real production posts of 2026-10-22 labelled by the owner's rules (eval_live_signals.py). before_pin: the row carried a pin that day.",
+ "posts": [
+  {
+   "id": "GJ2026IDF/1404",
+   "channel": "GJ2026IDF",
+   "msg_id": 1404,
+   "posted_at": "2026-10-22T15:41:13+00:00",
+   "text": "Bonjour à tous j’ai besoin d’aide, samedi j’étais sur Paris et j’ai assisté au pillage d’histoire d’or rue Rivoli au alentour de 2-3h du matin, un pilleur a été interpeller menotté face contre sol. De la un homme sort de nul part ni uniforme ni brassard rien on aurait dit un civile et il assène des coups de pieds au pilleur menotté face contre sol. Je l’ai insulte et de la les policiers dont un avec un lbd m’a viser au niveau du visage j’ai du fuir et il a essayer de m’attraper mais j’ai réussis à m’échapper. Cet homme je l’ai découvert mardi lorsqu’il est passé à la télé est le préfet de police de Paris. J’ai tout en vidéo mais je ne sais pas quoi en faire si vous avez des contacts dans les médias pouvez vous me les donner svp. Je pense que c’est grave,  l’opinion publique doit voir ça.",
+   "truth_live": false,
+   "why": "owner (a): a witness's story about Saturday night; 17:41 is the forwarded header",
+   "before_pin": true
+  },
+  {
+   "id": "AlertesInfos/10427",
+   "channel": "AlertesInfos",
+   "msg_id": 10427,
+   "posted_at": "2026-10-22T16:21:42+00:00",
+   "text": "🇫🇷 FLASH - Emmanuel Macron porte une \"atteinte grave et manifestement illégale à la liberté de manifester\", estime le professeur de droit public Paul Cassia, après les déclarations du président de la République sur sa volonté d’INTERDIRE les manifestations qui ne sont pas organisées par des syndicats. Le juriste dénonce un président qui \"sort complètement de son rôle constitutionnel\", rappelant qu’il n’est \"ni ministre de l’Intérieur, ni préfet\". Le professeur de droit public Serge Slama dénonce également une déclaration \"liberticide\" et rappelle qu’en France, manifester est une LIBERTÉ FONDAMENTALE qui ne nécessite aucune autorisation préalable, mais une simple déclaration auprès des autorités. Une manifestation ne peut être interdite qu’à titre exceptionnel, notamment en cas de risques de troubles à l’ordre public. \"La liberté est la règle et l’interdiction, l’exception\", insiste-t-il. (franceinfo)\n› Ouvrir sur X",
+   "truth_live": false,
+   "why": "owner (c): Macron on the freedom to demonstrate; the photo is a portrait",
+   "before_pin": false
+  },
+  {
+   "id": "info17octobre/472",
+   "channel": "info17octobre",
+   "msg_id": 472,
+   "posted_at": "2026-10-22T20:40:30+00:00",
+   "text": "https://www.bfmtv.com/police-justice/mort-d-un-manifestant-le-17-octobre-l-avocat-de-sa-famille-accuse-les-autorites-de-jouer-la-montre_AN-202610220553.html\n\nAppel à témoins : décès le 17 octobre, dans le 10e arrondissement de Paris, dans le secteur de Boulevard Magenta, vers 18h. Merci de contacter Maître Youri KRASSOULIA, avocat de la famille.",
+   "truth_live": false,
+   "why": "owner (d)-like: call for witnesses of a death on 17 October",
+   "before_pin": false
+  },
+  {
+   "id": "LeGrandQG/6347",
+   "channel": "LeGrandQG",
+   "msg_id": 6347,
+   "posted_at": "2026-10-22T16:36:39+00:00",
+   "text": "Justement il faut les combattre sans relâche depuis la Shoah pour éviter leurs retours… et le RN anciennement FN a était co-fondé par les SS Pierre Bousquet et Léon Gaultier.",
+   "truth_live": false,
+   "why": "owner (e): opinion about the founders of the RN",
+   "before_pin": false
+  },
+  {
+   "id": "LeGrandQG/6373",
+   "channel": "LeGrandQG",
+   "msg_id": 6373,
+   "posted_at": "2026-10-22T20:37:23+00:00",
+   "text": "Je finirais par dire LA JEUNESSE EMMERDE LE FRONT NATIONAL, des putains de nazi en costume, NIQUE LE RN NIQUE LE RN NIQUE LE RN (ta 15mn pour lire après je supprime)",
+   "truth_live": false,
+   "why": "owner (e): slogan against the RN",
+   "before_pin": false
+  },
+  {
+   "id": "AlertesInfos/10429",
+   "channel": "AlertesInfos",
+   "msg_id": 10429,
+   "posted_at": "2026-10-22T16:27:42+00:00",
+   "text": "🇫🇷 ALERTE - Les CRS sont ENTRÉS dans l’université Sorbonne Nouvelle, sur le campus Nation à Paris, pour procéder à l’ÉVACUATION des étudiants qui occupent les lieux. (via @IlanGabet)\n› Ouvrir sur X",
+   "truth_live": true,
+   "why": "CRS entered the Sorbonne Nouvelle (the good Sorbonne case, with its video)",
+   "before_pin": false
+  },
+  {
+   "id": "AlertesInfos/10428",
+   "channel": "AlertesInfos",
+   "msg_id": 10428,
+   "posted_at": "2026-10-22T16:26:50+00:00",
+   "text": "🇫🇷 ALERTE - Les occupants de la Sorbonne Nouvelle, sur le campus Nation à Paris, sont en train d’être DÉLOGÉS par les forces de l’ordre. (Révolution Permanente)\n› Ouvrir sur X",
+   "truth_live": true,
+   "why": "occupants of the Sorbonne Nouvelle being evicted",
+   "before_pin": true
+  },
+  {
+   "id": "GJ2026IDF/1407",
+   "channel": "GJ2026IDF",
+   "msg_id": 1407,
+   "posted_at": "2026-10-22T16:01:19+00:00",
+   "text": "Ils entrent dans la Sorbonne",
+   "truth_live": true,
+   "why": "'Ils entrent dans la Sorbonne'",
+   "before_pin": true
+  },
+  {
+   "id": "giletsjaunes2026/663",
+   "channel": "giletsjaunes2026",
+   "msg_id": 663,
+   "posted_at": "2026-10-22T16:46:52+00:00",
+   "text": "Tout les étudiants appel à se rendre à la Sorbonne nouvelle actuellement occupée. \n\nÀ tout ceux qui sont à proximité allez les aider !",
+   "truth_live": true,
+   "why": "the occupation of the Sorbonne Nouvelle, stated as going on",
+   "before_pin": true
+  },
+  {
+   "id": "QudsN/745625",
+   "channel": "QudsN",
+   "msg_id": 745625,
+   "posted_at": "2026-10-22T11:29:23+00:00",
+   "text": "قوات الاحتلال تقتحم خربة المراجم قرب قرية دوما جنوب شرق نابلس",
+   "truth_live": true,
+   "why": "forces storm Khirbet al-Marajim",
+   "before_pin": false
+  },
+  {
+   "id": "QudsN/745717",
+   "channel": "QudsN",
+   "msg_id": 745717,
+   "posted_at": "2026-10-22T15:39:10+00:00",
+   "text": "عاجل | مجدداً.. الاحتلال ينفذ تفجيرات في بلدة بني حيان، جنوب لبنان.",
+   "truth_live": true,
+   "why": "demolitions in Bani Hayyan",
+   "before_pin": false
+  },
+  {
+   "id": "me_observer_TG/1118667",
+   "channel": "me_observer_TG",
+   "msg_id": 1118667,
+   "posted_at": "2026-10-22T19:35:51+00:00",
+   "text": "Occupation forces storm Al-Fara'a camp, south of Tubas in the West Bank.",
+   "truth_live": true,
+   "why": "forces storm Al-Fara'a camp",
+   "before_pin": true
+  },
+  {
+   "id": "QudsN/745730",
+   "channel": "QudsN",
+   "msg_id": 745730,
+   "posted_at": "2026-10-22T16:40:39+00:00",
+   "text": "عاجل | متابعة شبكة قدس: اندلاع مواجهات في قرية \"بورين\" جنوب نابلس، والاحتلال يطلق الرصاص الحي.",
+   "truth_live": true,
+   "why": "clashes and live fire in Burin",
+   "before_pin": false
+  },
+  {
+   "id": "QudsN/745766",
+   "channel": "QudsN",
+   "msg_id": 745766,
+   "posted_at": "2026-10-22T18:57:47+00:00",
+   "text": "عاجل | اندلاع مواجهات في قرية \"المزرعة الغربية\" شمال غرب رام الله، وقوات الاحتلال تطلق قنابل الغاز.",
+   "truth_live": true,
+   "why": "clashes and tear gas in al-Mazra'a al-Gharbiya",
+   "before_pin": false
+  },
+  {
+   "id": "QudsN/745677",
+   "channel": "QudsN",
+   "msg_id": 745677,
+   "posted_at": "2026-10-22T13:25:19+00:00",
+   "text": "قوات الاحتلال تقتحم قرية مثلث الشهداء، جنوب جنين.",
+   "truth_live": true,
+   "why": "forces storm Muthallath al-Shuhada",
+   "before_pin": false
+  },
+  {
+   "id": "UkraineAlarmSignal/667679",
+   "channel": "UkraineAlarmSignal",
+   "msg_id": 667679,
+   "posted_at": "2026-10-22T17:32:41+00:00",
+   "text": "⚠️ Вінниця (Вінницька обл.)\nЗМІ повідомляють про вибухи. Будьте обережні!",
+   "truth_live": true,
+   "why": "media report explosions in Vinnytsia",
+   "before_pin": true
+  },
+  {
+   "id": "me_observer_TG/1118333",
+   "channel": "me_observer_TG",
+   "msg_id": 1118333,
+   "posted_at": "2026-10-21T21:53:39+00:00",
+   "text": "⚡️ 🟩 Machine gun raking targets the town of #Talousa",
+   "truth_live": true,
+   "why": "machine gun fire at Talousa",
+   "before_pin": false
+  },
+  {
+   "id": "QudsN/745646",
+   "channel": "QudsN",
+   "msg_id": 745646,
+   "posted_at": "2026-10-22T12:25:45+00:00",
+   "text": "عاجل | الاحتلال ينفذ تفجيراً على ثلاث دفعات في بلدة بني حيان، جنوب لبنان.",
+   "truth_live": true,
+   "why": "controlled demolitions in Bani Hayyan",
+   "before_pin": false
+  },
+  {
+   "id": "GeoPWatch/40954",
+   "channel": "GeoPWatch",
+   "msg_id": 40954,
+   "posted_at": "2026-10-22T15:21:40+00:00",
+   "text": "🇾🇪❌🇸🇦 – A large column of smoke was seen rising in Riyadh, Saudi Arabia, following what appears to have been a Houthi attack on a target that remains unknown.",
+   "truth_live": true,
+   "why": "smoke over Riyadh after an attack",
+   "before_pin": true
+  },
+  {
+   "id": "me_observer_TG/1118704",
+   "channel": "me_observer_TG",
+   "msg_id": 1118704,
+   "posted_at": "2026-10-22T20:28:54+00:00",
+   "text": "⚡️ #Syria: Explosive device detonates near Old Bridge in Deir ez-Zor, no casualties reported\n\n• An explosive device detonated near the Old Bridge in Deir ez-Zor city, northeast of Syria, with no casualties (SANA Agency via Rasd Akhbar Shehaba). IRIB News earlier described an unidentified object exploding in the city center near the old bridge.\n\nUpdated 20:28",
+   "truth_live": true,
+   "why": "explosive device near the Old Bridge, Deir ez-Zor",
+   "before_pin": true
+  },
+  {
+   "id": "sumygo/188237",
+   "channel": "sumygo",
+   "msg_id": 188237,
+   "posted_at": "2026-10-22T05:30:01+00:00",
+   "text": "😡ФПВ атакувала цивільний транспорт у Сумах: один постраждалий, — ДСНС\n\nУнаслідок влучання виникла пожежа. Також пошкоджено інші транспортні засоби.  Вибуховою хвилею повибивало вікна п’ятиповерхового житлового будинку.\n\nSUMY GO • Написати нам",
+   "truth_live": true,
+   "why": "FPV hit a vehicle in Sumy",
+   "before_pin": true
+  },
+  {
+   "id": "supernova_plus/61771",
+   "channel": "supernova_plus",
+   "msg_id": 61771,
+   "posted_at": "2026-10-22T02:39:28+00:00",
+   "text": "Серпухов, Московская область, РФ\nСилы обороны Украины нанесли удар ракетами и/или реактивными беспилотниками по 75-му арсеналу, расположенному в Серпухове Московской области.\nОбъект поражения: предприятие оборонно-промышленного комплекса, специализирующееся на ремонте, восстановлении и хранении военной техники, в том числе систем противовоздушной обороны.\nПо информации «Ростеха», на предприятии проводился ремонт техники зенитных ракетных комплексов «Бук-М1», «Бук-М2» и С-300В.\nВо время атаки в городе объявлялась ракетная опасность.\nСтепень повреждений и последствия удара уточняются.",
+   "truth_live": true,
+   "why": "strike on the 75th arsenal, Serpukhov",
+   "before_pin": true
+  },
+  {
+   "id": "me_observer_TG/1118344",
+   "channel": "me_observer_TG",
+   "msg_id": 1118344,
+   "posted_at": "2026-10-21T22:13:34+00:00",
+   "text": "⚡️ At 01:31 local time (2201 UTC), an Iranian Revolutionary Guard Corps missile launch platform in the Sirik hills was attacked by a drone.",
+   "truth_live": true,
+   "why": "drone attack on a launcher in the Sirik hills",
+   "before_pin": false
+  },
+  {
+   "id": "kpszsu/89541",
+   "channel": "kpszsu",
+   "msg_id": 89541,
+   "posted_at": "2026-10-22T19:03:12+00:00",
+   "text": "🏍 Дніпро: реактивний БпЛА в напрямку міста зі сходу",
+   "truth_live": false,
+   "why": "a drone track toward a city: an air-raid warning",
+   "before_pin": true
+  },
+  {
+   "id": "sumygo/188275",
+   "channel": "sumygo",
+   "msg_id": 188275,
+   "posted_at": "2026-10-22T09:07:08+00:00",
+   "text": "Вибух \n\nSUMY GO • Чуєте БпЛА?👉🏻@sumygo_bot",
+   "truth_live": false,
+   "why": "'Explosion' with no place",
+   "before_pin": true
+  },
+  {
+   "id": "kharkivlife/157443",
+   "channel": "kharkivlife",
+   "msg_id": 157443,
+   "posted_at": "2026-10-22T10:04:37+00:00",
+   "text": "🤯 Перші кадри з місця удару по ринку в Лозовій\nㅤ \nНадіслати новину @Kharkiv_Lifebot\n👉ПІДПИСАТИСЯ",
+   "truth_live": false,
+   "why": "first footage after a strike: past, no act now",
+   "before_pin": true
+  },
+  {
+   "id": "HalabTodayTV/142030",
+   "channel": "HalabTodayTV",
+   "msg_id": 142030,
+   "posted_at": "2026-10-22T07:09:53+00:00",
+   "text": "🛑#عاجل | هيئة الطيران المدني السعودي: وفاة شخصين وإصابة 8 آخرين جراء اعتداء استهدف مطار الملك فهد في الدمام يوم أمس\n\nلمتابعة أحدث الأخبار والتطورات في سوريا انضموا إلينا👇\n@HalabTodayTV",
+   "truth_live": false,
+   "why": "yesterday's attack, a toll",
+   "before_pin": true
+  },
+  {
+   "id": "AnsarAllahMCSaadah/127022",
+   "channel": "AnsarAllahMCSaadah",
+   "msg_id": 127022,
+   "posted_at": "2026-10-22T12:00:28+00:00",
+   "text": "🔴 بيان القوات المسلحة اليمنية بشأن استهداف وزارة الدفاع السعودية في الرياض ومطاري فهد وأبها وشركة أرامكو في ينبع، وتحذير العدو السعودي من عواقب كارثية وخيارات كبرى غير متوقعة إذا تورط في استهداف القبائل اليمنية | 11-05-1448هـ - 22-10-2026م\n\n#التصعيد_بالتصعيد\n#١٠٠_يوم_من_تصعيد_العدو_السعودي",
+   "truth_live": false,
+   "why": "a party's statement",
+   "before_pin": true
+  },
+  {
+   "id": "AnsarAllahMCSaadah/127030",
+   "channel": "AnsarAllahMCSaadah",
+   "msg_id": 127030,
+   "posted_at": "2026-10-22T12:05:14+00:00",
+   "text": "🔴عاجل🔴\nالقوات المسلحة: نؤكد أن تهديد العدو السعودي باستهداف القبائل اليمنية لن يمر مرور الكرام وعواقب ذلك ستكون عليه كارثية وغير متوقعة",
+   "truth_live": false,
+   "why": "a party's statement",
+   "before_pin": false
+  },
+  {
+   "id": "me_observer_TG/1118355",
+   "channel": "me_observer_TG",
+   "msg_id": 1118355,
+   "posted_at": "2026-10-21T22:46:44+00:00",
+   "text": "⚡️ REPORTER: Do you regret your decision to go to war with Iran?\nTRUMP: In my opinion, this is one of the best things we have done.",
+   "truth_live": false,
+   "why": "an interview",
+   "before_pin": false
+  },
+  {
+   "id": "ClashReport/102415",
+   "channel": "ClashReport",
+   "msg_id": 102415,
+   "posted_at": "2026-10-21T21:02:15+00:00",
+   "text": "The U.S. is quietly withdrawing troops from bases in Jordan, Qatar and Kuwait while reducing diplomatic staff across the Middle East amid threats from Iran.\n\nSource: NBC News",
+   "truth_live": false,
+   "why": "news analysis",
+   "before_pin": false
+  },
+  {
+   "id": "me_observer_TG/1118367",
+   "channel": "me_observer_TG",
+   "msg_id": 1118367,
+   "posted_at": "2026-10-21T23:40:33+00:00",
+   "text": "⚡️ Urgent | CBS News, citing a US official: The US military is quietly working to reduce its presence at its bases in the Middle East.",
+   "truth_live": false,
+   "why": "news",
+   "before_pin": false
+  },
+  {
+   "id": "me_observer_TG/1118305",
+   "channel": "me_observer_TG",
+   "msg_id": 1118305,
+   "posted_at": "2026-10-21T21:03:40+00:00",
+   "text": "⚡️ Babak Zanjani:\nIraq and Pakistan wag their tails for America; it is better that we cut off Iraq's electricity and internet, and Pakistan, God willing, will be disciplined by other actors.",
+   "truth_live": false,
+   "why": "opinion",
+   "before_pin": false
+  },
+  {
+   "id": "policeetrealites/22465",
+   "channel": "policeetrealites",
+   "msg_id": 22465,
+   "posted_at": "2026-10-22T15:47:02+00:00",
+   "text": "🚨 Émeutes du 17 octobre : 2 700 gardes à vue, 217 incarcérations. Gérald Darmanin détaille le bilan judiciaire et annonce de nouvelles réquisitions.\n\n#Justice #17octobre #Darmanin\n\nhttps://policeetrealites.com/2026/10/22/emeutes-du-17-octobre-2-700-gardes-a-vue-et-217-incarcerations-le-bilan-judiciaire-detaille-par-gerald-darmanin/",
+   "truth_live": false,
+   "why": "judicial recap of 17 October",
+   "before_pin": false
+  },
+  {
+   "id": "info17octobre/466",
+   "channel": "info17octobre",
+   "msg_id": 466,
+   "posted_at": "2026-10-22T18:46:07+00:00",
+   "text": "Interdiction de voter, de manifester, bannissement des réseaux sociaux... Nous sommes officiellement en dictature, nous n’avons plus aucune leçon à donner aux autres pays...\n\nhttps://x.com/ImpactMediaFR/status/2113281277440713204",
+   "truth_live": false,
+   "why": "opinion",
+   "before_pin": false
+  },
+  {
+   "id": "info17octobre/468",
+   "channel": "info17octobre",
+   "msg_id": 468,
+   "posted_at": "2026-10-22T19:01:52+00:00",
+   "text": "La LDH saisit le Haut-Commissaire aux droits de l’Homme pour qu’il effectue une mission d’observation des manifestations qui vont se dérouler ce samedi.",
+   "truth_live": false,
+   "why": "a lawyers' request, planned demonstrations",
+   "before_pin": false
+  },
+  {
+   "id": "giletsjaunes2026/635",
+   "channel": "giletsjaunes2026",
+   "msg_id": 635,
+   "posted_at": "2026-10-22T05:29:49+00:00",
+   "text": "Les manifestations bousculent le calendrier de la Ligue 1 et ligue 2 du football français.\n\nAu vu de la très grosse mobilisation des forces de l’ordres ce weekend, la LFP et les préfectures seront obligé de décaler ou au mieux d’adapter plusieurs matchs.\n(BFMTV)",
+   "truth_live": false,
+   "why": "football calendar news",
+   "before_pin": false
+  },
+  {
+   "id": "AlertesInfos/10415",
+   "channel": "AlertesInfos",
+   "msg_id": 10415,
+   "posted_at": "2026-10-22T10:37:54+00:00",
+   "text": "🇫🇷 ALERTE - Emmanuel Macron annonce la tenue d’un nouveau CONSEIL DE DÉFENSE dès demain, consacré à la situation sociale et sécuritaire en France. (déclaration)\n› Ouvrir sur X",
+   "truth_live": false,
+   "why": "an announced defence council",
+   "before_pin": false
+  },
+  {
+   "id": "LeGrandQG/6279",
+   "channel": "LeGrandQG",
+   "msg_id": 6279,
+   "posted_at": "2026-10-22T09:50:39+00:00",
+   "text": "Force à vous lyon votre manif est interdi",
+   "truth_live": false,
+   "why": "a remark about Lyon",
+   "before_pin": true
+  },
+  {
+   "id": "congonet24/9908",
+   "channel": "congonet24",
+   "msg_id": 9908,
+   "posted_at": "2026-10-22T11:30:23+00:00",
+   "text": "📰 Mauritanie: un parti d’opposition manifeste contre un éventuel troisième mandat de Mohamed Ould Ghazouani\n\n🔗 https://www.rfi.fr/fr/afrique/20261022-mauritanie-un-parti-d-opposition-manifeste-contre-un-%C3%A9ventuel-troisi%C3%A8me-mandat-de-mohamed-ould-ghazouani",
+   "truth_live": false,
+   "why": "news of a party protest, no place",
+   "before_pin": false
+  },
+  {
+   "id": "FotrosResistancee/24252",
+   "channel": "FotrosResistancee",
+   "msg_id": 24252,
+   "posted_at": "2026-10-21T22:36:33+00:00",
+   "text": "🇮🇷| Reports about explosions in Tehran are related to a previously announced controlled explosion of unexploded ordinances. \n\nIn other words nothing going on in Tehran. \n\n@FotrosResistancee",
+   "truth_live": false,
+   "why": "a denial: nothing is happening",
+   "before_pin": false
+  },
+  {
+   "id": "GeoPWatch/40943",
+   "channel": "GeoPWatch",
+   "msg_id": 40943,
+   "posted_at": "2026-10-21T21:31:24+00:00",
+   "text": "🇮🇱❌🇮🇷 - Israeli Fighter Jets are reportedly flying over Iraq right now close to the Iran border. \n\nWe have seen this before done as part of a joint U.S.-Israel tactic to keep Iran on their toes and as a show of force. It also doesn't let Iran know when they will strike.",
+   "truth_live": false,
+   "why": "aircraft reported over Iraq, no act, no place",
+   "before_pin": false
+  },
+  {
+   "id": "AMK_Mapping/39520",
+   "channel": "AMK_Mapping",
+   "msg_id": 39520,
+   "posted_at": "2026-10-22T05:41:24+00:00",
+   "text": "This drone was likely conducting a damage assessment. It repeatedly flew over the impact sites in eastern, southern, and northwestern Kyiv.\n\nIt was not shot down, and after conducting several maneuvers and loops around the city, flew east back to Chernihiv Oblast. \n\nUsually Russia uses a Geran-4 jet-drone for this, so it's unclear why they are using a slower and more vulnerable Geran-2 this time. Perhaps they were baiting air defence at the same time.",
+   "truth_live": false,
+   "why": "analysis of a drone's flight",
+   "before_pin": true
+  },
+  {
+   "id": "AMK_Mapping/39511",
+   "channel": "AMK_Mapping",
+   "msg_id": 39511,
+   "posted_at": "2026-10-22T03:05:13+00:00",
+   "text": "Iskander-M ballistic missile threat from Bryansk.",
+   "truth_live": false,
+   "why": "a missile threat warning",
+   "before_pin": false
+  },
+  {
+   "id": "dvbtvnews/42215",
+   "channel": "dvbtvnews",
+   "msg_id": 42215,
+   "posted_at": "2026-10-22T04:28:11+00:00",
+   "text": "DVB Digital မနက် ၁၁ နာရီ သတင်း (၂၂ ရက် အောက်တိုဘာလ ၂၀၂၆)\n🗞 နှစ်ပြည့်ပင်စင်နဲ့ လျှော့ပေါ့ပင်စင်ယူခွင့် ယာယီရပ်ဆိုင်းထား\n🗞 မင်းကင်းမှာ စစ်တပ် ဗုံးကြဲလို့ အရပ်သား ၈ ယောက် ဒဏ်ရာရ\n🗞 စစ်ဆေး၊ ဖမ်းဆီး များနေချိန် မြန်မာရွှေပြောင်းလုပ်သားတွေ ဘာတွေ သတိထားသင့်လဲ\n#dvbtvnews #dvbdigital #myanmar #dvbnews\nhttps://youtu.be/fZmR71Tszzo",
+   "truth_live": false,
+   "why": "a news roundup",
+   "before_pin": true
+  },
+  {
+   "id": "AnsarAllahMCSaadah/127019",
+   "channel": "AnsarAllahMCSaadah",
+   "msg_id": 127019,
+   "posted_at": "2026-10-21T21:51:40+00:00",
+   "text": "🎥 #شاهد_صعدة | نكف مسلح لقبائل مديرية بني بحر إعلانًا للنفير والجاهزية لمواجهة التصعيد بالتصعيد\n#انفروا_خفافا_وثقالا\n#التصعيد_بالتصعيد\n#قناة_المسيرة_مباشر\n#شاهد_أخبار_محافظة_صعدة \nhttp://t.me/VideosSaadah",
+   "truth_live": false,
+   "why": "an armed parade announcement",
+   "before_pin": true
+  },
+  {
+   "id": "Levant24/46175",
+   "channel": "Levant24",
+   "msg_id": 46175,
+   "posted_at": "2026-10-22T15:08:24+00:00",
+   "text": "The Anti-Narcotics Administration thwarted a major smuggling operation in Daraa involving helium-filled balloons, seizing 641,000 drug pills following several days of surveillance and tracking.\n\nAuthorities also seized 29 helium cylinders and balloons prepared for the operation. Investigations are ongoing to identify those involved and pursue the smuggling networks linked to the case.",
+   "truth_live": false,
+   "why": "a seizure of pills",
+   "before_pin": true
+  },
+  {
+   "id": "kharkivlife/157321",
+   "channel": "kharkivlife",
+   "msg_id": 157321,
+   "posted_at": "2026-10-21T22:07:57+00:00",
+   "text": "БПЛА на ХТЗ\nㅤ \nНадіслати новину @Kharkiv_Lifebot\n👉ПІДПИСАТИСЯ",
+   "truth_live": false,
+   "why": "a drone sound over a district",
+   "before_pin": false
+  }
+ ]
+}

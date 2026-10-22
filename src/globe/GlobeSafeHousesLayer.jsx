@@ -36,7 +36,7 @@ export default function GlobeSafeHousesLayer({ enabled = true }) {
         <Entity key={h.id} id={`safehouse-${h.id}`} name={`Safe house — ${h.name}`} position={Cartesian3.fromDegrees(h.lon, h.lat)}
                 billboard={{ image: safeHouseIcon(h.status === "closed"), width: 32, height: 38, verticalOrigin: VerticalOrigin.BOTTOM,
                              heightReference: HeightReference.CLAMP_TO_GROUND, eyeOffset: new Cartesian3(0, 0, -150),
-                             scaleByDistance: new NearFarScalar(2e4, 1.15, 8e6, 0.75) }}
+                             }}
                 label={{ text: `${h.name}${h.status === "closed" ? " · closed" : placesLabel(h)}`, font: "600 13px sans-serif",
                          fillColor: Color.fromCssColorString("#d8ffe6"), outlineColor: Color.BLACK, outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
                          verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 6), heightReference: HeightReference.CLAMP_TO_GROUND,

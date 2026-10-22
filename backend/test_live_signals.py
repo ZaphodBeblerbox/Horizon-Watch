@@ -38,6 +38,12 @@ def test_a_header_clock_and_a_past_story_are_not_a_live_arrest():
     assert li.story_cue(RIVOLI)
 
 
+def test_a_writers_own_clock_is_not_a_header():
+    assert li.header_clock("At 01:31 local time (2201 UTC), a launch platform was attacked") is None
+    assert li.header_clock("\u26a1\ufe0f At 01:31 local time") is None
+    assert li.header_clock("Paris 18:20. Bonjour") == "18:20"
+
+
 def test_a_witness_of_the_last_minutes_stands():
     t = "Je vois la police qui interpelle des gens en ce moment rue de Rivoli"
     assert li.story_cue(t) is None
@@ -167,3 +173,10 @@ def test_cards_are_clean():
     c = ls.notification_cards(s)[0]
     assert c["title"] == "Arrest at rue de Rivoli, Paris" and c["reason"] == "Eyewitness, unverified" and "kind" in c and c["kind"] == "telegram"
     assert not textclean.has_emoji(json.dumps(s, ensure_ascii=False))
+
+
+def test_the_announcement_geocoder_does_not_resolve_the_word_place():
+    """Owner (b): the announcement place was "Place, France", found by the geocoder as a hamlet called Place."""
+    import telegram_ingest as tg
+    hit, why = tg.locate("Place, France", "city", "fr")
+    assert hit is None and "kind of place" in why

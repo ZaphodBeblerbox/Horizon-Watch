@@ -95,14 +95,10 @@ function Pin({ a, position: p }) {
             <Entity id={`asset-${a.id}`} position={p}
                 billboard={{ image: icon(a.group, a.exposure), width: 34, height: 40, verticalOrigin: VerticalOrigin.BOTTOM,
                              heightReference: HeightReference.CLAMP_TO_GROUND, eyeOffset: new Cartesian3(0, 0, -120),
-                             scaleByDistance: new NearFarScalar(2e4, 1.15, 8e6, 0.7) }}
+                             }}
                 label={{ text: a.name, font: "600 13px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                          style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 6),
                          heightReference: HeightReference.CLAMP_TO_GROUND, distanceDisplayCondition: new DistanceDisplayCondition(0, 600_000) }} />
-            <Entity position={p}
-                ellipse={{ semiMajorAxis: a.radius_km * 1000, semiMinorAxis: a.radius_km * 1000, fill: true,
-                           material: ring.withAlpha(0.06), outline: true, outlineColor: ring.withAlpha(0.55), height: 0,
-                           distanceDisplayCondition: new DistanceDisplayCondition(0, a.radius_km * 1000 * 14) }} />
         </>
     )
 }

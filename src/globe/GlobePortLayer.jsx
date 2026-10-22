@@ -93,7 +93,7 @@ export default function GlobePortLayer({ enabled, viewBounds }) {
                             width:           sz,
                             height:          sz,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
-                            scaleByDistance: new NearFarScalar(1000, 1.2, 8_000_000, 0.2),
+                            
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 10_000_000),
                             eyeOffset: new (Cartesian3)(0, 0, -80),
                         }}

@@ -124,7 +124,7 @@ they are there or sees it), no_place (the text names no place for the act).
 TIME TRAPS: a time at the very start of a message that follows a channel or city name ("Ile de France 17:41", "Paris 18:20")
 is the forwarded message's header, the time it was posted: it is NOT the time of the event. A clock time alone proves nothing.
 The post's own time is not the event's time. A witness telling what happened on another day is not live.
-PLACE TRAPS: copy the place exactly as written; a bare word for a kind of place ("la place", "rue", "the square", "downtown",
+PLACE TRAPS: a name that appears only in a channel's signature, footer, "subscribe" line, hashtag or @handle ("Вибух  SUMY GO • ...") is not a place stated by the post; copy the place exactly as written; a bare word for a kind of place ("la place", "rue", "the square", "downtown",
 "the city") is NOT a place. If the text names only such a word, location is null and is_live is false.
 EVIDENCE: evidence_quote_act is the shortest exact quote that names the act itself ("tir de LBD", "ils arretent", "tear gas").
 first_hand: true only when the writer says they are there or see it themselves ("je vois", "on est a", "sous mes yeux", "I can see").
@@ -307,7 +307,7 @@ OTHER_DAY_CUES = re.compile(
     r"(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo))\b|вчера|вчора|позавчера|أمس|البارحة", re.I)
 # the words that say it is now, in a quote or in a text
 NOW_WORDS = re.compile(
-    r"\b(?:maintenant|en ce moment|a l'instant|en cours|now|right now|just now|currently|ongoing|in progress|live|ahora|"
+    r"\b(?:maintenant|en ce moment|a l'instant|en cours|now|right now|just now|currently|ongoing|in progress|ahora|"
     r"ahora mismo|en este momento|en directo|en direct|actuellement|il y a [1-9]\d?\s*min|\d{1,2}\s*min(?:ute)?s? ago|"
     r"on voit|on est|je vois|i can see|we are)\b|сейчас|зараз|только что|щойно|الآن|للتو", re.I)
 # opinion, politics talk, insult, slogan: never a signal (owner, 2026-10-22)
@@ -506,8 +506,12 @@ def header_clock(text: str | None) -> str | None:
     city name at the very start of the text ("Île de France 17:41. Bonjour ..."),
     which is when it was posted and never when the event happened."""
     t = (text or "").lstrip()
+    t = re.sub(r"^[^\w\d]+", "", t)                 # a leading flag or bolt is not a word
     m = re.match(r"^[^\d\n]{1,45}?\s(\d{1,2}\s*[:hH]\s*\d{2})\b", t)
     if not m:
+        return None
+    # "At 01:31 local time" is the writer's own time, not a channel's header: a header is a NAME then a clock
+    if re.match(r"(?i)^(?:at|on|in|around|about|since|from|until|à|vers|depuis|dès|a las|a|en|в|о|на|у)\b", t):
         return None
     mm = _CLOCK.search(m.group(1))
     return f"{int(mm.group(1)):02d}:{mm.group(2)}" if mm else None

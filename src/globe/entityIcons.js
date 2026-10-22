@@ -23,6 +23,7 @@
  * data) so the on-globe markers and the UI chrome icons are visually
  * identical, not a second icon language.
  */
+import { EDGE, STROKE } from "../lib/mapIcons.js"
 import { renderToStaticMarkup } from "react-dom/server"
 import { createElement } from "react"
 import { Ship, Plane, Building2, MapPin, Newspaper, TriangleAlert, Target, Sparkles, Crosshair } from "lucide-react"
@@ -464,7 +465,7 @@ export const MARKER_SHAPES = {
 }
 
 function shapeMarkerSvg({ shape = "circle", color = TEXT_MUTED, size = 24,
-                          invert = false, stroke = "#070B14", strokeWidth = 1.5 }) {
+                          invert = false, stroke = EDGE, strokeWidth = STROKE }) {
     const px = size * MARKER_SUPERSAMPLE
     const cx = px / 2, cy = px / 2, r = px * 0.36
     const draw = MARKER_SHAPES[shape] || MARKER_SHAPES.circle
@@ -481,7 +482,7 @@ const _shapeCache = new Map()
 /** A crisp marker of a given shape. Cached; the key covers every pixel input. */
 export function getShapeMarkerDataUri(opts = {}) {
     const { shape = "circle", color = TEXT_MUTED, size = 24,
-            invert = false, strokeWidth = 1.5 } = opts
+            invert = false, strokeWidth = STROKE } = opts
     const key = `shape:${shape}:${color}:${size}:${invert}:${strokeWidth}`
     if (_shapeCache.has(key)) return _shapeCache.get(key)
     const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(

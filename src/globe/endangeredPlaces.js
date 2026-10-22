@@ -78,6 +78,7 @@ export function placeIconUri({ kind, alarm = "grey", hasCall = false, size = 22 
 
 /** A cluster of places on the phone: a disc with the count, in the worst colour inside. */
 export function clusterIconUri({ count, alarm = "grey", size = 30 }) {
+    size = 30                      // one constant on-screen size, whatever the count (owner, 2026-10-23)
     const key = `cl:${count}:${alarm}:${size}`
     if (_cache.has(key)) return _cache.get(key)
     const px = size * MARKER_SUPERSAMPLE

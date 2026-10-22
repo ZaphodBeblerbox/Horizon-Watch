@@ -20,7 +20,8 @@
  */
 import { safeHouseIcon, placesLabel } from "../evacuation/safeHouseIcon.js"
 import API_BASE from "../apiBase.js"
-import { actIcon, cardText, liveSignalDrawn, mediaSources } from "../lib/liveSignals.js"
+import { actIcon, cardText, liveSignalDrawn, mediaSources, ICON_PX } from "../lib/liveSignals.js"
+import { imageryIcon } from "../lib/mapIcons.js"
 import { myPosition } from "../location/liveShare.js"
 import { getCurrentUser } from "../state/authStore.js"
 import {
@@ -160,7 +161,7 @@ export function cullOrCluster(features, bounds, zoom, { noun = "points", prefix 
             const sev = list.map((f) => f.severity).filter(Boolean)
                 .sort((a, b) => (SIG_RANK[a] ?? 9) - (SIG_RANK[b] ?? 9))[0] || null
             const alarm = sev === "critical" || sev === "high" ? "red" : sev === "medium" ? "amber" : "grey"
-            const size = list.length >= 50 ? 36 : list.length >= 10 ? 32 : 28
+            const size = 30
             const named = list.slice(0, 8).map((f) => f.title).filter(Boolean)
             out.push({
                 id: `${prefix}-cl-${z}-${px}-${k}`, lat, lon, iconUri: clusterIconUri({ count: list.length, alarm, size }), size,
@@ -287,18 +288,8 @@ function fireColourFor(k) {
     return "var(--sev-medium, #c9a227)"                    // warm, common
 }
 
-// ── Imagery signals (globe/GlobeImagerySignalsLayer.jsx icon, verbatim) ───
-const IMG_SEV = { critical: "#E5484D", high: "#F5A524", moderate: "#8FB4E8", medium: "#8FB4E8", low: "#9AA9BC" }
-const _imgIcons = {}
-function imagerySignalIcon(sev) {
-    const c = IMG_SEV[sev] || IMG_SEV.moderate
-    if (_imgIcons[c]) return _imgIcons[c]
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect x="5" y="5" width="22" height="22" fill="${c}" stroke="#0b1220" stroke-width="2.5"/>
-      <path d="M16 9v14M9 16h14" stroke="#0b1220" stroke-width="2.4"/><circle cx="16" cy="16" r="4" fill="none" stroke="#0b1220" stroke-width="2.2"/></svg>`
-    _imgIcons[c] = `data:image/svg+xml;base64,${btoa(svg)}`
-    return _imgIcons[c]
-}
+// ── Imagery signals: the shared icon style (lib/mapIcons.js), the same module as the globe ──
+const imagerySignalIcon = imageryIcon
 
 // ── Our assets (globe/GlobeAssetsLayer.jsx icon, verbatim) ────────────────
 const ASSET_GLYPH = {
@@ -510,7 +501,7 @@ async function loadGdelt({ bounds }) {
 // signals and have no layer; a picture or video is only the attachment of a signal's card.
 export const LIVE_SIGNALS_PATH = "/api/telegram/signals/live"
 export const LIVE_SIGNALS_REFRESH_MS = 30_000
-const LS_SIZE = 28
+const LS_SIZE = ICON_PX
 
 export function liveSignalFeatures(d, now = Date.now()) {
     return arr(d?.signals).filter((s) => finite(s.lat, s.lon) && liveSignalDrawn(s, now)).map((s) => {

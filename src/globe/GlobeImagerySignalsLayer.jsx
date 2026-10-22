@@ -19,20 +19,12 @@ import { makeArrivalTracker, arrivalScale, ARRIVAL_MS } from "./liveness.js"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { imageryIcon, ICON_PX } from "../lib/mapIcons.js"
 
-const SIZE = 22
+const SIZE = ICON_PX
 const DAYS = 7
-const SEV = { critical: "#E5484D", high: "#F5A524", moderate: "#8FB4E8", medium: "#8FB4E8", low: "#9AA9BC" }
-const _icons = {}
-function icon(sev) {
-    const c = SEV[sev] || SEV.moderate
-    if (_icons[c]) return _icons[c]
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect x="5" y="5" width="22" height="22" fill="${c}" stroke="#0b1220" stroke-width="2.5"/>
-      <path d="M16 9v14M9 16h14" stroke="#0b1220" stroke-width="2.4"/><circle cx="16" cy="16" r="4" fill="none" stroke="#0b1220" stroke-width="2.2"/></svg>`
-    _icons[c] = `data:image/svg+xml;base64,${btoa(svg)}`
-    return _icons[c]
-}
+// the shared icon style (lib/mapIcons.js): the same module as the phone map
+const icon = (sev) => imageryIcon(sev)
 
 /** Full weight for an hour, then dimming on a log scale to a floor at 7 days. */
 export function fade(tsMs, nowMs) {

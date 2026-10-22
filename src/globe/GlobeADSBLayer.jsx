@@ -381,7 +381,7 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
                             outlineWidth: 2,
                             style:      2,
                             pixelOffset: new Cartesian2(0, -20),
-                            scaleByDistance:          new NearFarScalar(1000, 1.0, 3_000_000, 0.3),
+                            
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 1_500_000),
                             showBackground: true,
                             backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.8),

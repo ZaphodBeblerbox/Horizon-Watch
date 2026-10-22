@@ -15,11 +15,11 @@ import { Cartesian3, SceneTransforms, HeightReference } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { actIcon, cardText, clusterIconUri, clusterSize, declutterAll, liveSignalDrawn, mediaSources, onNearSide } from "../lib/liveSignals.js"
+import { actIcon, cardText, clusterIconUri, clusterSize, declutterAll, liveSignalDrawn, mediaSources, onNearSide, ICON_PX } from "../lib/liveSignals.js"
 
 const PATH = "/api/telegram/signals/live"
 const REFRESH_MS = 30_000
-const SIZE = 28
+const SIZE = ICON_PX
 
 export default function GlobeLiveSignalsLayer({ enabled = false }) {
     const [signals, setSignals] = useState([])
@@ -47,6 +47,7 @@ export default function GlobeLiveSignalsLayer({ enabled = false }) {
         const viewer = cesium?.viewer
         const scene = viewer?.scene
         if (!enabled || !scene || scene.isDestroyed?.()) { setLayout([]); return undefined }
+        if (typeof window !== "undefined") window.__plxLiveViewer = viewer          // reachable for browser checks
         const compute = () => {
             if (scene.isDestroyed?.()) return
             const cam = scene.camera.positionWC
@@ -58,7 +59,10 @@ export default function GlobeLiveSignalsLayer({ enabled = false }) {
                 if (!w || w.x < -SIZE || w.y < -SIZE || w.x > scene.canvas.clientWidth + SIZE || w.y > scene.canvas.clientHeight + SIZE) continue
                 items.push({ id: s.id, x: w.x, y: w.y, size: SIZE, sev: s.muted ? null : (s.high_impact ? "high" : null), _s: s })
             }
-            const out = declutterAll(items).map((g) => {
+            const grouped = declutterAll(items)
+            // reachable for browser checks: where each marker is on screen and how big it is drawn
+            if (typeof window !== "undefined") window.__plxLiveLayout = grouped.map((g) => ({ id: g.id, x: g.x, y: g.y, size: g.cluster ? clusterSize(g.members.length) : SIZE, cluster: g.cluster, n: g.members.length }))
+            const out = grouped.map((g) => {
                 const ss = g.members.map((m) => m._s)
                 const lat = ss.reduce((a, s) => a + s.lat, 0) / ss.length
                 const lon = ss.reduce((a, s) => a + s.lon, 0) / ss.length

@@ -131,7 +131,7 @@ const ClaimEntity = memo(function ClaimEntity({ c }) {
                 showBackground: true, backgroundColor: css("#0B0F1A", 0.72), backgroundPadding: new Cartesian2(6, 4),
                 verticalOrigin: VerticalOrigin.CENTER, heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 2_500_000),
-                scaleByDistance: new NearFarScalar(100_000, 1, 2_500_000, 0.75),
+                
                 disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             }} />
     )
@@ -169,7 +169,7 @@ const MovementEntity = memo(function MovementEntity({ m }) {
                 pixelOffset: new Cartesian2(sym.width / 2 - sym.anchor[0], sym.height / 2 - sym.anchor[1]),
                 heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 3_000_000),
-                scaleByDistance: new NearFarScalar(80_000, 1.1, 3_000_000, 0.6),
+                
                 disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             } : undefined} />
     )
@@ -189,7 +189,7 @@ const MovementLabelEntity = memo(function MovementLabelEntity({ m, l }) {
                 pixelOffset: new Cartesian2(0, l.siege ? -8 : 8),
                 heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, l.siege ? 2_500_000 : 1_200_000),
-                scaleByDistance: new NearFarScalar(80_000, 1, 1_200_000, 0.8),
+                
                 disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             }} />
     )

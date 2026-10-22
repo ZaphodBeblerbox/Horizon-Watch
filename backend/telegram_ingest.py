@@ -648,6 +648,10 @@ def locate(place: str, precision: str, country_code: str) -> tuple[dict | None, 
     from geocode_utils import geocode_place, prefer_settlement
     cc = country_code.lower()
     parts = [p.strip() for p in place.split(",") if p.strip()]
+    # "Place, France" is the word for a square, not a place: the geocoder found a hamlet called Place (owner, 2026-10-22)
+    import textclean
+    if parts and textclean.is_generic_place(parts[0]):
+        return None, f"'{parts[0]}' is a kind of place, not a place"
     # The full form first, then the named place with only its country:
     # "Ras Al-Arah, Bab Al-Mandab, Yemen" fails where "Ras Al-Arah, Yemen"
     # resolves; the middle part is context the post added.

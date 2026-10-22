@@ -294,7 +294,7 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
                             outlineWidth: 2,
                             style:      2,
                             pixelOffset: new Cartesian2(0, -22),
-                            scaleByDistance:          new NearFarScalar(1000, 1.0, 2_000_000, 0.0),
+                            
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 500_000),
                             showBackground: true,
                             backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.8),

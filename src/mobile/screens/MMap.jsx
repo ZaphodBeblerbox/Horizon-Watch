@@ -94,10 +94,11 @@ const scaled = (f, dw = 16) => {
 const CLUSTER_LAYERS = new Set(["geoConfirmed", "strikes", "imagerySignals", "fires", "derivedAlerts",
                                 "ports", "airports", "facMilitary", "facMedical", "facSecurity", "power:sites"])
 const CLUSTER_PX = 46
+const CLUSTER_PX_SIZE = 30
 const CLUSTER_UNTIL = 11
 const CLUSTER_MIN = 3
 const clusterIcon = (n) => {
-    const d = n >= 100 ? 44 : n >= 20 ? 38 : 32
+    const d = CLUSTER_PX_SIZE                  // one constant on-screen size, whatever the count
     return L.divIcon({ className: "", iconSize: [d, d], iconAnchor: [d / 2, d / 2], html: `<div class="m2-cluster">${n > 999 ? "999+" : n}</div>` })
 }
 const pickedIcon = L.divIcon({ className: "", iconSize: [40, 40], iconAnchor: [20, 20], html: '<div class="m2-picked"></div>' })
@@ -281,7 +282,6 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         if (!me?.live) return
         const trail = myTrail().filter((p) => Date.now() - p.at < 6 * 3600_000).map((p) => [p.lat, p.lon])
         if (trail.length > 1) L.polyline(trail, { color: "#3b8cff", weight: 3, opacity: 0.7, interactive: false, className: "m2-me-trail" }).addTo(g)
-        if (me.accuracy > 20 && me.accuracy < 3000) L.circle([me.lat, me.lon], { radius: me.accuracy, color: "#3b8cff", weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false }).addTo(g)
     }, [me])
 
     // THE TRACK on show (an asset's or a person's): coloured by age, its

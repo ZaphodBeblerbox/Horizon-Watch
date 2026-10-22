@@ -84,12 +84,7 @@ export const ARRIVAL_MS = 20000
  * over. It decays to 1 rather than flashing on a timer, so the map
  * settles by itself and nothing is left permanently emphasised.
  */
-export function arrivalScale(arrivedAtMs, nowMs = Date.now()) {
-    if (!Number.isFinite(arrivedAtMs)) return 1
-    const t = (nowMs - arrivedAtMs) / ARRIVAL_MS
-    if (t <= 0) return 1.6
-    if (t >= 1) return 1
-    // Ease out: most of the emphasis is spent in the first few seconds,
-    // which is when a person is most likely to still be looking.
-    return 1 + 0.6 * (1 - t) ** 2
+export function arrivalScale() {
+    // Constant on-screen size (owner, 2026-10-23): a mark that arrives does not swell.
+    return 1
 }

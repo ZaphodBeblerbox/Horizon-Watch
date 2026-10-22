@@ -15,6 +15,8 @@
  *
  * Keep LIVE_WINDOW_MIN / CROWD_MAX_MIN the same as backend/live_signals.py.
  */
+import { badgeUri, EDGE, ICON_PX, PALETTE } from "./mapIcons.js"
+export { ICON_PX }
 export const LIVE_WINDOW_MIN = 60
 export const CROWD_MAX_MIN = 180
 
@@ -28,32 +30,22 @@ export function stripEmoji(s) {
 }
 
 export const ACTS = {
-    arrest: { label: "Arrest", color: "#E5484D", glyph: "M9 16a3 3 0 106 0 3 3 0 00-6 0M9 16v-2M15 16v-2M12 19v2" },
-    shots_fired: { label: "Shots fired", color: "#E5484D", glyph: "M7 16h8l3-2v4l-3-2M7 16l-2 4M10 13l1-2" },
-    explosion: { label: "Explosion", color: "#F5A524", glyph: "M16 7l1.5 4.5L22 12l-4 3 1.5 5L16 17l-3.5 3 1.5-5-4-3 4.5-.5z" },
-    strike: { label: "Strike", color: "#F5A524", glyph: "M16 6v9M12 12l4 5 4-5M9 22h14" },
-    missile_launch: { label: "Missile launch", color: "#E5484D", glyph: "M10 22l10-12M17 9h4v4M9 18l3 3" },
-    missile_impact: { label: "Missile impact", color: "#E5484D", glyph: "M16 8v7M13 12l3 4 3-4M10 21h12M12 18l-2 3M20 18l2 3" },
-    crowd_movement: { label: "Crowd", color: "#F5A524", glyph: "M11 15a2 2 0 104 0 2 2 0 00-4 0M17 15a2 2 0 104 0 2 2 0 00-4 0M8 22c.5-3 2-4.5 4-4.5s3.5 1.500 4 4.5M16 22c.5-3 2-4.500 4-4.500s3.500 1.500 4 4.500" },
-    troops_sighted: { label: "Troops", color: "#229ED9", glyph: "M8 22v-9l8-5 8 5v9M12 22v-5h8v5" },
-    police_intervention: { label: "Police", color: "#229ED9", glyph: "M16 7l7 3v5c0 4-3 6.500-7 8-4-1.500-7-4-7-8v-5z" },
+    arrest: { label: "Arrest", color: PALETTE.red, glyph: "M9 16a3 3 0 106 0 3 3 0 00-6 0M9 16v-2M15 16v-2M12 19v2" },
+    shots_fired: { label: "Shots fired", color: PALETTE.red, glyph: "M7 16h8l3-2v4l-3-2M7 16l-2 4M10 13l1-2" },
+    explosion: { label: "Explosion", color: PALETTE.amber, glyph: "M16 7l1.5 4.5L22 12l-4 3 1.5 5L16 17l-3.5 3 1.5-5-4-3 4.5-.5z" },
+    strike: { label: "Strike", color: PALETTE.amber, glyph: "M16 6v9M12 12l4 5 4-5M9 22h14" },
+    missile_launch: { label: "Missile launch", color: PALETTE.red, glyph: "M10 22l10-12M17 9h4v4M9 18l3 3" },
+    missile_impact: { label: "Missile impact", color: PALETTE.red, glyph: "M16 8v7M13 12l3 4 3-4M10 21h12M12 18l-2 3M20 18l2 3" },
+    crowd_movement: { label: "Crowd", color: PALETTE.amber, glyph: "M11 15a2 2 0 104 0 2 2 0 00-4 0M17 15a2 2 0 104 0 2 2 0 00-4 0M8 22c.5-3 2-4.5 4-4.5s3.5 1.500 4 4.5M16 22c.5-3 2-4.500 4-4.500s3.500 1.500 4 4.500" },
+    troops_sighted: { label: "Troops", color: PALETTE.blue, glyph: "M8 22v-9l8-5 8 5v9M12 22v-5h8v5" },
+    police_intervention: { label: "Police", color: PALETTE.blue, glyph: "M16 7l7 3v5c0 4-3 6.500-7 8-4-1.500-7-4-7-8v-5z" },
 }
 const FALLBACK = ACTS.police_intervention
 
-const _icons = {}
-/** The badge: a dark round disc, the act's colour ring and glyph. One family; `muted` draws it fainter. */
+/** The badge: the shared style (lib/mapIcons.js), a circle for an act on the ground, the act's glyph inside. `muted` fainter. */
 export function actIcon(act, { muted = false, bearing = null } = {}) {
-    const b = Number.isFinite(bearing) ? Math.round(bearing / 15) * 15 : null     // a moving crowd: an arrowhead on the ring toward where it goes
-    const key = `${act}|${muted ? 1 : 0}|${b}`
-    if (_icons[key]) return _icons[key]
     const a = ACTS[act] || FALLBACK
-    const op = muted ? 0.45 : 1
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" opacity="${op}">
-      <circle cx="16" cy="16" r="13" fill="#0b1220" stroke="${a.color}" stroke-width="2.5"/>
-      <path d="${a.glyph}" fill="none" stroke="${a.color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      ${b === null ? "" : `<path d="M16 0.5l4 5h-8z" fill="${a.color}" transform="rotate(${b} 16 16)"/>`}</svg>`
-    _icons[key] = `data:image/svg+xml;base64,${typeof btoa === "function" ? btoa(svg) : Buffer.from(svg).toString("base64")}`
-    return _icons[key]
+    return badgeUri({ shape: "circle", color: a.color, glyph: a.glyph, bearing, muted })
 }
 
 const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t : NaN }
@@ -130,7 +122,7 @@ export function declutter(items, gap = 2) {
 }
 
 /** The cluster's own size on screen, so a cluster is itself a box the collision pass can treat. */
-export const clusterSize = (n) => (n >= 100 ? 44 : n >= 20 ? 38 : 32)
+export const clusterSize = () => 30      // constant on-screen size, whatever the count
 
 /** Declutter to a fixed point: a cluster is bigger than a marker and may touch a neighbour, so merge again until none touch. */
 export function declutterAll(items, gap = 2) {
@@ -167,7 +159,7 @@ export function clusterIconUri(n) {
     const key = `${d}|${n}`
     if (_cl[key]) return _cl[key]
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${d * 2}" height="${d * 2}" viewBox="0 0 ${d} ${d}">
-      <circle cx="${d / 2}" cy="${d / 2}" r="${d / 2 - 1.5}" fill="#0b1220" stroke="#e8eaed" stroke-width="2"/>
+      <circle cx="${d / 2}" cy="${d / 2}" r="${d / 2 - 1.5}" fill="#0b1220" stroke="#e8eaed" stroke-width="1.5"/>
       <text x="${d / 2}" y="${d / 2 + 4.5}" text-anchor="middle" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#e8eaed">${n > 99 ? "99+" : n}</text></svg>`
     _cl[key] = `data:image/svg+xml;base64,${typeof btoa === "function" ? btoa(svg) : Buffer.from(svg).toString("base64")}`
     return _cl[key]

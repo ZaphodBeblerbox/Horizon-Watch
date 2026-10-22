@@ -73,12 +73,11 @@ export default function GlobeSeaRouteLayer() {
                         <Entity key={`szl-${h.id}`} id={`sea-zone-label-${h.id}`} position={Cartesian3.fromDegrees(lo, la)}
                                 label={{ text: h.name, font: "600 12.5px -apple-system, 'Segoe UI', Roboto, sans-serif", fillColor: Color.WHITE,
                                          outlineColor: Color.BLACK, outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
-                                         pixelOffset: new Cartesian2(0, 0), scaleByDistance: new NearFarScalar(1.5e6, 1.0, 2.0e7, 0.7),
+                                         pixelOffset: new Cartesian2(0, 0), 
                                          disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />,
                     ]
                 }
-                return <Entity key={`sc-${h.id}`} id={`sea-cell-${h.id}`} name={h.name} position={Cartesian3.fromDegrees(h.lon, h.lat)}
-                               ellipse={{ semiMajorAxis: h.radius_km * 1000, semiMinorAxis: h.radius_km * 1000, material: col.withAlpha(0.14), height: 0 }} />
+                return null            // no fixed-ground-size disc (owner, 2026-10-23): the cell's name above is its mark
             })}
             {routes.map(({ c, on, positions, material }) => (
                 <Entity key={`sr-${c.key}`} id={`sea-route-${c.recommended ? "recommended" : c.key}`} name={`${c.label} — ${c.days} days, ${c.distance_nm} nm`}
