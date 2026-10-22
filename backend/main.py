@@ -17,6 +17,7 @@ import socket as _socket
 import time as time_module
 import time
 import asyncio
+import functools
 import threading
 import base64 as _b64mod
 import json as _json
@@ -12246,13 +12247,13 @@ async def _escalation_loop():
 
 
 @app.get("/api/telegram/posts")
-async def api_telegram_posts(hours: int = Query(72, ge=1, le=720), statements: bool = False):
+async def api_telegram_posts(hours: int = Query(72, ge=1, le=720), statements: bool = False, pins: bool = False):
     """Telegram posts that passed relevance and precise geolocation
     (telegram_ingest.py). Unverified by nature; each says so. With
     statements=1, official channels' own claims come too (never pins)."""
     import telegram_ingest as _tg
     loop = asyncio.get_event_loop()
-    out = {"posts": await loop.run_in_executor(_executor, _tg.published, hours)}
+    out = {"posts": await loop.run_in_executor(_executor, functools.partial(_tg.published, hours, pins=pins))}
     if statements:
         out["statements"] = await loop.run_in_executor(_executor, _tg.statements, hours)
     return out

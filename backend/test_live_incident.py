@@ -602,3 +602,27 @@ def test_the_rule_path_does_not_place_a_settlement_name_the_country_has_twice(mo
     two[1]["importance"] = 0.1
     two[0]["importance"] = 0.5
     assert tr.resolve(x, [5])[0] is not None
+
+
+def test_pins_leave_the_map_after_a_day_and_warnings_never_pin(tmp_path, monkeypatch):
+    """published(pins=True): dated by the event (else the post), gone PIN_MAX_H after it;
+    an air-raid warning pinned before the rule existed is hidden; lists keep their window."""
+    import datetime as dt, sqlite3
+    import telegram_ingest as tg
+    db = tmp_path / "t.db"
+    monkeypatch.setattr(tg, "_db_path", lambda: str(db))
+    con = tg._con()
+    now = dt.datetime.now(dt.timezone.utc)
+    def row(mid, hours_ago, text, event_hours=None):
+        ts = (now - dt.timedelta(hours=hours_ago)).isoformat()
+        ev = (now - dt.timedelta(hours=event_hours)).isoformat() if event_hours is not None else None
+        con.execute("INSERT INTO telegram_posts (channel, msg_id, channel_title, posted_at, text, lat, lon, place, event_type, headline, role, event_time) "
+                    "VALUES ('c', ?, 'C', ?, ?, 48.85, 2.35, 'Paris', 'conflict', ?, 'aggregator', ?)", (mid, ts, text, f"h{mid}", ev))
+    row(1, 2, "Explosion at the depot, fire spreading")
+    row(2, 30, "Explosion at the depot, fire spreading")                   # posted 30 h ago
+    row(3, 2, "Strike earlier, now over", event_hours=40)                  # posted 2 h ago about an event 40 h old
+    row(4, 2, "Загроза застосування БПЛА. Перейдіть в укриття!")           # an air-raid warning
+    con.commit(); con.close()
+    ids = lambda **k: sorted(p["msg_id"] for p in tg.published(72, **k))
+    assert ids(pins=True) == [1]
+    assert 2 in ids() and 3 in ids() and 4 not in ids()

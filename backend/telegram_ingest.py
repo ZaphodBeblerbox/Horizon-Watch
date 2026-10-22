@@ -1360,7 +1360,29 @@ def _live_incident():
     return live_incident
 
 
-def published(hours: int = 72) -> list[dict]:
+PIN_MAX_H = float(os.environ.get("TG_PIN_MAX_H", "24"))   # a pin older than this is off the map (owner, 2026-10-22)
+
+
+def _pin_time(r) -> _dt.datetime | None:
+    """When the thing happened (event_time, if a reading established it), else when it was posted."""
+    for k in ("event_time", "posted_at"):
+        try:
+            v = r[k]
+        except (KeyError, IndexError):
+            v = None
+        if v:
+            try:
+                t = _dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+                return t if t.tzinfo else t.replace(tzinfo=_dt.timezone.utc)
+            except ValueError:
+                continue
+    return None
+
+
+def published(hours: int = 72, pins: bool = False) -> list[dict]:
+    """Located posts. pins=True is what the MAPS draw: a pin is dated by its
+    event (else its post) and is gone PIN_MAX_H after it — derived on read,
+    nothing is deleted; lists, statistics and the Desk keep their own window."""
     cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
     con = _con()
     con.row_factory = sqlite3.Row
@@ -1379,6 +1401,18 @@ def published(hours: int = 72) -> list[dict]:
         lat, lon = r["lat"], r["lon"]
         if r["event_type"] == "unrest" and not is_unrest(r):
             continue
+        # an air-raid warning or an all-clear is not an incident anywhere
+        # (telegram_rules.is_warning_only): old rows pinned before that rule are hidden too
+        try:
+            import telegram_rules
+            if telegram_rules.is_warning_only(r["text"]):
+                continue
+        except Exception:                                       # noqa: BLE001
+            pass
+        if pins:
+            t = _pin_time(r)
+            if t is not None and (now - t) > _dt.timedelta(hours=PIN_MAX_H):
+                continue
         # ONE EVENT, ONE PIN. Channels post a claim as several messages and
         # others repost it; the same headline at the same place on the same
         # day is one event, shown once, with who else carried it.

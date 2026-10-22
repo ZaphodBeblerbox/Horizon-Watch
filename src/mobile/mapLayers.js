@@ -557,7 +557,7 @@ const tgHours = (hours) => Math.max(48, Number(hours) || 48)
 
 async function loadTelegram({ bounds, hours }) {
     const [posts, sit] = await Promise.all([
-        getJson(`${API_BASE}/api/telegram/posts?hours=${tgHours(hours)}`),
+        getJson(`${API_BASE}/api/telegram/posts?hours=${tgHours(hours)}&pins=1`),
         getJson(`${API_BASE}/api/telegram/situations`),
     ])
     const feats = []
@@ -586,7 +586,7 @@ async function loadTelegram({ bounds, hours }) {
 
 async function loadUnrest({ bounds, hours }) {
     const [posts, sit, up] = await Promise.all([
-        getJson(`${API_BASE}/api/telegram/posts?hours=${tgHours(hours)}`),
+        getJson(`${API_BASE}/api/telegram/posts?hours=${tgHours(hours)}&pins=1`),
         getJson(`${API_BASE}/api/telegram/situations`),
         getJson(`${API_BASE}/api/telegram/upcoming?days=14`, { ttlMs: 60_000 }),
     ])

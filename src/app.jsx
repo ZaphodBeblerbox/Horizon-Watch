@@ -1203,7 +1203,7 @@ export default function App() {
     useEffect(() => {
         if (!profile) return undefined
         let live = true
-        const load = () => fetch(`${API}/api/telegram/posts?hours=24&statements=1`, { credentials: "include" })
+        const load = () => fetch(`${API}/api/telegram/posts?hours=24&statements=1&pins=1`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
                 if (!live || !d) return

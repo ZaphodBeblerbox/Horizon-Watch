@@ -109,7 +109,7 @@ export default function GlobeTelegramLayer({ enabled = false, unrest = false, ho
     useEffect(() => {
         if (!enabled && !unrest) { setPosts([]); return undefined }
         let live = true
-        const load = () => fetch(`${API_BASE}/api/telegram/posts?hours=${hours}`, { credentials: "include" })
+        const load = () => fetch(`${API_BASE}/api/telegram/posts?hours=${hours}&pins=1`, { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
                 if (!live || !d) return
