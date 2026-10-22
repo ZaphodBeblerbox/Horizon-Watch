@@ -26,6 +26,16 @@ const SEV = { critical: "#E5484D", high: "#F5A524", significant: "#F5A524", elev
 const FILTERS = [["all", "All"], ["signal", "Alerts"], ["geoconfirmed", "GeoConfirmed"], ["telegram", "Telegram"]]
 
 const ago = (iso) => (agoLabel(iso) || "").replace(/ ago$/, "")
+// A GeoConfirmed event is known to the DAY (general_feed.gc_event_at): one
+// stored weeks after its day reads as its date, never "just now".
+export const whenOf = (it) => {
+    if (!it?.at) return ""
+    if (it.at_precision === "day") {
+        const d = new Date(`${String(it.at).slice(0, 10)}T12:00:00Z`)
+        return Number.isNaN(d.getTime()) ? String(it.at).slice(0, 10) : d.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })
+    }
+    return ago(it.at)
+}
 const shownIds = (list) => new Set((list || []).flatMap((x) => [x.id, ...(Array.isArray(x.also) ? x.also.map((a) => a.id) : [])]))
 
 function Avatar({ it }) {
@@ -78,7 +88,7 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0, fontSize: 14 }}>
                     <b style={{ fontWeight: 650, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flex: "0 0 auto", maxWidth: "55%" }}>{sourceName(it)}</b>
                     <span style={{ color: "var(--txt4)", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        · {kindLabel}{place ? ` · ${place}` : ""} · {it.event_time ? ageLabel(it).replace(/ ago$/, "") : ago(it.at)}
+                        · {kindLabel}{place ? ` · ${place}` : ""} · {it.event_time ? ageLabel(it).replace(/ ago$/, "") : whenOf(it)}
                     </span>
                 </div>
                 <div style={{ fontSize: 15, lineHeight: 1.45, marginTop: 3, color: "var(--txt)", overflowWrap: "anywhere" }}>{it.headline}</div>
@@ -107,7 +117,7 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
                             <ul style={{ listStyle: "none", margin: "8px 0 0", padding: "0 0 0 10px", borderLeft: "2px solid var(--gline2)", display: "grid", gap: 6 }}>
                                 {also.map((a) => (
                                     <li key={a.id} style={{ fontSize: 13.5, lineHeight: 1.4, color: "var(--txt2)", overflowWrap: "anywhere" }}>
-                                        <span style={{ color: "var(--txt4)" }}>{a.source}{a.at ? ` · ${ago(a.at)}` : ""} · </span>{a.headline}
+                                        <span style={{ color: "var(--txt4)" }}>{a.source}{a.at ? ` · ${whenOf(a)}` : ""} · </span>{a.headline}
                                     </li>
                                 ))}
                             </ul>

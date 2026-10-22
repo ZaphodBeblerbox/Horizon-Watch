@@ -178,15 +178,37 @@ _THEATRE = {"ukraine": "Ukraine", "israel": "Israel and Gaza", "cartel": "Mexico
             "thailandcambodia": "Thailand and Cambodia", "afghanistan": "Afghanistan", "sahel": "Sahel", "sudan": "Sudan"}
 
 
+# A GeoConfirmed event's time (2026-10-23: items weeks old read "just now").
+# The source gives the DAY of the event; ingested_at is when our sync stored
+# it, and 99% of the rows were stored more than two days after their day (the
+# 90-day window is backfilled). So an event is dated by the earlier of the two:
+# the time we learned of it when that was on its own day, else the end of its
+# day, marked day-precision so the app shows the date, never "x min ago".
+# Every row's time lies inside its day, so ordering by (date, time) is the same
+# order and the date index answers it.
+_GC_AT = "min(ingested_at, datetime(date, '+86399 seconds'))"
+
+
+def gc_event_at(date, ingested_at) -> tuple[str, str]:
+    """(ISO time, precision) of a GeoConfirmed event — see _GC_AT."""
+    from datetime import datetime, timedelta
+    d = _iso(date)
+    if not d:
+        return _iso(ingested_at), "time"
+    end = (datetime.fromisoformat(d[:10]) + timedelta(seconds=86399)).isoformat()
+    ing = _iso(ingested_at)
+    if ing and ing <= end:
+        return ing, "time"
+    return end, "day"
+
+
 def _geoconfirmed(con, before: str, limit: int) -> list[dict]:
+    cut = before.replace("T", " ")
     try:
         rows = con.execute(
-            # by when it was PUBLISHED (ingested), not the event's day: a day
-            # carries no time, so every verified event sorted at midnight,
-            # beneath everything else that day, and never reached the top
-            "SELECT id, title, name, description, date, latitude, longitude, faction, original_source, theatre_slug, ingested_at"
-            " FROM geoconfirmed_placemarks WHERE ingested_at < ? AND coalesce(status, 'active') = 'active'"
-            " ORDER BY ingested_at DESC LIMIT ?", (before.replace("T", " "), limit)).fetchall()
+            f"SELECT id, title, name, description, date, latitude, longitude, faction, original_source, theatre_slug, ingested_at"
+            f" FROM geoconfirmed_placemarks WHERE date < ? AND {_GC_AT} < ? AND coalesce(status, 'active') = 'active'"
+            f" ORDER BY date DESC, {_GC_AT} DESC LIMIT ?", (cut, cut, limit)).fetchall()
     except sqlite3.OperationalError:
         return []
     out = []
@@ -195,7 +217,9 @@ def _geoconfirmed(con, before: str, limit: int) -> list[dict]:
         x = _X.search(src)
         text = re.sub(r"\s+", " ", (r["description"] or "")).strip()
         head = (r["title"] or "").strip() or text[:140] or r["name"]
-        out.append({"id": f"gc:{r['id']}", "kind": "geoconfirmed", "at": _iso(r["ingested_at"] or r["date"]), "event_date": str(r["date"] or "")[:10], "headline": head,
+        at, prec = gc_event_at(r["date"], r["ingested_at"])
+        out.append({"id": f"gc:{r['id']}", "kind": "geoconfirmed", "at": at, "at_precision": prec,
+                    "published_at": _iso(r["ingested_at"]), "event_date": str(r["date"] or "")[:10], "headline": head,
                     "text": text if text != head else "", "lat": r["latitude"], "lon": r["longitude"],
                     "source": "GeoConfirmed", "faction": r["faction"], "theatre": r["theatre_slug"], "precise": True,
                     "place": _THEATRE.get(r["theatre_slug"] or "", str(r["theatre_slug"] or "").replace("-", " ").title() or None),
