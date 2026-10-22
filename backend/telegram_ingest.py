@@ -124,7 +124,14 @@ EXTRA_COLUMNS = {"lang": "TEXT", "summary_en": "TEXT", "role": "TEXT", "party": 
                  # (telegram_vision.py): the model's structured description, the
                  # image's hash (one reading per picture), what code decided.
                  "read_by": "TEXT", "vision_checked": "INTEGER", "vision_at": "TEXT", "vision_json": "TEXT",
-                 "vision_hash": "TEXT", "vision_decision": "TEXT", "vision_cost": "REAL"}
+                 "vision_hash": "TEXT", "vision_decision": "TEXT", "vision_cost": "REAL",
+                 # IS IT LIVE, AND WHEN (live_incident.py, 2026-10-22): the strict
+                 # extractor's whole answer and the code's verdict (audit of every
+                 # live pin), the time the EVENT happened (never assumed to be the
+                 # post's), and the text hash identical posts share. "live" itself
+                 # is derived on read from event_time, never stored.
+                 "live_checked": "INTEGER", "live_at": "TEXT", "live_json": "TEXT", "live_verdict": "TEXT",
+                 "live_hash": "TEXT", "live_cost": "REAL", "event_time": "TEXT"}
 
 # What each channel is (telegram_channels.json). Unlisted = aggregator.
 CHANNELS_FILE = os.path.join(HERE, "telegram_channels.json")
@@ -173,6 +180,8 @@ def _con():
     for col, typ in EXTRA_COLUMNS.items():
         if col not in have:
             con.execute(f"ALTER TABLE telegram_posts ADD COLUMN {col} {typ}")
+    # the live window and the posts table's readers look at the last hours
+    con.execute("CREATE INDEX IF NOT EXISTS ix_telegram_posts_posted ON telegram_posts (posted_at)")
     return con
 
 
@@ -764,7 +773,14 @@ def classify(limit: int = 120) -> dict:
             # the system, separable by a toggle). Same rules as fighting:
             # a precise place, and footage first-hand from reposting channels.
             kinetic = (x.get("event_type") or "other") in KINETIC or x.get("event_type") == "unrest"
-            if rel and not kinetic:
+            # AN AIR-RAID WARNING IS NOT AN INCIDENT ("Загроза застосування БПЛА.
+            # Перейдіть в укриття!", "Відбій тривоги"): on 2026-10-22 these were
+            # the commonest pin on the map, typed as unrest. Same words as the
+            # rule reader's; a post that also names a hit still counts.
+            import telegram_rules
+            if rel and telegram_rules.is_warning_only(r[2]):
+                hit, why = None, "an alert or an all-clear, not an incident"
+            elif rel and not kinetic:
                 hit, why = None, f"not a kinetic event ({x.get('event_type') or 'other'})"
             # TEXT REPORTS AND RECAPS COUNT TOO (the owner, 2026-10-07: "as many
             # interesting Telegram signals as possible"). A reposting channel's
@@ -776,9 +792,16 @@ def classify(limit: int = 120) -> dict:
                 hit, why = None, "not relevant"
             else:
                 hit, why = locate(x.get("place"), x.get("precision"), x.get("country_code"))
+            # A post the strict extractor (live_incident.py) already pinned as
+            # LIVE keeps ITS place and type: this reading is the older, looser
+            # one, and must not move a pin the code verified.
+            live_keep = "live_verdict='live'"
+            keep = lambda col, new: f"{col}=CASE WHEN {live_keep} THEN {col} ELSE {new} END"
             con.execute(
-                "UPDATE telegram_posts SET classified=1, relevant=?, headline=?, event_type=?, place=?, precision=?,"
-                " country_code=?, lat=?, lon=?, geocoded_as=?, unpublished_reason=?, lang=?, summary_en=?, claim=?,"
+                "UPDATE telegram_posts SET classified=1, relevant=CASE WHEN " + live_keep + " THEN 1 ELSE ? END, headline=?, "
+                + keep("event_type", "?") + ", " + keep("place", "?") + ", " + keep("precision", "?") + ", "
+                + keep("country_code", "?") + ", " + keep("lat", "?") + ", " + keep("lon", "?") + ", " + keep("geocoded_as", "?") + ", "
+                + keep("unpublished_reason", "?") + ", lang=?, summary_en=?, claim=?,"
                 " first_hand=?, read_by='model' WHERE channel=? AND msg_id=?",
                 (int(rel), (x.get("headline") or "")[:200], x.get("event_type"), x.get("place"), x.get("precision"),
                  (x.get("country_code") or "").lower(), hit and hit["lat"], hit and hit["lon"],
@@ -834,24 +857,43 @@ def classify_by_rules(con, rows) -> dict:
         x = telegram_rules.read(text, cc, role)
         hit = place = pcc = None
         why = NO_EVENT_BY_RULE
+        verdict = event_time = None
         if x["relevant"]:
             relevant += 1
             hit, place, pcc, why = telegram_rules.resolve(x, budget)
+            # THE SAME DISCIPLINE AS THE STRICT EXTRACTOR, as far as code can
+            # (live_incident.py): a place the text names (resolve above), and a
+            # post that says it is happening now, says nothing of an earlier
+            # time, and is itself recent. Otherwise it is read, not pinned.
+            if hit:
+                import live_incident
+                is_live, live_why = live_incident.rule_live(text, r[7])
+                if is_live:
+                    verdict, event_time = "rule-live", r[7]
+                else:
+                    hit, place, pcc, why = None, None, None, f"not live by rule: {live_why}"
         elif x["event_type"]:
             why = "talk about an event, not a report of one (read by rule)"
+        if telegram_rules.is_warning_only(text):
+            hit, place, pcc, verdict, event_time, why = None, None, None, None, None, "an alert or an all-clear, not an incident"
+            x = {**x, "relevant": False}
+        if con.execute("SELECT live_verdict FROM telegram_posts WHERE channel=? AND msg_id=?", (chan, mid)).fetchone() == ("live",):
+            done += 1                      # the strict extractor already pinned it live: keep its reading
+            continue
         claim = int(role == "official" and bool(x["relevant"]))
         headline = x["headline"]
         if hit and place:
             headline = f"{telegram_rules.LABEL.get(x['event_type'], x['event_type'])} reported — {place}"
         con.execute(
             "UPDATE telegram_posts SET classified=1, relevant=?, headline=?, event_type=?, place=?, precision=?,"
-            " country_code=?, lat=?, lon=?, geocoded_as=?, unpublished_reason=?, claim=?, first_hand=?, read_by='rule'"
+            " country_code=?, lat=?, lon=?, geocoded_as=?, unpublished_reason=?, claim=?, first_hand=?, read_by='rule',"
+            " live_verdict=?, event_time=?"
             " WHERE channel=? AND msg_id=?",
             (int(bool(x["relevant"])), (headline or "")[:200], x["event_type"], place or (x["places"][0] if x["places"] else None),
              "town" if hit else None, (pcc or (x["countries"][0] if x["countries"] else "") or "").lower(),
              hit and hit["lat"], hit and hit["lon"], hit and hit.get("display_name"),
              None if hit else why, claim,
-             int(media != "none" and role in ("local", "group", "official")), chan, mid))
+             int(media != "none" and role in ("local", "group", "official")), verdict, event_time, chan, mid))
         done += 1
         kept += int(hit is not None)
     con.commit()
@@ -1313,6 +1355,11 @@ def _is_graphic(r) -> bool:
     return bool(g) if g is not None else graphic_by_words(r["headline"], r["summary_en"])
 
 
+def _live_incident():
+    import live_incident
+    return live_incident
+
+
 def published(hours: int = 72) -> list[dict]:
     cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
     con = _con()
@@ -1325,6 +1372,8 @@ def published(hours: int = 72) -> list[dict]:
                        (cutoff,)).fetchall()
     con.close()
     out, seen = [], {}
+    import live_incident
+    now = _dt.datetime.now(_dt.timezone.utc)
     for r in rows:
         chan = r["channel"]
         lat, lon = r["lat"], r["lon"]
@@ -1345,6 +1394,10 @@ def published(hours: int = 72) -> list[dict]:
         out.append({
             "id": f"tg-{chan}-{r['msg_id']}", "headline": r["headline"], "text": r["text"],
             "channel": chan, "channel_title": r["channel_title"], "posted_at": r["posted_at"],
+            # WHEN IT HAPPENED, NOT WHEN IT WAS POSTED (live_incident.py): event_time
+            # only when a reading established it; live is derived now and false
+            # 60 min after event_time; the readers' age and badge use event_time
+            **live_incident.live_fields(r, now),
             "event_type": r["event_type"], "place": r["place"], "precision": r["precision"],
             "country_code": r["country_code"], "lat": lat, "lon": lon, "geocoded_as": r["geocoded_as"],
             "media": r["media"], **media_urls(chan, r["msg_id"], r["media"], r["thumb"]), **vision_fields(r),
@@ -1364,6 +1417,13 @@ def published(hours: int = 72) -> list[dict]:
     # map and the notifications (demo_freshness.py; statistics read the table)
     import demo_freshness
     return demo_freshness.keep(with_signals(out, hours, located_only=True))
+
+
+def live_incidents(now: _dt.datetime | None = None) -> list[dict]:
+    """The LIVE set: pinned posts the strict extractor (or, with the model
+    out, the rule) judged live, whose event_time is within the window of now.
+    Derived on read: a signal leaves this list 60 min after its event."""
+    return [p for p in published(hours=3) if p.get("live")]
 
 
 def with_signals(out: list[dict], hours: int, located_only: bool = False, before: str | None = None,
@@ -1425,7 +1485,7 @@ def feed(before: str | None = None, limit: int = 40) -> dict:
         "url": None if r["channel"].startswith(("c/", "u/", "g/")) else f"https://t.me/{r['channel']}/{r['msg_id']}",
         "views": r["views"], "role": r["role"], "party": r["party"], "claim": bool(r["claim"]),
         "msg_id": r["msg_id"], "severity_tier": severity_of(r), "graphic": _is_graphic(r),
-        "on_map": r["lat"] is not None,
+        "on_map": r["lat"] is not None, **_live_incident().live_fields(r),
         "verification": (f"{r['party']} — " if r["party"] and r["role"] == "official" else "")
                         + ROLE_LABEL.get(r["role"] or "aggregator", ROLE_LABEL["aggregator"]),
     } for r in rows]
@@ -1558,6 +1618,11 @@ def stats() -> dict:
                                                  "credit_exhausted_since", "credit_errors", "credit_last_error")}
     except Exception as e:                                      # noqa: BLE001
         out["model"] = {"error": f"{type(e).__name__}: {e}"}
+    try:
+        import live_incident
+        out["live_incident"] = live_incident.status()
+    except Exception as e:                                      # noqa: BLE001
+        out["live_incident"] = {"error": f"{type(e).__name__}: {e}"}
     try:
         import telegram_vision
         out["vision"] = telegram_vision.status()

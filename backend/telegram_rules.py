@@ -73,6 +73,15 @@ ALERT_ONLY = re.compile(r"тривог\w*|загроз\w*|відбій|укри�
                         r"صفارات الإنذار|אזעק\w*|\bwarning\b", re.I)
 HARD_HIT = re.compile(r"вибух\w*|взрыв\w*|приліт\w*|прилет\w*|влучан\w*|\bexplosion|\bimpact\b|\bhit\b", re.I)
 
+def is_warning_only(text: str | None) -> bool:
+    """An air-raid alert, an all-clear, a threat warning: it names no hit.
+    Ukraine's alert channels post one per district every few minutes, and the
+    model reads them as 'unrest' with a place (2026-10-22), so the model's
+    reading is screened by the same words."""
+    t = fold(text)
+    return bool(t.strip()) and bool(ALERT_ONLY.search(t)) and not HARD_HIT.search(t)
+
+
 # Talk about an event is not one: a statement, a threat, an analysis.
 TALK = re.compile(r"\b(?:says?|said|stated|warns?|threaten\w*|vows?|could|may|might|would|will)\b|"
                   r"\bstatement\b|\bspokes(?:man|person)\b|\binterview\b|\banalysis\b", re.I)
@@ -225,10 +234,14 @@ def read(text: str | None, chat_cc: str | None = None, role: str | None = None) 
     talk = bool(TALK.search(fold(text)))
     places = places_of(text)
     ccs = countries_of(text, chat_cc)
+    # the countries the TEXT names: the only ones a pin may be placed in. The
+    # chat's own country (ccs, last) is context for the record, not evidence
+    # of where the post's place is ("Châtelet" in a French channel is not Paris).
+    in_text = countries_of(text, None)
     where = places[0] if places else (COUNTRY_NAME.get(ccs[0]) if ccs else None)
     headline = f"{LABEL.get(kind, kind)} reported{f' — {where}' if where else ''}"
     return {"relevant": not talk or role == "official", "event_type": kind, "matched": matched, "places": places,
-            "countries": ccs, "talk": talk, "headline": headline}
+            "countries": ccs, "countries_in_text": in_text, "talk": talk, "headline": headline}
 
 
 def resolve(reading: dict, budget: list | None = None) -> tuple[dict | None, str | None, str | None, str | None]:
@@ -239,10 +252,11 @@ def resolve(reading: dict, budget: list | None = None) -> tuple[dict | None, str
     import telegram_ingest
     if not reading.get("places"):
         return None, None, None, "no place named after a place word (read by rule)"
-    if not reading.get("countries"):
-        return None, None, None, "no country to place it in (read by rule)"
+    countries = reading.get("countries_in_text") if "countries_in_text" in reading else reading.get("countries")
+    if not countries:
+        return None, None, None, "the post names no country for its place (the channel's country is not evidence) (read by rule)"
     for name in reading["places"]:
-        for cc in reading["countries"][:2]:
+        for cc in countries[:2]:
             if budget is not None:
                 if budget[0] <= 0:
                     return None, None, None, "geocoder budget spent this pass (read by rule)"

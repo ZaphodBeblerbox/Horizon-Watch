@@ -12258,6 +12258,15 @@ async def api_telegram_posts(hours: int = Query(72, ge=1, le=720), statements: b
     return out
 
 
+@app.get("/api/telegram/incidents/live")
+async def api_telegram_live_incidents():
+    """The LIVE set (live_incident.py): pinned incidents whose event_time is
+    within the last 60 minutes — event time, not post time; derived now."""
+    import telegram_ingest as _tg
+    loop = asyncio.get_event_loop()
+    return {"incidents": await loop.run_in_executor(_executor, _tg.live_incidents)}
+
+
 @app.get("/api/telegram/feed")
 async def api_telegram_feed(before: str = "", limit: int = Query(40, ge=5, le=100)):
     """Every relevant Telegram post, newest first, paged by `before`
@@ -13831,6 +13840,33 @@ async def _telegram_vision_loop():
                 pass
             _loop_error("tg-vision", _e, every=10)
         await asyncio.sleep(60)
+
+
+async def _live_incident_loop():
+    """Which Telegram posts are LIVE incidents, and exactly where
+    (live_incident.py, owner 2026-10-22). Feed-driven, so on a pool of its own
+    (one thread) — never _executor, which serves requests. Every 20 s over the
+    posts of the last hour that pass the prefilter, within its hourly and
+    daily caps. Server only, like the collector whose posts it reads. A pass
+    that fails is counted, logged and on /api/telegram/status — never silent."""
+    import telegram_ingest as _tg
+    if not _tg.on_server():
+        return
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="live-incident")
+    await asyncio.sleep(90)
+    import live_incident as _li
+    while True:
+        try:
+            if not HEAVY_FEEDS_PAUSED and _tg.configured() and _tg.logged_in():
+                out = await asyncio.get_running_loop().run_in_executor(_pool, _li.run_once)
+                if out.get("live") or out.get("failed") or out.get("rejected"):
+                    print(f"[live-incident] {out}", flush=True)
+        except Exception as _e:                              # noqa: BLE001
+            _li._bump("failed_passes")
+            _li.STATUS["last_error"] = f"pass: {type(_e).__name__}: {str(_e)[:200]}"
+            _loop_error("live-incident", _e, every=10)
+        await asyncio.sleep(20)
 
 
 async def _telegram_mood_alert_loop():
@@ -16781,6 +16817,7 @@ async def startup_event():
     # "[telegram] error (occurrence 1)" lines per start.
     _spawn(_telegram_loop)
     _spawn(_telegram_vision_loop)
+    _spawn(_live_incident_loop)
     _spawn(_event_watch_loop)
     _spawn(_exit_watch_loop)
     _spawn(_warning_resend_loop)

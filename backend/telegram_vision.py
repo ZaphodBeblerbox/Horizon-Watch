@@ -337,10 +337,15 @@ def decide(x: dict) -> dict:
     return {"event_type": None, "what": None, "reason": "nothing of security interest visible", "graphic": graphic}
 
 
-def place_from_picture(x: dict, chat_cc: str | None) -> tuple[str | None, str | None]:
-    """(place, country) the picture itself shows — a landmark or a sign —
-    or (None, None). The model's guess counts only with evidence named and
-    enough confidence."""
+def place_from_picture(x: dict, chat_cc: str | None = None) -> tuple[str | None, str | None]:
+    """(place, country) the picture itself shows — a recognised landmark or a
+    sign it reads — or (None, None). THE SAME DISCIPLINE AS THE TEXT'S
+    (live_incident.py, 2026-10-22): the model's guess counts only with
+    evidence named, a landmark or a sign actually listed, enough confidence,
+    and a country the model gave for THAT place. The channel's own country is
+    never the fallback (a channel's usual country is not evidence of where a
+    picture was taken), and a guess never outranks a place the text states
+    (apply)."""
     try:
         conf = float(x.get("confidence") or 0)
     except (TypeError, ValueError):
@@ -348,7 +353,9 @@ def place_from_picture(x: dict, chat_cc: str | None) -> tuple[str | None, str | 
     place = (x.get("place_guess") or "").strip()
     if not place or not (x.get("place_evidence") or "").strip() or conf < PLACE_CONFIDENCE:
         return None, None
-    cc = (x.get("place_country") or chat_cc or "").strip().lower()
+    if not (x.get("landmarks") or x.get("signage_text")):
+        return None, None                      # evidence in words only: nothing recognised, nothing read
+    cc = (x.get("place_country") or "").strip().lower()
     return (place, cc) if len(cc) == 2 else (None, None)
 
 
@@ -419,12 +426,11 @@ def apply(con, post: dict, x: dict, cost: float, digest: str, *, frames: int = 0
             hit = {"lat": post["lat"], "lon": post["lon"], "display_name": None}
         elif place and cc:
             hit, _ = telegram_ingest.locate(place, prec if prec in telegram_ingest.PRECISE else "town", cc)
-        if hit is None:
-            try:
-                chat_cc = telegram_signals.chat_context(post["channel"]).get("country")
-            except Exception:                                  # noqa: BLE001
-                chat_cc = None
-            vp, vcc = place_from_picture(x, chat_cc or cc or None)
+        # A place the TEXT names but the geocoder could not find is not replaced by
+        # what the picture seems to show: a guess does not outrank the words.
+        text_named = bool((place or "").strip())
+        if hit is None and not text_named:
+            vp, vcc = place_from_picture(x)
             if vp and (budget_geocode is None or budget_geocode[0] > 0):
                 if budget_geocode is not None:
                     budget_geocode[0] -= 1

@@ -54,6 +54,28 @@ def test_a_place_from_the_picture_needs_evidence_and_confidence():
     assert tv.place_from_picture({**POLICE, "confidence": 0.5}, None) == (None, None)
 
 
+def test_a_place_from_the_picture_is_never_the_channels_country_or_a_bare_guess():
+    """2026-10-22: the guess took the channel's country when it gave none, and counted without
+    anything recognised or read in the picture."""
+    assert tv.place_from_picture({**POLICE, "place_country": ""}, "fr") == (None, None)        # no fallback to the chat
+    assert tv.place_from_picture({**POLICE, "landmarks": [], "signage_text": []}, "fr") == (None, None)
+    assert tv.place_from_picture({**POLICE, "landmarks": [], "signage_text": ["Place de la République"]}, None)[1] == "fr"
+
+
+def test_a_guess_does_not_outrank_a_place_the_text_names(db, monkeypatch):
+    _post(db, 4900, text="Les CRS chargent à Châtelet")
+    con = tg._con()
+    con.execute("UPDATE telegram_posts SET place='Châtelet', country_code='fr', precision='city' WHERE msg_id=4900")
+    con.commit()
+    con.close()
+    seen = []
+    monkeypatch.setattr(tg, "locate", lambda place, prec, cc: seen.append(place) or (None, "no"))
+    tv.run_once(client=FakeClient(POLICE))
+    assert seen == ["Châtelet"]                       # the picture's "Place de la République" was not tried
+    r = sqlite3.connect(db.path).execute("SELECT lat, unpublished_reason FROM telegram_posts WHERE msg_id=4900").fetchone()
+    assert r[0] is None
+
+
 def test_priority_prefers_active_places_and_groups_over_stock_photos():
     stock = {"role": "aggregator", "chat_kind": "channel", "text": "Kenya: un chef de secte condamné", "media": "photo"}
     street = {"role": "group", "chat_kind": "forum", "text": "", "media": "video", "channel": "LeGrandQG", "cc": "fr"}

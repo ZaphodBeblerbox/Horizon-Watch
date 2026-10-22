@@ -70,14 +70,19 @@ FUSION = "fusion"
 # from the system's own recent reports and citing them (conflict_context.py).
 CONTEXT = "context"
 
+# The strict extractor that decides whether a Telegram post is a LIVE incident
+# and where exactly (live_incident.py, owner 2026-10-22). One short call per
+# post that passes the prefilter, capped per hour and day in that module.
+LIVE_INCIDENT = "live_incident"
+
 KNOWN_PURPOSES = frozenset({
-    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT,
+    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT,
     "constellation",      # filling gaps between entities in the graph
     "summarise",          # a one-line precis of a long wire report
     "translate",
 })
 
-_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT})
+_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT})
 
 DEFAULT_MODEL = "gpt-4o-mini"
 

@@ -147,6 +147,10 @@ def geocode_place(
                     "type": item.get("type", ""),
                     "class": item.get("class", ""),
                     "boundingbox": item.get("boundingbox", []),
+                    # how fine the match is (4 country ... 16 city ... 26 street, 30 a venue):
+                    # live_incident.py accepts a result only at the level the text stated
+                    "place_rank": item.get("place_rank"),
+                    "importance": item.get("importance"),
                     "address": address,
                     "country_code": country_code,
                     "country": address.get("country", ""),
