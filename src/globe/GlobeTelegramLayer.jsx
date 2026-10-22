@@ -13,6 +13,7 @@ import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { useCoveredIds } from "./useStrikeSettings.js"
 import { dropStaleDemos } from "./freshness.js"
+import { isLive, whenOf } from "../lib/liveIncident.js"
 
 const SIZE = 18
 let _unrest = null, _soon = null
@@ -141,11 +142,12 @@ export default function GlobeTelegramLayer({ enabled = false, unrest = false, ho
         <>
             {posts.map((p) => {
                 if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon) || covered.has(p.id)) return null
-                const alpha = recencyAlpha(Date.parse(p.posted_at), nowMs)
+                // the mark fades with the EVENT's age (backend/live_incident.py), not with when someone wrote the post
+                const alpha = recencyAlpha(Date.parse(whenOf(p)), nowMs)
                 const size = Math.round(SIZE * arrivalScale(arrivedAt[p.id], nowMs))
                 return (
                 <Entity key={p.id} id={p.id} position={Cartesian3.fromDegrees(p.lon, p.lat, 0)}
-                        billboard={{ image: p.category === "unrest" ? unrestIcon() : icon(), width: size, height: size, color: Color.WHITE.withAlpha(alpha),
+                        billboard={{ image: isLive(p, nowMs) ? nowIcon() : p.category === "unrest" ? unrestIcon() : icon(), width: size, height: size, color: Color.WHITE.withAlpha(alpha),
                                      heightReference: HeightReference.CLAMP_TO_GROUND,
                                      distanceDisplayCondition: new DistanceDisplayCondition(0, 12_000_000), eyeOffset: new Cartesian3(0, 0, -60) }} />
                 )

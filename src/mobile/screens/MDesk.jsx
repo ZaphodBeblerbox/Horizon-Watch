@@ -19,6 +19,7 @@ import { inTheater, setTheaterScope, useTheaterScope } from "../theaterScope.js"
 import { attachDrag, attachPullToRefresh, swallowClickAfterDrag } from "../gesture.js"
 import { captureMedia } from "../MediaViewer.jsx"
 import { itemStatusLabel } from "../../globe/protests.js"
+import { ageLabel } from "../../lib/liveIncident.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { audienceLabel } from "../../desk/Desk.jsx"
 import { dropStaleDemos } from "../../globe/freshness.js"
@@ -167,7 +168,7 @@ function TelegramCard({ t, onShowOnMap }) {
                     <b>{t.channel_title || t.channel}</b>
                     <span>{ROLE_SHORT[t.role] || "aggregator"}</span>
                     {/* an announced protest: where it stands now, never "announced 14 h ago" */}
-                    <span title={when(t.posted_at)}>· {itemStatusLabel(t) || ago(t.posted_at)}</span>
+                    <span title={when(t.event_time || t.posted_at)}>· {itemStatusLabel(t) || (t.event_time ? ageLabel(t) : null) || ago(t.posted_at)}</span>
                 </div>
                 {t.headline && <div className="m2-post-body" style={{ fontWeight: 600 }}>{t.headline}</div>}
                 {body && body !== t.headline && <div className="m2-post-body" style={{ color: "var(--txt2, #c3c7cf)", fontSize: 14 }}>{body.length > 420 ? body.slice(0, 420) + "…" : body}</div>}

@@ -18,6 +18,7 @@ import TelegramMedia from "../components/TelegramMedia.jsx"
 import XPost from "../components/XPost.jsx"
 import SourceLink from "../components/SourceLink.jsx"
 import { agoLabel } from "../utils/formatTime.js"
+import { ageLabel } from "../lib/liveIncident.js"
 import { dropStaleDemos } from "../globe/freshness.js"
 
 const SEV = { critical: "#E5484D", high: "#F5A524", significant: "#F5A524", elevated: "#F5A524", moderate: "#8FB4E8" }
@@ -77,7 +78,7 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0, fontSize: 14 }}>
                     <b style={{ fontWeight: 650, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flex: "0 0 auto", maxWidth: "55%" }}>{sourceName(it)}</b>
                     <span style={{ color: "var(--txt4)", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        · {kindLabel}{place ? ` · ${place}` : ""} · {ago(it.at)}
+                        · {kindLabel}{place ? ` · ${place}` : ""} · {it.event_time ? ageLabel(it).replace(/ ago$/, "") : ago(it.at)}
                     </span>
                 </div>
                 <div style={{ fontSize: 15, lineHeight: 1.45, marginTop: 3, color: "var(--txt)", overflowWrap: "anywhere" }}>{it.headline}</div>

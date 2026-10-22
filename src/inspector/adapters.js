@@ -29,6 +29,7 @@ import { resolveSanctionsStatus } from "../globe/entityIcons.js"
 import { vesselShipType, acClassify } from "../globe/iconUtils.js"
 import { extentOf } from "../utils/extent.js"
 import { fmtWhen, whenLabel } from "../utils/formatTime.js"
+import { ageLabel } from "../lib/liveIncident.js"
 import { callLines, listedNote, nearbyLine, KIND_LABEL as ENDANGERED_KIND } from "../globe/endangeredPlaces.js"
 import { modelLabelOf } from "../globe/placeModels.js"
 import { isCrossRef, totalEvidence, agreementText } from "../lib/riskFamilies.js"
@@ -692,7 +693,9 @@ function adaptTelegram(data = {}) {
     return {
         identity: {
             title: data.headline || data.happening || "Telegram post",
-            subtitle: ["Telegram", data.channel_title || data.channel, data.place, data.posted_at ? whenLabel(data.posted_at) : null]
+            // the event's time when the server established it (Live · 12 min ago), else the post's
+            subtitle: ["Telegram", data.channel_title || data.channel, data.place,
+                       data.event_time ? ageLabel(data) : data.posted_at ? whenLabel(data.posted_at) : null]
                 .filter(Boolean).join(" · "),
             entityType: "telegram", subtype: null, sanctionsStatus: null,
         },

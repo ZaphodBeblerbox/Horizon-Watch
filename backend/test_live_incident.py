@@ -432,6 +432,20 @@ def test_the_model_out_leaves_posts_unjudged_for_the_rule_path(db):
         openai_gate.note_ok()
 
 
+def test_a_purpose_missing_from_the_production_list_is_said_loudly_not_silently_off(db, monkeypatch, capsys):
+    """HW_OPENAI_PURPOSES in production is an explicit list without live_incident."""
+    monkeypatch.setenv("HW_OPENAI_PURPOSES", "voice,explain,enrich,forecast,outlook,fusion,context")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setitem(li._GATE_LOG, "at", 0.0)
+    assert "HW_OPENAI_PURPOSES" in li.gate_reason()
+    _post(40)
+    out = li.run_once(now=NOW, geocode=REPUBLIQUE)                 # the real gate, no stub
+    assert out["model_out"] and "NOT RUNNING" in capsys.readouterr().out
+    assert "HW_OPENAI_PURPOSES" in li.status()["gate_closed_because"]
+    monkeypatch.setenv("HW_OPENAI_PURPOSES", "voice,live_incident")
+    assert li.gate_reason() is None
+
+
 def test_failed_calls_are_counted_loudly_and_retried(db, capsys):
     _post(31)
 
@@ -554,6 +568,24 @@ def test_the_model_path_drops_warnings_it_would_have_pinned(rdb, monkeypatch):
     tg.classify()
     r = sqlite3.connect(rdb).execute("SELECT lat, unpublished_reason FROM telegram_posts").fetchone()
     assert r[0] is None and "alert" in r[1]
+
+
+def test_the_notification_card_carries_the_events_time_and_says_live_only_when_it_is(monkeypatch):
+    """Phone and desktop read the same server card: its time is the event's, its context the channel and the place."""
+    import main
+    import telegram_signals
+    main._TG_CARDS_CACHE.clear()
+    posts = [{"id": "tg-a-1", "headline": "Explosion — Kharkiv", "channel_title": "Kharkiv Watch", "place": "Kharkiv", "role": "aggregator",
+              "posted_at": "2026-10-22T13:58:00+00:00", "event_time": "2026-10-22T13:50:00+00:00", "live": True},
+             {"id": "tg-b-2", "headline": "Paris riots: 557 held", "channel_title": "Fdesouche", "place": "Paris", "role": "aggregator",
+              "posted_at": "2026-10-22T13:58:00+00:00", "live": False}]
+    monkeypatch.setattr(tg, "published", lambda hours: posts)
+    monkeypatch.setattr(tg, "statements", lambda hours: [])
+    monkeypatch.setattr(telegram_signals, "posts", lambda hours: [])
+    cards = {c["id"]: c for c in main._telegram_report_cards(24)}
+    main._TG_CARDS_CACHE.clear()
+    assert cards["tg-a-1"]["reason"] == "Live · Kharkiv Watch · Kharkiv" and cards["tg-a-1"]["created_at"] == "2026-10-22T13:50:00+00:00"
+    assert cards["tg-b-2"]["reason"] == "Fdesouche · Paris" and cards["tg-b-2"]["created_at"] == "2026-10-22T13:58:00+00:00"
 
 
 def test_the_rule_path_does_not_place_a_settlement_name_the_country_has_twice(monkeypatch):

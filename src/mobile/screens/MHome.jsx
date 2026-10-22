@@ -58,7 +58,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
     // your assets), plus Telegram posts and news in your theaters and
     // interests; one row per headline, assets first, then severity, then time.
     const tgMine = useMemo(() => mine.split(arr(posts).filter((x) => Number.isFinite(+x.lat)).map((x) => ({
-        ...x, headline: x.headline || String(x.summary_en || x.text || "").slice(0, 140), published_at: x.posted_at,
+        ...x, headline: x.headline || String(x.summary_en || x.text || "").slice(0, 140), published_at: x.event_time || x.posted_at,
         source: `Telegram · ${x.channel_title || x.channel}`, location: x.place }))).mine, [posts, mine.w]) // eslint-disable-line react-hooks/exhaustive-deps
     const urgent = useMemo(() => {
         const fromFeed = arr(notes).map((n) => ({ ...n, headline: n.title, severity_tier: n.sev, published_at: n.created_at, _asset: n.kind === "asset", _why: n.reason }))

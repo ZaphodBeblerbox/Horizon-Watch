@@ -862,6 +862,36 @@ def candidates(con, now: _dt.datetime, limit: int = 400) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def gate_reason() -> str | None:
+    """Why the model is not available to this module, or None when it is.
+    HW_OPENAI_PURPOSES in production is an explicit list: a purpose missing
+    from it is off, and a feature that is off in silence is a defect."""
+    import openai_gate
+    if not openai_gate.is_enabled(openai_gate.LIVE_INCIDENT):
+        return "purpose 'live_incident' is not in HW_OPENAI_PURPOSES"
+    if not os.getenv("OPENAI_API_KEY"):
+        return "no OPENAI_API_KEY"
+    if openai_gate.quota_paused():
+        return "OpenAI credit exhausted (all model passes paused)"
+    if openai_gate.over_budget():
+        return "monthly OpenAI budget spent (OPENAI_BUDGET_USD)"
+    return None
+
+
+_GATE_LOG = {"at": 0.0}
+
+
+def _note_gate_closed() -> None:
+    """Said loudly, at most every 30 minutes, with the reason."""
+    import time as _t
+    why = gate_reason() or "model gate closed"
+    with _STATUS_LOCK:
+        STATUS["gate_reason"] = why
+    if _t.time() - _GATE_LOG["at"] > 1800:
+        _GATE_LOG["at"] = _t.time()
+        print(f"[live-incident] NOT RUNNING — no model: {why}. Posts are read by rule (telegram_rules) meanwhile.", flush=True)
+
+
 def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geocode=None, gate_ok=None) -> dict:
     """One pass over the posts of the last LIVE_WINDOW_MIN. `extract_fn(text,
     published_at, source_name, source_region)` → (raw, cost) | (None, 0) when
@@ -905,6 +935,7 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
             # judges them when the model is back, while still in the window
             out["model_out"] = True
             _bump("model_out_passes")
+            _note_gate_closed()
             return out
         todo.sort(key=lambda r: (r["_drone"], ""))                      # stable: strong event words first, newest first within
         left = budget(con, now)["left"]
@@ -1006,6 +1037,10 @@ def status() -> dict:
         out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in STATUS.items()}
     out.update({"enabled": ENABLED, "model": MODEL, "window_min": LIVE_WINDOW_MIN, "per_hour": PER_HOUR,
                 "per_day": PER_DAY})
+    try:
+        out["gate_closed_because"] = gate_reason()          # None: the model is available
+    except Exception as e:                                   # noqa: BLE001
+        out["gate_closed_because"] = f"{type(e).__name__}: {e}"
     try:
         import telegram_ingest
         con = telegram_ingest._con()

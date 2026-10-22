@@ -20,6 +20,7 @@ import { createPortal } from "react-dom"
 import { attachDrag, flingMs, swallowClickAfterDrag } from "../gesture.js"
 import { ago, sevColor } from "./common.jsx"
 import { itemStatusLabel, mediaItems } from "../../globe/protests.js"
+import { ageLabel } from "../../lib/liveIncident.js"
 import ReportMedia from "../../components/ReportMedia.jsx"
 
 const kindOf = (s) => s?.source || s?.channel_title || s?.layerLabel || s?.alert_type || s?.kind_label || "Signal"
@@ -90,9 +91,11 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
     if (!s) return null
     const sev = s.severity_tier || s.sev || s.severity
     const place = s.location || s.place || s.region || s.location_name || null
-    const t = s.published_at || s.posted_at || s.created_at || s.time || null
-    // an announced protest says where it stands ("Ongoing · since 14:00"), never "14 h ago"
-    const status = itemStatusLabel(s) || s.status_label || null
+    const t = s.event_time || s.published_at || s.posted_at || s.created_at || s.time || null
+    // an announced protest says where it stands ("Ongoing · since 14:00"), never "14 h ago";
+    // a signal whose EVENT time the server established says "Live · 12 min ago" or "Happened 3 h ago"
+    // (the event's age, not the post's: lib/liveIncident.js)
+    const status = itemStatusLabel(s) || (s.event_time ? ageLabel(s) : null) || s.status_label || null
     const title = s.headline || s.title || "Signal"
     const host = document.querySelector(".m2") || document.body
     return createPortal(

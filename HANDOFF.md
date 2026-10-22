@@ -4,6 +4,28 @@ Written for the next session (an engineer or a Claude agent) so it can carry on
 without re-reading the long chat of 2026-10-13 → 18. Checked against the repo
 on 2026-10-18. Older sections below still hold where this one doesn't override them.
 
+## Live incidents (2026-10-22, branch worktree-agent-a37bebda413eb0f6e, not pushed)
+
+`backend/live_incident.py` is the strict extractor that decides whether a Telegram post is a LIVE pinned
+signal (the owner's spec, kept verbatim as `SPEC`). The model extracts (quotes for time and place, the place
+as written, its level); the code decides: quotes verbatim in the text, place and context in the text, event
+time inside 60 min of the post and of now, only the quoted place plus quoted context geocoded, the answer at
+the stated level, homonyms rejected unless one clearly leads (Nominatim importance gap 0.25), a street or venue
+must lie within 40 km of the city the text puts it in. The model's whole answer and the verdict are stored
+(`telegram_posts.live_json`, `live_verdict`, `event_time`, `live_hash`, `live_cost`); "live" is derived on read
+(`live_incident.live_fields`, `src/lib/liveIncident.js`). Model out: `classify_by_rules` pins only a place the
+text names in a country the text names, with a present-tense cue, no earlier-time cue, a post under 60 min old.
+- Needs, in production: `live_incident` in `HW_OPENAI_PURPOSES` (an explicit list today, so it is OFF until
+  added; `/api/telegram/status` > `live_incident.gate_closed_because` says so) and a higher `OPENAI_BUDGET_USD`
+  (11 today; the extractor is about $0.5-1.2 a day).
+- Env: `LIVE_INCIDENT_MODEL` (gpt-4.1-mini), `_PER_HOUR` 200, `_PER_DAY` 2000, `_PER_PASS` 24, `_ENABLED`,
+  `_COARSER_FALLBACK=1` (a street or venue the geocoder cannot find is pinned at the city the text names,
+  labelled city-level; off by default), `_DOMINANCE_GAP`.
+- Evaluation: `backend/eval_live_incident.py` over `backend/data/live_incident_fixtures.json` (57 labelled posts,
+  6 languages); `EVAL_REUSE=<earlier result>` re-decides without model cost.
+- Seen, not fixed: GeoConfirmed items in the General feed read "just now" for events weeks old (ingest time);
+  calls to gather still resolve their place through the chat's region (telegram_signals._resolve).
+
 ## Where things stand
 
 - `main` = `origin/main` = **`16b7d52`**, pushed; Railway deploys on push.

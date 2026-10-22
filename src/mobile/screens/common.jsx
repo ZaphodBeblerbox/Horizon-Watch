@@ -25,6 +25,7 @@ import { factionCountry } from "../../globe/frontlineClaims.js"
 import ProtestDetail from "../../inspector/ProtestDetail.jsx"
 import ReportMedia from "../../components/ReportMedia.jsx"
 import { itemStatusLabel } from "../../globe/protests.js"
+import { ageLabel } from "../../lib/liveIncident.js"
 
 // Severity is an ICON's colour (a diamond, a dot), never a word's: the phone's
 // text is monochrome (m2.css v4), so these are fixed values, not the theme's.
@@ -223,7 +224,7 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
         <Sheet onClose={onClose} half={half} fromPeek={fromPeek}>
             <div className="m2-eyebrow" style={{ paddingRight: half ? 36 : 0, display: "flex", alignItems: "center", gap: 7 }}>
                 {(s.severity_tier || s.sev) && <i className="m2-sev" style={{ background: sevColor(s.severity_tier || s.sev), width: 7, height: 7, transform: "rotate(45deg)", display: "inline-block", flex: "none" }} />}
-                {[s.severity_tier || s.sev, itemStatusLabel(s) || s.status_label || when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
+                {[s.severity_tier || s.sev, itemStatusLabel(s) || (s.event_time ? ageLabel(s) : null) || s.status_label || when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
             </div>
             {(s.kind === "troop_movement" || s.kind === "frontline_claim") && factionCountry(s) && (
                 <div style={{ marginTop: 6 }}><CountryFlag iso2={factionCountry(s).iso2} name={factionCountry(s).name} size={22} /></div>

@@ -47,6 +47,7 @@ import { MOOD_PATH, MOOD_REFRESH_MS, moodIconUri, moodPoint } from "../globe/tel
 import { SITUATION_PATH, SITUATION_REFRESH_MS, convergenceIcon, situationFeatures } from "../globe/demoSituation.js"
 import { POLICE_PATH, POLICE_REFRESH_MS, policeFeatures, tacticIcon } from "../globe/policeActions.js"
 import { dropStaleDemos } from "../globe/freshness.js"
+import { isLive as isLiveIncident } from "../lib/liveIncident.js"
 
 /** No layer draws more than this many features on the phone. */
 export const MAX_FEATURES = 600
@@ -572,7 +573,8 @@ async function loadTelegram({ bounds, hours }) {
     for (const p of arr(posts?.posts)) {
         if (p.category === "unrest") continue
         feats.push({
-            id: p.id, lat: num(p.lat), lon: num(p.lon), iconUri: tgIcon(), size: TG_SIZE,
+            // a signal the strict extractor vouched for, inside its 60 minutes: the "now" mark
+            id: p.id, lat: num(p.lat), lon: num(p.lon), iconUri: isLiveIncident(p) ? tgNowIcon() : tgIcon(), size: TG_SIZE,
             title: p.headline || p.summary_en || "Telegram post",
             sub: [p.place, p.channel_title].filter(Boolean).join(" · ") || null,
             severity: p.severity_tier || null,

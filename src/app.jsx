@@ -221,6 +221,7 @@ import { decodeView, shareUrl } from "./state/shareLink.js"
 import { getCameraState as getShareCamera } from "./globe/cameraState.js"
 import { hmZone, zuluHm } from "./utils/clock.js"
 import { dropStaleDemos } from "./globe/freshness.js"
+import { isLive as isLiveIncident } from "./lib/liveIncident.js"
 
 const API = API_BASE
 const WS_STORAGE_KEY  = "akili-workspaces-v1"
@@ -1214,9 +1215,11 @@ export default function App() {
                     pushNotification({
                         silent: first, id: p.id, kind: "telegram", sev: p.role === "official" ? "high" : "moderate",
                         title: p.headline || "Telegram report",
-                        sub: [p.channel_title || p.channel, p.place, p.media !== "none" ? p.media : null].filter(Boolean).join(" · "),
+                        // "Live" only when the strict extractor vouched for the event (backend/live_incident.py);
+                        // the card's time is the EVENT's when known, not when someone wrote the post
+                        sub: [isLiveIncident(p) ? "Live" : null, p.channel_title || p.channel, p.place, p.media !== "none" ? p.media : null].filter(Boolean).join(" · "),
                         ref: { lat: p.lat, lon: p.lon },
-                        ts: Date.parse(p.posted_at) || Date.now(),
+                        ts: Date.parse(p.event_time || p.posted_at) || Date.now(),
                     })
                 }
                 // OFFICIAL STATEMENTS: into the tray always; a card only for a

@@ -205,17 +205,23 @@ def _geoconfirmed(con, before: str, limit: int) -> list[dict]:
 
 
 def _telegram(con, before: str, limit: int) -> list[dict]:
+    base = ("SELECT channel, msg_id, channel_title, posted_at, headline, summary_en, text, media, thumb, place, country_code, lat, lon,"
+            " event_type, role, graphic{extra} FROM telegram_posts WHERE posted_at < ? AND relevant = 1 AND headline IS NOT NULL"
+            " AND coalesce(unpublished_reason, '') = '' ORDER BY posted_at DESC LIMIT ?")
     try:
-        rows = con.execute(
-            "SELECT channel, msg_id, channel_title, posted_at, headline, summary_en, text, media, thumb, place, country_code, lat, lon,"
-            " event_type, role, graphic FROM telegram_posts WHERE posted_at < ? AND relevant = 1 AND headline IS NOT NULL"
-            " AND coalesce(unpublished_reason, '') = '' ORDER BY posted_at DESC LIMIT ?", (before, limit)).fetchall()
+        # the event's time and what the strict extractor said of it (live_incident.py), once the columns exist
+        rows = con.execute(base.format(extra=", live_verdict, event_time"), (before, limit)).fetchall()
     except sqlite3.OperationalError:
-        return []
+        try:
+            rows = con.execute(base.format(extra=""), (before, limit)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    import live_incident
     out = []
     for r in rows:
         chan = r["channel"]
-        out.append({"id": f"{chan}/{r['msg_id']}", "kind": "telegram", "at": _iso(r["posted_at"]), "headline": r["headline"],
+        lf = live_incident.live_fields({k: r[k] for k in ("live_verdict", "event_time")}) if "live_verdict" in r.keys() else {}
+        out.append({"id": f"{chan}/{r['msg_id']}", "kind": "telegram", "at": _iso(r["posted_at"]), "headline": r["headline"], **lf,
                     "text": r["summary_en"] or "", "channel": chan, "msg_id": r["msg_id"], "channel_title": r["channel_title"] or chan,
                     "media": r["media"], "thumb_url": f"/api/telegram/media/{r['thumb']}" if r["thumb"] else None,
                     "place": r["place"], "country_code": r["country_code"], "lat": r["lat"], "lon": r["lon"],

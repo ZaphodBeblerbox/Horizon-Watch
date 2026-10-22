@@ -29762,9 +29762,11 @@ def _telegram_report_cards(hours: int, cap: int = 25) -> list:
             "id": p["id"], "kind": "telegram",
             "sev": "critical" if p.get("severity_tier") == "critical" else "high" if official else "moderate",
             "title": _nc.plain(p.get("headline") or "Telegram report"),
-            "reason": " · ".join(x for x in (p.get("channel_title") or p.get("channel"), p.get("place")) if x),
+            # "Live" only when the strict extractor vouched for the event (live_incident.py) and it is
+            # inside its 60 minutes; the card's time is the EVENT's when known, not when it was posted
+            "reason": " · ".join(x for x in ("Live" if p.get("live") else None, p.get("channel_title") or p.get("channel"), p.get("place")) if x),
             "lat": p.get("lat"), "lon": p.get("lon"), "country_code": p.get("country_code"),
-            "region": p.get("place"), "created_at": p.get("posted_at"), "source": "telegram",
+            "region": p.get("place"), "created_at": p.get("event_time") or p.get("posted_at"), "source": "telegram",
             # its picture or video, so the card shows the footage, not only its words (owner, 2026-10-19)
             "media": p.get("media"), "thumb_url": p.get("thumb_url"), "channel": p.get("channel"),
             "msg_id": p.get("msg_id"), "graphic": p.get("graphic"), "category": p.get("category"),
