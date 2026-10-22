@@ -19,6 +19,7 @@ import API_BASE from "../apiBase.js"
 import { MODE_SURFACE } from "../plx6/modeWindow.js"
 import { getSettings, subscribeSettings, updateSetting } from "../state/settingsStore.js"
 import InterestsEditor from "../components/InterestsEditor.jsx"
+import ProfileScopeRow from "../components/ProfileScopeRow.jsx"
 import Crucible from "./Crucible.jsx"
 import {
     GeneralSection, MapLayersSection, AlertsSection, SourcesSection, BriefingSection,
@@ -157,7 +158,7 @@ export default function Settings({ section = null, onClose = null, onAccount = n
                         </div>
                         <div style={CARD}>
                             {sec === "general" && <GeneralSection settings={settings} />}
-                            {sec === "interests" && <InterestsEditor />}
+                            {sec === "interests" && <><ProfileScopeRow Row={Row} Toggle={Toggle} /><InterestsEditor /></>}
                             {sec === "mapLayers" && <MapLayersSection settings={settings} />}
                             {sec === "alerts" && <AlertsSection settings={settings} onOpenSources={onOpenSources} />}
                             {sec === "ai" && <AiSection settings={settings} />}

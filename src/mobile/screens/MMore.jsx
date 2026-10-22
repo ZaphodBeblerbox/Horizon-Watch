@@ -35,6 +35,7 @@ import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 import { locate } from "../../location/geo.js"
 import ClosedNotificationsRow from "../../notify/ClosedNotificationsRow.jsx"
 import PushDevices from "../../notify/PushDevices.jsx"
+import ProfileScopeRow from "../../components/ProfileScopeRow.jsx"
 import { dropStaleDemos } from "../../globe/freshness.js"
 
 const EXPOSURE = { high: ["High exposure", "#E5484D"], elevated: ["Elevated", "#F5A524"], low: ["Low", "#8FB4E8"], quiet: ["Quiet", "#4CAF7A"], unknown: ["No position", "#9AA9BC"] }
@@ -449,6 +450,9 @@ export function MSettings() {
     const timeUtc = st?.general?.timeDisplay === "utc"
     return (
         <div className="m2-scroll" data-screen-label="Phone settings">
+            <Group title="Your profile">
+                <ProfileScopeRow Row={PhoneRow} Toggle={PhoneToggle} />
+            </Group>
             <Group title="Notifications">
                 <ClosedNotificationsRow Row={PhoneRow} Toggle={PhoneToggle} />
                 <PushDevices Row={PhoneRow} />
