@@ -12,7 +12,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, DistanceDisplayCondition, HeightReference, LabelStyle, VerticalOrigin, Cartesian2 } from "cesium"
-import { pinIcon, priorityOf, clusterIcon, SIZE } from "../lib/mapIcons.js"
+import { pinIcon, priorityOf, SIZE } from "../lib/mapIcons.js"
+import ClusterMark from "./ClusterMark.jsx"
 import { useDeclutter, clusterRecord } from "./screenDeclutter.js"
 import API_BASE from "../apiBase.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
@@ -56,7 +57,7 @@ export default function GlobeAssetsLayer({ enabled = true, teamOn = false }) {
     }).filter(Boolean)
     const sig = drawn.map((d) => `${d.a.id}|${d.lat.toFixed(5)}|${d.lon.toFixed(5)}|${d.a.exposure}`).join(";")
     // ONE COLLISION PASS with every other point layer (screenDeclutter.js): no overlapping markers
-    const items = useMemo(() => drawn.map((d) => ({ id: `asset-${d.a.id}`, lat: d.lat, lon: d.lon, size: PIN.h, pri: priorityOf(d.a.exposure, "info"),
+    const items = useMemo(() => drawn.map((d) => ({ id: `asset-${d.a.id}`, lat: d.lat, lon: d.lon, size: PIN.h, pri: priorityOf(d.a.exposure, "info"), image: icon(d.a.group, d.a.exposure), pin: true,
                                                     title: d.a.name || "Asset", line: [d.a.type_label || d.a.group, d.a.exposure ? `${d.a.exposure} exposure` : null].filter(Boolean).join(" · ") })),
                           [sig]) // eslint-disable-line react-hooks/exhaustive-deps
     const layout = useDeclutter("assets", items, enabled)
@@ -75,9 +76,7 @@ export default function GlobeAssetsLayer({ enabled = true, teamOn = false }) {
                 // gone ("An entity with id asset-… already exists", Cesium DeveloperError)
                 ? <LivePin key={d.a.id} a={d.a} lat={d.lat} lon={d.lon} gapMs={d.gapMs} /> : null))}
             {clusters.map((g) => (
-                <Entity key={g.id} id={g.id} name={`${g.members.length} here`} position={Cartesian3.fromDegrees(g.lon, g.lat, 0)}
-                        billboard={{ image: clusterIcon(g.members.length, g.pri).uri, width: SIZE.cluster, height: SIZE.cluster,
-                                     heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e7, eyeOffset: new Cartesian3(0, 0, -120) }} />
+                <ClusterMark key={g.id} g={g} />
             ))}
         </>
     )

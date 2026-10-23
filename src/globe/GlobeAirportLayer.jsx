@@ -76,7 +76,7 @@ export default function GlobeAirportLayer({ enabled, viewBounds }) {
     const items = useMemo(() => airports.map((f) => {
         const p = f.properties || {}
         const [lon, lat] = f.geometry?.coordinates || []
-        return { id: `airport-${p.system_id}`, lat, lon, size: SIZE.infra, pri: null, title: p.airport_name || p.name || p.ident || "Airport", line: [p.iata_code || p.icao_code, p.municipality, p.country_name].filter(Boolean).join(" · ") }
+        return { id: `airport-${p.system_id}`, lat, lon, size: SIZE.infra, pri: null, image: getIcon(p.airport_type || "small_airport"), title: p.airport_name || p.name || p.ident || "Airport", line: [p.iata_code || p.icao_code, p.municipality, p.country_name].filter(Boolean).join(" · ") }
     }).filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)), [airports])
     const layout = useDeclutter("airports", items, !!enabled)
     const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))

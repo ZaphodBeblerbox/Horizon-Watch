@@ -9,7 +9,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference, LabelStyle, VerticalOrigin } from "cesium"
-import { SIZE, clusterIcon } from "../lib/mapIcons.js"
+import { SIZE } from "../lib/mapIcons.js"
+import ClusterMark from "./ClusterMark.jsx"
 import { useDeclutter, clusterRecord } from "./screenDeclutter.js"
 import { listSafeHouses } from "../evacuation/api.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
@@ -35,7 +36,7 @@ export default function GlobeSafeHousesLayer({ enabled = true }) {
         return () => houses.forEach((h) => deleteEntity(`safehouse-${h.id}`))
     }, [houses])
     // ONE COLLISION PASS with every other point layer (screenDeclutter.js)
-    const items = useMemo(() => houses.map((h) => ({ id: `safehouse-${h.id}`, lat: +h.lat, lon: +h.lon, size: SIZE.pin.h, pri: "info",
+    const items = useMemo(() => houses.map((h) => ({ id: `safehouse-${h.id}`, lat: +h.lat, lon: +h.lon, size: SIZE.pin.h, pri: "info", image: safeHouseIcon(h.status === "closed"), pin: true,
                                                      title: `Safe house — ${h.name}`, line: h.status === "closed" ? "closed" : "open" })), [houses])
     const layout = useDeclutter("safeHouses", items, enabled)
     const clusters = layout.filter((g) => g.cluster)
@@ -46,9 +47,7 @@ export default function GlobeSafeHousesLayer({ enabled = true }) {
     if (!enabled) return null
     const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))
     return [...clusters.map((g) => (
-        <Entity key={g.id} id={g.id} name={`${g.members.length} here`} position={Cartesian3.fromDegrees(g.lon, g.lat, 0)}
-                billboard={{ image: clusterIcon(g.members.length, g.pri).uri, width: SIZE.cluster, height: SIZE.cluster,
-                             heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e7, eyeOffset: new Cartesian3(0, 0, -150) }} />
+        <ClusterMark key={g.id} g={g} />
     )), ...houses.filter((h) => single.has(`safehouse-${h.id}`)).map((h) => (
         <Entity key={h.id} id={`safehouse-${h.id}`} name={`Safe house — ${h.name}`} position={Cartesian3.fromDegrees(h.lon, h.lat)}
                 billboard={{ image: safeHouseIcon(h.status === "closed"), width: SIZE.pin.w, height: SIZE.pin.h, verticalOrigin: VerticalOrigin.BOTTOM,

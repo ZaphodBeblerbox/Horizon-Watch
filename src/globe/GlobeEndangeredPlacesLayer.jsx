@@ -61,6 +61,7 @@ export default function GlobeEndangeredPlacesLayer({ enabled = false }) {
     }, [places])
     const marks = useMemo(() => places.map((p) => ({
         id: `endangered-${p.id}`, lat: p.lat, lon: p.lon, size: ICON_PX, pri: priorityOf(p.alarm, "info"),
+        image: placeIconUri({ kind: p.kind, alarm: p.alarm, hasCall: Array.isArray(p.calls) && p.calls.length > 0 && p.alarm !== "grey" }),
         title: p.name || "Endangered place", line: p.city || "", p,
     })), [places])
     const layout = useDeclutter("endangered", marks, enabled)

@@ -146,6 +146,7 @@ export default function GlobeStrikesLayer({ enabled = false, at = null }) {
 
     const marks = useMemo(() => shown.filter((e) => Number.isFinite(+e.lat) && Number.isFinite(+e.lon)).map((e) => ({
         id: `strike-${e.id}`, lat: +e.lat, lon: +e.lon, size: ICON_PX, pri: strikePriority(e),
+        image: strikeIconUri({ event: e, hollow: isHollow(e), priority: strikePriority(e) }), t: Date.parse(e.time || "") || 0,
         title: e.title || e.act_label || "Strike", line: [e.actor, e.target_name ? String(e.target_name).split(",")[0] : null].filter(Boolean).join(" · "), e,
     })), [shown])
     const layout = useDeclutter("strikes", marks, enabled)
@@ -171,7 +172,7 @@ export default function GlobeStrikesLayer({ enabled = false, at = null }) {
 const StrikeEntity = memo(function StrikeEntity({ e, atMs }) {
     const opacity = strikeOpacity(e, atMs)
     const pos = useMemo(() => Cartesian3.fromDegrees(+e.lon, +e.lat, 0), [e.lon, e.lat])
-    const image = strikeIconUri({ act: e.act, hollow: isHollow(e), priority: strikePriority(e) })
+    const image = strikeIconUri({ event: e, hollow: isHollow(e), priority: strikePriority(e) })
     return (
         <Entity id={`strike-${e.id}`} name={e.title} position={pos}
             billboard={{

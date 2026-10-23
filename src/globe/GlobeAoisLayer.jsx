@@ -13,7 +13,7 @@ import { useEffect, useState } from "react"
 import { Entity } from "resium"
 import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference,
          LabelStyle, VerticalOrigin } from "cesium"
-import { OURS, EDGE, SIZE, clusterIcon } from "../lib/mapIcons.js"
+import { OURS, EDGE, SIZE, markerIcon } from "../lib/mapIcons.js"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 
@@ -76,13 +76,13 @@ export default function GlobeAoisLayer({ enabled = false }) {
                                     material: PLAIN.withAlpha(st.fresh || z.status === "active" ? 0.9 : 0.45) }} />,
                     st.fresh && centre ? (
                         <Entity key={`aoi-l-${z.system_id}`} id={`aoi-l-${z.system_id}`} position={centre}
-                            billboard={{ image: clusterIcon(Math.max(1, Number(z.findings?.fresh?.count) || 1), "urgent").uri, width: SIZE.cluster, height: SIZE.cluster,
+                            billboard={{ image: markerIcon({ kind: "confirmed", glyph: "detection", priority: "urgent" }).uri, width: SIZE.event, height: SIZE.event,
                                          heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e7 }}
                             label={{ text: st.label.length > 70 ? `${st.label.slice(0, 69)}…` : st.label,
                                      font: "600 13px system-ui, -apple-system, sans-serif",
                                      fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                                      style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.BOTTOM,
-                                     pixelOffset: new Cartesian2(0, -(SIZE.cluster / 2 + 4)), showBackground: true,
+                                     pixelOffset: new Cartesian2(0, -(SIZE.event / 2 + 4)), showBackground: true,
                                      backgroundColor: Color.fromCssColorString(EDGE).withAlpha(0.85), backgroundPadding: new Cartesian2(7, 4),
                                      distanceDisplayCondition: new DistanceDisplayCondition(0, 6_000_000) }} />
                     ) : null,

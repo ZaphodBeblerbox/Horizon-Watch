@@ -73,7 +73,7 @@ export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 3
     const marks = useMemo(() => placemarks
         // Number.isFinite, not bare isFinite (isFinite(null) is true)
         .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && !covered.has(`geoconfirmed-${p.id}`))
-        .map((p) => ({ id: `geoconfirmed-${p.id}`, lat: p.lat, lon: p.lon, size: ICON().w, pri: "alert",
+        .map((p) => ({ id: `geoconfirmed-${p.id}`, lat: p.lat, lon: p.lon, size: ICON().w, pri: "alert", image: ICON().uri, t: Date.parse(p.date || p.published_at || "") || 0,
                        title: p.title || p.name || "Geolocated event", line: [p.faction, p.date_label].filter(Boolean).join(" · "), p })),
     [placemarks, covered])
     const layout = useDeclutter("geoConfirmed", marks, enabled)

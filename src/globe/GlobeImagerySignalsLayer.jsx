@@ -54,7 +54,7 @@ export default function GlobeImagerySignalsLayer({ enabled = true }) {
         return () => items.forEach((a) => deleteEntity(`imgsig-${a.alert_id}`))
     }, [items])
     const marks = useMemo(() => items.map((a) => ({
-        id: `imgsig-${a.alert_id}`, lat: a.lat, lon: a.lon, size: SIZE, pri: priorityOf(a.severity, "alert"),
+        id: `imgsig-${a.alert_id}`, lat: a.lat, lon: a.lon, size: SIZE, pri: priorityOf(a.severity, "alert"), image: imageryIcon(a.severity), t: Date.parse(a.created_at || "") || 0,
         title: a.title || a.alert_type || "Imagery signal", line: a.region || "", a,
     })), [items])
     const layout = useDeclutter("imagerySignals", marks, enabled)

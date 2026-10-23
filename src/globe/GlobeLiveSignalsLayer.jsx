@@ -17,7 +17,7 @@ import { Cartesian3, HeightReference } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { signalIcon, signalPriority, cardText, clusterSize, liveSignalDrawn, mediaSources, ICON_PX } from "../lib/liveSignals.js"
+import { signalIcon, signalPriority, cardText, liveSignalDrawn, mediaSources, ICON_PX } from "../lib/liveSignals.js"
 import { useDeclutter } from "./screenDeclutter.js"
 import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 
@@ -49,13 +49,13 @@ export default function GlobeLiveSignalsLayer({ enabled = false }) {
 
     const items = useMemo(() => signals.filter((s) => liveSignalDrawn(s, nowMs)).map((s) => {
         const c = cardText(s, nowMs)
-        return { id: s.id, lat: s.lat, lon: s.lon, size: SIZE, pri: signalPriority(s), title: c.title, line: c.line, s }
+        return { id: s.id, lat: s.lat, lon: s.lon, size: SIZE, pri: signalPriority(s), image: signalIcon(s), t: Date.parse(s.event_time || "") || 0, title: c.title, line: c.line, s }
     }), [signals, nowMs])
     const layout = useDeclutter("liveSignals", items, enabled)
     useClusterRecords(layout)
     useEffect(() => {
         if (typeof window !== "undefined") {
-            window.__plxLiveLayout = layout.map((g) => ({ id: g.id, lat: g.lat, lon: g.lon, size: g.cluster ? clusterSize(g.members.length) : SIZE,
+            window.__plxLiveLayout = layout.map((g) => ({ id: g.id, lat: g.lat, lon: g.lon, size: SIZE,
                                                           cluster: g.cluster, n: g.cluster ? g.members.length : 1 }))
         }
     }, [layout])

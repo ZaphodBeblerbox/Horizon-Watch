@@ -70,7 +70,7 @@ export default function GlobePortLayer({ enabled, viewBounds }) {
     const items = useMemo(() => ports.map((f) => {
         const p = f.properties || {}
         const [lon, lat] = f.geometry?.coordinates || []
-        return { id: `port-${p.system_id}`, lat, lon, size: SIZE.infra, pri: null, title: p.port_name || p.name || "Port", line: [p.port_size ? `${p.port_size} port` : null, p.country].filter(Boolean).join(" · ") }
+        return { id: `port-${p.system_id}`, lat, lon, size: SIZE.infra, pri: null, image: getIcon(p.port_size || "Small"), title: p.port_name || p.name || "Port", line: [p.port_size ? `${p.port_size} port` : null, p.country].filter(Boolean).join(" · ") }
     }).filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)), [ports])
     const layout = useDeclutter("ports", items, !!enabled)
     const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))

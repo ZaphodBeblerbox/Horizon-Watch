@@ -86,7 +86,7 @@ export default function GlobeChokepointsLayer({ enabled }) {
 
     // ONE COLLISION PASS with every other point layer (screenDeclutter.js)
     const items = useMemo(() => data.map((c) => ({ id: `choke-${c.id ?? c.system_id ?? c.name ?? "Chokepoint"}`, lat: +(c.lat ?? c.center?.[0]), lon: +(c.lon ?? c.center?.[1]),
-                                                   size: SIZE.infra, pri: null, title: c.name || "Chokepoint", line: c.current_status || "" }))
+                                                   size: SIZE.infra, pri: null, image: getChokeIcon(), title: c.name || "Chokepoint", line: c.current_status || "" }))
                           .filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)), [data])
     const layout = useDeclutter("chokepoints", items, !!enabled)
     const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))

@@ -114,7 +114,7 @@ export default function GlobeGfwLayer({ enabled = false, kinds = [], days = 14, 
         .map((ev) => {
             const ic = gfwIcon(kind, ev)
             return { id: `gfw-${kind}-${ev.id}`, lat: +ev.lat, lon: +ev.lon, size: SIZE, pri: ev.watchlisted || ev.vessel?.watchlisted || ev.sanctioned ? "urgent" : "alert",
-                     title: summaryOf({ ...ev, kind }), line: [ageLabel(ev.start), "satellite AIS, not live"].filter(Boolean).join(" · "), ev, kind, ic }
+                     image: ic.uri, t: Date.parse(ev.start || "") || 0, title: summaryOf({ ...ev, kind }), line: [ageLabel(ev.start), "satellite AIS, not live"].filter(Boolean).join(" · "), ev, kind, ic }
         })), [byKind])
     const layout = useDeclutter("gfw", marks, enabled)
     useClusterRecords(layout)

@@ -32,7 +32,7 @@ import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 import { SurgeTip, FusionTip } from "./DerivedTips.jsx"
 import { CAT } from "../components/timeStripMath.js"
 import { LABEL_MAX_DISTANCE_M } from "./derivedMarkGeometry.js"
-import { markerIcon, dotIcon, PRIORITY, ICON_PX } from "../lib/mapIcons.js"
+import { markerIcon, PRIORITY, ICON_PX } from "../lib/mapIcons.js"
 import { useDeclutter } from "./screenDeclutter.js"
 import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 
@@ -216,9 +216,10 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
             ds.entities.add({
                 id,
                 position: Cartesian3.fromDegrees(i.lon, i.lat, 0),
-                // a thread's end: a 10 px hollow circle (lib/mapIcons.js dotIcon endpoint), the fusion's priority
+                // a thread's end: the evidence is a report, so the one typology's event circle (no black dot; owner,
+                // 2026-10-23 evening), in the past state: it is what the fusion was built from
                 billboard: (() => {
-                    const ic = dotIcon({ role: "endpoint", priority: derivedPriority(f) })
+                    const ic = markerIcon({ kind: "event", glyph: "generic", priority: derivedPriority(f), state: "past" })
                     return { image: ic.uri, width: ic.w, height: ic.h, heightReference: HeightReference.CLAMP_TO_GROUND,
                              disableDepthTestDistance: MARKER_DEPTH_TEST_M }
                 })(),
@@ -271,10 +272,10 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
 
     const marks = useMemo(() => [
         ...surges.filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)).map((x) => ({
-            id: `surge-${x.id}`, lat: x.lat, lon: x.lon, size: ICON_PX, pri: derivedPriority(x), kind: "surge", x,
+            id: `surge-${x.id}`, lat: x.lat, lon: x.lon, size: ICON_PX, pri: derivedPriority(x), kind: "surge", x, image: markBillboard("surge", x).image, t: Date.parse(x.last_at || x.updated_at || x.created_at || "") || 0,
             title: `${String(CAT[x.cat]?.name || x.cat || "activity").toLowerCase()} reporting surging around ${x.place || "this area"}`, line: surgeLabel(x) })),
         ...fusions.filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)).map((x) => ({
-            id: `fusion-${x.id}`, lat: x.lat, lon: x.lon, size: ICON_PX, pri: derivedPriority(x), kind: "fusion", x,
+            id: `fusion-${x.id}`, lat: x.lat, lon: x.lon, size: ICON_PX, pri: derivedPriority(x), kind: "fusion", x, image: markBillboard("fusion", x).image, t: Date.parse(x.last_at || x.updated_at || x.created_at || "") || 0,
             title: x.headline || "Converging evidence", line: fusionLabel(x) })),
     ], [surges, fusions])
     const layout = useDeclutter("derivedAlerts", marks, enabled)

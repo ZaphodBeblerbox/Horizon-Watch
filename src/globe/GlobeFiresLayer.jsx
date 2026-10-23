@@ -84,7 +84,7 @@ export default function GlobeFiresLayer({ enabled = false, hours = 72 }) {
     }, [fires])
 
     const marks = useMemo(() => fires.filter((f) => Number.isFinite(f.lat) && Number.isFinite(f.lon)).map((f) => ({
-        id: `fire-${f.id}`, lat: f.lat, lon: f.lon, size: MARKER_SIZE, pri: firePriority(f.brightness_k),
+        id: `fire-${f.id}`, lat: f.lat, lon: f.lon, size: MARKER_SIZE, pri: firePriority(f.brightness_k), image: markerIcon({ kind: "confirmed", glyph: "flame", priority: firePriority(f.brightness_k) }).uri, t: Date.parse(f.acquired_at || "") || 0,
         title: f.label || "Thermal anomaly", line: [f.instrument || "VIIRS", f.satellite].filter(Boolean).join(" · "), f,
     })), [fires])
     const layout = useDeclutter("fires", marks, enabled)

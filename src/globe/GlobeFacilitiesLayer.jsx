@@ -141,7 +141,7 @@ export default function GlobeFacilitiesLayer({ types = [], viewBounds = null,
     }, [rows, typesKey]) // eslint-disable-line react-hooks/exhaustive-deps
     // ONE COLLISION PASS with every other point layer (screenDeclutter.js)
     const items = useMemo(() => shown.filter((f) => Number.isFinite(f.lat) && Number.isFinite(f.lon)).map((f) => ({
-        id: `facility-${f.system_id}`, lat: f.lat, lon: f.lon, size: SIZE.infra, pri: null,
+        id: `facility-${f.system_id}`, lat: f.lat, lon: f.lon, size: SIZE.infra, pri: null, image: getFacilityMarkerDataUri({ kind: f.kind }),
         title: f.name || `${String(f.kind || "site").replace(/_/g, " ")} (unnamed)`, line: CATEGORY_LABEL[f.category] || "" })), [shown])
     const layout = useDeclutter("facilities", items, !!enabled)
     const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))

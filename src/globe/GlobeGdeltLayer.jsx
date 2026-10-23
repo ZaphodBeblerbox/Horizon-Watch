@@ -141,6 +141,7 @@ export default function GlobeGdeltLayer({ enabled = false, limit = 500, types = 
         })
         : points).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon)).map((p) => ({
         id: `gdelt-${p.id}`, lat: p.lat, lon: p.lon, size: MARKER_SIZE, pri: gdeltPriority(p.goldstein),
+        image: markerIcon({ kind: "news", glyph: "news", priority: gdeltPriority(p.goldstein) }).uri, t: Date.parse(`${p.date}T00:00:00Z`) || 0,
         title: p.title || "Wire report", line: p.location_name || "", p,
     })), [points, typesKey])
     const layout = useDeclutter("gdelt", marks, enabled)

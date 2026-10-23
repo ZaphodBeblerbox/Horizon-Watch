@@ -2,21 +2,23 @@
  * screenDeclutter.js — ONE collision pass for every point layer of the globe (owner, 2026-10-22/23: "no
  * overlapping icons, ever"; one unified typology). Each layer registers its points; one pass in SCREEN pixels
  * (lib/liveSignals.js declutterAll, the same pass the phone runs) groups every marker whose box touches another,
- * across layers; a group of one is drawn by its own layer, a larger group is ONE cluster badge (lib/mapIcons.js
- * clusterIcon, ringed in the highest priority inside) drawn by the first layer in ORDER among its members. Nothing
- * is nudged. Recomputed when the points change and when the camera moves (debounced).
+ * across layers; a group of one is drawn by its own layer, a larger group is ONE ICON: its most important member's
+ * own marker (lib/liveSignals.js representative: priority, then recency), drawn by that member's layer, whose card
+ * lists the others (owner, 2026-10-23 evening: one icon per place, never stacked). Nothing is nudged. Recomputed when the points change and when the camera moves (debounced).
  *
  *   useDeclutter(key, items, enabled) -> this layer's share of the layout:
  *       [{ id, cluster:false, lat, lon, item }]                     a marker of its own
- *       [{ id, cluster:true, lat, lon, members:[{key,item}], pri }]  a cluster this layer draws
- *   items: [{ id, lat, lon, size, pri, title, line }]  (size = the marker's on-screen box in px)
+ *       [{ id, cluster:true, lat, lon, item, members:[{key,item}], pri }]  several things at one place: drawn as
+ *                                           `item` (the most important, members[0]) by its own layer
+ *   items: [{ id, lat, lon, size, pri, t, image, pin, title, line }]  (size = the marker's on-screen box in px,
+ *          image = its own marker, pin = stands on its point)
  *
  * Traffic (ships, aircraft) is not in the pass: it moves, and a tracker shows every contact.
  */
 import { useEffect, useState } from "react"
 import { useCesium } from "resium"
 import { Cartesian3, SceneTransforms } from "cesium"
-import { declutterAll, onNearSide, clusterSize } from "../lib/liveSignals.js"
+import { declutterAll, onNearSide, representative } from "../lib/liveSignals.js"
 import { topPriority } from "../lib/mapIcons.js"
 
 /** Who draws a mixed cluster: the first of these among its members. */
@@ -55,11 +57,16 @@ function compute() {
             dbg.push({ id: g.id, x: g.x, y: g.y, size: m.item.size || 24, cluster: false, layer: m.key })
             continue
         }
-        const owner = ms.map((m) => m.key).sort((a, b) => rank(a) - rank(b))[0]
-        const lat = ms.reduce((a, m) => a + m.item.lat, 0) / ms.length
-        const lon = ms.reduce((a, m) => a + m.item.lon, 0) / ms.length
-        out.get(owner)?.push({ id: `cl:${g.id}`, cluster: true, lat, lon, members: ms, pri: topPriority(ms.map((m) => m.item.pri).filter(Boolean)) })
-        dbg.push({ id: g.id, x: g.x, y: g.y, size: clusterSize(ms.length), cluster: true, n: ms.length, layer: owner })
+        // ONE ICON PER PLACE (owner, 2026-10-23 evening): the group is drawn as its most important member's own
+        // marker (priority, then the most recent; ORDER breaks a tie), at that member's place, by that member's layer;
+        // its card lists the others. Never a count badge.
+        const ranked = [...ms].sort((a, b) => rank(a.key) - rank(b.key))
+        const top = representative(ranked.map((m) => ({ ...m, pri: m.item.pri, t: m.item.t })))
+        const rest = ms.filter((m) => m !== top && !(m.key === top.key && m.item === top.item))
+        const members = [{ key: top.key, item: top.item }, ...rest]
+        out.get(top.key)?.push({ id: `cl:${g.id}`, cluster: true, lat: top.item.lat, lon: top.item.lon, item: top.item, top: members[0], members,
+                                 pri: topPriority(ms.map((m) => m.item.pri).filter(Boolean)) })
+        dbg.push({ id: g.id, x: g.x, y: g.y, size: top.item.size || 24, cluster: true, n: ms.length, layer: top.key })
     }
     if (typeof window !== "undefined") window.__plxDeclutter = dbg          // reachable for browser checks
     for (const [k, L] of _layers) L.set(out.get(k) || [])
@@ -95,8 +102,13 @@ export function useDeclutter(key, items, enabled = true) {
     return layout
 }
 
-/** The inspector record of a cluster: the one list card (kind live_cluster), titles and lines of its members. */
+/**
+ * The inspector record of a place with several things: the one list card (kind live_cluster), headed by the most
+ * important (the one drawn), its line first, then the others.
+ */
 export function clusterRecord(g) {
-    return { kind: "live_cluster", id: g.id, headline: `${g.members.length} here`, title: `${g.members.length} here`, lat: g.lat, lon: g.lon,
+    const top = g.members[0]?.item || {}
+    const head = `${top.title || "Here"} · ${g.members.length - 1} more here`
+    return { kind: "live_cluster", id: g.id, headline: head, title: head, lat: g.lat, lon: g.lon,
              cluster: g.members.map((m) => ({ title: m.item.title || "", line: m.item.line || "" })) }
 }

@@ -17,7 +17,6 @@ import { Cartesian3, Color, HeightReference, PolylineDashMaterialProperty } from
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { clusterSize } from "../lib/liveSignals.js"
 import { PROTESTS_PATH, ICON_PX, getFrame, subscribeFrame, setMeta, protestBadge, protestPriority, inspectorData, cardOf, refreshMs, TRACK_COLOR } from "../lib/protests.js"
 import { useDeclutter } from "./screenDeclutter.js"
 import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
@@ -56,7 +55,7 @@ export default function GlobeProtestsLayer({ enabled = false }) {
 
     const marks = useMemo(() => items.map((it) => {
         const c = cardOf(it)
-        return { id: it.id, lat: it.lat, lon: it.lon, size: SIZE, pri: protestPriority(it), title: c.title, line: c.line, it }
+        return { id: it.id, lat: it.lat, lon: it.lon, size: SIZE, pri: protestPriority(it), image: protestBadge(it), t: Date.parse(it.last_update || it.time || "") || 0, title: c.title, line: c.line, it }
     }), [items])
     const layout = useDeclutter("protests", marks, enabled)
     const cesium = useCesium()
@@ -64,7 +63,7 @@ export default function GlobeProtestsLayer({ enabled = false }) {
     useClusterRecords(layout)
     useEffect(() => {
         if (typeof window !== "undefined") {
-            window.__plxProtestLayout = layout.map((g) => ({ id: g.id, lat: g.lat, lon: g.lon, size: g.cluster ? clusterSize(g.members.length) : SIZE,
+            window.__plxProtestLayout = layout.map((g) => ({ id: g.id, lat: g.lat, lon: g.lon, size: SIZE,
                                                              cluster: g.cluster, n: g.cluster ? g.members.length : 1 }))
         }
         const ids = []
