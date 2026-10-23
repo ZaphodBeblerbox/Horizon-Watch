@@ -17,8 +17,8 @@
  *
  * Data: backend/protests.py, GET /api/protests?frame=live|today|upcoming.
  */
-import { badgeUri, ICON_PX, PALETTE } from "./mapIcons.js"
-import { ACTS, stripEmoji } from "./liveSignals.js"
+import { markerUri, ICON_PX, PALETTE, PRIORITY } from "./mapIcons.js"
+import { stripEmoji } from "./liveSignals.js"
 
 export const PROTESTS_PATH = "/api/protests"
 export const FRAMES = [
@@ -53,19 +53,34 @@ export function setMeta(m) { _meta = { ..._meta, ...m }; _metaSubs.forEach((cb) 
 export function subscribeMeta(cb) { _metaSubs.add(cb); return () => _metaSubs.delete(cb) }
 
 // ── icons ─────────────────────────────────────────────────────────────────
-const PLACARD = "M11 9h10v7H11zM16 16v8M13 24h6"
-const CLASH = "M10 10l12 12M22 10L10 22M16 7v3M16 22v3"
+// One typology (lib/mapIcons.js): a circle, a reported event; the glyph says what; the colour is the priority for
+// you (the server's when it sends one; arrests and clashes urgent; the rest alert); the state says when:
+// live, earlier today (past: hollow, faint), announced (upcoming: hollow, dashed).
 export const KINDS = {
-    protest: { label: "Protest", color: PALETTE.amber, glyph: PLACARD, shape: "circle" },
-    crowd: { label: "Crowd", color: PALETTE.amber, glyph: ACTS.crowd_movement.glyph, shape: "circle" },
-    crowd_track: { label: "Crowd movement", color: PALETTE.amber, glyph: ACTS.crowd_movement.glyph, shape: "circle" },
-    police: { label: "Police", color: PALETTE.blue, glyph: ACTS.police_intervention.glyph, shape: "circle" },
-    police_track: { label: "Police movement", color: PALETTE.blue, glyph: ACTS.police_intervention.glyph, shape: "circle" },
-    arrest: { label: "Arrests", color: PALETTE.red, glyph: ACTS.arrest.glyph, shape: "circle" },
-    clash: { label: "Clashes", color: PALETTE.red, glyph: CLASH, shape: "circle" },
-    planned: { label: "Planned protest", color: PALETTE.sky, glyph: PLACARD, shape: "diamond" },
+    protest: { label: "Protest", glyph: "placard" },
+    crowd: { label: "Crowd", glyph: "crowd" },
+    crowd_track: { label: "Crowd movement", glyph: "crowd" },
+    police: { label: "Police", glyph: "police" },
+    police_track: { label: "Police movement", glyph: "police" },
+    arrest: { label: "Arrests", glyph: "arrest", urgent: true },
+    clash: { label: "Clashes", glyph: "clash", urgent: true },
+    planned: { label: "Planned protest", glyph: "placard" },
 }
+// the crowd's and the police's paths are LINES: they may keep a colour of their own
 export const TRACK_COLOR = { crowd_track: PALETTE.amber, police_track: PALETTE.blue }
+
+/** Priority for you: the server's, else arrests and clashes urgent, else alert. */
+export function protestPriority(it) {
+    if (it?.priority && PRIORITY[it.priority]) return it.priority
+    return KINDS[it?.kind]?.urgent ? "urgent" : "alert"
+}
+/** State: announced = upcoming; earlier today = past; uncorroborated = muted; else live (developing when the server says). */
+export function protestState(it) {
+    if (it?.kind === "planned" || it?.frame === "upcoming") return "upcoming"
+    if (it?.muted) return "muted"
+    if (it?.frame === "today" && !it?.live) return "past"
+    return it?.developing ? "developing" : "live"
+}
 
 /** Where the item is heading, in degrees: a track's heading; police that came by a street move away from it. */
 export function headingOf(it) {
@@ -76,10 +91,10 @@ export function headingOf(it) {
     return null
 }
 
-/** The item's badge: one style (lib/mapIcons.js); "today" quieter; movement with an arrowhead. */
+/** The item's badge: one typology (lib/mapIcons.js); movement with an arrowhead. */
 export function protestBadge(it) {
     const k = KINDS[it?.kind] || KINDS.protest
-    return badgeUri({ shape: k.shape, color: k.color, glyph: k.glyph, bearing: headingOf(it), muted: it?.frame === "today" || !!it?.muted })
+    return markerUri({ kind: "event", glyph: k.glyph, priority: protestPriority(it), state: protestState(it), bearing: headingOf(it) })
 }
 
 // ── words ─────────────────────────────────────────────────────────────────
@@ -129,7 +144,7 @@ export function protestFeatures(d) {
         return {
             id: it.id, lat: Number(it.lat), lon: Number(it.lon), size: ICON_PX, collide: true,
             iconUri: protestBadge(it), title: c.title, sub: c.line,
-            severity: it.kind === "arrest" || it.kind === "clash" ? "high" : null,
+            severity: protestPriority(it) === "flash" ? "critical" : protestPriority(it) === "urgent" ? "high" : null, pri: protestPriority(it),
             path, pathColor: TRACK_COLOR[it.kind] || null, pathDash: it.kind === "police_track" ? "6 5" : null,
             raw: inspectorData(it),
         }

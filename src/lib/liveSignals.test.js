@@ -42,7 +42,7 @@ describe("the card", () => {
 describe("one family of icons", () => {
     it("has an icon for each of the nine acts, fainter when muted", () => {
         expect(Object.keys(ACTS)).toHaveLength(9)
-        for (const a of Object.keys(ACTS)) expect(actIcon(a)).toMatch(/^data:image\/svg\+xml;base64,/)
+        for (const a of Object.keys(ACTS)) expect(actIcon(a)).toMatch(/^data:image\/svg\+xml/)
         expect(actIcon("arrest")).not.toBe(actIcon("arrest", { muted: true }))
     })
 })

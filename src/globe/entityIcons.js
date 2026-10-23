@@ -23,7 +23,7 @@
  * data) so the on-globe markers and the UI chrome icons are visually
  * identical, not a second icon language.
  */
-import { EDGE, STROKE } from "../lib/mapIcons.js"
+import { ICON_PX, markerUri, infraIcon } from "../lib/mapIcons.js"
 import { renderToStaticMarkup } from "react-dom/server"
 import { createElement } from "react"
 import { Ship, Plane, Building2, MapPin, Newspaper, TriangleAlert, Target, Sparkles, Crosshair } from "lucide-react"
@@ -199,138 +199,23 @@ export function getEntityMarkerDataUri(opts = {}) {
     return uri
 }
 
-// ── News markers — solid diamond, one fixed size ──────────────────────────────
-// Design update: every news-derived marker (raw news/events in
-// GlobeEventsLayer.jsx, and Forge NEWS-domain assessment alerts in
-// GlobeAlertsLayer.jsx) now renders as one solid diamond at one fixed size,
-// ── HOW BIG A MARK IS, IN ONE PLACE ──────────────────────────────────────
-//
-// SIZE IS EVIDENTIAL WEIGHT, and it was inverted. The raw news diamond was
-// the LARGEST mark on the globe at 30px — larger than a human-verified
-// GeoConfirmed square at 22 — so the least trustworthy source out-read the
-// most trustworthy one at every zoom level. Nobody chose that; the numbers
-// were set per-layer, months apart, and no file ever showed them together.
-//
-// Ordered here, descending, so the ordering is the visible thing and the
-// next person to change one has to look at the others:
-//
-//   geoconfirmed  a human found the building in the video
-//   detection     a model found an object in an image we hold
-//   gdelt         a machine coded a wire story, and cites the article
-//   news          an RSS item, geocoded by place name
-//   fire          an instrument measured a temperature
-//
-// Every one of these is drawn through getShapeMarkerDataUri, which renders
-// at MARKER_SUPERSAMPLE and lets the GPU downsample — a mark built at
-// exactly its billboard size is half the pixels a HiDPI screen wants, and
-// that is what "low res" looked like.
+// ── map markers: lib/mapIcons.js, the one typology ──────────────────────
+// The per-source sizes, the news diamond, GeoConfirmed's faction-coloured square and the facility discs that
+// used to live here are gone (owner, 2026-10-23: one typology, constant sizes). What stays is the camera limit
+// and thin wrappers so any caller left on the old names still draws the one style.
 /**
- * How far the camera may be and still see a point marker.
- *
- * THE OLD CEILING WAS BELOW THE APP'S OWN DEFAULT VIEW. Every finding
- * layer used 15,000km, and the World preset in the region bar puts the
- * camera at 18,000km — so opening the app at its default zoom and turning
- * a layer on drew absolutely nothing, with no error and a healthy fetch
- * behind it. Measured by diffing two frames with GDELT off and on at
- * World: zero pixels changed, with 23 points loaded.
- *
- * Set beyond any Earth view this app can produce, so "zoom out" can never
- * silently empty the map again. Deliberately NOT applied to AIS, where
- * thousands of vessels at world zoom is a real clutter and performance
- * problem rather than a bug.
+ * How far the camera may be and still see a point marker: beyond any Earth view this app produces, so
+ * "zoom out" can never silently empty the map (memory: layer render verification).
  */
 export const MARKER_MAX_CAMERA_M = 60_000_000
 
-export const MARK_SIZE = {
-    // Matched by eye, not by number. The event marks were first set to one
-    // identical size, which looked wrong: a square fills its box, while a
-    // diamond is that same square rotated (about 70% of the area) and a
-    // triangle less again. Equal numbers therefore make the square the
-    // heaviest mark on the globe. The square is knocked down until the
-    // three read as the same weight.
-    geoconfirmed: 14,
-    gdelt: 16,
-    alert: 16,
-    ucdp: 14,
-    // These two stay smaller. A detection is read inside an image, not
-    // against the globe, and a thermal reading is the weakest claim here —
-    // the news diamond was cut to 14 in the same pass that found it was
-    // the largest mark on the map.
-    detection: 18,
-    news: 14,
-    fire: 13,
-}
+/** Every event-family mark is one size now (lib/mapIcons.js SIZE.event). Kept for old imports. */
+export const MARK_SIZE = { geoconfirmed: ICON_PX, gdelt: ICON_PX, alert: ICON_PX, ucdp: ICON_PX, detection: ICON_PX, news: ICON_PX, fire: ICON_PX }
+export const GEOCONFIRMED_MARKER_SIZE = ICON_PX
 
-// replacing the previous mix of a Newspaper lucide icon (events) and the
-// generic TriangleAlert glyph (assessments) at several different tier/
-// severity-scaled sizes. Colour still varies by real article/assessment
-// type (unchanged); only shape and size are now uniform. A hand-drawn shape
-// rather than a lucide icon, same precedent as vesselAircraftGlyphs.js's
-// purpose-drawn hull/airframe silhouettes.
-export const NEWS_MARKER_SIZE = MARK_SIZE.news
-
-function newsDiamondSvg(color, size) {
-    const cx = size / 2, cy = size / 2, r = size * 0.42
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
-        + `<path d="M ${cx} ${cy - r} L ${cx + r} ${cy} L ${cx} ${cy + r} L ${cx - r} ${cy} Z" `
-        + `fill="${color}" stroke="#070B14" stroke-width="1"/>`
-        + `</svg>`
-}
-
-const _newsCache = new Map()
-export function getNewsMarkerDataUri({ color = TEXT_MUTED } = {}) {
-    const key = `news:${color}`
-    if (_newsCache.has(key)) return _newsCache.get(key)
-    // Same diamond, rendered at MARKER_SUPERSAMPLE and downsampled by the
-    // GPU. It was built at exactly the billboard size, which on a HiDPI
-    // screen is half the available pixels — hence the soft blob.
-    const uri = getShapeMarkerDataUri({ shape: "diamond", color,
-                                        size: NEWS_MARKER_SIZE, strokeWidth: 1 })
-    _newsCache.set(key, uri)
-    return uri
-}
-
-// ── GeoConfirmed markers — real color-coded dot per faction/side ─────────────
-// GeoConfirmed's own live map renders conflict-event pins as color-coded
-// dots by faction (confirmed live 2026-09 via their real bulk placemark API,
-// GET /api/Placemark/{theatre} -> [{name, color, invertColor, icons:[...]}]
-// — a real per-theatre faction->color field, not a universal palette: the
-// same hex denotes a different real side in a different theatre). This
-// reproduces that real convention faithfully as a bespoke hand-drawn shape
-// (same precedent as newsDiamondSvg above, not the shared outline-glyph
-// family ENTITY_ICON_COMPONENT uses for other entity types — a plain dot is
-// GeoConfirmed's own real visual language here, not a shape this app invented).
-//
-// `invertColor` reasoning (stated explicitly — GeoConfirmed's API exposes
-// this boolean but not its own pixel-level rendering logic): applied here as
-// a light-fill/colored-stroke swap, since GeoConfirmed uses it on very pale
-// colors (e.g. a near-white yellow) that would be nearly invisible as a
-// solid fill against a map background. Never fabricated new colors — only
-// a rendering-mode choice for genuinely-real GeoConfirmed color values.
-const GEOCONFIRMED_DOT_FALLBACK = "#E8C547" // pre-existing color, used only when this placemark has no real faction_color yet
-export const GEOCONFIRMED_MARKER_SIZE = MARK_SIZE.geoconfirmed
-
-function geoconfirmedDotSvg(color, size, invert) {
-    const cx = size / 2, cy = size / 2, r = size * 0.36
-    const fill = invert ? "#0B0F1A" : color
-    const stroke = invert ? color : "#070B14"
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
-        + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`
-        + `</svg>`
-}
-
-const _geoconfirmedCache = new Map()
-export function getGeoConfirmedMarkerDataUri({ color, invertColor = false, size = GEOCONFIRMED_MARKER_SIZE } = {}) {
-    const realColor = color || GEOCONFIRMED_DOT_FALLBACK
-    const key = `geoconfirmed:${realColor}:${invertColor}:${size}`
-    if (_geoconfirmedCache.has(key)) return _geoconfirmedCache.get(key)
-    // A SQUARE, not a dot: GeoConfirmed is human-verified, geolocated ground
-    // truth, and it should be distinguishable at a glance from reporting
-    // (diamond) and from a derived warning (triangle). Supersampled.
-    const uri = getShapeMarkerDataUri({ shape: "square", color: realColor,
-                                        size, invert: invertColor })
-    _geoconfirmedCache.set(key, uri)
-    return uri
+/** GeoConfirmed: confirmed by an analyst, so a square, neutral, with the check; the faction is in the card only. */
+export function getGeoConfirmedMarkerDataUri({ priority = "alert", state = "live" } = {}) {
+    return markerUri({ kind: "confirmed", glyph: "check", priority, state })
 }
 
 // ── ForceGraph (forge entity graph) support ───────────────────────────────────
@@ -428,170 +313,43 @@ export function drawGraphNode(ctx, cx, cy, r, canonType) {
     }
 }
 
-// ── Crisp shape markers ───────────────────────────────────────────────────
-//
-// WHY THIS EXISTS. Every marker above builds its SVG at exactly the size the
-// billboard is drawn at — a 30px SVG shown at 30px. On any HiDPI display
-// that is half the pixels the screen can show, so Cesium upscales the
-// rasterised bitmap and the result is the soft, muddy blob the markers have
-// always been. Rendering the SVG at a multiple of the display size and
-// letting the GPU downsample is the fix; it costs nothing at runtime because
-// every marker is cached by its key.
-//
-// SHAPE CARRIES MEANING. A map where everything is a dot makes the reader
-// consult a legend for every pin. Shape is the fastest visual channel there
-// is, so each kind of thing gets its own, and colour is then free to mean
-// severity or faction rather than type.
-//
-// Vessels and aircraft keep their purpose-drawn hull/airframe silhouettes —
-// a ship is not a shape-coded abstraction, it has a heading and a form, and
-// those glyphs already say so.
+// ── shape markers: the one typology's (lib/mapIcons.js) ────────────────
+/** Rendered at 2x by lib/mapIcons.js; kept for old imports. */
+export const MARKER_SUPERSAMPLE = 2
 
-/** Rendered at this multiple of display size, then downsampled by the GPU. */
-export const MARKER_SUPERSAMPLE = 3
-
-export const MARKER_SHAPES = {
-    // verified ground event — a square reads as "confirmed, surveyed"
-    square: (cx, cy, r) =>
-        `<rect x="${cx - r}" y="${cy - r}" width="${r * 2}" height="${r * 2}" rx="${r * 0.15}"`,
-    // reporting / news — diamond, the existing news language
-    diamond: (cx, cy, r) =>
-        `<path d="M ${cx} ${cy - r} L ${cx + r} ${cy} L ${cx} ${cy + r} L ${cx - r} ${cy} Z"`,
-    // warning / derived alert — triangle, the universal caution form
-    triangle: (cx, cy, r) =>
-        `<path d="M ${cx} ${cy - r} L ${cx + r * 0.92} ${cy + r * 0.72} L ${cx - r * 0.92} ${cy + r * 0.72} Z"`,
-    // observation / sensor reading — circle
-    circle: (cx, cy, r) => `<circle cx="${cx}" cy="${cy}" r="${r}"`,
+/**
+ * A shape marker in the one style (lib/mapIcons.js markerIcon). `color` is accepted only from old callers;
+ * new code passes `priority` and a `glyph`. `size`, `invert` and `strokeWidth` are ignored: one size, one edge.
+ */
+export function getShapeMarkerDataUri({ shape = "circle", color = null, priority = "alert", glyph = null, state = "live" } = {}) {
+    return markerUri({ shape, color, priority, glyph, state })
 }
 
-function shapeMarkerSvg({ shape = "circle", color = TEXT_MUTED, size = 24,
-                          invert = false, stroke = EDGE, strokeWidth = STROKE }) {
-    const px = size * MARKER_SUPERSAMPLE
-    const cx = px / 2, cy = px / 2, r = px * 0.36
-    const draw = MARKER_SHAPES[shape] || MARKER_SHAPES.circle
-    const fill = invert ? "#0B0F1A" : color
-    const edge = invert ? color : stroke
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">`
-        + `${draw(cx, cy, r)} fill="${fill}" stroke="${edge}" `
-        + `stroke-width="${strokeWidth * MARKER_SUPERSAMPLE}" stroke-linejoin="round"/>`
-        + `</svg>`
-}
-
-const _shapeCache = new Map()
-
-/** A crisp marker of a given shape. Cached; the key covers every pixel input. */
-export function getShapeMarkerDataUri(opts = {}) {
-    const { shape = "circle", color = TEXT_MUTED, size = 24,
-            invert = false, strokeWidth = STROKE } = opts
-    const key = `shape:${shape}:${color}:${size}:${invert}:${strokeWidth}`
-    if (_shapeCache.has(key)) return _shapeCache.get(key)
-    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-        shapeMarkerSvg({ shape, color, size, invert, strokeWidth }))}`
-    _shapeCache.set(key, uri)
-    return uri
-}
-
-// ── facility glyphs ──────────────────────────────────────────────────────
-//
-// Hospitals, police stations, fire stations and military sites were all
-// drawn as the same coloured square, which told a reader "a facility is
-// here" and nothing else — the thing they actually need at a glance is
-// WHICH KIND. Purpose-drawn, the same precedent as the vessel hull and
-// aircraft airframe silhouettes: a ship is not a shape-coded
-// abstraction, and neither is a hospital.
-//
-// Deliberately NOT MIL-STD-2525. That symbology encodes AFFILIATION —
-// friendly, hostile, unknown — in the frame, and this app's own rebuild
-// spec cancelled affiliation-frame geometry for a good reason: on open
-// sources we usually cannot establish affiliation, and a red "hostile"
-// frame around an unverified barracks asserts something nobody checked.
-// These say what a thing IS, never whose side it is on.
-const FACILITY_GLYPH = {
-    // A cross. Universally read, and not confusable with anything else here.
-    hospital: (px) => {
-        const c = px / 2, a = px * 0.30, b = px * 0.12
-        return `<rect x="${c - b}" y="${c - a}" width="${b * 2}" height="${a * 2}" rx="${b * 0.4}"/>`
-             + `<rect x="${c - a}" y="${c - b}" width="${a * 2}" height="${b * 2}" rx="${b * 0.4}"/>`
-    },
-    // A shield: the police/security form everywhere, and distinct in
-    // outline from the cross and the star at small sizes.
-    police: (px) => {
-        const c = px / 2, r = px * 0.32
-        return `<path d="M ${c} ${c - r} L ${c + r * 0.85} ${c - r * 0.45} `
-             + `L ${c + r * 0.85} ${c + r * 0.15} Q ${c + r * 0.85} ${c + r * 0.8} ${c} ${c + r} `
-             + `Q ${c - r * 0.85} ${c + r * 0.8} ${c - r * 0.85} ${c + r * 0.15} `
-             + `L ${c - r * 0.85} ${c - r * 0.45} Z"/>`
-    },
-    // A flame, for fire stations.
-    fire: (px) => {
-        const c = px / 2, r = px * 0.32
-        return `<path d="M ${c} ${c - r} Q ${c + r * 0.75} ${c - r * 0.1} ${c + r * 0.45} ${c + r * 0.55} `
-             + `Q ${c + r * 0.2} ${c + r} ${c} ${c + r} `
-             + `Q ${c - r * 0.2} ${c + r} ${c - r * 0.45} ${c + r * 0.55} `
-             + `Q ${c - r * 0.75} ${c - r * 0.1} ${c} ${c - r} Z"/>`
-    },
-    // Crossed swords, the oldest military map convention there is — and
-    // one that says "military" without saying whose.
-    military: (px) => {
-        const c = px / 2, r = px * 0.33, w = px * 0.085
-        return `<rect x="${c - w / 2}" y="${c - r}" width="${w}" height="${r * 2}" `
-             + `transform="rotate(45 ${c} ${c})"/>`
-             + `<rect x="${c - w / 2}" y="${c - r}" width="${w}" height="${r * 2}" `
-             + `transform="rotate(-45 ${c} ${c})"/>`
-    },
-    // A bunker: a squat dome on a base line.
-    bunker: (px) => {
-        const c = px / 2, r = px * 0.32
-        return `<path d="M ${c - r} ${c + r * 0.45} L ${c - r} ${c + r * 0.1} `
-             + `Q ${c} ${c - r * 0.75} ${c + r} ${c + r * 0.1} `
-             + `L ${c + r} ${c + r * 0.45} Z"/>`
-    },
-}
-
-/** Which glyph an OSM facility kind uses. */
+/** Which infrastructure glyph an OSM facility kind uses. */
 export function facilityGlyphKey(kind) {
     const k = String(kind || "").toLowerCase()
     if (k === "hospital" || k === "clinic" || k === "doctors") return "hospital"
-    if (k === "police") return "police"
-    if (k === "fire_station") return "fire"
+    if (k === "police") return "police_station"
+    if (k === "fire_station") return "fire_station"
     if (k === "bunker") return "bunker"
     return "military"
 }
 
-const _facCache = new Map()
-
-/** A crisp facility glyph, supersampled like every other marker here. */
-export function getFacilityMarkerDataUri({ kind = "military", color = TEXT_MUTED,
-                                           size = 16 } = {}) {
-    const key = `fac:${kind}:${color}:${size}`
-    if (_facCache.has(key)) return _facCache.get(key)
-    const px = size * MARKER_SUPERSAMPLE
-    const draw = FACILITY_GLYPH[facilityGlyphKey(kind)] || FACILITY_GLYPH.military
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" `
-        + `viewBox="0 0 ${px} ${px}">`
-        // A dark disc behind the glyph so it stays legible over bright
-        // terrain, the same trick the labels use.
-        + `<circle cx="${px / 2}" cy="${px / 2}" r="${px * 0.44}" `
-        + `fill="#0B0F1A" fill-opacity="0.72" stroke="${color}" `
-        + `stroke-width="${1.2 * MARKER_SUPERSAMPLE}"/>`
-        + `<g fill="${color}" stroke="${color}" stroke-width="${0.5 * MARKER_SUPERSAMPLE}" `
-        + `stroke-linejoin="round">${draw(px)}</g>`
-        + `</svg>`
-    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-    _facCache.set(key, uri)
-    return uri
+/** A facility: infrastructure context, a line glyph, neutral, one size (lib/mapIcons.js infraIcon). */
+export function getFacilityMarkerDataUri({ kind = "military" } = {}) {
+    return infraIcon({ glyph: facilityGlyphKey(kind) }).uri
 }
 
-/** Which shape a source's markers use. One place, so the map stays legible. */
+/** Which knowledge shape a source's markers use (lib/mapIcons.js KIND_SHAPE). */
 export const SHAPE_FOR_SOURCE = {
-    geoconfirmed: "square",     // human-verified, geolocated ground truth
-    news: "diamond",            // reporting
-    gdelt: "diamond",           // reporting
+    geoconfirmed: "square",     // confirmed by an analyst
+    news: "diamond",            // coverage
+    gdelt: "diamond",
     alert: "triangle",          // derived warning
     fusion: "triangle",
-    fire: "circle",             // a sensor reading
-    firms: "circle",
-    detection: "square",        // imagery detection
+    fire: "square",             // observed by a sensor
+    firms: "square",
+    detection: "square",
     ucdp: "square",
 }
 
