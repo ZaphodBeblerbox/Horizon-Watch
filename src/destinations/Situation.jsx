@@ -75,6 +75,8 @@ import EndangeredCountryChips from "../components/EndangeredCountryChips.jsx"
 import { closeOpenedSignal } from "../lib/signalPin.js"
 import { markerUri } from "../lib/mapIcons.js"
 import MapLegend from "../components/MapLegend.jsx"
+import AssistantThread from "../assistant/AssistantThread.jsx"
+import { useRightTab, setRightTab } from "../assistant/assistantDock.js"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -859,8 +861,17 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
        first, is also what A4 describes: `openObj(id)` opens the object
        view as part of selecting. */
     useEffect(() => {
-        if (inspectorPopup) { setRightOpen(true); claimSide("inspector") }
+        if (inspectorPopup) { setRightOpen(true); setRightTab("inspector"); claimSide("inspector") }
     }, [inspectorPopup, setRightOpen])
+    /* THE RIGHT COLUMN HAS TWO FACES (assistant/assistantDock.js): the
+       Inspector and the Assistant. Opening an item brings the Inspector
+       forward; its X brings the chat forward instead of leaving an empty
+       map edge. The chat stays mounted behind the Inspector once opened, so
+       its scroll and draft are where they were. */
+    const rightTab = useRightTab()
+    const [assistantMounted, setAssistantMounted] = useState(rightTab === "assistant")
+    useEffect(() => { if (rightTab === "assistant") setAssistantMounted(true) }, [rightTab])
+    useEffect(() => { if (selected) setRightTab("inspector") }, [selected])
     // ONE WINDOW ON THE RIGHT (ui/sideWindows.js): a spoken answer takes the
     // inspector's place; opening the inspector folds the answer away.
     useEffect(() => { if (rightOpen) claimSide("inspector") }, [rightOpen])
@@ -2309,13 +2320,41 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
             {/* Same as the Layers tab above — reached from the rail. */}
             {asCanvas ? null : (
             <div className="pane-glass" data-testid="glass-inspector-pane" data-open={!rightMin} aria-hidden={rightMin || undefined} style={rightPaneStyle}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
-                    <span style={{ font: "600 11px var(--font)", color: "var(--txt)" }}>Inspector</span>
-                    <button onClick={() => setRightMin(true)} title="Minimize" style={{ background: "none", border: "none", color: "var(--txt-3)", cursor: "pointer", padding: 0, display: "flex" }}>
-                        <svg className="icon sm"><use href="#i-collapse-r" /></svg>
-                    </button>
+                <div className="plx-rcol-head" role="tablist" aria-label="Right column">
+                    {[["inspector", "Inspector"], ["assistant", "Assistant"]].map(([k, label]) => (
+                        <button key={k} role="tab" aria-selected={rightTab === k} data-testid={`right-tab-${k}`}
+                                className="plx-rcol-tab" onClick={() => setRightTab(k)}>{label}</button>
+                    ))}
+                    <span style={{ flex: 1 }} />
+                    {rightTab === "inspector" ? (
+                        /* the Inspector's X: the chat comes forward in its place */
+                        <button className="plx-rcol-x" data-testid="inspector-close" title="Close the inspector (the assistant takes its place)"
+                                aria-label="Close the inspector"
+                                onClick={() => {
+                                    if (inspectorPopup) {
+                                        inspectorPopup.onClose?.()
+                                        setSelected(null)
+                                        closeOpenedSignal([inspectorPopup.entityId, inspectorPopup.data?.alert_id, inspectorPopup.data?.id])
+                                        setInspectorPopup(null)
+                                    }
+                                    setSelected(null)
+                                    setRightTab("assistant")
+                                }}>
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" /></svg>
+                        </button>
+                    ) : (
+                        <button className="plx-rcol-x" data-testid="right-column-hide" onClick={() => setRightMin(true)} title="Hide the column" aria-label="Hide the column">
+                            <svg className="icon sm"><use href="#i-collapse-r" /></svg>
+                        </button>
+                    )}
                 </div>
-                <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                {assistantMounted && (
+                    <div style={{ flex: 1, minHeight: 0, display: rightTab === "assistant" ? "flex" : "none", flexDirection: "column" }}
+                         data-testid="right-column-assistant">
+                        <AssistantThread platform="desktop" autoFocus={false} hidden={rightTab !== "assistant"} />
+                    </div>
+                )}
+                <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: rightTab === "inspector" ? undefined : "none" }}>
                 {inspectorPopup ? (
                     // A real map-marker click (GlobePopup, via GlobeView's
                     // dockExternally) — same real InspectorPanel component
@@ -2341,6 +2380,8 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             setSelected(null)
                             // a signal opened from a notification: its marker, boxes and image go with it
                             closeOpenedSignal([inspectorPopup.entityId, inspectorPopup.data?.alert_id, inspectorPopup.data?.id])
+                            // the item's X: the chat comes forward, not an empty column
+                            setRightTab("assistant")
                         }}
                         onSelectRelated={inspectorPopup.onSelectRelated}
                         onJumpToLocation={inspectorPopup.onJumpToLocation}

@@ -18,14 +18,17 @@ import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js
 import { claimSide, onSideClaim } from "../ui/sideWindows.js"
 
 export default function SourceViewer() {
-    const [url, setUrl] = useState(null)
+    const [url, setUrlState] = useState(null)
+    // A source with no embed (a news page, a web finding) is shown as a card:
+    // its title, source, date and summary, with the original as a secondary link.
     const [card, setCard] = useState(null)
+    const setUrl = (u, c = null) => { setUrlState(u); setCard(u || c ? c : null) }
     const urlRef = useRef(null)
-    urlRef.current = url
+    urlRef.current = url || card
     const [theme, setTheme] = useState(getRenderedTheme)
     useEffect(() => subscribeRenderedTheme(setTheme), [])
     useEffect(() => {
-        const open = (e) => { setUrl(e.detail?.url || null); setCard(e.detail?.card || null) }
+        const open = (e) => setUrl(e.detail?.url || null, e.detail?.card || null)
         // ESCAPE CLOSES THE TOP THING ONLY. The inspector also closes on
         // Escape, and the shell then leaves the map, so one key press
         // dropped the source, the record and the screen at once. Caught in
@@ -45,10 +48,9 @@ export default function SourceViewer() {
     }, [])
 
     useEffect(() => onSideClaim("source", (by) => { if (by === "answer") setUrl(null) }), [])
-    useEffect(() => { if (url) claimSide("source") }, [url])
-    // a post in its embed; an article the web agent cited (no embed) as its card (WebContext.jsx)
-    const embed = url ? (embedFor(url, { dark: theme === "dark" })
-        || (card ? { kind: "article", label: card.source || hostOf(url), card } : null)) : null
+    useEffect(() => { if (url || card) claimSide("source") }, [url, card])
+    const embed = url ? embedFor(url, { dark: theme === "dark" }) : null
+    const shown = !!(embed || card)
 
     /* WHERE IT GOES. Beside the inspector when the window has room for the
        map, the inspector and the source; on a narrow window it takes the
@@ -65,13 +67,14 @@ export default function SourceViewer() {
     const docked = vw >= 1150
     const width = docked ? Math.min(460, vw - 48 - 334 - 480) : 312
     useEffect(() => {
-        window.dispatchEvent(new CustomEvent("akili:source-viewer", { detail: { open: !!embed, docked, width: Math.max(320, width) } }))
-    }, [!!embed, docked, width]) // eslint-disable-line react-hooks/exhaustive-deps
+        window.dispatchEvent(new CustomEvent("akili:source-viewer", { detail: { open: shown, docked, width: Math.max(320, width) } }))
+    }, [shown, docked, width]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (!embed) return null
+    if (!shown) return null
+    const label = embed ? embed.label : (card.source || hostOf(url) || "Source")
 
     return (
-        <aside role="dialog" aria-label={`Source: ${embed.label}`} style={{
+        <aside role="dialog" aria-label={`Source: ${label}`} data-testid="source-viewer" style={{
             position: "fixed", top: phone ? 0 : 94, bottom: phone ? 0 : 22, zIndex: phone ? 3000 : 70,
             right: phone ? 0 : docked ? 12 + 312 + 10 : 12, width: phone ? "100vw" : docked ? Math.max(320, width) : 312,
             display: "flex", flexDirection: "column",
@@ -87,31 +90,20 @@ export default function SourceViewer() {
                         Source
                     </div>
                     <div style={{ font: "600 13px var(--font)", color: "var(--txt)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {embed.label}
+                        {label}
                     </div>
                 </div>
                 {/* NOT A WAY OUT (owner, 2026-10-10): the post stays in Parallax; its link can be copied */}
-                <button onClick={() => { navigator.clipboard?.writeText(url).catch(() => {}) }} title={url} style={{
+                {url && <button onClick={() => { navigator.clipboard?.writeText(url).catch(() => {}) }} title={url} style={{
                     font: "500 12px var(--font)", color: "var(--acc-hi, var(--acchi))", whiteSpace: "nowrap", border: 0, background: "none", cursor: "pointer", padding: 0,
-                }}>Copy link</button>
+                }}>Copy link</button>}
                 <button onClick={() => setUrl(null)} aria-label="Close source" title="Close (Esc)" style={{
                     width: 26, height: 26, border: "1px solid var(--gline2, var(--line))", background: "transparent",
                     color: "var(--txt-3, var(--txt3))", cursor: "pointer", font: "inherit",
                 }}>✕</button>
             </header>
-            {embed.card ? (
-                /* A NEWS ARTICLE the web agent cited (WebContext.jsx): news sites cannot be framed, so the
-                   viewer shows what we know of it — its headline, outlet, time and what it says — and the
-                   link to copy, without leaving Parallax. */
-                <div data-testid="source-article" style={{ flex: 1, overflow: "auto", padding: "14px 14px 18px", font: "400 13.5px/1.5 var(--font)", color: "var(--txt)" }}>
-                    <div style={{ font: "600 15px/1.35 var(--font)", marginBottom: 6 }}>{embed.card.title || embed.label}</div>
-                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3, var(--txt3))", marginBottom: 10 }}>
-                        {[embed.label, embed.card.published_at ? new Date(embed.card.published_at).toLocaleString() : null].filter(Boolean).join(" · ")}
-                    </div>
-                    {embed.card.summary && <p style={{ margin: "0 0 12px" }}>{embed.card.summary}</p>}
-                    <div style={{ font: "400 11.5px var(--font)", color: "var(--txt-3, var(--txt3))", wordBreak: "break-all" }}>{url}</div>
-                </div>
-            ) : <iframe
+            {!embed && <SourceCard card={card} url={url} />}
+            {embed && <iframe
                 key={embed.src}
                 title={embed.label}
                 src={embed.src}
@@ -124,5 +116,23 @@ export default function SourceViewer() {
                 style={{ flex: 1, width: "100%", border: 0, background: "#fff" }}
             />}
         </aside>
+    )
+}
+
+/** A source that cannot be framed, read here: what it says, from whom, when. The original is a secondary link. */
+function SourceCard({ card, url }) {
+    const at = card?.when || card?.published_at   // the web agent cites published_at (WebContext.jsx)
+    const when = at ? new Date(String(at).replace(" ", "T")) : null
+    return (
+        <div data-testid="source-card" style={{ flex: 1, overflowY: "auto", padding: "14px 14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+            {card?.title && <div style={{ font: "600 15px/1.35 var(--font)", color: "var(--txt)" }}>{card.title}</div>}
+            <div style={{ font: "400 11.5px var(--font)", color: "var(--txt-3, var(--txt3))" }}>
+                {[card?.source || hostOf(url), when && !Number.isNaN(+when) ? when.toLocaleString() : null, card?.place].filter(Boolean).join(" · ")}
+            </div>
+            {card?.summary && <div style={{ font: "400 13px/1.55 var(--font)", color: "var(--txt-2, var(--txt2))", whiteSpace: "pre-wrap" }}>{card.summary}</div>}
+            {card?.note && <div style={{ font: "400 11.5px/1.5 var(--font)", color: "var(--txt-3, var(--txt3))" }}>{card.note}</div>}
+            {url && <a href={url} target="_blank" rel="noreferrer noopener" style={{ marginTop: 4, font: "500 12px var(--font)", color: "var(--txt-3, var(--txt3))", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                Open original</a>}
+        </div>
     )
 }

@@ -30,8 +30,9 @@ export function embedFor(url, { dark = false } = {}) {
     return null
 }
 
-/** Ask the shell to show this source in its in-console viewer. `card` (a web agent citation: title, source,
- *  published_at, summary) lets the viewer show an article that cannot be framed as what we know of it. */
+/** Ask the shell to show this source in its in-console viewer. A `card`
+ *  ({title, source, summary, when, place}) lets a source with no embed (a news
+ *  page, a web finding) be read there too instead of opening a tab. */
 export function openSource(url, card = null) {
     window.dispatchEvent(new CustomEvent("akili:open-source", { detail: { url, card } }))
 }

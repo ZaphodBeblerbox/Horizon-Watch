@@ -44,6 +44,8 @@ import Settings from "./destinations/Settings.jsx"
 import "./components/collab/CollabPanel.jsx"
 // The Flights route mode: registers the aircraft inspector's "Check this flight's route" offer.
 import "./routes/modes/air.js"
+// "Write a post" on an item in the Inspector (assistant/WritePostButton.jsx): an extension, so the card stays as it is.
+import "./assistant/registerWritePost.js"
 import ToastHost from "./ui/ToastHost.jsx"
 import Home from "./destinations/Home.jsx"
 import Situation from "./destinations/Situation.jsx"
@@ -170,6 +172,9 @@ import MobileApp from "./mobile/MobileApp.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
 import AssistantPanel from "./components/AssistantPanel.jsx"
+import { startAssistant } from "./assistant/assistantStore.js"
+import { useRightTab, getRightTab, setRightTab, sparkleAction, isChatShortcut } from "./assistant/assistantDock.js"
+import { FOCUS_EVENT as ASSISTANT_FOCUS } from "./assistant/AssistantThread.jsx"
 import TVWidget from "./components/tvwidget.jsx"
 import { loadProfile, saveProfileToStorage } from "./components/MissionProfilePanel.jsx"
 import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
@@ -825,7 +830,7 @@ export default function App() {
        then the button and the pane cannot disagree, and the state
        survives a reload like every other chrome setting. */
     const [layersOpen, toggleLayers] = useChrome("leftPanel")
-    const [inspectorOpen, toggleInspector] = useChrome("rightPanel")
+    const [inspectorOpen, toggleInspector, setInspectorOpen] = useChrome("rightPanel")
     const plxLeft = layersOpen ? "layers" : inspectorOpen ? "selection" : null
     /* The rail's Timeline button drives the REAL strip, through the same
        persisted chrome store the Layers and Inspector panes read. It used
@@ -957,11 +962,37 @@ export default function App() {
     // The assistant (DATAMINR_PLAN B7): null, or the mode it opened in —
     // "chat", "onboarding" (first login, "set me up"), "theater" (New theater).
     const [assistant, setAssistant] = useState(null)
+    /* ON THE MAP THE ASSISTANT IS THE RIGHT COLUMN'S SECOND TAB (beside the
+       Inspector, assistant/assistantDock.js); elsewhere it is the floating
+       panel. One conversation either way (assistantStore). The sparkle
+       toggles it; '/' opens it and puts the cursor in the box. */
+    const rightTab = useRightTab()
+    const onMap = activeTabType === "situation"
+    const showAssistant = useCallback((mode = "chat", { toggle = false, focus = true } = {}) => {
+        if (mode && mode !== "chat") startAssistant(mode)
+        if (onMap) {
+            if (toggle && sparkleAction(inspectorOpen, getRightTab()) === "close") { setInspectorOpen(false); return }
+            setAssistant(null)
+            setRightTab("assistant")
+            setInspectorOpen(true)
+        } else {
+            if (toggle && assistant) { setAssistant(null); return }
+            setAssistant("chat")
+        }
+        if (focus) setTimeout(() => window.dispatchEvent(new CustomEvent(ASSISTANT_FOCUS)), 80)
+    }, [onMap, inspectorOpen, setInspectorOpen, assistant])
     useEffect(() => {
-        const open = (e) => setAssistant(e?.detail?.mode || "chat")
+        const open = (e) => showAssistant(e?.detail?.mode || "chat")
+        const key = (e) => { if (!isMobile && isChatShortcut(e)) { e.preventDefault(); showAssistant("chat") } }
         window.addEventListener("plx:assistant", open)
-        return () => window.removeEventListener("plx:assistant", open)
-    }, [])
+        // capture: ahead of the map's voice field, which would take the '/' as text
+        window.addEventListener("keydown", key, true)
+        return () => { window.removeEventListener("plx:assistant", open); window.removeEventListener("keydown", key, true) }
+    }, [showAssistant, isMobile])
+    // the floating panel was open and the map came up: the chat moves into the column
+    useEffect(() => {
+        if (onMap && assistant) { setAssistant(null); setRightTab("assistant"); setInspectorOpen(true) }
+    }, [onMap]) // eslint-disable-line react-hooks/exhaustive-deps
     // FIRST LOGIN WITH NOTHING SET UP: the assistant asks where you are, what
     // you protect, what you follow (once per account on this device).
     useEffect(() => {
@@ -977,7 +1008,7 @@ export default function App() {
                 const st = await assistantStatus()
                 if (st?.onboarding?.empty_profile) {
                     try { localStorage.setItem(key, "1") } catch { /* private mode */ }
-                    setAssistant("onboarding")
+                    window.dispatchEvent(new CustomEvent("plx:assistant", { detail: { mode: "onboarding" } }))
                 }
             } catch { /* offline: the forms and Settings remain */ }
         }
@@ -2282,8 +2313,8 @@ export default function App() {
             {/* Voice everywhere: the map has its own bar; every other page
                 gets this one, so "search for Dubai" works from Home too. */}
             {!isMobile && !presenting && activeTabType !== "situation" && <VoiceBar active floating />}
-            {!isMobile && !presenting && assistant && (
-                <AssistantPanel mode={assistant} onClose={() => setAssistant(null)} />
+            {!isMobile && !presenting && assistant && !onMap && (
+                <AssistantPanel onClose={() => setAssistant(null)} />
             )}
             <NotificationStack
                 onOpen={openNotificationItem}
@@ -2425,8 +2456,8 @@ export default function App() {
                            there was no chat to open, and the wrong one now
                            that there is. */
                         onChat={() => openTab("chat")}
-                        onAssistant={() => setAssistant((a) => (a ? null : "chat"))}
-                        assistantOpen={!!assistant}
+                        onAssistant={() => showAssistant("chat", { toggle: true })}
+                        assistantOpen={onMap ? inspectorOpen && rightTab === "assistant" : !!assistant}
                         chatOpen={activeTabType === "chat"}
                         chatCount={badgeText(unreadMessages)}
                         themeMode={plxThemeMode}
@@ -2518,7 +2549,7 @@ export default function App() {
                 const MENUS = {
                     file: [
                         ["New theater…", () => setEditingTheater("new"), "⇧⌘T"],
-                        ["New theater with the assistant…", () => setAssistant("theater")],
+                        ["New theater with the assistant…", () => showAssistant("theater")],
                         ["New document", () => openTab("editor")],
                         ["Open file…", () => openOverlay("overlay:palette"), "⌘O"],
                         ["Save", say("Saved"), "⌘S"],

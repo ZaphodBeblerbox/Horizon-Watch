@@ -22,6 +22,7 @@ import { ago, sevColor } from "./common.jsx"
 import { itemStatusLabel, mediaItems } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
 import ReportMedia from "../../components/ReportMedia.jsx"
+import WritePostButton from "../../assistant/WritePostButton.jsx"
 import { stripEmoji } from "../../lib/liveSignals.js"
 import WebContext from "../../components/WebContext.jsx"
 import { StatusChip } from "../../events/EventDetail.jsx"
@@ -154,6 +155,7 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
             </div>
             <div className="m2-peek-acts">
                 <button className="m2-btn" onClick={() => onDetails?.()} data-testid="m2-peek-details">Details</button>
+                <WritePostButton item={s} phone />
                 <button className="m2-btn ghost" aria-label="Put away" onClick={() => onClose?.()}>Close</button>
                 {count > 1 && index != null && <span className="m2-peek-count" aria-label={`${index + 1} of ${count} in view; swipe for the next`}>{index + 1} / {count}</span>}
             </div>
