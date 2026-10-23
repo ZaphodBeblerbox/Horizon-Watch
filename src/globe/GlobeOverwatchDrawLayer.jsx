@@ -24,6 +24,7 @@ import {
     ClassificationType,
 } from "cesium"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { dotIcon } from "../lib/mapIcons.js"
 
 export default function GlobeOverwatchDrawLayer({
     active,
@@ -178,11 +179,10 @@ export default function GlobeOverwatchDrawLayer({
 
                 const dot = viewer.entities.add({
                     position: Cartesian3.fromDegrees(pt.lng, pt.lat),
-                    point: {
-                        pixelSize: 8,
-                        color: Color.CYAN,
-                        outlineColor: Color.WHITE,
-                        outlineWidth: 1,
+                    // a vertex you placed: ours, a blue dot (lib/mapIcons.js)
+                    billboard: {
+                        image: dotIcon({ role: "end" }).uri,
+                        width: dotIcon({ role: "end" }).w, height: dotIcon({ role: "end" }).h,
                         disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                     },
                 })

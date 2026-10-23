@@ -3,6 +3,7 @@ import {
     Cartesian3, Color, CallbackProperty, PolylineDashMaterialProperty,
 } from "cesium"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { markerIcon, priorityOf, PRIORITY } from "../lib/mapIcons.js"
 
 // GlobeReplayLayer.jsx — draws the "Replay on map" walk (see
 // src/services/replayOnMap.js) on the one real globe. Plain component
@@ -18,17 +19,21 @@ import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 // — matching the build spec's own caution that time-based UI here must stay
 // independent of both.
 
-const SEV_COLOR = {
-    critical: Color.fromCssColorString("#ef4444"),
-    significant: Color.fromCssColorString("#f59e0b"),
-    high: Color.fromCssColorString("#f59e0b"),
-    elevated: Color.fromCssColorString("#f59e0b"),
-    medium: Color.fromCssColorString("#f59e0b"),
-    low: Color.fromCssColorString("#22c55e"),
-}
+// THE SAME MARKER AS ITS SOURCE TYPE, in the PAST state (lib/mapIcons.js): a replay walks what already happened.
+// The colour is the priority ramp (no green "low" any more).
+const priorityFor = (sig) => priorityOf(sig?.severity_tier || sig?.severity, "alert")
 function severityColor(sig) {
-    return SEV_COLOR[sig?.severity_tier || sig?.severity] || Color.fromCssColorString("#60a5fa")
+    return Color.fromCssColorString(PRIORITY[priorityFor(sig)])
 }
+/** Which knowledge shape a replayed record is: sensor/analyst = confirmed, news = news, derived = derived, else event. */
+export function replayKind(sig) {
+    const src = String(sig?.source || sig?.kind || sig?.type || "").toLowerCase()
+    if (/sat-task|imagery|geoconfirmed|detection|firms|fire/.test(src)) return "confirmed"
+    if (/gdelt|news|rss/.test(src)) return "news"
+    if (/surge|fusion|derived|alert/.test(src)) return "derived"
+    return "event"
+}
+const replayIcon = (sig) => markerIcon({ kind: replayKind(sig), priority: priorityFor(sig), state: "past" })
 
 const PING_MS = 700
 const STEP_MS = 420
@@ -51,17 +56,17 @@ export default function GlobeReplayLayer({ viewerRef, isVisible }) {
     // A pulse — grows a point from ~6px to ~46px while fading out, over
     // PING_MS, then removes itself. Used for the target's single "ping once"
     // and for each walked context signal's own expanding ring.
-    function addPulse(viewer, run, cartesian, color) {
+    function addPulse(viewer, run, cartesian, sig) {
         const start = performance.now()
+        const ic = replayIcon(sig)
         const ent = viewer.entities.add({
             position: cartesian,
-            point: {
-                pixelSize: 10,                       // constant on-screen size: it fades, it does not swell
+            billboard: {
+                image: ic.uri, width: ic.w, height: ic.h,   // constant on-screen size: it fades, it does not swell
                 color: new CallbackProperty(() => {
                     const t = Math.min(1, (performance.now() - start) / PING_MS)
-                    return color.withAlpha(1 - easeOutCubic(t))
+                    return Color.WHITE.withAlpha(1 - easeOutCubic(t))
                 }, false),
-                outlineWidth: 0,
                 disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             },
         })
@@ -98,10 +103,8 @@ export default function GlobeReplayLayer({ viewerRef, isVisible }) {
             runRef.current = run
 
             const targetCartesian = Cartesian3.fromDegrees(Number(target.lon), Number(target.lat))
-            const targetColor = severityColor(target)
-
             // Ping once on the target itself.
-            addPulse(viewer, run, targetCartesian, targetColor)
+            addPulse(viewer, run, targetCartesian, target)
 
             // Then walk the real chronological context, 420ms apart —
             // each step draws a converging dashed line plus its own pulse.
@@ -112,7 +115,7 @@ export default function GlobeReplayLayer({ viewerRef, isVisible }) {
                     const cartesian = Cartesian3.fromDegrees(Number(sig.lon), Number(sig.lat))
                     const color = severityColor(sig)
                     addConvergingLine(viewer, run, cartesian, targetCartesian, color)
-                    addPulse(viewer, run, cartesian, color)
+                    addPulse(viewer, run, cartesian, sig)
                 }, (i + 1) * STEP_MS)
                 run.timers.add(t)
             })

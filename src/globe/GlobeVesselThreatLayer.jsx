@@ -8,7 +8,7 @@ import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import {
   BoundingSphere, CallbackProperty, Cartesian2, Cartesian3, Color, ColorBlendMode, DistanceDisplayCondition,
-  HeadingPitchRoll, HorizontalOrigin, LabelStyle, NearFarScalar, PolylineDashMaterialProperty,
+  HeadingPitchRoll, HorizontalOrigin, LabelStyle, PolylineDashMaterialProperty,
   PolylineGlowMaterialProperty, Transforms, VerticalOrigin, HeadingPitchRange, Math as CMath,
 } from "cesium"
 import { getVesselThreat, subscribeVesselThreat } from "../state/vesselThreatStore.js"
@@ -18,6 +18,11 @@ import {
 } from "./vesselThreat.js"
 import { renderDuringFlight } from "./flightRender.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { markerIcon, dotIcon } from "../lib/mapIcons.js"
+
+// The one typology (lib/mapIcons.js): the vessel of concern is a warning we derived (a triangle, flash); the
+// candidate targets are 10 px hollow dots, the top ten urgent, the rest alert. No ground circles.
+const bb = (ic) => ({ image: ic.uri, width: ic.w, height: ic.h, disableDepthTestDistance: MARKER_DEPTH_TEST_M })
 
 const FONT = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
 const FONT_SM = "12px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
@@ -93,16 +98,13 @@ export default function GlobeVesselThreatLayer() {
           id: `${pre}-tgt-${i}`,
           name: t.name,
           position: deg2(t, 50),
-          point: {
-            pixelSize: isTop ? 11 : 6, color: Color.fromCssColorString(isTop ? "#ff3b30" : "#c9c9c9").withAlpha(isTop ? 1 : 0.8),
-            outlineColor: Color.BLACK, outlineWidth: isTop ? 2 : 1, disableDepthTestDistance: MARKER_DEPTH_TEST_M,
-          },
+          billboard: bb(dotIcon({ role: "endpoint", priority: isTop ? "urgent" : "alert" })),
           label: isTop ? {
             text: `${rank}. ${t.name} · ${Math.round(t.distance_km)} km`,
             font: FONT_SM, fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
             style: LabelStyle.FILL_AND_OUTLINE, horizontalOrigin: HorizontalOrigin.LEFT, verticalOrigin: VerticalOrigin.CENTER,
             pixelOffset: new Cartesian2(10, 0), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
-            translucencyByDistance: new NearFarScalar(2.5e6, 1, 6e6, 0),
+            distanceDisplayCondition: new DistanceDisplayCondition(0, 4e6),
           } : undefined,
         })
       })
@@ -110,7 +112,7 @@ export default function GlobeVesselThreatLayer() {
       add({
         id: `${pre}-vessel`,
         position: deg2(c, 30),
-        point: { pixelSize: 15, color: Color.fromCssColorString("#ff3b30"), outlineColor: Color.WHITE, outlineWidth: 3, disableDepthTestDistance: MARKER_DEPTH_TEST_M },
+        billboard: bb(markerIcon({ kind: "derived", glyph: "Vessels", priority: "flash", state: "developing" })),
         label: {
           text: `${data.synthetic ? "SYNTHETIC — " : ""}${v.name || `MMSI ${v.mmsi}`}\n${data.assessment?.tier_label || ""} · ${data.assessment?.score ?? "—"}/100`,
           font: FONT, fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 4, style: LabelStyle.FILL_AND_OUTLINE,

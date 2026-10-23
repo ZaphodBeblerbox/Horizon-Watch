@@ -26,7 +26,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { Entity, useCesium } from "resium"
 import {
     CallbackProperty, Cartesian2, Cartesian3, Color, ColorBlendMode, DistanceDisplayCondition, HeadingPitchRoll,
-    HeightReference, LabelStyle, NearFarScalar, PolygonHierarchy, PolylineDashMaterialProperty, PolylineGlowMaterialProperty,
+    HeightReference, LabelStyle, PolygonHierarchy, PolylineDashMaterialProperty, PolylineGlowMaterialProperty,
     StripeMaterialProperty, StripeOrientation, Transforms, VerticalOrigin,
 } from "cesium"
 import API_BASE from "../apiBase.js"
@@ -38,6 +38,7 @@ import {
 } from "./frontlineClaims.js"
 import { fmtMinutes, modelHeadingRad, pathLengthKm, positionAlong, shahedModelUri } from "./vesselThreat.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { markerIcon, dotIcon } from "../lib/mapIcons.js"
 
 const REFRESH_MS = 3 * 60_000
 const FONT = "600 12px system-ui, -apple-system, Segoe UI, sans-serif"
@@ -155,7 +156,8 @@ const MovementEntity = memo(function MovementEntity({ m }) {
     // ring arrow or a single arrow); the entity sits there, or at the head
     const at = movementSymbolPoint(m) || m.to
     const pos = useMemo(() => Cartesian3.fromDegrees(+at.lon, +at.lat), [at.lon, at.lat])
-    const sym = st.symbolAt ? milSymbol(m.sidc, { colour, size: 22 }) : {}
+    // the unit symbol, small and constant (lines and areas carry the side's colour)
+    const sym = st.symbolAt ? milSymbol(m.sidc, { colour, size: 12 }) : {}
     // later legs of a path more opaque; an open siege approach dashed
     const material = st.dash
         ? new PolylineDashMaterialProperty({ color: css(colour, st.alpha), dashLength: 12 })
@@ -218,8 +220,9 @@ function OriginEntity({ id, t, n }) {
     const text = `${t.from.assumed ? "Assumed origin" : "Launch point"} · ${t.from.name || "unnamed"}${n > 1 ? ` · ${n} flights` : ""}`
     return (
         <Entity id={id} name={text} position={pos}
-            point={{ pixelSize: 8, color: css("#0b1220"), outlineColor: css(colour), outlineWidth: 2,
-                     heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
+            // the launch point: a 10 px hollow circle (lib/mapIcons.js), never the side's colour on a point
+            billboard={{ image: dotIcon({ role: "endpoint" }).uri, width: dotIcon({ role: "endpoint" }).w, height: dotIcon({ role: "endpoint" }).h,
+                         heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
             label={{
                 text, font: FONT, fillColor: css(colour), outlineColor: css("#05070C"), outlineWidth: 3,
                 style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -10),
@@ -313,8 +316,8 @@ function TrajectoryReplay({ trajectories }) {
                 added.push(viewer.entities.add({
                     id: `ftraj-replay-craft-${t.id}`,
                     position: new CallbackProperty(() => at(posNow()), false),
-                    point: { pixelSize: 10, color: css("#fff4e0"), outlineColor: css(colour), outlineWidth: 3,
-                             disableDepthTestDistance: MARKER_DEPTH_TEST_M },
+                    billboard: { image: markerIcon({ kind: "event", glyph: t.kind === "drone" ? "drone" : "missile", priority: "urgent" }).uri,
+                                 width: 24, height: 24, disableDepthTestDistance: MARKER_DEPTH_TEST_M },
                     label,
                 }))
             }
