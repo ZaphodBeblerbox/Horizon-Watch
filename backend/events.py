@@ -332,12 +332,15 @@ def assign(con, atom: dict, now: _dt.datetime | None = None) -> str | None:
 
 
 def attach_other(con, kind: str, ref: str, lat: float, lon: float, at, *, act: str | None = None, label: str | None = None,
-                 url: str | None = None, now: _dt.datetime | None = None) -> str | None:
+                 url: str | None = None, now: _dt.datetime | None = None, channel: str | None = None,
+                 quote: str | None = None) -> str | None:
     """A report from another domain JOINS an event, never creates one (phase 1):
       fire      only an explosion or strike event (violence, launch/impact), within FIRE_JOIN_KM and FIRE_JOIN_H;
       imagery   within the event's area (its join radius, at least OTHER_JOIN_KM) and FIRE_JOIN_H;
       situation a Telegram situation, by distance and the family's window like a live signal;
-      fusion    within OTHER_JOIN_KM and the family's window."""
+      fusion    within OTHER_JOIN_KM and the family's window;
+      web       a web finding with a place (web_agent.py): like fusion; `channel` is its domain, so each domain counts once
+                as an independent source and a quote it carries is checked like a report's."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     t = utc(at) or now
     with _lock:
@@ -367,7 +370,8 @@ def attach_other(con, kind: str, ref: str, lat: float, lon: float, at, *, act: s
         ev = best[0]
         _insert_member(con, ev["id"], {"kind": kind, "ref": ref, "act": act, "event_time": iso(t), "lat": lat, "lon": lon,
                                        "precision": "site", "url": url, "label": (label or "")[:200], "text": (label or "")[:400],
-                                       "quote": (label or "")[:300]}, now)
+                                       "channel": channel, "channel_title": channel,
+                                       "quote": (quote or label or "")[:300]}, now)
         _bump("joined_other")
         return ev["id"]
 
@@ -1028,7 +1032,7 @@ def reconcile(con=None, now: _dt.datetime | None = None, *, atoms=None, situatio
                 continue
             ref = f"sit:{s.get('id')}"
             if attach_other(con, "situation", ref, float(s["lat"]), float(s["lon"]), s.get("posted_at"),
-                            label=s.get("happening"), url=s.get("url"), now=now):
+                            label=s.get("happening"), url=s.get("url"), now=now, channel=s.get("channel")):
                 out["joined_other"] += 1
         for o in (_other_alerts(now - _dt.timedelta(hours=LOOKBACK_H)) if others is None else others):
             if attach_other(con, o["kind"], o["ref"], float(o["lat"]), float(o["lon"]), o.get("at"), label=o.get("label"), now=now):

@@ -29845,6 +29845,98 @@ def api_get_notifications(
 _TG_CARDS_CACHE: dict = {}
 
 
+def _around_sync(lat: float, lon: float, at: str | None, event_id: str | None, domain: str | None,
+                 radius_km: float, hours: float) -> dict:
+    """GET /api/around: the clicked point's event (its other reports) and everything relevant near it in space
+    and time across domains (around.py), ranked and deduplicated. Every input is a shared, already-built list."""
+    import around as _ar
+    out = {"event": None, "same_event": [], "related": [], "errors": {}}
+    excl = set()
+    if event_id:
+        try:
+            import events as _events
+            con = _events.connect()
+            try:
+                ev = _events.get(con, event_id, full=True)
+            finally:
+                con.close()
+            if ev:
+                out["event"] = {k: ev.get(k) for k in ("id", "status", "status_label", "headline", "first_seen", "last_update",
+                                                       "corroboration", "brief", "significant_brief", "members_count")}
+                out["same_event"] = ev.get("members") or []
+                excl = {m["ref"] for m in out["same_event"]}
+                at = at or ev.get("first_seen")
+        except Exception as e:                              # noqa: BLE001
+            out["errors"]["event"] = f"{type(e).__name__}: {e}"
+    items = []
+    lat_d = radius_km / 111.0
+    lon_d = radius_km / max(1.0, 111.0 * math.cos(math.radians(lat)))
+
+    def near(x):
+        try:
+            return abs(float(x.get("lat")) - lat) <= lat_d and abs(float(x.get("lon", x.get("lng"))) - lon) <= lon_d
+        except (TypeError, ValueError):
+            return False
+    try:
+        import live_signals as _ls
+        items += [_ar.from_signal(s) for s in _ls.signals() if near(s) and s.get("event_id") != event_id]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["live_signals"] = f"{type(e).__name__}: {e}"
+    try:
+        import telegram_ingest as _tg
+        items += [_ar.from_post(p) for p in _tg.published(max(6, int(hours) + 1), pins=True) if near(p)]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["telegram"] = f"{type(e).__name__}: {e}"
+    with _SURFACE_POOL_LOCK:
+        pool = [x for x in _SURFACE_POOL if isinstance(x, dict) and near(x)]
+    items += [_ar.from_surface(x) for x in pool if not str(x.get("source_type") or "").startswith("telegram")]
+    try:
+        from database import Alert as _Al
+        since = datetime.utcnow() - timedelta(hours=max(hours, 6))
+        with get_db() as db:
+            rows = (db.query(_Al.alert_id, _Al.alert_type, _Al.title, _Al.lat, _Al.lon, _Al.created_at, _Al.severity)
+                    .filter(_Al.created_at >= since, _Al.lat.between(lat - lat_d, lat + lat_d), _Al.lon.between(lon - lon_d, lon + lon_d))
+                    .order_by(_Al.created_at.desc()).limit(300).all())
+        items += [_ar.from_alert({"alert_id": r[0], "alert_type": r[1], "title": r[2], "lat": r[3], "lon": r[4],
+                                  "created_at": r[5].replace(tzinfo=timezone.utc).isoformat() if r[5] else None, "severity": r[6]})
+                  for r in rows]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["alerts"] = f"{type(e).__name__}: {e}"
+    try:
+        with _AIS_LOCK:
+            vs = [dict(v) for v in list(_AIS_VESSELS.values()) if isinstance(v, dict) and near(v)]
+        items += [_ar.from_vessel(v) for v in vs[:200]]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["ais"] = f"{type(e).__name__}: {e}"
+    try:
+        acs = [dict(a) for a in list(_GLOBAL_ADSB_CACHE.values()) if isinstance(a, dict) and near(a)]
+        items += [_ar.from_aircraft(a) for a in acs[:200]]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["adsb"] = f"{type(e).__name__}: {e}"
+    center = {"lat": lat, "lon": lon, "at": at, "domain": domain or "live_signal"}
+    out["related"] = _ar.rank(center, items, radius_km=radius_km, hours=hours, exclude_refs=excl)
+    out["counts"] = {}
+    for r in out["related"]:
+        out["counts"][r["domain"]] = out["counts"].get(r["domain"], 0) + 1
+    out["radius_km"], out["hours"] = radius_km, hours
+    for k, v in out["errors"].items():
+        print(f"[around] error: {k}: {v}", flush=True)
+    return out
+
+
+@app.get("/api/around")
+async def api_around(request: Request, lat: float, lon: float, at: str | None = None, event_id: str | None = None,
+                     domain: str | None = None, km: float = 5.0, hours: float = 6.0):
+    """Everything relevant around a clicked point (around.py): the other reports of its event, then related items
+    near it in space and time from every domain, ranked, deduplicated, each saying why it is there."""
+    _get_current_user(request)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(status_code=400, detail="bad position")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _around_sync, lat, lon, at, event_id, domain,
+                                      max(0.5, min(km, 50.0)), max(0.5, min(hours, 48.0)))
+
+
 def _telegram_report_cards(hours: int, cap: int = 25) -> list:
     """Telegram notification cards: ONLY the live signals (live_signals.py, owner 2026-10-22), the same
     list as the map's "Live signals" layer, so phone and desktop cannot disagree and a notification is
