@@ -61,7 +61,7 @@ export function crowdAlpha(ageMin) {
     return Math.max(freshAlpha(ageMin), 0.55)
 }
 
-export function rgba(hex, a) {
+function rgba(hex, a) {
     const h = String(hex).replace("#", "")
     const n = parseInt(h.length === 3 ? h.split("").map((x) => x + x).join("") : h, 16)
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Math.round(a * 100) / 100})`

@@ -50,15 +50,13 @@ const TACTIC = {
 export const POLICE_TACTICS = Object.keys(TACTIC)
 export const tacticColour = (t) => (TACTIC[t] || TACTIC.footage).colour
 
-const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 const arr = (v) => (Array.isArray(v) ? v : [])
 const fin = (p) => p?.lat != null && p?.lon != null && p.lat !== "" && Number.isFinite(+p.lat) && Number.isFinite(+p.lon)
 const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t : NaN }
 const R = 6_371_000
 const STACK_PX = 30
 
-export function rgba(hex, a) {
+function rgba(hex, a) {
     const h = String(hex).replace("#", "")
     const n = parseInt(h.length === 3 ? h.split("").map((x) => x + x).join("") : h, 16)
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Math.round(a * 100) / 100})`
