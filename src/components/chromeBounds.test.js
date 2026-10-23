@@ -27,7 +27,7 @@ describe("the bars are absolute limits", () => {
     const PANELS = [
         "components/InspectorPanel.jsx",
         "components/OverwatchSidebar.jsx",
-        "components/ChatPanel.jsx",
+        "components/AssistantPanel.jsx",
         "components/WorkspacesPanel.jsx",
     ]
 

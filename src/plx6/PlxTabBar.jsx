@@ -43,6 +43,9 @@ export default function PlxTabBar({
     onFiles = () => {},
     chatOpen = false,
     onChat = () => {},
+    // The assistant (src/assistant): asks, answers with sources, moves the map.
+    onAssistant = null,
+    assistantOpen = false,
     // NOT 4. This defaulted to a literal 4, so every screenshot and every
     // fresh account showed four unread messages that did not exist. An
     // unknown count shows nothing.
@@ -279,6 +282,22 @@ export default function PlxTabBar({
                     <PlxIcon href="#g-plus" size={14} />
                 </button>
             </nav>
+
+            {onAssistant && (
+                <button
+                    onClick={onAssistant} title="Assistant — ask about a place, set up what you watch"
+                    aria-label="Assistant" aria-pressed={assistantOpen} data-testid="assistant-button"
+                    style={{
+                        display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36,
+                        border: 0, background: assistantOpen ? ON : OFF, color: "var(--txt2)", cursor: "pointer", borderRadius: 0,
+                    }}
+                >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--acc-hi, #7aa7ff)" strokeWidth="1.4" aria-hidden>
+                        <path d="M8 1.8l1.5 3.9 3.9 1.5-3.9 1.5L8 12.6 6.5 8.7 2.6 7.2l3.9-1.5z" />
+                        <path d="M13 11.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" />
+                    </svg>
+                </button>
+            )}
 
             <button
                 onClick={onChat} title={chatCount ? `Messages · ${chatCount} unread` : "Messages"}

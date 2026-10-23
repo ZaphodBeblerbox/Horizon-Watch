@@ -75,14 +75,20 @@ CONTEXT = "context"
 # post that passes the prefilter, capped per hour and day in that module.
 LIVE_INCIDENT = "live_incident"
 
+# The one assistant of desktop, phone and voice (assistant.py, DATAMINR_PLAN
+# B5-B7): answers a user's own question from our data through tools, with
+# citations, and proposes set-up the user confirms. Called only when a user
+# asks something the rule path cannot answer; capped per user per day.
+ASSISTANT = "assistant"
+
 KNOWN_PURPOSES = frozenset({
-    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT,
+    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT,
     "constellation",      # filling gaps between entities in the graph
     "summarise",          # a one-line precis of a long wire report
     "translate",
 })
 
-_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT})
+_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT})
 
 DEFAULT_MODEL = "gpt-4o-mini"
 

@@ -490,6 +490,9 @@ app.include_router(_desk_router.router)
 # The spoken sentence the rule parser could not place — see routers/voice_ai.py.
 from routers import voice_ai as _voice_ai_router
 app.include_router(_voice_ai_router.router)
+# The one assistant of desktop, phone and voice — see assistant.py.
+from routers import assistant as _assistant_router
+app.include_router(_assistant_router.router)
 # A watch zone's automatic findings as boxes on the ground — routers/zone_findings.py.
 from routers import zone_findings as _zone_findings_router
 app.include_router(_zone_findings_router.router)
@@ -20610,47 +20613,17 @@ async def load_profile():
         return {"profile": None}
 
 
-# ── /chat — mission chat using Haiku (cost-optimised) ────────────────────────
+# ── /chat — retired ──────────────────────────────────────────────────────────
+# The mission chat (Claude Haiku, no access to our data, no citations) was
+# replaced by the assistant (assistant.py, POST /api/assistant/turn), which
+# answers from our data with citations and drives the map. Nothing calls
+# /chat any more; an old client is told where to go.
 
 @app.post("/chat")
-async def mission_chat(request: Request):
-    if not client:
-        return {"error": "ANTHROPIC_API_KEY not configured"}
-    body = await request.json()
-    messages      = body.get("messages", [])[-6:]   # enforce 6-message cap
-    mission_brief = body.get("mission_brief", "")
-    contextual    = body.get("contextual", False)
-
-    system = (
-        "You are Akili, a senior intelligence analyst. "
-        "Answer questions directly, concisely, and accurately. "
-        "If you don't know something, say so. Never fabricate intelligence.\n\n"
-    )
-    if mission_brief:
-        system += f"CURRENT MISSION:\n{mission_brief}\n\n"
-    if contextual:
-        pass
-
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=600,
-        system=system,
-        messages=messages,
-    )
-
-    input_tokens  = response.usage.input_tokens
-    output_tokens = response.usage.output_tokens
-    cost_usd      = (input_tokens * 0.0000008) + (output_tokens * 0.000004)
-    usage_tracker.record_call(input_tokens, output_tokens, call_type="chat", model="claude-haiku-4-5-20251001")
-
-    return {
-        "response": response.content[0].text,
-        "usage": {
-            "input_tokens":  input_tokens,
-            "output_tokens": output_tokens,
-            "cost_usd":      round(cost_usd, 5),
-        },
-    }
+async def mission_chat_retired():
+    return JSONResponse(status_code=410, content={
+        "error": "The mission chat was replaced by the assistant.",
+        "use": "/api/assistant/turn"})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
