@@ -7,16 +7,21 @@
  * fetch/register-in-entityStore/click-to-inspect pattern as every other
  * point layer in this file's family, not a bespoke one-off.
  */
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { useCoveredIds } from "./useStrikeSettings.js"
-import { getGeoConfirmedMarkerDataUri, GEOCONFIRMED_MARKER_SIZE, MARKER_MAX_CAMERA_M } from "./entityIcons.js"
+import { MARKER_MAX_CAMERA_M } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { markerIcon } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 
-const MARKER_SIZE = GEOCONFIRMED_MARKER_SIZE
+// The one typology (lib/mapIcons.js): confirmed by an analyst, so a square with the check, neutral; the faction
+// (GeoConfirmed's own colour) is in the card only, never on the point.
+const ICON = () => markerIcon({ kind: "confirmed", glyph: "check", priority: "alert" })
 
 export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 30, theatres = null, endDate = null }) {
     // placemarks a strike pin stands for are drawn as that pin (strikes.js)
@@ -65,36 +70,30 @@ export default function GlobeGeoConfirmedLayer({ enabled = false, maxAgeDays = 3
         return () => ids.forEach(deleteEntity)
     }, [placemarks])
 
-    if (!enabled || !placemarks.length) return null
-
-    // Real, per-placemark faction color (GeoConfirmed's own real bulk API
-    // field — see entityIcons.js's getGeoConfirmedMarkerDataUri doc comment).
-    // Cached per distinct (color, invert) pair, not per placemark, so this
-    // stays cheap even across thousands of pins.
-    const iconFor = (p) => getGeoConfirmedMarkerDataUri({
-        color: p.faction_color, invertColor: !!p.faction_invert_color, size: MARKER_SIZE,
-    })
-
+    const marks = useMemo(() => placemarks
+        // Number.isFinite, not bare isFinite (isFinite(null) is true)
+        .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && !covered.has(`geoconfirmed-${p.id}`))
+        .map((p) => ({ id: `geoconfirmed-${p.id}`, lat: p.lat, lon: p.lon, size: ICON().w, pri: "alert",
+                       title: p.title || p.name || "Geolocated event", line: [p.faction, p.date_label].filter(Boolean).join(" · "), p })),
+    [placemarks, covered])
+    const layout = useDeclutter("geoConfirmed", marks, enabled)
+    useClusterRecords(layout)
+    if (!enabled || !layout.length) return null
+    const ic = ICON()
     return (
         <>
-            {placemarks.map((p) => {
-                // Number.isFinite, not bare isFinite (isFinite(null) is
-                // true) — defense in depth for the same real crash class
-                // fixed in GlobeConnectorLinesLayer.jsx. GeoConfirmedPlacemark
-                // rows are DB-constrained non-null today, so this is
-                // currently unreachable, but the cheap fix keeps this layer
-                // safe against that assumption ever changing.
-                if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return null
-                if (covered.has(`geoconfirmed-${p.id}`)) return null
+            {layout.map((g) => {
+                if (g.cluster) return <ClusterMark key={g.id} g={g} />
+                const p = g.item.p
                 return (
                     <Entity
                         id={`geoconfirmed-${p.id}`}
                         key={p.id}
                         position={Cartesian3.fromDegrees(p.lon, p.lat, 0)}
                         billboard={{
-                            image: iconFor(p),
-                            width: MARKER_SIZE,
-                            height: MARKER_SIZE,
+                            image: ic.uri,
+                            width: ic.w,
+                            height: ic.h,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, MARKER_MAX_CAMERA_M),
                             eyeOffset: new Cartesian3(0, 0, -50),

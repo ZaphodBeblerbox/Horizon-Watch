@@ -1,45 +1,31 @@
 /**
  * GlobeImagerySignalsLayer.jsx — imagery signals on the map.
  *
- * A satellite pass that counted (imagery_signals.py: a new smoke plume,
- * tankers massing at an oil terminal, a vessel leaving a naval base, a
- * structure gone) is an alert with source SAT-TASK. The map's alert layer
- * draws surges and fusions only, so these reached the Inbox and the
- * notifications but never the map. Here they are pins — a square with a
- * cross-hair, coloured by severity — and opening one loads the image with
- * its detections (ImagerySignalSection).
+ * A satellite pass that counted (imagery_signals.py: a new smoke plume, tankers massing at an oil terminal, a
+ * vessel leaving a naval base, a structure gone) is an alert with source SAT-TASK. Here they are marks in the one
+ * typology (lib/mapIcons.js imageryIcon): a square (observed by a sensor) with the target glyph, the severity as
+ * priority for you, one constant size; opening one loads the image with its detections (ImagerySignalSection).
  *
- * Passes come every few days, not every minute, so a signal stays for seven
- * days, dimming with age, instead of the event layers' 24 hours.
+ * Passes come every few days, so a signal stays for seven days, dimming with age (liveness.recencyAlpha, the one
+ * age fade of every layer). It joins the shared collision pass (screenDeclutter.js).
  */
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, DistanceDisplayCondition, HeightReference } from "cesium"
-import { makeArrivalTracker, arrivalScale, ARRIVAL_MS } from "./liveness.js"
+import { recencyAlpha } from "./liveness.js"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { imageryIcon, ICON_PX } from "../lib/mapIcons.js"
+import { imageryIcon, priorityOf, ICON_PX } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 
 const SIZE = ICON_PX
 const DAYS = 7
-// the shared icon style (lib/mapIcons.js): the same module as the phone map
-const icon = (sev) => imageryIcon(sev)
-
-/** Full weight for an hour, then dimming on a log scale to a floor at 7 days. */
-export function fade(tsMs, nowMs) {
-    if (!Number.isFinite(tsMs)) return 1
-    const min = Math.max(0, (nowMs - tsMs) / 60000)
-    if (min <= 60) return 1
-    const end = DAYS * 24 * 60
-    if (min >= end) return 0.35
-    return Math.max(0.35, 1 - (Math.log(min / 60) / Math.log(end / 60)) * 0.65)
-}
+const tsOf = (a) => Date.parse(String(a.created_at).replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(a.created_at) ? "" : "Z"))
 
 export default function GlobeImagerySignalsLayer({ enabled = true }) {
     const [items, setItems] = useState([])
-    const arrivalsRef = useRef(null)
-    const [arrivedAt, setArrivedAt] = useState({})
     const [nowMs, setNowMs] = useState(() => Date.now())
     useEffect(() => {
         const h = setInterval(() => setNowMs(Date.now()), 30000)
@@ -55,21 +41,8 @@ export default function GlobeImagerySignalsLayer({ enabled = true }) {
             .then((d) => {
                 if (!live || !d) return
                 const cutoff = Date.now() - DAYS * 86400_000
-                const rows = safeArray(Array.isArray(d) ? d : d.alerts)
-                    .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon)
-                        && Date.parse(String(a.created_at).replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(a.created_at) ? "" : "Z")) >= cutoff)
-                setItems(rows)
-                if (!arrivalsRef.current) arrivalsRef.current = makeArrivalTracker()
-                const fresh = arrivalsRef.current.arrivals(rows.map((a) => a.alert_id))
-                if (fresh.length) {
-                    const t = Date.now()
-                    setArrivedAt((prev) => ({ ...prev, ...Object.fromEntries(fresh.map((id) => [id, t])) }))
-                    setTimeout(() => setArrivedAt((prev) => {
-                        const next = { ...prev }
-                        for (const id of fresh) delete next[id]
-                        return next
-                    }), ARRIVAL_MS + 500)
-                }
+                setItems(safeArray(Array.isArray(d) ? d : d.alerts)
+                    .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon) && tsOf(a) >= cutoff))
             })
             .catch(() => {})
         load()
@@ -80,20 +53,25 @@ export default function GlobeImagerySignalsLayer({ enabled = true }) {
         items.forEach((a) => setEntity(`imgsig-${a.alert_id}`, "alert", { ...a, id: a.alert_id, source: "SAT-TASK" }))
         return () => items.forEach((a) => deleteEntity(`imgsig-${a.alert_id}`))
     }, [items])
-    if (!enabled || !items.length) return null
+    const marks = useMemo(() => items.map((a) => ({
+        id: `imgsig-${a.alert_id}`, lat: a.lat, lon: a.lon, size: SIZE, pri: priorityOf(a.severity, "alert"),
+        title: a.title || a.alert_type || "Imagery signal", line: a.region || "", a,
+    })), [items])
+    const layout = useDeclutter("imagerySignals", marks, enabled)
+    useClusterRecords(layout)
+    if (!enabled || !layout.length) return null
     return (
         <>
-            {items.map((a) => {
-                const ts = Date.parse(String(a.created_at).replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(a.created_at) ? "" : "Z"))
-                const alpha = fade(ts, nowMs)
-                const size = Math.round(SIZE * arrivalScale(arrivedAt[a.alert_id], nowMs))
+            {layout.map((g) => {
+                if (g.cluster) return <ClusterMark key={g.id} g={g} />
+                const a = g.item.a
                 return (
                     <Entity key={a.alert_id} id={`imgsig-${a.alert_id}`} position={Cartesian3.fromDegrees(a.lon, a.lat, 0)}
-                        billboard={{ image: icon(a.severity), width: size, height: size, color: Color.WHITE.withAlpha(alpha),
+                        billboard={{ image: imageryIcon(a.severity), width: SIZE, height: SIZE, color: Color.WHITE.withAlpha(recencyAlpha(tsOf(a), nowMs)),
                                      heightReference: HeightReference.CLAMP_TO_GROUND,
                                      // Out of the way once you are looking at the place itself
                                      // (closer than 25 km); back as you zoom out.
-                                     distanceDisplayCondition: new DistanceDisplayCondition(25_000, 15_000_000),
+                                     distanceDisplayCondition: new DistanceDisplayCondition(25_000, 60_000_000),
                                      eyeOffset: new Cartesian3(0, 0, -80) }} />
                 )
             })}

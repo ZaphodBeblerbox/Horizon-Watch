@@ -17,17 +17,20 @@
  * Same fetch / register-in-entityStore / click-to-inspect pattern as every
  * other point layer here, not a bespoke one-off.
  */
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Entity } from "resium"
 import { Cartesian3, Color, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { GDELT_EVENT_TYPES } from "../components/layerRailConfig.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getShapeMarkerDataUri, MARK_SIZE, MARKER_MAX_CAMERA_M } from "./entityIcons.js"
+import { MARKER_MAX_CAMERA_M } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { recencyAlpha, makeArrivalTracker, arrivalScale, ARRIVAL_MS } from "./liveness.js"
+import { recencyAlpha } from "./liveness.js"
+import { markerIcon, ICON_PX } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 
-const MARKER_SIZE = MARK_SIZE.gdelt
+const MARKER_SIZE = ICON_PX
 // GDELT publishes a new export every 15 minutes and the backend loop
 // ingests on that cadence, so polling faster than the data changes is
 // waste and polling slower makes the map stale. Three minutes keeps a
@@ -35,18 +38,14 @@ const MARKER_SIZE = MARK_SIZE.gdelt
 const REFRESH_MS = 3 * 60 * 1000
 
 /**
- * Colour by how conflictual the coding is, not by event type.
+ * Priority by how conflictual the coding is, not by event type (lib/mapIcons.js ramp).
  *
- * Goldstein runs -10 (use of force) to +10 (cooperation). The reader cares
- * how bad it is, and the shape already says what kind of source it came
- * from, so colour is free to carry severity.
+ * Goldstein runs -10 (use of force) to +10 (cooperation): <= -8 flash, <= -5 urgent, else alert. The diamond
+ * already says "news coverage", so colour is free to carry what it means to you.
  */
-function colourFor(goldstein) {
+export function gdeltPriority(goldstein) {
     const g = typeof goldstein === "number" ? goldstein : 0
-    if (g <= -8) return "var(--sev-critical, #d4553f)"
-    if (g <= -5) return "var(--sev-high, #e8a33d)"
-    if (g < 0) return "var(--sev-medium, #c9a227)"
-    return "var(--txt-4, #6f8fa8)"
+    return g <= -8 ? "flash" : g <= -5 ? "urgent" : "alert"
 }
 
 /**
@@ -62,11 +61,6 @@ export { GDELT_EVENT_TYPES }
 
 export default function GlobeGdeltLayer({ enabled = false, limit = 500, types = null }) {
     const [points, setPoints] = useState([])
-    // What arrived while the analyst was watching. A mark already on
-    // screen when the page opened is history and must not announce
-    // itself; only a genuine arrival earns motion.
-    const arrivalsRef = useRef(null)
-    const [arrivedAt, setArrivedAt] = useState({})
     // One clock for every mark, so ages advance while the page is simply
     // being read rather than only when new data lands.
     const [nowMs, setNowMs] = useState(() => Date.now())
@@ -85,22 +79,6 @@ export default function GlobeGdeltLayer({ enabled = false, limit = 500, types = 
                     if (cancelled) return
                     const pts = safeArray(d?.points)
                     setPoints(pts)
-                    if (!arrivalsRef.current) arrivalsRef.current = makeArrivalTracker()
-                    const fresh = arrivalsRef.current.arrivals(pts.map((p) => String(p.id)))
-                    if (fresh.length) {
-                        const t = Date.now()
-                        setArrivedAt((prev) => {
-                            const next = { ...prev }
-                            for (const id of fresh) next[id] = t
-                            return next
-                        })
-                        // Settle by itself, so nothing stays emphasised.
-                        setTimeout(() => setArrivedAt((prev) => {
-                            const next = { ...prev }
-                            for (const id of fresh) delete next[id]
-                            return next
-                        }), ARRIVAL_MS + 500)
-                    }
                 })
                 .catch(() => { /* a dropped poll is not an empty world */ })
         }
@@ -153,26 +131,30 @@ export default function GlobeGdeltLayer({ enabled = false, limit = 500, types = 
     // `types` null means no filter at all, which is different from an
     // empty set — an empty set is a reader who has deselected everything
     // and should see nothing, not everything.
-    const shown = types
+    // memoised by the types' contents: a fresh array from the parent must not re-run the collision pass
+    const typesKey = types ? types.join("|") : null
+    const marks = useMemo(() => (typesKey !== null
         ? points.filter((p) => {
             const list = p.event_types?.length ? p.event_types : [p.event_type]
-            return list.some((t) => types.includes(t))
+            const want = typesKey.split("|")
+            return list.some((t) => want.includes(t))
         })
-        : points
-
-    if (!enabled || !shown.length) return null
+        : points).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon)).map((p) => ({
+        id: `gdelt-${p.id}`, lat: p.lat, lon: p.lon, size: MARKER_SIZE, pri: gdeltPriority(p.goldstein),
+        title: p.title || "Wire report", line: p.location_name || "", p,
+    })), [points, typesKey])
+    const layout = useDeclutter("gdelt", marks, enabled)
+    useClusterRecords(layout)
+    if (!enabled || !layout.length) return null
 
     return (
         <>
-            {shown.map((p) => {
-                if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return null
-                // AGE IS THE SIGNAL. A report from four minutes ago and
-                // one from yesterday looked identical, which is what made
-                // the map read as an archive.
-                const age = Date.parse(`${p.date}T00:00:00Z`)
-                const alpha = recencyAlpha(age, nowMs)
-                const grow = arrivalScale(arrivedAt[String(p.id)], nowMs)
-                const size = Math.round(MARKER_SIZE * grow)
+            {layout.map((g) => {
+                if (g.cluster) return <ClusterMark key={g.id} g={g} />
+                const p = g.item.p
+                // AGE IS THE SIGNAL, through the one age fade (liveness.recencyAlpha)
+                const alpha = recencyAlpha(Date.parse(`${p.date}T00:00:00Z`), nowMs)
+                const ic = markerIcon({ kind: "news", glyph: "news", priority: g.item.pri })
                 return (
                     <Entity
                         id={`gdelt-${p.id}`}
@@ -189,15 +171,10 @@ export default function GlobeGdeltLayer({ enabled = false, limit = 500, types = 
                             + `</div>`
                         }
                         billboard={{
-                            // Diamond: reporting. Square is reserved for
-                            // human-verified ground truth.
-                            image: getShapeMarkerDataUri({
-                                shape: "diamond",
-                                color: colourFor(p.goldstein),
-                                size: MARKER_SIZE,
-                            }),
-                            width: size,
-                            height: size,
+                            // Diamond: news coverage (lib/mapIcons.js)
+                            image: ic.uri,
+                            width: ic.w,
+                            height: ic.h,
                             color: Color.WHITE.withAlpha(alpha),
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, MARKER_MAX_CAMERA_M),

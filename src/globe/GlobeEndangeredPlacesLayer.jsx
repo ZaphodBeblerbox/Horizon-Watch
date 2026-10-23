@@ -23,12 +23,15 @@
  */
 import { memo, useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
-import { Cartesian3, DistanceDisplayCondition, HeightReference, NearFarScalar } from "cesium"
+import { Cartesian3, HeightReference } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { placeIconUri, rememberWithin7, filterByCountry, placesUrl } from "./endangeredPlaces.js"
 import { useEndangeredCountries, useEndangeredActive } from "../components/EndangeredCountryChips.jsx"
+import { ICON_PX, priorityOf } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 
 const REFRESH_MS = 5 * 60_000
 
@@ -56,8 +59,14 @@ export default function GlobeEndangeredPlacesLayer({ enabled = false }) {
         places.forEach((p) => setEntity(`endangered-${p.id}`, "endangered_place", p))
         return () => places.forEach((p) => deleteEntity(`endangered-${p.id}`))
     }, [places])
-    if (!enabled || !places.length) return null
-    return <>{places.map((p) => <PlaceEntity key={p.id} p={p} far={activeOnly} />)}</>
+    const marks = useMemo(() => places.map((p) => ({
+        id: `endangered-${p.id}`, lat: p.lat, lon: p.lon, size: ICON_PX, pri: priorityOf(p.alarm, "info"),
+        title: p.name || "Endangered place", line: p.city || "", p,
+    })), [places])
+    const layout = useDeclutter("endangered", marks, enabled)
+    useClusterRecords(layout)
+    if (!enabled || !layout.length) return null
+    return <>{layout.map((g) => (g.cluster ? <ClusterMark key={g.id} g={g} /> : <PlaceEntity key={g.item.p.id} p={g.item.p} />))}</>
 }
 
 /**
@@ -65,21 +74,18 @@ export default function GlobeEndangeredPlacesLayer({ enabled = false }) {
  * active only because a call is near keeps its grey disc; its card says
  * which call and how far). Memoised, its position computed once.
  */
-const PlaceEntity = memo(function PlaceEntity({ p, far = false }) {
+const PlaceEntity = memo(function PlaceEntity({ p }) {
     const hasCall = Array.isArray(p.calls) && p.calls.length > 0 && p.alarm !== "grey"
-    const size = hasCall ? (p.alarm === "red" ? 24 : 21) : 14
+    const size = ICON_PX                     // one constant size (lib/mapIcons.js); the alarm is the colour
     const pos = useMemo(() => Cartesian3.fromDegrees(p.lon, p.lat, 0), [p.lon, p.lat])
     return (
         <Entity id={`endangered-${p.id}`} name={p.name}
             position={pos}
             billboard={{
-                image: placeIconUri({ kind: p.kind, alarm: p.alarm, hasCall, size }),
+                image: placeIconUri({ kind: p.kind, alarm: p.alarm, hasCall }),
                 width: size, height: size,
                 heightReference: HeightReference.CLAMP_TO_GROUND,
-                // calls (and, with "Active only", places near one) from
-                // continent scale; listed-only places from region scale
-                distanceDisplayCondition: new DistanceDisplayCondition(0, hasCall || (far && p.active) ? 9_000_000 : 1_800_000),
-                
+                // every place at every height: the shared collision pass folds the crowded ones into one badge
                 eyeOffset: new Cartesian3(0, 0, hasCall ? -60 : -20),
             }} />
     )
