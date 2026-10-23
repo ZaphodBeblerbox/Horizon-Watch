@@ -146,6 +146,19 @@ export default function VoiceBar({ active: activeProp = true, floating = false }
         // A rule that reads the sentence unambiguously goes first: a watch
         // area around a named place is resolved by the server either way,
         // and asking the model first only adds a round trip.
+        /* NOT CONFIDENT: THE ASSISTANT (DATAMINR_PLAN B7). The same backend
+           as the typed assistant: map commands are free there, a question
+           is answered with its sources (the panel opens with it). The old
+           /api/voice/interpret below stays the fallback. */
+        if (useModelRef.current && !result.confident) {
+            const { askByVoice } = await import("../assistant/assistantStore.js")
+            const a = await askByVoice(text)
+            if (a.handled) {
+                setState("idle")
+                if (a.label) remember({ label: a.label, fn: null, logIndex })
+                return
+            }
+        }
         const ruleFirst = result.confident && RULE_FIRST.has(result.intent)
         const guess = useModelRef.current && !ruleFirst ? await interpretWithModel(text, ctx) : null
         if (guess) {

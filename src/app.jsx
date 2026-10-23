@@ -169,7 +169,7 @@ import Deck from "./reports/Deck.jsx"
 import MobileApp from "./mobile/MobileApp.jsx"
 import AlertStrip, { isFlagged } from "./components/AlertStrip.jsx"
 import WorkspacesPanel from "./components/WorkspacesPanel.jsx"
-import ChatPanel from "./components/ChatPanel.jsx"
+import AssistantPanel from "./components/AssistantPanel.jsx"
 import TVWidget from "./components/tvwidget.jsx"
 import { loadProfile, saveProfileToStorage } from "./components/MissionProfilePanel.jsx"
 import SurfaceDetailPanel from "./components/SurfaceDetailPanel.jsx"
@@ -951,6 +951,36 @@ export default function App() {
     // ── Right panel slot — mutually exclusive ─────────────────────────────────
     // null | "layers" | "detail" | "profile" | "settings" | "health" | "workspaces" | "situations" | "chat" | "alerts"
     const [rightPanel, setRightPanel] = useState(null)
+    // The assistant (DATAMINR_PLAN B7): null, or the mode it opened in —
+    // "chat", "onboarding" (first login, "set me up"), "theater" (New theater).
+    const [assistant, setAssistant] = useState(null)
+    useEffect(() => {
+        const open = (e) => setAssistant(e?.detail?.mode || "chat")
+        window.addEventListener("plx:assistant", open)
+        return () => window.removeEventListener("plx:assistant", open)
+    }, [])
+    // FIRST LOGIN WITH NOTHING SET UP: the assistant asks where you are, what
+    // you protect, what you follow (once per account on this device).
+    useEffect(() => {
+        let done = false
+        const check = async () => {
+            const u = getCurrentUser()
+            if (!u || done || isMobile) return
+            done = true
+            const key = `plx-assistant-setup:${u.id || u.email}`
+            try { if (localStorage.getItem(key)) return } catch { return }
+            try {
+                const { assistantStatus } = await import("./assistant/assistantApi.js")
+                const st = await assistantStatus()
+                if (st?.onboarding?.empty_profile) {
+                    try { localStorage.setItem(key, "1") } catch { /* private mode */ }
+                    setAssistant("onboarding")
+                }
+            } catch { /* offline: the forms and Settings remain */ }
+        }
+        check()
+        return subscribeAuth(check)
+    }, [isMobile])
 
     // Generate/Briefings/print-layout wiring — Generate's completed run (or
     // its "printable briefing" button) opens the Briefings tab pre-loaded
@@ -2247,6 +2277,9 @@ export default function App() {
             {/* Voice everywhere: the map has its own bar; every other page
                 gets this one, so "search for Dubai" works from Home too. */}
             {!isMobile && !presenting && activeTabType !== "situation" && <VoiceBar active floating />}
+            {!isMobile && !presenting && assistant && (
+                <AssistantPanel mode={assistant} onClose={() => setAssistant(null)} />
+            )}
             <NotificationStack
                 onOpen={openNotificationItem}
                 onAcknowledge={(n) => markNotificationRead(n.id)}
@@ -2387,6 +2420,8 @@ export default function App() {
                            there was no chat to open, and the wrong one now
                            that there is. */
                         onChat={() => openTab("chat")}
+                        onAssistant={() => setAssistant((a) => (a ? null : "chat"))}
+                        assistantOpen={!!assistant}
                         chatOpen={activeTabType === "chat"}
                         chatCount={badgeText(unreadMessages)}
                         themeMode={plxThemeMode}
@@ -2478,6 +2513,7 @@ export default function App() {
                 const MENUS = {
                     file: [
                         ["New theater…", () => setEditingTheater("new"), "⇧⌘T"],
+                        ["New theater with the assistant…", () => setAssistant("theater")],
                         ["New document", () => openTab("editor")],
                         ["Open file…", () => openOverlay("overlay:palette"), "⌘O"],
                         ["Save", say("Saved"), "⌘S"],
@@ -2953,14 +2989,6 @@ export default function App() {
                     </div>
                 )}
 
-                {rightPanel === "chat" && (
-                    <div style={panelStyle}>
-                        <ChatPanel
-                            activeSituation={activeSituation}
-                            onClose={() => setRightPanel(null)}
-                        />
-                    </div>
-                )}
 
             </div>
 

@@ -28,6 +28,8 @@ import useConnection, { connectionLine } from "../lib/useConnection.js"
 import PlxWordmark from "../plx6/PlxWordmark.jsx"
 import GeneralFeed from "../general/GeneralFeed.jsx"
 import MAdmin from "./screens/MAdmin.jsx"
+import MAssistant from "./screens/MAssistant.jsx"
+import { assistantStatus } from "../assistant/assistantApi.js"
 import { getCurrentUser, subscribeAuth } from "../state/authStore.js"
 import LocationPrompt from "../components/LocationPrompt.jsx"
 import LivePlayerHost, { watchLive } from "../telegram/LivePlayer.jsx"
@@ -46,10 +48,11 @@ import { dropStaleDemos } from "../globe/freshness.js"
 import { useInboxUnread, badgeText } from "../notify/inbox.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
-const MORE = [["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
+const MORE = [["assistant", "Assistant", "g-orb"], ["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
               ["reports", "Reports", "g-report"], ["general", "General", "g-feed"], ["profile", "Profile", "g-user"], ["settings", "Settings", "g-gear"]]
 const TITLES = { home: null, map: "Map", desk: "Desk", messages: "Messages", assets: "Assets", alerts: "Alerts", conflicts: "Conflicts", mood: "Mood on Telegram",
-                 reports: "Situation reports", general: "General", profile: "Profile", admin: "Admin", settings: "Settings" }
+                 reports: "Situation reports", general: "General", profile: "Profile", admin: "Admin", settings: "Settings",
+                 assistant: "Assistant" }
 
 export default function MobileApp() {
     const [tab, setTab] = useState("home")
@@ -157,6 +160,37 @@ export default function MobileApp() {
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
     const [me, setMe] = useState(() => getCurrentUser())
     useEffect(() => subscribeAuth(setMe), [])
+    /* THE ASSISTANT (src/assistant): its own screen; what it flies to is shown
+       on the map, with a chip back to the conversation. */
+    const [assistantMode, setAssistantMode] = useState(null)
+    const [backToAssistant, setBackToAssistant] = useState(false)
+    useEffect(() => {
+        const fly = (e) => {
+            const d = e.detail || {}
+            if (!Number.isFinite(+d.lat)) return
+            setMenu(false)
+            setFocus({ lat: +d.lat, lon: +d.lon, _zoom: Number.isFinite(+d.zoom) ? +d.zoom : undefined, _t: Date.now() })
+            setTab("map"); setBackToAssistant(true)
+        }
+        const open = (e) => { setAssistantMode(e?.detail?.mode || "chat"); go("assistant") }
+        const toMap = () => { setMenu(false); setTab("map"); setBackToAssistant(true) }
+        window.addEventListener("m2:assistant-fly", fly)
+        window.addEventListener("m2:assistant-map", toMap)
+        window.addEventListener("plx:assistant", open)
+        return () => { window.removeEventListener("m2:assistant-fly", fly); window.removeEventListener("m2:assistant-map", toMap); window.removeEventListener("plx:assistant", open) }
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { if (tab !== "map" && tab !== "assistant") setBackToAssistant(false) }, [tab])
+    // FIRST LOGIN WITH NOTHING SET UP: the set-up conversation, once per account on this phone
+    useEffect(() => {
+        if (!me) return
+        const key = `plx-assistant-setup:${me.id || me.email}`
+        try { if (localStorage.getItem(key)) return } catch { return }
+        assistantStatus().then((st) => {
+            if (!st?.onboarding?.empty_profile) return
+            try { localStorage.setItem(key, "1") } catch { /* private mode */ }
+            setAssistantMode("onboarding"); setTab("assistant")
+        }).catch(() => {})
+    }, [me?.id]) // eslint-disable-line react-hooks/exhaustive-deps
     const more = me?.is_super_admin ? [...MORE, ["admin", "Admin", "g-gear"]] : MORE
     const inMore = more.some(([k]) => k === tab)
     // THE CHROME GETS OUT OF THE WAY: reading down a screen slides the header
@@ -218,6 +252,10 @@ export default function MobileApp() {
             {tab !== "map" && <header className="m2-top">
                 {TITLES[tab] ? <span className="m2-title">{TITLES[tab]}</span>
                     : <span className="m2-brand" style={{ flex: 1, display: "flex" }} aria-label="Parallax"><span style={{ width: 124, height: 19, display: "block" }}><PlxWordmark /></span></span>}
+                {tab !== "assistant" && <button className="m2-iconbtn" aria-label="Assistant" data-testid="m2-assistant" onClick={() => go("assistant")}>
+                    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#7aa7ff" strokeWidth="1.3" aria-hidden>
+                        <path d="M8 1.8l1.5 3.9 3.9 1.5-3.9 1.5L8 12.6 6.5 8.7 2.6 7.2l3.9-1.5z" /><path d="M13 11.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" />
+                    </svg></button>}
                 {tab !== "settings" && <button className="m2-iconbtn" aria-label="Settings" onClick={() => go("settings")}><Icon id="g-gear" /></button>}
                 <button className="m2-iconbtn" aria-label="Alerts" onClick={() => go("alerts")}>
                     <Icon id="g-bell" />{arr(notes).length > 0 && <span className="m2-badge">{Math.min(99, arr(notes).length)}</span>}
@@ -239,7 +277,19 @@ export default function MobileApp() {
                 {tab === "admin" && me?.is_super_admin && <Pane on><MAdmin /></Pane>}
                 {tab === "profile" && <Pane on><MProfile /></Pane>}
                 {tab === "settings" && <Pane on><MSettings /></Pane>}
+                {tab === "assistant" && <Pane on><MAssistant mode={assistantMode} /></Pane>}
             </main>
+            {tab === "map" && backToAssistant && (
+                <button data-testid="m2-back-assistant" onClick={() => go("assistant")} style={{
+                    position: "fixed", left: "50%", transform: "translateX(-50%)", zIndex: 30, pointerEvents: "auto",
+                    bottom: "calc(env(safe-area-inset-bottom, 0px) + 84px)", height: 36, padding: "0 14px", borderRadius: 18,
+                    display: "flex", alignItems: "center", gap: 8, background: "var(--glass)", border: "1px solid var(--gline2)",
+                    backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", color: "var(--txt)", font: "500 13px var(--font)",
+                }}>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#7aa7ff" strokeWidth="1.5" aria-hidden><path d="M10 3L5 8l5 5" /></svg>
+                    Back to the assistant
+                </button>
+            )}
             <nav className="m2-nav">
                 <span className="m2-nav-mark" aria-hidden style={{ transform: `translateX(${markAt * 100}%)` }} />
                 {NAV.map(([k, label, icon]) => (

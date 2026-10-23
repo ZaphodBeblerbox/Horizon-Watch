@@ -7,9 +7,12 @@ import Home from "./Home.jsx"
 import Assets from "./Assets.jsx"
 import Settings from "./Settings.jsx"
 import Analytics from "./Analytics.jsx"
+import AssistantPanel from "../components/AssistantPanel.jsx"
+import MAssistant from "../mobile/screens/MAssistant.jsx"
 
 describe("main screens render", () => {
-    for (const [name, C] of [["Home", Home], ["Assets", Assets], ["Settings", Settings], ["Analytics", Analytics]]) {
+    for (const [name, C] of [["Home", Home], ["Assets", Assets], ["Settings", Settings], ["Analytics", Analytics],
+                               ["AssistantPanel", AssistantPanel], ["MAssistant", MAssistant]]) {
         it(name, () => { expect(() => renderToStaticMarkup(<C />)).not.toThrow() })
     }
 })

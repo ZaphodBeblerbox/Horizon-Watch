@@ -656,7 +656,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             map.current.setView(c, z, { animate: true })
         } else {
             // the point above the card that opens with it
-            const z = Math.max(map.current.getZoom(), 9)
+            const z = Number.isFinite(focus._zoom) ? focus._zoom : Math.max(map.current.getZoom(), 9)   // _zoom: the assistant's fly (a country is not a street)
             prog.current = true
             map.current.setView(map.current.unproject(map.current.project([+focus.lat, +focus.lon], z).add([0, 70]), z), z, { animate: true })
         }
