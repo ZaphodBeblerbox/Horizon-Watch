@@ -1453,8 +1453,9 @@ def get_conflict_zones(
 
 
 @app.get("/api/usage")
-def get_usage():
-    """Return Claude API token usage and budget stats."""
+def get_usage(request: Request):
+    """Return Claude API token usage and budget stats (signed-in only: spend is not public)."""
+    _require_current_user(request)
     return usage_tracker.get_stats(CLAUDE_BUDGET_USD)
 
 
@@ -31503,14 +31504,17 @@ def api_auth_me(request: Request, response: Response):
     return user
 
 @app.get("/api/teams")
-def api_teams_list():
+def api_teams_list(request: Request):
+    # signed-in only: the list names customers (auth audit 2026-10-23); the app reads it through the bearer fetch
+    _require_current_user(request)
     from database import Team, get_db as _gdb_teams
     with _gdb_teams() as db:
         rows = db.query(Team).all()
         return [_team_to_dict(t) for t in rows]
 
 @app.get("/api/teams/{team_id}/members")
-def api_team_members(team_id: str):
+def api_team_members(team_id: str, request: Request):
+    _require_current_user(request)
     from database import User, get_db as _gdb_teams
     with _gdb_teams() as db:
         rows = db.query(User).filter(User.team_id == team_id).order_by(User.name).all()
