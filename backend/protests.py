@@ -202,7 +202,7 @@ def from_signal(s: dict, frame: str, now: _dt.datetime) -> dict | None:
                  place=s.get("place"), country_code=cc, tz=getattr(z, "key", None), first_seen=iso(first), last_update=iso(last),
                  corroboration=s.get("corroboration"), sources=s.get("sources") or [], messages=_messages(s.get("messages") or [], z),
                  media=s.get("media"), all_media=s.get("all_media") or [], lines=[ln["text"] for ln in s.get("lines") or []],
-                 live=frame == "live", muted=bool(s.get("muted")),
+                 live=frame == "live", muted=bool(s.get("muted")), refs=list(s.get("refs") or []),
                  track={"bearing": (s.get("direction") or {}).get("bearing"), "toward": (s.get("direction") or {}).get("toward_place")}
                  if s.get("direction") else None)
 
@@ -390,6 +390,8 @@ def _merge_into(keep: dict, other: dict) -> None:
         keep["media"], keep["all_media"] = other["media"], other.get("all_media") or [other["media"]]
     if other.get("from") and not keep.get("from"):
         keep["from"] = other["from"]
+    if other.get("refs"):
+        keep["refs"] = list(dict.fromkeys((keep.get("refs") or []) + other["refs"]))
     for k, f in (("first_seen", min), ("last_update", max)):
         vals = [v for v in (keep.get(k), other.get(k)) if v]
         keep[k] = f(vals) if vals else None
@@ -564,6 +566,14 @@ def compute(now: _dt.datetime | None = None) -> dict:
     for k, v in errors.items():
         print(f"[protests] error: {k}: {v}", flush=True)
     out = build(signals_day=sigs, street_day=street, protests=prot, announcements=ann, now=now)
+    # an item that belongs to a stored event carries its id, status and evolving brief (events.py); the layer's
+    # own accuracy rules above are untouched: this only adds fields
+    try:
+        import events
+        events.annotate([i for f in ("live", "today") for i in out.get(f) or []], lambda i: i.get("refs"))
+    except Exception as e:                                     # noqa: BLE001
+        errors["events"] = f"{type(e).__name__}: {e}"
+        print(f"[protests] error: events: {errors['events']}", flush=True)
     out["generated_at"] = iso(now)
     out["errors"] = errors
     return out
