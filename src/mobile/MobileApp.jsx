@@ -282,7 +282,7 @@ export default function MobileApp() {
             {tab === "map" && backToAssistant && (
                 <button data-testid="m2-back-assistant" onClick={() => go("assistant")} style={{
                     position: "fixed", left: "50%", transform: "translateX(-50%)", zIndex: 30, pointerEvents: "auto",
-                    bottom: "calc(env(safe-area-inset-bottom, 0px) + 84px)", height: 36, padding: "0 14px", borderRadius: 18,
+                    top: "calc(env(safe-area-inset-top, 0px) + 72px)", height: 36, padding: "0 14px", borderRadius: 18,
                     display: "flex", alignItems: "center", gap: 8, background: "var(--glass)", border: "1px solid var(--gline2)",
                     backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", color: "var(--txt)", font: "500 13px var(--font)",
                 }}>

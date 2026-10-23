@@ -111,7 +111,7 @@ export default function AssistantThread({ platform = "desktop", title = "Assista
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#7aa7ff" strokeWidth="1.4" aria-hidden>
                     <path d="M8 1.8l1.5 3.9 3.9 1.5-3.9 1.5L8 12.6 6.5 8.7 2.6 7.2l3.9-1.5z" /><path d="M13 11.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" />
                 </svg>
-                <h2>{s.mode === "theater" ? "New theater" : s.mode === "onboarding" ? "Set up" : title}</h2>
+                <h2>{s.mode === "theater" ? "New theater" : s.mode === "onboarding" ? "Set up" : title}</h2>{/* phone: the page title already says Assistant */}
                 {s.mode !== "onboarding" && <button className="plx-as-iconbtn" title="Set me up" onClick={() => startAssistant("onboarding")}>
                     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="2.2" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" /></svg>
                 </button>}
