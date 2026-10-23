@@ -2,6 +2,7 @@ import { useState } from "react"
 import FlyoutMenu from "../ui/FlyoutMenu.jsx"
 import { buttonStyle } from "../ui/styleHelpers.js"
 import { LAYER_GROUPS, isLayerOn, countActive, clampOpacity } from "./layerRailConfig.js"
+import MapLegend from "./MapLegend.jsx"
 
 /**
  * LayersFlyout — the ONE layers-control pattern in the app now (UI
@@ -118,28 +119,14 @@ function GroupSection({ group, active, expanded, onToggleExpand, onToggle, onLay
     )
 }
 
-// Real legend — kept accurate to what's actually rendered on the globe
-// (src/globe/entityIcons.js) rather than decorative filler.
+// The legend: the one definition both maps share (lib/mapIcons.js via MapLegend), so it is what the globe draws.
 function Legend() {
-    const row = (swatch, label) => (
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "3px 0" }}>
-            {swatch}
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>{label}</span>
-        </div>
-    )
     return (
-        <div style={{ padding: "var(--space-3) var(--space-2)" }}>
+        <div style={{ padding: "var(--space-3) var(--space-2)", color: "var(--text-secondary)" }}>
             <div style={{ fontSize: 10, textTransform: "uppercase", color: "var(--text-muted)", letterSpacing: "0.08em", marginBottom: "var(--space-2)" }}>
                 Legend
             </div>
-            {/* Real fix — the documented SVG-theming trap: a bare
-                stroke="var(--x)" presentation attribute doesn't reliably
-                resolve CSS custom properties in every rendering path. */}
-            {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" style={{ stroke: "var(--accent-blue)" }} strokeWidth="2" /></svg>, "Track (AIS/ADS-B)")}
-            {row(<svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" style={{ stroke: "var(--accent-cyan)" }} strokeWidth="2" strokeDasharray="4 3" /></svg>, "AOI boundary")}
-            {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--danger)", display: "inline-block" }} />, "Sanctions — confirmed")}
-            {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--warn)", display: "inline-block" }} />, "Sanctions — possible")}
-            {row(<span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--accent-cyan)", display: "inline-block" }} />, "Selected entity")}
+            <MapLegend />
         </div>
     )
 }
