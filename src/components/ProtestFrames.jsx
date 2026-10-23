@@ -23,8 +23,10 @@ export function noteOf(meta, frame) {
     if (!meta || meta.frame !== frame) return "Loading…"
     if (meta.note) return meta.note
     const n = meta.counts?.[frame] ?? meta.items ?? 0
-    const word = { live: "live now", today: "today", upcoming: "upcoming" }[frame]
-    return `${n} ${n === 1 ? "protest" : "protests"} ${word} in your areas`
+    // the count is protests, police action and arrests together: "protests" alone would misname it
+    if (frame === "live") return `${n} ${n === 1 ? "development" : "developments"} live now in your areas`
+    if (frame === "today") return `${n} ${n === 1 ? "event" : "events"} today in your areas`
+    return `${n} ${n === 1 ? "protest" : "protests"} announced in your areas`
 }
 
 export default function ProtestFrames({ variant = "desktop", compact = false }) {
@@ -37,8 +39,8 @@ export default function ProtestFrames({ variant = "desktop", compact = false }) 
         return (
             <button key={f.key} type="button" aria-pressed={frame === f.key} data-frame={f.key}
                     onClick={(e) => { e.stopPropagation(); setFrame(f.key) }}
-                    style={phone ? undefined : { font: "500 11px var(--font)", padding: "3px 8px", flex: 1 }}>
-                {f.label}{n != null ? ` ${n}` : ""}
+                    style={phone ? { whiteSpace: "nowrap" } : { font: "500 11px var(--font)", padding: "3px 6px", flex: "1 1 auto", minWidth: 0, whiteSpace: "nowrap" }}>
+                {f.label}{n != null ? <span style={{ opacity: 0.6, marginLeft: 4 }}>{n}</span> : null}
             </button>
         )
     })
