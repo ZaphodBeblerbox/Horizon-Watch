@@ -1262,9 +1262,13 @@ def upcoming(days_ahead: int = 30) -> list[dict]:
     per what, place and day however many channels carried it. Served from
     telegram_events (every place a post names); the one-per-post reading
     below is the fallback if that module fails."""
+    # A REAL FUTURE TIME AND A NAMED PLACE (upcoming_gate.py, 2026-10-23): a
+    # bare day that is today, a past time or the post's own clock is not
+    # upcoming; "Place, Bordeaux" (the word 'place') or a country is not a place.
+    import upcoming_gate
     try:
         import telegram_events
-        return _protest_status(telegram_events.announcements(days_ahead))
+        return _protest_status(upcoming_gate.keep(telegram_events.announcements(days_ahead)))
     except Exception as e:                                      # noqa: BLE001
         print(f"[telegram] events unavailable, one-per-post fallback: {type(e).__name__}: {e}", flush=True)
     today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
@@ -1277,6 +1281,9 @@ def upcoming(days_ahead: int = 30) -> list[dict]:
     horizon = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=days_ahead)).strftime("%Y-%m-%d")
     for r in rows:
         if r["announce_at"][:10] > horizon or not is_announcement(r["announce_what"], r["announce_at"], r["posted_at"]):
+            continue
+        if not upcoming_gate.listed({"starts_at": r["announce_at"], "posted_at": r["posted_at"], "place": r["announce_place"],
+                                     "lat": r["announce_lat"], "lon": r["announce_lon"], "country_code": r["announce_country"]})[0]:
             continue
         key = ((r["announce_what"] or "").lower(), round(r["announce_lat"], 2), round(r["announce_lon"], 2), r["announce_at"][:10])
         label = r["channel_title"] or r["channel"]

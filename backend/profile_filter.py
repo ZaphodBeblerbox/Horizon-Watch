@@ -53,6 +53,44 @@ def bare(items: list, user, response=None, key: Callable | None = None, sc: uc.S
     return kept
 
 
+def filled(user, fetch: Callable, limit: int, response=None, key: Callable | None = None,
+           max_pages: int = 5, wide: int = 500) -> list:
+    """A bare list read with a SQL `limit`, filtered and still `limit` long.
+
+    /api/alerts and /api/signals cut the newest `limit` rows in SQL and
+    filtered after, so a Paris-only profile got 3 of 100. `fetch(offset,
+    size)` -> rows (newest first), or (rows, rows_read) when the reader drops
+    some rows itself; a filtered read takes `wide` rows a page and keeps
+    reading (bounded) until `limit` are kept or the rows end.
+    limit <= 0 means "every row": one read, filtered."""
+    def read(off, size):
+        got = fetch(off, size)
+        if isinstance(got, tuple):
+            return list(got[0] or []), got[1]
+        got = list(got or [])
+        return got, len(got)
+
+    sc = scope(user)
+    if not limit or limit <= 0:
+        return bare(read(0, 0)[0], user, response, key, sc=sc)
+    if not sc.active:
+        return bare(read(0, limit)[0], user, response, key, sc=sc)
+    size = max(limit, wide)
+    kept, hidden, off = [], 0, 0
+    for _ in range(max_pages):
+        rows, n = read(off, size)
+        k, h = sc.filter(rows, key)
+        kept += k
+        hidden += h
+        off += n
+        if len(kept) >= limit or n < size:
+            break
+    if response is not None:
+        response.headers["X-Profile-Filtered"] = "1"
+        response.headers["X-Profile-Hidden"] = str(hidden)
+    return kept[:limit]
+
+
 def paged(user, fetch: Callable, before, limit: int, list_key: str, max_pages: int = 6, wide: int = 100) -> dict:
     """A paged feed, filtered. A page the filter empties would stop the
     reader, so more pages are read (bounded) until `limit` kept or the end.
@@ -94,6 +132,50 @@ def street(snap: dict, user) -> dict:
 def situation(answer: dict, user) -> dict:
     """demo_situation's per-city answer: a city is kept by where its crowds are."""
     return lists(answer, user, "cities")
+
+
+# ── what changed (insight_changes) ──────────────────────────────────────────
+
+def _country_row(sc: uc.Scope, row: dict) -> bool:
+    """A per-country row: the country named in words, or one of its located
+    examples, concerns the user."""
+    if sc.concerns({"region": row.get("country")})[0]:
+        return True
+    return any(sc.concerns(e)[0] for e in (row.get("examples") or []) if e.get("lat") is not None)
+
+
+def insight_changes(answer: dict, user) -> dict:
+    """'What changed' (Home and Insight): escalating / calmer countries, newly
+    lit-up cells and changes of control, kept by the user's profile; the
+    headline sentences are rebuilt from what is kept (a Paris-only Home read
+    "Ukraine front moved ..."). The shared answer is copied, never touched."""
+    sc = scope(user)
+    if not sc.active or not isinstance(answer, dict):
+        return {**answer, "profile": sc.block(0)} if isinstance(answer, dict) else answer
+    out = dict(answer)
+    hidden = 0
+    for k in ("escalating", "calmer"):
+        rows = list(out.get(k) or [])
+        kept = [r for r in rows if _country_row(sc, r)]
+        hidden += len(rows) - len(kept)
+        out[k] = kept
+    for k in ("lit_up", "frontlines"):
+        if isinstance(out.get(k), list):
+            out[k], n = sc.filter(out[k])
+            hidden += n
+    try:
+        import insight_changes as ic
+        out["headline"] = ic.headline(out, ic.RANGES.get(out.get("range"), 168))
+    except Exception as e:                                       # noqa: BLE001
+        print(f"[profile-filter] error: what-changed headline: {type(e).__name__}: {e}", flush=True)
+        out["headline"] = []
+    out["profile"] = sc.block(hidden)
+    return out
+
+
+def statements(answer: dict, user) -> dict:
+    """Official statements near a place (/api/telegram/statements)."""
+    return lists(answer, user, "statements")
 
 
 # ── notifications ───────────────────────────────────────────────────────────

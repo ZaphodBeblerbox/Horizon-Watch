@@ -22,7 +22,7 @@ SIGNALS = [
 
 def _statement(**kw):
     base = {
-        "place": "Yemen", "actor": "Houthi forces",
+        "place": "Yemen", "actor": "Houthi forces", "act": "intensify operations",
         "statement": "Houthi forces may intensify operations around Taiz",
         "because": "Over 70 deaths in 24 hours",
         "criterion": "A wire service reports territorial change in Taiz governorate",
@@ -135,6 +135,77 @@ def test_a_certainty_is_dropped_too():
         out = outlook.validate([_statement(statement=certain)], SIGNALS)
         assert out["outlook"] == [], certain
         assert out["hollow_dropped"] == 1, certain
+
+
+# ── what dropped every statement in production (2026-10-23) ─────────────
+
+GC = [{"headline": "An explosion, with smoke observed, was detected by the UAV “Pryvid” of the 2nd battalion… — Kup'yans'k",
+       "location": "Kup'yans'k, Kharkiv Oblast, Ukraine", "source": "geoconfirmed", "severity_tier": "elevated", "lat": 49.7, "lon": 37.6},
+      {"headline": "Damage to an “Epicentr” shopping center following a reported Russian ballistic missile attack — Kyiv",
+       "location": "Kyiv, Kyiv city, Ukraine", "source": "geoconfirmed", "severity_tier": "elevated", "lat": 50.45, "lon": 30.5}]
+
+
+def _gc(**kw):
+    base = {"place": "Kup'yans'k", "actor": "Russian forces", "act": "assault",
+            "statement": "Russian forces may attempt to enter Kup'yans'k from the north"}
+    return _statement(**{**base, **kw})
+
+
+def test_a_citation_by_id_is_checked_against_the_list():
+    """The model cites ids ([S1]); the code checks the id exists."""
+    out = outlook.validate([_gc(citations=["S1"])], GC)
+    assert len(out["outlook"]) == 1 and out["outlook"][0]["citations"][0]["source"] == "geoconfirmed"
+    out = outlook.validate([_gc(citations=["S9"])], GC)
+    assert out["outlook"] == [] and out["fabricated_citations"] == 1 and out["uncited_dropped"] == 1
+
+
+def test_a_headline_retyped_with_plain_quotes_and_dots_is_the_same_headline():
+    """Production: every GeoConfirmed citation was called a fabrication because the model
+    re-typed the ellipsis as '...' and the curly quotes as straight ones."""
+    retyped = 'An explosion, with smoke observed, was detected by the UAV "Pryvid" of the 2nd battalion... - Kup\'yans\'k'
+    assert len(outlook.validate([_gc(citations=[retyped])], GC)["outlook"]) == 1
+    # the whole signal line copied back is still that signal
+    assert len(outlook.validate([_gc(citations=["[S1] ELEVATED | " + retyped + " | Kup'yans'k"])], GC)["outlook"]) == 1
+
+
+def test_actor_place_and_act_are_required():
+    for missing in ({"actor": None}, {"actor": "unknown"}, {"place": ""}, {"act": ""}):
+        out = outlook.validate([_gc(citations=["S1"], **missing)], GC)
+        assert out["outlook"] == [] and out["incomplete_dropped"] == 1, missing
+
+
+def test_the_place_must_be_one_its_signals_name():
+    out = outlook.validate([_gc(citations=["S1"], place="Odesa", statement="Russian forces may strike the port of Odesa")], GC)
+    assert out["outlook"] == [] and out["ungrounded_dropped"] == 1
+
+
+def test_a_statement_settled_today_or_undated_is_dropped():
+    today = datetime.date.today().isoformat()
+    for d in (today, None, "soon"):
+        out = outlook.validate([_gc(citations=["S1"], resolves_by=d)], GC)
+        assert out["outlook"] == [] and out["undated_dropped"] == 1, d
+
+
+def test_gdelt_is_not_read_and_the_model_is_told_the_date(monkeypatch):
+    """The outlook read the pool's first 45 items, all GDELT; and without today's
+    date the model dated every statement by its signals' day (yesterday)."""
+    import json as _json
+    import types
+    import openai_gate
+    seen = {}
+
+    def create(**kw):
+        seen["user"] = kw["messages"][1]["content"]
+        msg = types.SimpleNamespace(content=_json.dumps({"outlook": [_gc(citations=["S1"])]}))
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)], usage=None)
+    client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+    monkeypatch.setattr(openai_gate, "get_client", lambda *a, **k: client)
+    monkeypatch.setattr(openai_gate, "model_for", lambda *a, **k: "m")
+    news = [{"headline": f"News {i}", "source": "gdelt", "severity_tier": "critical"} for i in range(50)]
+    out = outlook.build_outlook(news + GC)
+    assert out["count"] == 2 and len(out["outlook"]) == 1
+    assert "News 1" not in seen["user"] and "[S1]" in seen["user"]
+    assert f"TODAY IS {datetime.date.today().isoformat()}" in seen["user"]
 
 
 def test_a_specific_act_survives_the_word_further():

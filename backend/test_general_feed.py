@@ -109,6 +109,34 @@ def test_cursor_keeps_rows_stamped_in_the_same_second(tmp_path):
     assert len([s for s in seen if s.startswith("gc:b")]) == 12 and len(set(seen)) == len(seen)
 
 
+def test_geoconfirmed_is_dated_by_its_event_not_by_our_sync(tmp_path):
+    """2026-10-23: GeoConfirmed items weeks old read 'just now' — they carried the
+    sync's ingested_at. An event stored after its day is dated by its day, marked
+    day-precision; one stored on its own day keeps the time we learned of it."""
+    p = _db(tmp_path)
+    c = sqlite3.connect(p)
+    c.executemany("INSERT INTO geoconfirmed_placemarks (id, title, description, date, latitude, longitude, original_source, theatre_slug, ingested_at)"
+                  " VALUES (?,?,?,?,?,?,?,?,?)", [
+        ("old", "", "Strike weeks ago", "2026-09-20 00:00:00.000000", 48, 37, "", "ukraine", "2026-10-22 17:30:08.545362"),
+        ("today", "", "Strike today", "2026-10-22 00:00:00.000000", 48, 37, "", "ukraine", "2026-10-22 09:15:00.000000"),
+    ] + [(f"m{n}", "", f"Mid {n}", f"2026-10-{n + 1:02d} 00:00:00.000000", 48, 37, "", "ukraine", "2026-10-22 17:30:08.5") for n in range(9)])
+    c.commit(); c.close()
+    seen, before = [], None
+    for _ in range(10):
+        d = g.feed(p, before=before, limit=5, kinds=("geoconfirmed",))
+        seen += d["items"]
+        before = d["next"]
+        if not before:
+            break
+    by = {i["id"]: i for i in seen}
+    assert by["gc:old"]["at"] == "2026-09-20T23:59:59" and by["gc:old"]["at_precision"] == "day"
+    assert by["gc:old"]["published_at"].startswith("2026-10-22T17:30")
+    assert by["gc:today"]["at"].startswith("2026-10-22T09:15") and by["gc:today"]["at_precision"] == "time"
+    ids = [i["id"] for i in seen]
+    assert ids[0] == "gc:today" and ids[-1] == "gc:old"           # chronology by the event
+    assert len(ids) == len(set(ids)) == 12                        # paged without repeats or gaps (+ g1)
+
+
 def test_own_source_rule():
     assert g.is_own_source("geoconfirmed") and g.is_own_source("FIRMS") and g.is_own_source("AIS")
     assert not g.is_own_source("gdelt") and not g.is_own_source("rss:reuters") and not g.is_own_source("News API")

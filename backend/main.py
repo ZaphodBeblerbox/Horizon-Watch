@@ -895,10 +895,12 @@ _SURFACE_POOL_LAST_NONEMPTY: float = 0.0   # time.time() of last pool with items
 _SURFACE_BUILD_LOCK = threading.Lock()
 
 # ── Prefetch + enrichment caches ──────────────────────────────────────────────
-_PREFETCH_CACHE: dict  = {}   # event_id → {infra_nodes: [...], fetched_at: ts, ttl: 7200}
+# Bounded (2026-10-23): keyed per event, written for every surfaced event and
+# never evicted, so they grew for the life of the process.
+_PREFETCH_CACHE: dict  = CappedDict(maxsize=2_000)   # event_id → {infra_nodes: [...], fetched_at: ts, ttl: 7200}
 _PREFETCH_LOCK         = threading.Lock()
 _PREFETCH_INFLIGHT: dict[str, threading.Event] = {}
-_ENRICHMENT_CACHE: dict = {}  # event_id → {enrichment: {...}, prose: str, fetched_at: ts, ttl: 21600}
+_ENRICHMENT_CACHE: dict = CappedDict(maxsize=3_000)  # event_id → {enrichment: {...}, prose: str, fetched_at: ts, ttl: 21600}
 _ENRICHMENT_LOCK       = threading.Lock()
 _AUTO_ENRICH_DAILY_LIMIT = 5
 _AUTO_ENRICH_DAILY_SPEND_CAP = 0.18   # USD
@@ -5356,15 +5358,19 @@ async def api_frontline_changes(days: int = 30):
 
 
 @app.get("/api/warmap/{theatre}/changes")
-async def api_warmap_changes(theatre: str, days: int = 30):
+async def api_warmap_changes(request: Request, theatre: str, days: int = 30):
     """Towns that changed hands in one war, from the map's own history.
 
     A wiki keeps revisions, and a control map's revisions are a record of
     ground changing hands — with the editor's own note and citation.
+    The list is the shared cached answer, filtered per user (a copy).
     """
     import wiki_warmaps as _wm
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _wm.changes, theatre, days)
+    user = await _profile_user(request)
+    data = await loop.run_in_executor(_executor, _wm.changes, theatre, days)
+    return _pf.lists(data, user, "changes") if isinstance(data, dict) else data
 
 
 @app.get("/api/warmap/{theatre}/timeline")
@@ -5757,7 +5763,7 @@ def purge_dark_ships(current_user=None):
 
 
 # ── City & spaceflight news caches ───────────────────────────────────────────
-_CITY_NEWS_CACHE: dict = {}       # cache_key → {articles, fetched_at}
+_CITY_NEWS_CACHE: dict = CappedDict(maxsize=500)       # cache_key (a city name from the request) → {articles, fetched_at}
 
 # ── City news locality helpers ─────────────────────────────────────────────────
 
@@ -6376,7 +6382,7 @@ async def get_news_shorts(current_user=None):
     }
 
 
-_WIKI_IMAGE_CACHE: dict = {}
+_WIKI_IMAGE_CACHE: dict = CappedDict(maxsize=2_000)   # keyed by the request's query
 
 @app.get("/api/image/wiki")
 async def get_wiki_image(q: str = Query(..., min_length=1, max_length=200)):
@@ -12588,13 +12594,17 @@ async def api_telegram_upcoming(request: Request, days: int = Query(30, ge=1, le
 
 
 @app.get("/api/telegram/statements")
-async def api_telegram_statements(lat: float, lon: float, hours: int = Query(72, ge=1, le=720),
+async def api_telegram_statements(request: Request, lat: float, lon: float, hours: int = Query(72, ge=1, le=720),
                                   km: float = 75, country: str | None = None):
     """What the parties say about a place: official statements located
-    within `km`, or naming the country."""
+    within `km`, or naming the country. Only those that concern the asking
+    user (user_concern.py), after the shared read."""
     import telegram_ingest as _tg
+    import profile_filter as _pf
     loop = asyncio.get_event_loop()
-    return {"statements": await loop.run_in_executor(_executor, lambda: _tg.statements_near(lat, lon, hours, km, country))}
+    user = await _profile_user(request)
+    got = await loop.run_in_executor(_executor, lambda: _tg.statements_near(lat, lon, hours, km, country))
+    return _pf.statements({"statements": got}, user)
 
 
 @app.get("/api/telegram/video/{chan}/{msg_id}")
@@ -12620,18 +12630,22 @@ _INSIGHT_CHANGES_CACHE: dict = {}
 
 
 @app.get("/api/insight/changes")
-async def api_insight_changes(range: str = "7d"):
+async def api_insight_changes(request: Request, range: str = "7d"):
     """What changed: this window against the one before it, per country and
-    kind of evidence, adjusted for what we were collecting (insight_changes.py)."""
+    kind of evidence, adjusted for what we were collecting (insight_changes.py).
+    Built once for everybody; each user gets a filtered copy (profile_filter)."""
     import insight_changes as _ic
+    import profile_filter as _pf
     if range not in _ic.RANGES:
         raise HTTPException(400, "range is 24h, 7d or 30d")
+    user = await _profile_user(request)
     hit = _INSIGHT_CHANGES_CACHE.get(range)
     if hit and time.time() - hit[0] < 300:
-        return hit[1]
-    out = await asyncio.get_event_loop().run_in_executor(_executor, _ic.changes, range)
-    _INSIGHT_CHANGES_CACHE[range] = (time.time(), out)
-    return out
+        out = hit[1]
+    else:
+        out = await asyncio.get_event_loop().run_in_executor(_executor, _ic.changes, range)
+        _INSIGHT_CHANGES_CACHE[range] = (time.time(), out)
+    return _pf.insight_changes(out, user)
 
 
 def _require_super_admin(request: Request) -> dict:
@@ -21739,7 +21753,7 @@ async def api_infrastructure_chokepoints():
     return {"chokepoints": enriched}
 
 
-_OG_CACHE: dict[str, str | None] = {}
+_OG_CACHE: dict[str, str | None] = CappedDict(maxsize=5_000)   # keyed by the requested url
 
 @app.get("/api/og")
 async def get_og_image(url: str = Query(...)):
@@ -29544,22 +29558,31 @@ def api_get_alerts(
         if severity:
             q = q.filter(_AlertModel.severity == severity)
         q = q.order_by(_AlertModel.created_at.desc())
-        rows = (q.limit(limit) if limit and limit > 0 else q).all()
-        # A smoke plume today's rules withdraw is no longer an imagery
-        # signal on the map (imagery_verdict; the alert row is untouched).
-        try:
-            import imagery_verdict as _iv
-            _gone = _iv.withdrawn_alerts(_db, rows)
-            rows = [r for r in rows if r.alert_id not in _gone]
-        except Exception as _ive:                                # noqa: BLE001
-            print(f"[alerts] error: imagery verdicts unavailable, all shown: {type(_ive).__name__}: {_ive}", flush=True)
+
+        def _read(off, n):
+            rows = (q.offset(off).limit(n) if n and n > 0 else q).all()
+            read = len(rows)
+            # A smoke plume today's rules withdraw is no longer an imagery
+            # signal on the map (imagery_verdict; the alert row is untouched).
+            try:
+                import imagery_verdict as _iv
+                _gone = _iv.withdrawn_alerts(_db, rows)
+                rows = [r for r in rows if r.alert_id not in _gone]
+            except Exception as _ive:                            # noqa: BLE001
+                print(f"[alerts] error: imagery verdicts unavailable, all shown: {type(_ive).__name__}: {_ive}", flush=True)
+            return rows, read
+
         # ONLY WHAT CONCERNS THE ASKING USER (user_concern.py), on the rows
-        # already read: no per-user query, no rebuild.
+        # read: no per-user rebuild. The SQL limit is applied AFTER the
+        # filter (wider pages read until `limit` are kept), else a narrow
+        # profile got a handful of the newest 100.
         if request is not None:
             import profile_filter as _pf
-            rows = _pf.bare(rows, _get_current_user(request), response,
-                            key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code,
-                                           "severity": r.severity, "title": r.title, "alert_type": r.alert_type})
+            rows = _pf.filled(_get_current_user(request), _read, limit, response,
+                              key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code,
+                                             "severity": r.severity, "title": r.title, "alert_type": r.alert_type})
+        else:
+            rows = _read(0, limit)[0]
         return [
             {
                 "alert_id":    r.alert_id, "source": r.source, "alert_type": r.alert_type,
@@ -29777,16 +29800,23 @@ def api_get_notifications(
     """The notification feed for whoever is asking — see _notification_feed."""
     _u = _get_current_user(request)
     _uid = str(_u.get("id")) if _u and _u.get("id") else None
-    items = _notification_feed(_uid, limit=limit, hours=hours, include_silent=include_silent)
     # THE SAME PROFILE AS THE MAPS AND LISTS (user_concern.py): a card about
     # a place outside what this user watches is not theirs. Cards made for
     # them (their assets, their events, messages, warnings, the desk) are
-    # personal and stay.
+    # personal and stay. A filtered feed is read wider and cut to `limit`
+    # after the filter, or a narrow profile got a few of the 40.
+    import profile_filter as _pf
     try:
-        import profile_filter as _pf
-        items = _pf.notifications(items, _u)
+        _active = _pf.scope(_u).active
+    except Exception:                                       # noqa: BLE001
+        _active = False
+    items = _notification_feed(_uid, limit=min(400, max(limit, limit * 4)) if _active else limit,
+                               hours=hours, include_silent=include_silent)
+    try:
+        items = _pf.notifications(items, _u)[:limit]
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] profile filter: {type(ex).__name__}: {ex}", flush=True)
+        items = items[:limit]
     # WHAT A NOTIFICATION IS, decided once (event_watch.notifies): `push`
     # marks what reaches a closed app — the phone's push and the desktop
     # app's macOS notification alike — so the two devices cannot disagree.
@@ -30327,12 +30357,16 @@ def api_get_signals(
             q = q.filter(_SignalModel.domain == domain)
         if region:
             q = q.filter(_SignalModel.region == region)
-        rows = q.order_by(_SignalModel.created_at.desc()).limit(limit).all()
+        q = q.order_by(_SignalModel.created_at.desc())
         if request is not None:
+            # the limit after the profile filter, not before it (see /api/alerts)
             import profile_filter as _pf
-            rows = _pf.bare(rows, _get_current_user(request), response,
-                            key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code, "title": r.title,
-                                           "type": r.signal_type})
+            rows = _pf.filled(_get_current_user(request), lambda off, n: q.offset(off).limit(n).all(),
+                              limit, response,
+                              key=lambda r: {"lat": r.lat, "lon": r.lon, "country_code": r.country_code, "title": r.title,
+                                             "type": r.signal_type})
+        else:
+            rows = q.limit(limit).all()
         return [
             {
                 "signal_id":   r.signal_id, "domain": r.domain, "signal_type": r.signal_type,

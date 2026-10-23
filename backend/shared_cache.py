@@ -26,10 +26,15 @@ from typing import Any, Callable, Hashable
 
 
 class SharedCache:
-    def __init__(self, name: str, ttl: float, max_stale: float, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, name: str, ttl: float, max_stale: float, clock: Callable[[], float] = time.monotonic,
+                 max_entries: int = 16):
         if max_stale < ttl:
             raise ValueError("max_stale must be at least ttl")
         self.name, self.ttl, self.max_stale, self._clock = name, ttl, max_stale, clock
+        # BOUNDED (2026-10-23): a key can carry a request's parameter
+        # (/api/telegram/posts?hours=1..720, pins or not: 1,440 keys, each a
+        # whole list of posts). Past max_entries the oldest entries go.
+        self.max_entries = max_entries
         self._entries: dict = {}            # key -> (built_at, value)
         self._lock = threading.Lock()       # guards the dicts below
         self._building: dict = {}           # key -> threading.Event, set when that build ends
@@ -47,6 +52,17 @@ class SharedCache:
             for k, (t, v) in list(self._entries.items()):
                 self._entries[k] = (min(t, stale_at), v)
 
+    def _prune(self, now: float) -> None:
+        """Caller holds the lock. Only past the cap, oldest first: a too-old
+        entry is still the fallback when its own rebuild fails."""
+        if len(self._entries) > self.max_entries:
+            for k, _ in sorted(self._entries.items(), key=lambda kv: kv[1][0])[:len(self._entries) - self.max_entries]:
+                del self._entries[k]
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
     def peek(self, key: Hashable):
         with self._lock:
             hit = self._entries.get(key)
@@ -56,8 +72,10 @@ class SharedCache:
         try:
             value = build()
             with self._lock:
-                self._entries[key] = (self._clock(), value)
+                now = self._clock()
+                self._entries[key] = (now, value)
                 self.builds += 1
+                self._prune(now)
             return value
         finally:
             with self._lock:

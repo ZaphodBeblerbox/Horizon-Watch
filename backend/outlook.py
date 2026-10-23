@@ -64,19 +64,34 @@ _TAUTOLOGY = re.compile(
 
 MAX_SIGNALS = 45
 MAX_STATEMENTS = 6
-MAX_TOKENS = 900
+MAX_TOKENS = 1400
+
+# WHY EVERY STATEMENT WAS DROPPED (production, 2026-10-23: 2 statements, 4
+# citations "not in the input", 2 uncited, nothing shown). The model was asked
+# to quote headlines EXACTLY, and the headlines it was given are GeoConfirmed's
+# ("… — Kup'yans'k", "“Atmosphere”"): a model re-types an ellipsis as "...",
+# curly quotes as straight ones, and an exact-string match then calls an honest
+# citation a fabrication. Each signal now carries an id ([S7]); the model cites
+# ids and the code checks each id exists (model extracts, code verifies). A
+# quoted headline is still accepted when it matches after normalising quotes,
+# dashes, ellipses and spacing.
+# And the pool it read was mostly GDELT, which is not a signal on Home (owner,
+# 2026-10-13); select_signals keeps our own sources only, as /api/surface does.
 
 SYSTEM = (
     "You write the day's outlook for an intelligence console, from the "
-    "signals it currently holds.\n"
+    "signals it currently holds. Each signal line starts with its id, e.g. [S7].\n"
     "Reply with JSON only:\n"
-    '{"outlook": [{"place": <country or region>, "actor": <who may act, or '
-    'null if genuinely no actor is identifiable>, "statement": <one sentence: '
-    'what may happen>, "because": <one sentence: why, from the signals>, '
+    '{"outlook": [{"place": <the named place: a town, site, region or country '
+    'the cited signals name>, "actor": <the named force, group or state that '
+    'may act>, "act": <the physical act, e.g. "strike", "seize", "close", '
+    '"withdraw">, "statement": <one plain English sentence naming the actor, '
+    'the act and the place, e.g. "RSF may attempt to retake Babanusa">, '
+    '"because": <one sentence: why, from the signals>, '
     '"resolves_by": <ISO date within the next 14 days>, "criterion": <how '
     'anybody would later decide this happened or did not: a specific, '
     'observable, checkable event>, "probability": <integer 5-95>, '
-    '"citations": [<headlines, quoted EXACTLY as given>], "watch_for": '
+    '"citations": [<ids of the signals it rests on, e.g. "S7">], "watch_for": '
     '[<1-3 specific, observable indicators that this is coming true: a named '
     'force moving, a named place hit, a named route closing>]}]}\n\n'
     "RULES.\n"
@@ -98,11 +113,13 @@ SYSTEM = (
     "those.\n"
     "- NEVER EXPAND OR INTERPRET AN ACRONYM you cannot resolve from the "
     "signals themselves. If a headline says 'RSF' about road safety, it is "
-    "not Sudan's Rapid Support Forces. Where an abbreviation is ambiguous, "
-    "leave the actor null and describe it as the signal does.\n"
-    "- Every statement MUST cite at least one headline from the list, "
-    "quoted exactly. Never invent, never merge two headlines into one "
-    "quotation, never paraphrase a quotation.\n"
+    "not Sudan's Rapid Support Forces. Never name an actor the signals do "
+    "not name; where the actor is ambiguous, write nothing about it.\n"
+    "- Every statement MUST cite at least one signal by its id ([S7] is cited "
+    "as \"S7\"). Cite only ids from the list; never invent one.\n"
+    "- Every statement names an ACTOR, a PLACE and an ACT. If no actor is "
+    "identifiable from the signals, write nothing about it.\n"
+    "- The place must be one the cited signals name.\n"
     "- Say only what the signals support. No outside knowledge, no figures "
     "that are not in them.\n"
     "- EVERY STATEMENT NEEDS A RESOLUTION CRITERION — a specific observable "
@@ -122,10 +139,78 @@ SYSTEM = (
 )
 
 
+def _is_gdelt(s: dict) -> bool:
+    return str(s.get("source") or "").lower() == "gdelt" or str(s.get("id") or "").startswith("gdelt_")
+
+
+def select_signals(pool: list[dict], limit: int = MAX_SIGNALS) -> list[dict]:
+    """What the outlook may read: our own signals (no GDELT: news is not a
+    signal on Home), one per headline, in the pool's order, at most `limit`."""
+    out, seen = [], set()
+    for s in pool or []:
+        if not isinstance(s, dict) or _is_gdelt(s):
+            continue
+        k = norm_text(s.get("headline"))
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(s)
+        if len(out) >= limit:
+            break
+    return out
+
+
+_QUOTES = str.maketrans({"‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'", "`": "'",
+                         "“": '"', "”": '"', "„": '"', "«": '"', "»": '"',
+                         "–": "-", "—": "-", "−": "-", " ": " "})
+
+
+def norm_text(s) -> str:
+    """A headline as compared: quotes, dashes, ellipses and spacing normalised, case folded."""
+    t = str(s or "").translate(_QUOTES).replace("…", "...")
+    t = re.sub(r"\.{3,}", "...", t)
+    return re.sub(r"\s+", " ", t).strip(" .\"'").casefold()
+
+
+_SEV_PREFIX = re.compile(r"^\s*\[?s?\d+\]?\s*[|:-]?\s*|^\s*(critical|significant|high|elevated|moderate|low|routine)\s*\|\s*", re.I)
+
+
+def _resolve_cite(c, by_id: dict, by_norm: dict) -> dict | None:
+    """One citation -> the signal it names, or None. An id ("S7", "[S7]") or a
+    headline quoted as given (normalised), also when the model copied the
+    whole line ("[S7] HIGH | headline | place | ...")."""
+    raw = str(c or "").strip()
+    m = re.fullmatch(r"\[?\s*[sS]\s*(\d+)\s*\]?", raw)
+    if m:
+        return by_id.get(int(m.group(1)))
+    m = re.match(r"\[\s*[sS]\s*(\d+)\s*\]", raw)
+    if m and by_id.get(int(m.group(1))):
+        return by_id[int(m.group(1))]
+    for cand in (raw, _SEV_PREFIX.sub("", raw), _SEV_PREFIX.sub("", raw).split(" | ")[0]):
+        hit = by_norm.get(norm_text(cand))
+        if hit:
+            return hit
+    return None
+
+
+_STOP = {"the", "of", "and", "in", "on", "at", "city", "region", "oblast", "province", "district", "area", "near", "north",
+         "south", "east", "west", "northern", "southern", "eastern", "western", "central", "a", "an", "de", "la", "le"}
+
+
+def _place_grounded(place: str, cites: list[dict]) -> bool:
+    """The statement's place is one its cited signals name: a word of it
+    appears in a cited headline or location."""
+    words = [w for w in re.findall(r"[^\W\d_]{3,}", norm_text(place)) if w not in _STOP]
+    if not words:
+        return False
+    hay = " ".join(norm_text(f"{c.get('headline') or ''} {c.get('location') or ''}") for c in cites)
+    return any(w in hay for w in words)
+
+
 def _signal_lines(signals: list[dict]) -> list[str]:
     out = []
-    for s in signals[:MAX_SIGNALS]:
-        out.append(" | ".join(str(x) for x in (
+    for i, s in enumerate(signals[:MAX_SIGNALS], 1):
+        out.append(f"[S{i}] " + " | ".join(str(x) for x in (
             str(s.get("severity_tier") or "routine").upper(),
             s.get("headline") or "",
             s.get("location") or "",
@@ -139,6 +224,7 @@ def build_outlook(signals: list[dict], base_rates: list[dict] | None = None) -> 
     """The day's outlook, or an honest empty one."""
     import openai_gate
 
+    signals = select_signals(signals)
     if not signals:
         return {"ok": True, "outlook": [], "count": 0,
                 "note": "The console is holding nothing today. There is no "
@@ -168,13 +254,20 @@ def build_outlook(signals: list[dict], base_rates: list[dict] | None = None) -> 
                        "answer and not to be restated:\n" + "\n".join(bits))
 
     model = openai_gate.model_for(openai_gate.OUTLOOK)
+    # THE DATE, SAID. Without it the model dated every statement by its
+    # signals' day (resolves_by = yesterday) and the code, rightly, dropped
+    # them all as already past (reproduced on the production pool, 2026-10-23).
+    import datetime as _dt
+    today = _dt.date.today()
+    dated = (f"TODAY IS {today.isoformat()}. resolves_by must be between "
+             f"{(today + _dt.timedelta(days=1)).isoformat()} and {(today + _dt.timedelta(days=14)).isoformat()}.\n\n")
     try:
         resp = client.chat.completions.create(
             model=model, max_tokens=MAX_TOKENS, temperature=0.2,
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": SYSTEM},
                       {"role": "user", "content":
-                       f"SIGNALS THE CONSOLE HOLDS ({len(lines)}):\n"
+                       dated + f"SIGNALS THE CONSOLE HOLDS ({len(lines)}):\n"
                        + "\n".join(lines) + context}],
         )
     except Exception as e:
@@ -197,7 +290,13 @@ def build_outlook(signals: list[dict], base_rates: list[dict] | None = None) -> 
         return {"ok": False, "outlook": [], "count": len(signals),
                 "why": "The model did not answer in the agreed format."}
 
-    return {"ok": True, "count": len(signals), **validate(d.get("outlook") or [], signals)}
+    res = validate(d.get("outlook") or [], signals)
+    print(f"[outlook] built from {len(signals)} signals: {len(res['outlook'])} kept of {len(d.get('outlook') or [])} "
+          f"(unknown citations {res['fabricated_citations']}, uncited {res['uncited_dropped']}, "
+          f"no criterion {res['uncheckable_dropped']}, hollow {res['hollow_dropped']}, "
+          f"no actor/place/act {res['incomplete_dropped']}, place not in its signals {res['ungrounded_dropped']}, "
+          f"no date {res['undated_dropped']})", flush=True)
+    return {"ok": True, "count": len(signals), **res}
 
 
 def validate(raw: list, signals: list[dict]) -> dict:
@@ -207,8 +306,13 @@ def validate(raw: list, signals: list[dict]) -> dict:
     the whole point of this replacing the base-rate block is that each line
     can be followed back to the thing it came from.
     """
-    by_head = {(s.get("headline") or "").strip().lower(): s for s in signals}
+    sigs = signals[:MAX_SIGNALS]
+    by_id = {i: s for i, s in enumerate(sigs, 1)}
+    by_norm = {}
+    for s in sigs:
+        by_norm.setdefault(norm_text(s.get("headline")), s)
     kept, dropped, uncited, uncheckable, hollow = [], 0, 0, 0, 0
+    incomplete = ungrounded = undated = 0
     for o in raw:
         if not isinstance(o, dict):
             dropped += 1
@@ -217,22 +321,37 @@ def validate(raw: list, signals: list[dict]) -> dict:
         if not statement:
             dropped += 1
             continue
-        cites = []
+        cites, seen = [], set()
         for c in (o.get("citations") or []):
-            s = by_head.get(str(c).strip().lower())
-            if s:
-                cites.append({
-                    "headline": s.get("headline"), "source": s.get("source"),
-                    "location": s.get("location"), "lat": s.get("lat"),
-                    "lon": s.get("lon"), "url": s.get("url"),
-                    "severity": s.get("severity_tier"),
-                })
-            else:
+            s = _resolve_cite(c, by_id, by_norm)
+            if s is None:
                 dropped += 1
+                continue
+            if id(s) in seen:
+                continue
+            seen.add(id(s))
+            cites.append({
+                "headline": s.get("headline"), "source": s.get("source"),
+                "location": s.get("location"), "lat": s.get("lat"),
+                "lon": s.get("lon"), "url": s.get("url"),
+                "severity": s.get("severity_tier"),
+            })
         if not cites:
             # The line that makes this feature worth having. Without a
             # citation it is indistinguishable from the thing it replaced.
             uncited += 1
+            continue
+        # ACTOR + PLACE + ACT (owner's rule for a forecast): a statement
+        # without a named actor or place, or without the act, is a category.
+        actor = str(o.get("actor") or "").strip()
+        place = str(o.get("place") or "").strip()
+        act = str(o.get("act") or "").strip()
+        if not actor or actor.lower() in ("null", "none", "unknown") or not place or not act:
+            incomplete += 1
+            continue
+        # the place is the cited signals' place, not the model's knowledge
+        if not _place_grounded(place, cites):
+            ungrounded += 1
             continue
         # A STATEMENT WITH NO CRITERION IS NOT A FORECAST. It is the thing
         # this replaced: a sentence nobody can ever be wrong about. Dropped,
@@ -244,13 +363,19 @@ def validate(raw: list, signals: list[dict]) -> dict:
         if _HOLLOW.search(statement) or _TAUTOLOGY.search(statement):
             hollow += 1
             continue
+        # ... and a date by which it is settled
+        resolves = _clean_date(o.get("resolves_by"))
+        if not resolves:
+            undated += 1
+            continue
         kept.append({
-            "place": str(o.get("place") or "").strip()[:80] or None,
-            "actor": (str(o.get("actor")).strip()[:80] if o.get("actor") else None),
+            "place": place[:80],
+            "actor": actor[:80],
+            "act": act[:60],
             "statement": statement[:300],
             "because": str(o.get("because") or "").strip()[:300] or None,
             "criterion": criterion[:300],
-            "resolves_by": _clean_date(o.get("resolves_by")),
+            "resolves_by": resolves,
             "probability": _clean_probability(o.get("probability")),
             "citations": cites[:4],
             "watch_for": [str(w).strip()[:160] for w in (o.get("watch_for") or []) if str(w).strip()][:3],
@@ -267,6 +392,9 @@ def validate(raw: list, signals: list[dict]) -> dict:
         "uncited_dropped": uncited,
         "uncheckable_dropped": uncheckable,
         "hollow_dropped": hollow,
+        "incomplete_dropped": incomplete,
+        "ungrounded_dropped": ungrounded,
+        "undated_dropped": undated,
     }
 
 
@@ -296,6 +424,6 @@ def _clean_date(v) -> str | None:
     except (TypeError, ValueError):
         return None
     today = _dt.date.today()
-    if d < today:
-        return None
+    if d <= today:
+        return None                      # settled today or before: not a forecast
     return min(d, today + _dt.timedelta(days=14)).isoformat()

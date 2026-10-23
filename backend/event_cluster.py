@@ -270,7 +270,8 @@ def cluster(items: list[dict], *, at: str = "at", text=("headline", "text"), sev
         if rest:
             rest.sort(key=lambda x: x.t or 0, reverse=True)
             row["also"] = [{"id": x.d.get(key), "headline": x.d.get(f["text"][0]), "source": src(x.d),
-                            "at": x.d.get(at), "kind": x.d.get("kind")} for x in rest]
+                            "at": x.d.get(at), "kind": x.d.get("kind"),
+                            **({"at_precision": x.d["at_precision"]} if x.d.get("at_precision") else {})} for x in rest]
             row["also_count"] = len(rest)
             sources = []
             for x in rest:

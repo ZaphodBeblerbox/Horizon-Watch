@@ -127,6 +127,32 @@ def test_paged_reads_on_until_a_page_is_filled():
     assert len(out["posts"]) == 2 and out["next"] is None and out["profile"]["hidden"] == 10
 
 
+def test_filled_applies_the_limit_after_the_filter():
+    """/api/alerts and /api/signals cut `limit` in SQL before the filter: a Berlin-only
+    profile got 2 of the newest 100. filled() reads wider pages until `limit` are kept."""
+    u = _profile("j", theaters=[_theater("Berlin", BERLIN)])
+    rows = ([sig(PARIS)] * 98 + [sig(BERLIN)] * 2) * 10           # 1000 rows, 20 in Berlin
+    calls = []
+
+    def fetch(off, n):
+        calls.append((off, n))
+        return rows[off:off + n]
+    out = pf.filled(u, fetch, 15, wide=200)
+    assert len(out) == 15 and all(r["lat"] == BERLIN[0] for r in out)
+    assert calls[0] == (0, 200) and len(calls) <= 5
+    # no profile: one read of exactly `limit`, as before
+    calls.clear()
+    assert len(pf.filled(_profile("new"), fetch, 15)) == 15 and calls == [(0, 15)]
+    # a reader that drops rows itself says how many it read, so the end is not misjudged
+    calls.clear()
+    got = pf.filled(u, lambda off, n: (fetch(off, n)[1:], len(rows[off:off + n])), 15, wide=200)
+    assert len(got) == 15 and calls[1][0] == 200
+    # bounded: a profile nothing matches stops after max_pages
+    calls.clear()
+    assert pf.filled(_profile("t", theaters=[_theater("Tokyo", (35.68, 139.69))]), fetch, 15, wide=100, max_pages=3) == []
+    assert len(calls) == 3
+
+
 def test_notifications_keep_personal_cards_and_filter_the_rest():
     u = _profile("j", theaters=[_theater("Berlin", BERLIN)])
     cards = [{"id": "a", "kind": "signal", "sev": "high", "lat": PARIS[0], "lon": PARIS[1], "title": "Paris"},
@@ -284,3 +310,89 @@ def test_shared_cache_is_built_once_for_six_concurrent_users():
     assert all(len(v) == 1 for v in got.values())
     assert {got[f"u{i}"][0]["lat"] for i in range(6)} == {BERLIN[0], PARIS[0]}
     assert len(cache.peek("k")["posts"]) == 2                    # nobody mutated the shared answer
+
+
+# ── what changed, statements, war maps (2026-10-23) ────────────────────────
+
+CHANGES = {
+    "range": "7d",
+    "escalating": [
+        {"country": "Ukraine", "indicators": [{"key": "verified", "label": "verified events", "dir": "up", "ratio": 2, "cur": 8, "prev": 4, "score": 3}],
+         "score": 3, "examples": [{"title": "Strike on Kharkiv", "lat": 49.99, "lon": 36.23}]},
+        {"country": "France", "indicators": [{"key": "verified", "label": "verified events", "dir": "up", "ratio": 2, "cur": 6, "prev": 3, "score": 2}],
+         "score": 2, "examples": [{"title": "Clashes in Paris", "lat": PARIS[0], "lon": PARIS[1]}]}],
+    "calmer": [{"country": "Ukraine", "indicators": [], "score": 1}],
+    "lit_up": [{"place": "Kharkiv", "country": "Ukraine", "lat": 49.99, "lon": 36.23, "count": 3, "examples": []}],
+    "frontlines": [{"title": "Ukraine front moved: 120 km² occupied, 10 km² retaken in 7d", "lat": None, "lon": None, "region": "Ukraine"}],
+    "headline": ["Ukraine front moved ..."],
+}
+
+
+def test_what_changed_is_kept_by_the_profile_and_its_headline_rebuilt():
+    """A Paris-only Home read 'Ukraine front moved': /api/insight/changes was not filtered."""
+    u = _profile("lea", theaters=[_theater("Paris", PARIS)])
+    out = pf.insight_changes(CHANGES, u)
+    assert [r["country"] for r in out["escalating"]] == ["France"]
+    assert out["calmer"] == [] and out["lit_up"] == [] and out["frontlines"] == []
+    assert not any("Ukraine" in h for h in out["headline"]) and out["headline"][0].startswith("France")
+    assert out["profile"]["hidden"] == 4
+    assert len(CHANGES["escalating"]) == 2 and CHANGES["headline"] == ["Ukraine front moved ..."]   # shared answer untouched
+    # a user watching Ukraine keeps the front line
+    k = _profile("k", countries=["Ukraine"])
+    assert len(pf.insight_changes(CHANGES, k)["frontlines"]) == 1
+    # no profile: everything
+    assert pf.insight_changes(CHANGES, _profile("new"))["frontlines"] == CHANGES["frontlines"]
+
+
+def test_insight_changes_endpoint_filters_after_the_shared_build(api, monkeypatch):
+    import insight_changes as ic
+    client, who = api
+    builds = []
+    monkeypatch.setattr(ic, "changes", lambda r: builds.append(r) or {k: (list(v) if isinstance(v, list) else v) for k, v in CHANGES.items()})
+    main._INSIGHT_CHANGES_CACHE.clear()
+    who["u"] = LEA
+    r = client.get("/api/insight/changes?range=7d").json()
+    assert r["frontlines"] == [] and [x["country"] for x in r["escalating"]] == ["France"]
+    who["u"] = {"id": "nobody-yet", "settings": {}}
+    _profile("nobody-yet")
+    assert len(client.get("/api/insight/changes?range=7d").json()["frontlines"]) == 1
+    assert builds == ["7d"]                                     # one build for both users
+    main._INSIGHT_CHANGES_CACHE.clear()
+
+
+def test_statements_endpoint_is_filtered(api, monkeypatch):
+    import telegram_ingest as tg
+    client, who = api
+    monkeypatch.setattr(tg, "statements_near", lambda lat, lon, hours, km, country: [dict(p) for p in POSTS])
+    who["u"] = LEA
+    r = client.get(f"/api/telegram/statements?lat={PARIS[0]}&lon={PARIS[1]}").json()
+    assert [s["id"] for s in r["statements"]] == ["paris-1"] and r["profile"]["hidden"] == 1
+
+
+def test_notification_feed_is_read_wider_then_cut_after_the_filter(api, monkeypatch):
+    client, who = api
+    asked = []
+
+    def feed(uid, limit=60, hours=48, include_silent=False):
+        asked.append(limit)
+        return [{"id": f"p{i}", "kind": "signal", "sev": "high", "lat": PARIS[0], "lon": PARIS[1], "title": "p"} for i in range(limit - 5)] + \
+               [{"id": f"b{i}", "kind": "signal", "sev": "high", "lat": BERLIN[0], "lon": BERLIN[1], "title": "b"} for i in range(5)]
+    monkeypatch.setattr(main, "_notification_feed", feed)
+    who["u"] = JAKOB
+    got = client.get("/api/notifications?limit=10").json()
+    assert asked == [40] and len(got) == 5 and all(x["id"].startswith("b") for x in got)
+    asked.clear()
+    _profile("new")
+    who["u"] = {"id": "new", "settings": {}}
+    assert len(client.get("/api/notifications?limit=10").json()) == 10 and asked == [10]
+
+
+def test_warmap_changes_are_filtered_by_copy(api, monkeypatch):
+    import wiki_warmaps as wm
+    client, who = api
+    shared = {"available": True, "changes": [{"kind": "changed_hands", "lat": BERLIN[0], "lon": BERLIN[1]},
+                                             {"kind": "changed_hands", "lat": PARIS[0], "lon": PARIS[1]}]}
+    monkeypatch.setattr(wm, "changes", lambda theatre, days=30, cached_only=False: shared)
+    who["u"] = LEA
+    r = client.get("/api/warmap/x/changes").json()
+    assert len(r["changes"]) == 1 and len(shared["changes"]) == 2

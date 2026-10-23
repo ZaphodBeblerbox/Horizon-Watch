@@ -34,6 +34,20 @@ set -m
 # diagnose the worker and not.
 export PYTHONUNBUFFERED=1
 
+# NATIVE THREADS AND MALLOC ARENAS (measured 2026-10-23, web process, 7.8 h
+# up: 6.07 GB RSS, 188 OS threads of which only 48 run Python). The host
+# shows 48 CPUs, so OpenBLAS (twice: numpy's and scipy's), libgomp (twice)
+# and torch each started a 48-thread pool at import: ~150 idle threads. And
+# glibc gives every thread that allocates its own 64 MB arena (up to 8 per
+# CPU = 384): 48 arena heaps held 2.45 GB resident, freed memory that never
+# returns to the OS. Bounded here, before Python starts (malloc reads its
+# setting once); a variable set in Railway still wins.
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-4}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-4}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-4}"
+export NUMEXPR_MAX_THREADS="${NUMEXPR_MAX_THREADS:-4}"
+
 PORT="${PORT:-8000}"
 WORKER_PORT="${WORKER_PORT:-8090}"
 

@@ -393,7 +393,9 @@ def refresh_outlook(limit: int = 45) -> dict:
                 pool = pool + _tg.as_surface_items(24)
         except Exception:
             pass
-        pool = pool[:max(5, min(60, limit))]
+        # our own signals only (no GDELT), cut AFTER that: the pool's first
+        # 45 were GDELT news, so the outlook read news and little else
+        pool = _outlook.select_signals(pool, max(5, min(60, limit)))
 
         # AN EMPTY POOL IS NOT A QUIET DAY. Right after a restart the pool
         # has not filled yet, and caching "nothing specific today" from zero
