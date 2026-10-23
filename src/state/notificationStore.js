@@ -274,7 +274,20 @@ export function pushNotification(n) {
         // same rule as the phone's push, so the desktop and the phone get
         // the same notifications. Cards on screen are unchanged.
         push: n.push === true,
+        // ONE EVENT, ONE NOTIFICATION (DATAMINR_PLAN B2): an event's cards share its key (ev:<id>); an update
+        // (ev:<id>:v3) REPLACES the earlier card in the tray and on screen instead of stacking, like the phone's
+        // service worker tag. `label` says "New event · Urgent" or "Update · Critical alert".
+        eventKey: n.eventKey || null,
+        label: n.label || null,
         read: !fresh,
+    }
+    if (item.eventKey) {
+        const older = state.items.filter((x) => x.eventKey === item.eventKey && x.id !== item.id)
+        if (older.length) {
+            const gone = new Set(older.map((x) => x.id))
+            state.items = state.items.filter((x) => !gone.has(x.id))
+            state.cards = state.cards.filter((x) => !gone.has(x.id))
+        }
     }
     const had = state.items.find((x) => x.id === item.id)
     if (had) {

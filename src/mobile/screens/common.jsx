@@ -26,6 +26,7 @@ import ProtestDetail from "../../inspector/ProtestDetail.jsx"
 import ReportMedia from "../../components/ReportMedia.jsx"
 import { itemStatusLabel } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
+import EventDetail from "../../events/EventDetail.jsx"
 
 // Severity is an ICON's colour (a diamond, a dot), never a word's: the phone's
 // text is monochrome (m2.css v4), so these are fixed values, not the theme's.
@@ -215,6 +216,7 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
     const title = s.headline || s.title || "Signal"
     const finding = isFindingAlert(s) ? findingZoneOf(s) : null
     const where = String(s.place || s.location || s.geocoded_as || "").split(",").slice(0, 3).join(",")
+    const hasPlace = Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lon)) && !(Number(s.lat) === 0 && Number(s.lon) === 0)
     const xs = [...new Set(String(s.original_source || s.url || "").match(URLS) || [])].filter(xPostId).slice(0, 2)
     const share = async () => {
         try { await createPost({ body: note, attachment: attachmentFor(s), urgency: ["critical", "high", "elevated", "routine"].includes(String(s.severity_tier || "").toLowerCase()) ? String(s.severity_tier).toLowerCase() : undefined }); setShared("Posted to the desk.") }
@@ -233,14 +235,18 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
             {where && <div className="m2-sub" style={{ marginBottom: 10 }}>{where}</div>}
             {/* WHY IT IS FOR YOU (owner, 2026-10-17): a For-you signal opens on
                 itself, saying what of yours it concerns — not on the asset */}
-            {(s._whyMine || (s._asset && s.reason)) && (
+            {(s._whyMine || (s._asset && s.reason)) && !hasPlace && (
                 <div className="m2-why" data-testid="m2-why">
                     <div className="m2-why-h">Why this is for you</div>
                     <div>{s._whyMine || s.reason}</div>
-                    {s.asset_id && <button className="m2-btn ghost" style={{ height: 32, marginTop: 10 }}
-                        onClick={() => { window.dispatchEvent(new CustomEvent("m2:go-asset", { detail: s.asset_id })); onClose() }}>Open the asset</button>}
                 </div>
             )}
+            {/* THE EVENT AND EVERYTHING AROUND IT (owner, 2026-10-23): status, why it is for you and how near your
+                assets, the evolving cited brief, Follow, its timeline and the related items near it in space and time */}
+            {hasPlace && <EventDetail key={s.event_id || s.id || title} item={{ ...s, why: s.why || s._whyMine || (s._asset ? s.reason : null) }}
+                variant="phone" embedded onOpenItem={(r) => onShowOnMap?.({ ...r, headline: r.title })} />}
+            {s.asset_id && <button className="m2-btn ghost" style={{ height: 32, margin: "0 0 10px" }}
+                onClick={() => { window.dispatchEvent(new CustomEvent("m2:go-asset", { detail: s.asset_id })); onClose() }}>Open the asset</button>}
             {/* AN ENDANGERED PLACE: its model turning slowly (never on the map; three.js loads only here) */}
             {s.kind === "endangered_place" && <div style={{ marginBottom: 12 }}><PlaceModel key={s.id} place={s} height={210} /></div>}
             {/* AN ANNOUNCED PROTEST: where it stands, the crowd, the photos and videos from there */}

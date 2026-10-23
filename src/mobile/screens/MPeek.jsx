@@ -23,6 +23,8 @@ import { itemStatusLabel, mediaItems } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
 import ReportMedia from "../../components/ReportMedia.jsx"
 import { stripEmoji } from "../../lib/liveSignals.js"
+import { StatusChip } from "../../events/EventDetail.jsx"
+import { clock } from "../../events/eventLogic.js"
 
 const arr = (v) => (Array.isArray(v) ? v : [])
 const kindOf = (s) => s?.source || s?.channel_title || s?.layerLabel || s?.alert_type || s?.kind_label || "Signal"
@@ -114,10 +116,19 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
                         {!cl && <div className="m2-peek-place" data-testid="m2-peek-line">{stripEmoji(s.status_label || "")}</div>}
                         {!cl && arr(s.card_lines).map((t, i) => <div key={i} className="m2-peek-place">{stripEmoji(t)}</div>)}
                         {cl && arr(s.cluster).map((c, i) => <div key={i} className="m2-peek-place" data-testid="m2-peek-item">{stripEmoji(c.title)}{c.line ? `. ${stripEmoji(c.line)}` : ""}</div>)}
+                        {/* its event: status and the evolving brief, one line (events.py) */}
+                        {!cl && s.event && (
+                            <div className="m2-peek-place" data-testid="m2-peek-brief" style={{ display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
+                                <StatusChip status={s.event.status} />
+                                <span>{[s.event.brief?.version > 1 ? `Updated ${clock(s.event.brief.created_at)} · v${s.event.brief.version}` : null,
+                                        s.event.brief?.what_changed].filter(Boolean).join(" · ")}</span>
+                            </div>
+                        )}
                     </div>
                     {!cl && arr(s.sources).length > 0 && <ReportMedia item={{ sources: s.sources }} compact />}
                 </div>
                 <div className="m2-peek-acts">
+                    {!cl && <button className="m2-btn" onClick={() => onDetails?.()} data-testid="m2-peek-details">Details</button>}
                     <button className="m2-btn ghost" aria-label="Put away" onClick={() => onClose?.()}>Close</button>
                     {count > 1 && index != null && <span className="m2-peek-count">{index + 1} / {count}</span>}
                 </div>

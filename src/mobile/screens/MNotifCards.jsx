@@ -39,7 +39,7 @@ function Banner({ n, onOpen }) {
             <button className="m2-banner-body" onClick={() => { close(); onOpen?.(n) }}>
                 <i style={{ background: SEV[n.sev] || SEV.moderate }} />
                 <span style={{ minWidth: 0 }}>
-                    <small>{KIND[n.kind]?.name || "Signal"}</small>
+                    <small>{n.label || KIND[n.kind]?.name || "Signal"}</small>
                     <b>{n.title}</b>
                     {n.sub && <span className="m2-sub">{n.sub}</span>}
                 </span>

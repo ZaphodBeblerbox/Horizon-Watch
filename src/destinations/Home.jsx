@@ -45,6 +45,8 @@ import { hmZone } from "../utils/clock.js"
 import { createPortal } from "react-dom"
 import OutlookExplain from "../insight/OutlookExplain.jsx"
 import { itemStatusLabel } from "../globe/protests.js"
+import { DevelopingList, FollowingList } from "../events/EventLists.jsx"
+import EventDialog from "../events/EventDialog.jsx"
 export { slotOf }
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -238,7 +240,7 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
         const SEV = { critical: 0, high: 1, elevated: 1, moderate: 2, medium: 2, low: 3 }
         const fromAssets = assetCards.map((n) => ({
             key: n.id, title: n.title, sev: n.sev, when: n.created_at, why: n.reason,
-            assetId: n.asset_id, lat: n.lat, lon: n.lon, kind: "asset",
+            assetId: n.asset_id, lat: n.lat, lon: n.lon, kind: "asset", raw: n,
         }))
         const fromTheaters = split.mine.map((m) => ({
             key: `s:${m.id ?? m.headline}`, title: m.title || m.headline, sev: m.severity_tier,
@@ -252,16 +254,19 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                 || String(b.when || "").localeCompare(String(a.when || "")))
             .slice(0, 6)
     }, [assetCards, split])
+    /* A HOME ITEM OPENS ITSELF (owner, 2026-10-23: it opened Assets): what happened (the evolving brief and its
+       sources), how it is connected to the user's assets and theaters, and why it is on Home — the event panel
+       (events/EventDialog.jsx), over Home, with "Show on the map" there. */
+    const [evOpen, setEvOpen] = useState(null)
     const openUrgent = (u) => {
-        if (u.assetId) {
-            window.__plxAssetSel = u.assetId
-            window.dispatchEvent(new CustomEvent("akili:navigate", { detail: { destination: "assets" } }))
-            setTimeout(() => window.dispatchEvent(new CustomEvent("akili:open-asset", { detail: { id: u.assetId } })), 200)
-            return
-        }
         const it = u.item || {}
-        if (it.lat != null) window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: it.lat, lon: it.lon, altitude: 250000 } }))
-        window.dispatchEvent(new CustomEvent("akili:open-inspector", { detail: { entityType: it.source_type || "signal", entityId: it.id, data: it } }))
+        setEvOpen({ ...it, ...u.raw, id: u.raw?.id || it.id || u.key, headline: u.title, title: u.title, lat: u.lat ?? it.lat, lon: u.lon ?? it.lon,
+                    why: u.why, reason: u.why, sev: u.sev, asset_id: u.assetId || null })
+    }
+    const showOnMap = (it) => {
+        setEvOpen(null)
+        onOpenModule("map")
+        if (it?.lat != null) setTimeout(() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: +it.lat, lon: +it.lon, altitude: 60000 } })), 250)
     }
     const hasOwn = (userTheaters || []).length > 0 || (myAssets || []).length > 0 || split.hasInterests
 
@@ -549,6 +554,27 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                             }}>⌘K</span>
                         </button>
                     </header>
+
+                    {/* ── Developing in your areas (DATAMINR_PLAN B1-B2): events ranked by YOUR priority,
+                           with their status and evolving brief; then what you follow ── */}
+                    <div data-screen-label="Developing in your areas" data-testid="home-developing" style={{
+                        border: "1px solid var(--gline)", background: "var(--glass2)", padding: "14px 18px",
+                        display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(0, 1fr)", gap: 24,
+                    }}>
+                        <div style={{ minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
+                                <span style={{ fontSize: 10.5, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--txt4)" }}>Developing in your areas</span>
+                                <span style={{ fontSize: 11.5, color: "var(--txt4)" }}>events, ranked by what they mean to you · every 30 s</span>
+                            </div>
+                            <DevelopingList variant="desk" onOpen={setEvOpen} />
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 10.5, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--txt4)", marginBottom: 8 }}>Following</div>
+                            <FollowingList variant="desk" onOpen={setEvOpen} />
+                        </div>
+                    </div>
+                    {evOpen && <EventDialog item={evOpen} onClose={() => setEvOpen(null)} onShowOnMap={showOnMap}
+                        onOpenItem={(r) => setEvOpen({ ...r, headline: r.title })} />}
 
                     {/* ── Most urgent for you ───────────────────────────── */}
                     <div data-screen-label="Most urgent" style={{
