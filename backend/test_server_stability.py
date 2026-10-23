@@ -73,6 +73,27 @@ def test_asset_list_answers_before_the_exposure_is_built(monkeypatch):
     assert all(not a["building"] and a["exposure"] == "elevated" and a["signal_count"] == 1 for a in second)
 
 
+def test_start_script_bounds_native_threads_and_malloc_arenas():
+    """48 CPUs in production: ~150 idle native pool threads and 48 malloc arenas (2.45 GB)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    s = open(os.path.join(here, "start.sh"), encoding="utf-8").read()
+    for var in ("MALLOC_ARENA_MAX", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        assert f'export {var}="${{{var}:-' in s, var
+    assert s.index("export MALLOC_ARENA_MAX") < s.index("python -m uvicorn")
+
+
+def test_per_event_and_per_request_caches_are_capped():
+    """Keyed by event id, url or a request's query and never evicted: they grew for
+    the life of the web process (12.1 GB RSS seen 2026-10-19)."""
+    for name in ("_PREFETCH_CACHE", "_ENRICHMENT_CACHE", "_CITY_NEWS_CACHE", "_WIKI_IMAGE_CACHE", "_OG_CACHE"):
+        d = getattr(main, name)
+        assert isinstance(d, main.CappedDict) and d.maxsize <= 5_000, name
+    d = main.CappedDict(maxsize=3)
+    for i in range(10):
+        d[i] = i
+    assert list(d) == [7, 8, 9]
+
+
 def test_asset_exposure_cache_is_bounded(monkeypatch):
     """_EXPO kept one entry per (asset, position, identifiers) forever: every edit and every
     deleted asset stayed in memory. One entry per asset id, an age limit and a size cap."""

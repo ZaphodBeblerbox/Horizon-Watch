@@ -895,10 +895,12 @@ _SURFACE_POOL_LAST_NONEMPTY: float = 0.0   # time.time() of last pool with items
 _SURFACE_BUILD_LOCK = threading.Lock()
 
 # ── Prefetch + enrichment caches ──────────────────────────────────────────────
-_PREFETCH_CACHE: dict  = {}   # event_id → {infra_nodes: [...], fetched_at: ts, ttl: 7200}
+# Bounded (2026-10-23): keyed per event, written for every surfaced event and
+# never evicted, so they grew for the life of the process.
+_PREFETCH_CACHE: dict  = CappedDict(maxsize=2_000)   # event_id → {infra_nodes: [...], fetched_at: ts, ttl: 7200}
 _PREFETCH_LOCK         = threading.Lock()
 _PREFETCH_INFLIGHT: dict[str, threading.Event] = {}
-_ENRICHMENT_CACHE: dict = {}  # event_id → {enrichment: {...}, prose: str, fetched_at: ts, ttl: 21600}
+_ENRICHMENT_CACHE: dict = CappedDict(maxsize=3_000)  # event_id → {enrichment: {...}, prose: str, fetched_at: ts, ttl: 21600}
 _ENRICHMENT_LOCK       = threading.Lock()
 _AUTO_ENRICH_DAILY_LIMIT = 5
 _AUTO_ENRICH_DAILY_SPEND_CAP = 0.18   # USD
@@ -5761,7 +5763,7 @@ def purge_dark_ships(current_user=None):
 
 
 # ── City & spaceflight news caches ───────────────────────────────────────────
-_CITY_NEWS_CACHE: dict = {}       # cache_key → {articles, fetched_at}
+_CITY_NEWS_CACHE: dict = CappedDict(maxsize=500)       # cache_key (a city name from the request) → {articles, fetched_at}
 
 # ── City news locality helpers ─────────────────────────────────────────────────
 
@@ -6380,7 +6382,7 @@ async def get_news_shorts(current_user=None):
     }
 
 
-_WIKI_IMAGE_CACHE: dict = {}
+_WIKI_IMAGE_CACHE: dict = CappedDict(maxsize=2_000)   # keyed by the request's query
 
 @app.get("/api/image/wiki")
 async def get_wiki_image(q: str = Query(..., min_length=1, max_length=200)):
@@ -21751,7 +21753,7 @@ async def api_infrastructure_chokepoints():
     return {"chokepoints": enriched}
 
 
-_OG_CACHE: dict[str, str | None] = {}
+_OG_CACHE: dict[str, str | None] = CappedDict(maxsize=5_000)   # keyed by the requested url
 
 @app.get("/api/og")
 async def get_og_image(url: str = Query(...)):

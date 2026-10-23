@@ -16,6 +16,18 @@ class Clock:
         return self.t
 
 
+def test_entries_keyed_by_request_parameters_are_bounded():
+    """/api/telegram/posts?hours=N built one whole post list per N (1..720, x2 for pins)
+    and kept every one for the life of the process."""
+    clk = Clock()
+    c = SharedCache("t", ttl=10, max_stale=60, clock=clk, max_entries=8)
+    for h in range(100):
+        clk.t += 1
+        assert c.get(("db", h, False), lambda h=h: [h] * 10) == [h] * 10
+    assert len(c) == 8
+    assert c.peek(("db", 99, False)) == [99] * 10 and c.peek(("db", 0, False)) is None
+
+
 def test_concurrent_cold_callers_share_one_build():
     c = SharedCache("t", ttl=10, max_stale=60)
     started = threading.Event()
