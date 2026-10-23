@@ -26,6 +26,7 @@ import ProtestDetail from "../../inspector/ProtestDetail.jsx"
 import ReportMedia from "../../components/ReportMedia.jsx"
 import { itemStatusLabel } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
+import { langNote } from "../../lib/titleLang.js"
 
 // Severity is an ICON's colour (a diamond, a dot), never a word's: the phone's
 // text is monochrome (m2.css v4), so these are fixed values, not the theme's.
@@ -230,6 +231,7 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
                 <div style={{ marginTop: 6 }}><CountryFlag iso2={factionCountry(s).iso2} name={factionCountry(s).name} size={22} /></div>
             )}
             <h2 style={{ margin: "6px 0 4px", fontSize: 19, lineHeight: 1.3 }}>{title}</h2>
+            {langNote(s) && <div className="m2-sub" data-testid="m2-lang-note" style={{ marginBottom: 6, overflowWrap: "anywhere" }}>{langNote(s)}</div>}
             {where && <div className="m2-sub" style={{ marginBottom: 10 }}>{where}</div>}
             {/* WHY IT IS FOR YOU (owner, 2026-10-17): a For-you signal opens on
                 itself, saying what of yours it concerns — not on the asset */}

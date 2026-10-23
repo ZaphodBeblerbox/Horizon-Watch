@@ -33,6 +33,7 @@ function useHere() {
 }
 import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 import { dropStaleDemos } from "../../globe/freshness.js"
+import { untranslatedLang } from "../../lib/titleLang.js"
 
 const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
 
@@ -150,7 +151,7 @@ export default function MHome({ onShowOnMap, onOpen }) {
                 {(forYou.length ? forYou : worldwide).map((u) => (
                     <button key={u.id ?? u.title} className="m2-fy" onClick={() => setOpen({ ...u, _whyMine: u._why || u.reason || null })}>
                         <span style={{ minWidth: 0 }}>
-                            <b>{u.headline || u.title}</b>
+                            <b>{untranslatedLang(u) && <span className="m2-lang" data-testid="m2-lang">{untranslatedLang(u)}</span>}{u.headline || u.title}</b>
                             <small>{[u._why || String(u.location || u.place || "").split(",").slice(0, 2).join(","), String(u.source || "").replace(/^news_event$/, "News")].filter(Boolean).join(" · ")}</small>
                         </span>
                         <span className="m2-when"><i className="m2-sev" style={{ background: sevColor(u.severity_tier || u.sev) }} />{ago(u.published_at || u.created_at || u.posted_at)}</span>

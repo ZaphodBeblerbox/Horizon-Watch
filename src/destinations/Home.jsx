@@ -45,6 +45,7 @@ import { hmZone } from "../utils/clock.js"
 import { createPortal } from "react-dom"
 import OutlookExplain from "../insight/OutlookExplain.jsx"
 import { itemStatusLabel } from "../globe/protests.js"
+import { originalTitle, untranslatedLang } from "../lib/titleLang.js"
 export { slotOf }
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -239,10 +240,12 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
         const fromAssets = assetCards.map((n) => ({
             key: n.id, title: n.title, sev: n.sev, when: n.created_at, why: n.reason,
             assetId: n.asset_id, lat: n.lat, lon: n.lon, kind: "asset",
+            lang: untranslatedLang(n), original: originalTitle(n),
         }))
         const fromTheaters = split.mine.map((m) => ({
             key: `s:${m.id ?? m.headline}`, title: m.title || m.headline, sev: m.severity_tier,
             when: m.published_at, why: m.location || m.place || "", item: m, kind: "signal",
+            lang: untranslatedLang(m), original: originalTitle(m),
         }))
         const seen = new Set()
         return [...fromAssets, ...fromTheaters]
@@ -576,7 +579,12 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                                         <span style={{ width: 8, height: 8, borderRadius: 4, alignSelf: "center",
                                             background: u.sev === "critical" ? "var(--red)" : (u.sev === "high" || u.sev === "elevated") ? "var(--amber)" : "var(--txt4)" }} />
                                         <span style={{ minWidth: 0 }}>
-                                            <span style={{ fontSize: 14, fontWeight: 550, display: "block", overflowWrap: "anywhere" }}>{u.title}</span>
+                                            <span style={{ fontSize: 14, fontWeight: 550, display: "block", overflowWrap: "anywhere" }}
+                                                title={u.original ? `Translated · original: ${u.original}` : undefined}>
+                                                {u.lang && <span data-testid="home-lang" style={{ display: "inline-block", marginRight: 6, padding: "0 5px", border: "1px solid var(--gline)",
+                                                    borderRadius: 5, fontSize: 10.5, fontWeight: 600, lineHeight: "16px", color: "var(--txt3)", verticalAlign: 1 }}>{u.lang}</span>}
+                                                {u.title}
+                                            </span>
                                             {u.why && <span style={{ fontSize: 12, color: "var(--txt3)", display: "block", overflowWrap: "anywhere" }}>{u.why}</span>}
                                         </span>
                                         <span style={{ fontSize: 11.5, color: "var(--txt4)", whiteSpace: "nowrap" }}>{u.when ? whenLabel(u.when) : ""}</span>
