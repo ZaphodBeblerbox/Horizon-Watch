@@ -36,6 +36,7 @@ import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
 import { closeOpenedSignal } from "../../lib/signalPin.js"
 import { declutterAll } from "../../lib/liveSignals.js"
+import ProtestFrames, { useProtestFrame } from "../../components/ProtestFrames.jsx"
 import { setTheaterScope } from "../theaterScope.js"
 import CountryFlag from "../../components/CountryFlag.jsx"
 import { trackCountry } from "../../lib/icaoCountry.js"
@@ -175,6 +176,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const epCountries = useEndangeredCountries()          // endangered places: the countries chosen
     const epActive = useEndangeredActive()                // and "Active only" (called, or a call within 2 km)
     const strikeSet = useStrikeSettings()                 // strikes: the acts and time window chosen
+    const protestFrame = useProtestFrame()                // protests: live now / today / upcoming (lib/protests.js)
 
     // the map itself, once
     useEffect(() => {
@@ -268,7 +270,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const fastest = Math.min(2 * 60_000, ...PHONE_LAYERS.filter((l) => on[l.key] && l.refreshMs).map((l) => l.refreshMs))
         const t = setInterval(run, active ? fastest : 10 * 60_000)
         return () => { live = false; clearTimeout(first); clearInterval(t) }
-    }, [bounds, zoom, hours, on, active, epCountries, epActive, strikeSet])
+    }, [bounds, zoom, hours, on, active, epCountries, epActive, strikeSet, protestFrame])
 
     // THE BLUE DOT: where you are (location/liveShare.js), above everything —
     // with the way you came while sharing, and the accuracy as a soft ring.
@@ -429,6 +431,14 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         // opens a list; nothing is nudged or fanned out. At every zoom, so zooming in separates them.
         const z0 = m.getZoom()
         const collide = points.filter((p) => p.f.collide)
+        // a movement's path (the crowd's, the police's: lib/protests.js) under its marker, drawn whether or not the
+        // marker itself folds into a cluster
+        for (const p of collide) {
+            if (!Array.isArray(p.f.path) || p.f.path.length < 2) continue
+            want.set(`t:${p.key}`, { sig: `${p.f.pathColor}|${p.f.pathDash}|${JSON.stringify(p.f.path)}`, make: () =>
+                L.polyline(p.f.path, { color: p.f.pathColor || "#9AA9BC", weight: 3, opacity: 0.85, dashArray: p.f.pathDash || undefined,
+                                       interactive: true, className: "m2-track-path" }).on("click", tap(p.f, p.l, p.key)) })
+        }
         if (collide.length) {
             const groups = declutterAll(collide.map((p) => {
                 const q = m.project([p.lat, p.lon], z0)
@@ -795,6 +805,13 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                             : [on.ships && `${ships.length} ships`, on.aircraft && `${planes.length} aircraft`].filter(Boolean).join(" · ")}
                     </div>
                 )}
+                {/* PROTESTS ON: its three frames and what they hold, on the map itself (owner, 2026-10-23) */}
+                {on.protests && !open && !tr.target && (
+                    <div className="m2-card" data-testid="m2-protests-chip"
+                         style={{ position: "absolute", left: 12, right: 12, bottom: "calc(env(safe-area-inset-bottom, 0px) + 132px)", zIndex: 550, padding: "8px 10px" }}>
+                        <ProtestFrames variant="phone" compact />
+                    </div>
+                )}
                 {/* FIRST RUN: nothing is on, so say where to start (quiet, monochrome) */}
                 {nothingShown && !open && (
                     <button type="button" className="m2-pill" data-testid="m2-empty-hint" onClick={() => setSheet("filters")}
@@ -846,6 +863,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                                 {/* under whichever group holds the layer (it moved to Infrastructure) */}
                                 {layers.some((l) => l.key === "endangered") && <EndangeredCountryChips enabled={!!on.endangered} variant="phone" />}
                                 {layers.some((l) => l.key === "strikes") && on.strikes && <StrikesLayerControls variant="phone" />}
+                                {layers.some((l) => l.key === "protests") && on.protests && <ProtestFrames variant="phone" />}
                             </div>
                         ))}
                         <div className="m2-h">How serious</div>

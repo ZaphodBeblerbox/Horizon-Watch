@@ -21,7 +21,8 @@
 import { safeHouseIcon, placesLabel } from "../evacuation/safeHouseIcon.js"
 import API_BASE from "../apiBase.js"
 import { actIcon, cardText, liveSignalDrawn, mediaSources, ICON_PX } from "../lib/liveSignals.js"
-import { imageryIcon } from "../lib/mapIcons.js"
+import { imageryIcon, badgeUri } from "../lib/mapIcons.js"
+import { PROTESTS_PATH, LIVE_REFRESH_MS, getFrame, setMeta, protestFeatures, refreshMs as protestsRefreshMs, KINDS as PROTEST_KINDS } from "../lib/protests.js"
 import { myPosition } from "../location/liveShare.js"
 import { getCurrentUser } from "../state/authStore.js"
 import {
@@ -519,6 +520,26 @@ export function liveSignalFeatures(d, now = Date.now()) {
 async function loadLiveSignals({ bounds }) {
     const d = await getJson(`${API_BASE}${LIVE_SIGNALS_PATH}`, { ttlMs: LIVE_SIGNALS_REFRESH_MS / 2 })
     return cullPoints(liveSignalFeatures(d), normBounds(bounds))
+}
+
+// ── Protests: live now / today / upcoming (backend/protests.py, src/lib/protests.js) ──
+// Owner, 2026-10-23: "Protests should be an actual layer". Its own switch, off by default like every layer,
+// the frame chosen in the segmented control (phone map chip, filters sheet; the globe shares the choice).
+// Read every 15 s while something is live in the user's areas, every 60 s otherwise; not while the page is hidden.
+const _protestLast = new Map()
+export async function loadProtests({ bounds } = {}) {
+    const frame = getFrame()
+    const url = `${API_BASE}${PROTESTS_PATH}?frame=${frame}`
+    const prev = _protestLast.get(frame)
+    const hidden = typeof document !== "undefined" && document.hidden
+    let d = prev?.d
+    if (!prev || (!hidden && Date.now() - prev.t >= protestsRefreshMs(prev.d) - 500)) {
+        const got = await getJson(url, { ttlMs: LIVE_REFRESH_MS - 1000 })
+        if (got) { d = got; _protestLast.set(frame, { t: Date.now(), d }) }
+    }
+    if (d) setMeta({ counts: d.counts || null, note: d.note || null, any_live: !!d.any_live, frame, items: arr(d.items).length })
+    const b = normBounds(bounds)
+    return protestFeatures(d).filter((f) => inBounds(f.lat, f.lon, b, 0.5) || (f.path && lineInView(f.path, b)))
 }
 
 async function loadImagerySignals({ bounds, zoom }) {
@@ -1217,6 +1238,7 @@ async function loadTrajectories({ bounds }) {
 // ── the registry ──────────────────────────────────────────────────────────
 
 const G = {
+    protests: "Protests",
     assets: "Our assets",
     endangered: "Endangered places",
     maritime: "Maritime",
@@ -1237,6 +1259,12 @@ const GFW_LABEL = {
 }
 
 export const PHONE_LAYERS = [
+    // Protests — first, so it is easy to find (owner, 2026-10-23).
+    {
+        key: "protests", label: "Protests", group: G.protests, defaultOn: false, kind: "points", minZoom: 0,
+        refreshMs: LIVE_REFRESH_MS, legendIcon: badgeUri({ shape: "circle", color: PROTEST_KINDS.protest.color, glyph: PROTEST_KINDS.protest.glyph }),
+        load: loadProtests,
+    },
     // Our assets — Situation's first group.
     {
         key: "assets", label: "Our assets", group: G.assets, defaultOn: false, kind: "points", minZoom: 0,

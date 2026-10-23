@@ -26,6 +26,7 @@ import GlobeDerivedAlertsLayer  from "../globe/GlobeDerivedAlertsLayer.jsx"
 import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeLiveSignalsLayer     from "../globe/GlobeLiveSignalsLayer.jsx"
+import GlobeProtestsLayer        from "../globe/GlobeProtestsLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
 import GlobeEndangeredPlacesLayer from "../globe/GlobeEndangeredPlacesLayer.jsx"
 import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
@@ -159,6 +160,7 @@ export default function GlobeView({
     gdeltEnabled = false,
     // THE signal layer (owner, 2026-10-22): the nine acts, live only, one marker per event
     liveSignalsEnabled = false,
+    protestsEnabled = false,
     // Strikes & control (GlobeStrikesLayer), and the frontline claims,
     // movements and trajectories drawn from the same events.
     strikesEnabled  = false,
@@ -1248,6 +1250,7 @@ export default function GlobeView({
                 <GlobeConnectorLinesLayer enabled={geoConfirmedEnabled} />
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} limit={1500} />
                 <GlobeLiveSignalsLayer enabled={liveSignalsEnabled} />
+                <GlobeProtestsLayer enabled={protestsEnabled} />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
                 <GlobeEndangeredPlacesLayer enabled={endangeredEnabled} />
                 {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}
