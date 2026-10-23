@@ -40,5 +40,7 @@ export function isChatShortcut(e) {
     if (!e || e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return false
     const t = e.target
     const tag = (t?.tagName || "").toLowerCase()
+    // the map's voice field holds the focus for dictation; empty, a '/' there is the shortcut
+    if (tag === "input" && t.getAttribute?.("aria-label") === "Spoken command" && !t.value) return true
     return !(tag === "input" || tag === "textarea" || tag === "select" || t?.isContentEditable)
 }

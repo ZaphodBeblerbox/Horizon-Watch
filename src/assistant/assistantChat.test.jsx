@@ -213,6 +213,10 @@ describe("pure helpers", () => {
         expect(isChatShortcut({ key: "/", target: document.body })).toBe(true)
         expect(isChatShortcut({ key: "/", target: document.createElement("input") })).toBe(false)
         expect(isChatShortcut({ key: "/", metaKey: true, target: document.body })).toBe(false)
+        const voice = document.createElement("input"); voice.setAttribute("aria-label", "Spoken command")
+        expect(isChatShortcut({ key: "/", target: voice })).toBe(true)
+        voice.value = "go to"
+        expect(isChatShortcut({ key: "/", target: voice })).toBe(false)
     })
     it("the column's tab is remembered", () => {
         setRightTab("assistant"); expect(getRightTab()).toBe("assistant")

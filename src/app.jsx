@@ -982,8 +982,9 @@ export default function App() {
         const open = (e) => showAssistant(e?.detail?.mode || "chat")
         const key = (e) => { if (!isMobile && isChatShortcut(e)) { e.preventDefault(); showAssistant("chat") } }
         window.addEventListener("plx:assistant", open)
-        window.addEventListener("keydown", key)
-        return () => { window.removeEventListener("plx:assistant", open); window.removeEventListener("keydown", key) }
+        // capture: ahead of the map's voice field, which would take the '/' as text
+        window.addEventListener("keydown", key, true)
+        return () => { window.removeEventListener("plx:assistant", open); window.removeEventListener("keydown", key, true) }
     }, [showAssistant, isMobile])
     // the floating panel was open and the map came up: the chat moves into the column
     useEffect(() => {
