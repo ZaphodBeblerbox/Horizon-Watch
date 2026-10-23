@@ -44,6 +44,8 @@ import Settings from "./destinations/Settings.jsx"
 import "./components/collab/CollabPanel.jsx"
 // The Flights route mode: registers the aircraft inspector's "Check this flight's route" offer.
 import "./routes/modes/air.js"
+// "Write a post" on an item in the Inspector (assistant/WritePostButton.jsx): an extension, so the card stays as it is.
+import "./assistant/registerWritePost.js"
 import ToastHost from "./ui/ToastHost.jsx"
 import Home from "./destinations/Home.jsx"
 import Situation from "./destinations/Situation.jsx"

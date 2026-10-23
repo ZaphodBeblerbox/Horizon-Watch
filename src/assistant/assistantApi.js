@@ -39,6 +39,11 @@ export const appendMessages = (id, messages) => req(`${C}/${encodeURIComponent(i
 export const stopTurn = (id, turnId) => req(`${C}/${encodeURIComponent(id)}/stop`, J("POST", { turn_id: turnId }))
 export const setProposalState = (id, mid, token, state, why) =>
     req(`${C}/${encodeURIComponent(id)}/messages/${mid}`, J("PATCH", { token, state, why }))
+export const setDraftState = (id, mid, draft) =>
+    req(`${C}/${encodeURIComponent(id)}/messages/${mid}`, J("PATCH", { draft }))
+/** "Write a post": the item in, a cited draft out (one model call at most; a template when it is off). */
+export const draftPost = (item, { signal } = {}) =>
+    req("/api/assistant/draft_post", { method: "POST", body: JSON.stringify({ item }), signal })
 export const proposeForm = (kind, fields) =>
     req("/api/assistant/propose", { method: "POST", body: JSON.stringify({ kind, fields }) })
 export const assistantStatus = () => req("/api/assistant/status")

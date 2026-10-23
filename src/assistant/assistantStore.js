@@ -19,7 +19,10 @@ import { useSyncExternalStore } from "react"
 import {
     askTurn, confirmProposal, createConversation, getConversation, listConversations,
     renameConversation as apiRename, deleteConversation as apiDelete, appendMessages, stopTurn, setProposalState,
+    draftPost, setDraftState,
 } from "./assistantApi.js"
+import { postItemFrom, postMediaOf, deskPostBody, getOpenItem, isPostRequest } from "./postDraft.js"
+import { createPost } from "../lib/deskApi.js"
 import { runAssistantActions, planActions } from "./assistantActions.js"
 
 const HISTORY = 8
@@ -74,7 +77,7 @@ export function fromServer(m, plat = platform) {
         done: m.actions?.length ? planActions(m.actions, plat).labels : [],
         proposals: (m.proposals || []).map((p) => ({ ...p, expires_at: p.expires_at || created + TTL_S })),
         ask: m.ask || null, forms: !!m.forms, refused: !!m.refused, stopped: !!m.stopped,
-        step: m.step || null, chips: m.chips || null, fromForm: !!m.fromForm,
+        step: m.step || null, chips: m.chips || null, fromForm: !!m.fromForm, draft: m.draft || null,
     }
 }
 
@@ -144,7 +147,67 @@ async function turn(text, { retry = null } = {}) {
 
 export const sendAssistant = (text) => {
     const t = String(text || "").trim().slice(0, 800)
+    // "write a post about this" with an item open: the post draft, not a turn
+    if (t && isPostRequest(t) && getOpenItem()) return writePostAbout(getOpenItem(), { ask: t })
     return t ? turn(t) : Promise.resolve(null)
+}
+
+/**
+ * "Write a post" from a signal's card (or typed with the item open): the
+ * draft arrives as a card in the open conversation, with the item's media,
+ * editable text, Post to Desk (after a confirm), Copy text and Download.
+ */
+export async function writePostAbout(record, { ask = null } = {}) {
+    const item = postItemFrom(record)
+    if (!item || (!item.title && !item.summary) || state.loading) return null
+    if (state.mode !== "chat") newConversation("chat")
+    window.dispatchEvent(new CustomEvent("plx:assistant", { detail: { mode: "chat" } }))
+    const label = (item.title || item.summary).slice(0, 120)
+    const turnId = newTurnId()
+    await addLocal({ role: "user", content: ask || `Write a post about: ${label}`, turnId })
+    const ctl = new AbortController()
+    controller = ctl
+    set({ loading: true, turnId })
+    let d
+    try {
+        d = await draftPost(item, { signal: ctl.signal })
+    } catch (e) {
+        if (ctl.signal.aborted || state.turnId !== turnId) return null
+        set({ loading: false, turnId: null, messages: [...state.messages, { role: "assistant", error: true,
+            content: e?.message || "The draft was not written.", created_at: nowS() }] })
+        return null
+    } finally {
+        if (controller === ctl) controller = null
+    }
+    if (state.turnId !== turnId) return null
+    set({ loading: false, turnId: null, model: d.model || state.model })
+    const draft = { short: d.short, long: d.long, path: d.path, state: "draft", post_id: null,
+                    media: postMediaOf(item), item: { ...item, sources: (item.sources || []).slice(0, 3) } }
+    await addLocal({ role: "assistant", content: d.path === "model" ? "A draft from the item and its reports. Edit it, then post or copy it."
+        : "A draft written from the item's own fields (the model is off). Edit it, then post or copy it.",
+        citations: d.citations || [], draft })
+    return d
+}
+
+/** The draft's text edited, kept with the message. */
+export function editDraft(m, patch) {
+    set({ messages: state.messages.map((x) => (x === m || (m.id && x.id === m.id) ? { ...x, draft: { ...x.draft, ...patch } } : x)) })
+    const cur = state.messages.find((x) => (m.id ? x.id === m.id : x === m))
+    if (state.convId && cur?.id) setDraftState(state.convId, cur.id, patch).catch(() => {})
+}
+
+/** Post to Desk, after the user's confirm: the existing endpoint, with the user's own session. */
+export async function postDraftToDesk(m, which = "short") {
+    const text = (which === "long" ? m.draft?.long : m.draft?.short) || m.draft?.short || ""
+    try {
+        const out = await createPost(deskPostBody(text, m.draft?.item))
+        editDraft(m, { state: "posted", post_id: out?.id || null })
+        return true
+    } catch (e) {
+        editDraft(m, { state: "failed" })
+        set({ messages: state.messages.map((x) => (x.draft && (m.id ? x.id === m.id : x === m) ? { ...x, draftWhy: e?.message || "Not posted." } : x)) })
+        return false
+    }
 }
 
 /** Ask again after an error, or for a question that has no answer (reload mid-turn). */
@@ -289,8 +352,8 @@ async function addLocal(...msgs) {
     const id = await ensureConversation()
     if (!id) return
     try {
-        const out = await appendMessages(id, stamped.map(({ role, content, citations, actions, proposals, ask, fromForm }) => ({
-            role, content, meta: { citations, actions, proposals, ask, fromForm } })))
+        const out = await appendMessages(id, stamped.map(({ role, content, citations, actions, proposals, ask, fromForm, draft }) => ({
+            role, content, meta: { citations, actions, proposals, ask, fromForm, draft } })))
         const ids = out?.ids || []
         if (ids.length === stamped.length) {
             set({ messages: state.messages.map((m) => { const i = stamped.indexOf(m); return i >= 0 ? { ...m, id: ids[i] } : m }) })

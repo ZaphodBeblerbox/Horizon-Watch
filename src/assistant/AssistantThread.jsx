@@ -11,6 +11,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react"
 import "./assistant.css"
 import ConfirmCard from "./ConfirmCard.jsx"
+import DraftCard from "./DraftCard.jsx"
 import AssistantForms from "./AssistantForms.jsx"
 import { openCitation, openCitationSource } from "./assistantActions.js"
 import {
@@ -109,6 +110,7 @@ function Message({ m, platform, onEdit, busy }) {
                         <button key={o.label} className="plx-as-chip" disabled={busy} onClick={() => sendAssistant(o.label)}>{o.label}</button>))}
                 </div>
             )}
+            {m.draft && <DraftCard m={m} platform={platform} />}
             {(m.proposals || []).map((p) => (
                 <ConfirmCard key={p.token} proposal={p} platform={platform}
                              onConfirm={confirmAssistantProposal} onSkip={skipAssistantProposal} onEdit={onEdit} />))}

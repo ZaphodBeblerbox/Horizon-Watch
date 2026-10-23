@@ -115,6 +115,19 @@
 .plx-as-rename input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--gline2, rgba(255,255,255,.18));
                        background: rgba(0,0,0,.18); color: var(--txt, #fff); font: 400 12.5px var(--font, system-ui, sans-serif); outline: none; }
 .plx-as-rename button { border: 0; background: none; color: var(--txt, #fff); font: 600 12px var(--font, system-ui, sans-serif); cursor: pointer; }
+/* a post drafted from a signal */
+.plx-as-msg:has(.plx-as-draft) { max-width: 100%; width: 100%; box-sizing: border-box; }
+.plx-as-draft-media { background: rgba(0,0,0,.25); }
+.plx-as-draft-media img, .plx-as-draft-media video { display: block; width: 100%; max-height: 220px; object-fit: cover; }
+.plx-as-draft-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 10px 0; }
+.plx-as-draft-tabs button { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: none; cursor: pointer;
+                            color: var(--txt3, rgba(233,237,243,.55)); font: 600 11px var(--font, system-ui, sans-serif); }
+.plx-as-draft-tabs button[aria-selected="true"] { background: rgba(255,255,255,.09); color: var(--txt, #fff); }
+.plx-as-draft-tabs span { margin-left: auto; font-size: 10.5px; color: var(--txt3, rgba(233,237,243,.5)); }
+.plx-as-draft-text { display: block; width: calc(100% - 20px); margin: 6px 10px 10px; box-sizing: border-box; resize: vertical;
+                     padding: 8px 10px; border-radius: 10px; border: 1px solid var(--gline2, rgba(255,255,255,.18));
+                     background: rgba(0,0,0,.18); color: var(--txt, #fff); font: 400 13px/1.45 var(--font, system-ui, sans-serif); outline: none; white-space: pre-wrap; }
+[data-theme="light"] .plx-as-draft-text { background: rgba(255,255,255,.6); }
 /* the map's right column: Inspector | Assistant (destinations/Situation.jsx) */
 .plx-rcol-head { display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); flex-shrink: 0; }
 .plx-rcol-tab { height: 26px; padding: 0 10px; border: 0; border-radius: 13px; background: transparent; cursor: pointer;
