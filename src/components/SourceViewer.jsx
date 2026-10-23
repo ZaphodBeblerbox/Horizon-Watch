@@ -13,18 +13,19 @@
  * a spoken answer it takes the side (ui/sideWindows.js).
  */
 import { useEffect, useRef, useState } from "react"
-import { embedFor } from "../inspector/sourceEmbed.js"
+import { embedFor, hostOf } from "../inspector/sourceEmbed.js"
 import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
 import { claimSide, onSideClaim } from "../ui/sideWindows.js"
 
 export default function SourceViewer() {
     const [url, setUrl] = useState(null)
+    const [card, setCard] = useState(null)
     const urlRef = useRef(null)
     urlRef.current = url
     const [theme, setTheme] = useState(getRenderedTheme)
     useEffect(() => subscribeRenderedTheme(setTheme), [])
     useEffect(() => {
-        const open = (e) => setUrl(e.detail?.url || null)
+        const open = (e) => { setUrl(e.detail?.url || null); setCard(e.detail?.card || null) }
         // ESCAPE CLOSES THE TOP THING ONLY. The inspector also closes on
         // Escape, and the shell then leaves the map, so one key press
         // dropped the source, the record and the screen at once. Caught in
@@ -45,7 +46,9 @@ export default function SourceViewer() {
 
     useEffect(() => onSideClaim("source", (by) => { if (by === "answer") setUrl(null) }), [])
     useEffect(() => { if (url) claimSide("source") }, [url])
-    const embed = url ? embedFor(url, { dark: theme === "dark" }) : null
+    // a post in its embed; an article the web agent cited (no embed) as its card (WebContext.jsx)
+    const embed = url ? (embedFor(url, { dark: theme === "dark" })
+        || (card ? { kind: "article", label: card.source || hostOf(url), card } : null)) : null
 
     /* WHERE IT GOES. Beside the inspector when the window has room for the
        map, the inspector and the source; on a narrow window it takes the
@@ -96,7 +99,19 @@ export default function SourceViewer() {
                     color: "var(--txt-3, var(--txt3))", cursor: "pointer", font: "inherit",
                 }}>✕</button>
             </header>
-            <iframe
+            {embed.card ? (
+                /* A NEWS ARTICLE the web agent cited (WebContext.jsx): news sites cannot be framed, so the
+                   viewer shows what we know of it — its headline, outlet, time and what it says — and the
+                   link to copy, without leaving Parallax. */
+                <div data-testid="source-article" style={{ flex: 1, overflow: "auto", padding: "14px 14px 18px", font: "400 13.5px/1.5 var(--font)", color: "var(--txt)" }}>
+                    <div style={{ font: "600 15px/1.35 var(--font)", marginBottom: 6 }}>{embed.card.title || embed.label}</div>
+                    <div style={{ font: "400 12px var(--font)", color: "var(--txt-3, var(--txt3))", marginBottom: 10 }}>
+                        {[embed.label, embed.card.published_at ? new Date(embed.card.published_at).toLocaleString() : null].filter(Boolean).join(" · ")}
+                    </div>
+                    {embed.card.summary && <p style={{ margin: "0 0 12px" }}>{embed.card.summary}</p>}
+                    <div style={{ font: "400 11.5px var(--font)", color: "var(--txt-3, var(--txt3))", wordBreak: "break-all" }}>{url}</div>
+                </div>
+            ) : <iframe
                 key={embed.src}
                 title={embed.label}
                 src={embed.src}
@@ -107,7 +122,7 @@ export default function SourceViewer() {
                 referrerPolicy="no-referrer"
                 loading="lazy"
                 style={{ flex: 1, width: "100%", border: 0, background: "#fff" }}
-            />
+            />}
         </aside>
     )
 }

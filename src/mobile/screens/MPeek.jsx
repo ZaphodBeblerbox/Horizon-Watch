@@ -23,6 +23,7 @@ import { itemStatusLabel, mediaItems } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
 import ReportMedia from "../../components/ReportMedia.jsx"
 import { stripEmoji } from "../../lib/liveSignals.js"
+import WebContext from "../../components/WebContext.jsx"
 
 const arr = (v) => (Array.isArray(v) ? v : [])
 const kindOf = (s) => s?.source || s?.channel_title || s?.layerLabel || s?.alert_type || s?.kind_label || "Signal"
@@ -114,6 +115,7 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
                         {!cl && <div className="m2-peek-place" data-testid="m2-peek-line">{stripEmoji(s.status_label || "")}</div>}
                         {!cl && arr(s.card_lines).map((t, i) => <div key={i} className="m2-peek-place">{stripEmoji(t)}</div>)}
                         {cl && arr(s.cluster).map((c, i) => <div key={i} className="m2-peek-place" data-testid="m2-peek-item">{stripEmoji(c.title)}{c.line ? `. ${stripEmoji(c.line)}` : ""}</div>)}
+                        {!cl && <WebContext item={s} compact />}
                     </div>
                     {!cl && arr(s.sources).length > 0 && <ReportMedia item={{ sources: s.sources }} compact />}
                 </div>

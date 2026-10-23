@@ -33,6 +33,7 @@ import FindingPreview from "./FindingPreview.jsx"
 import { findingZoneOf, isFindingAlert, showFindings } from "../lib/findings.js"
 import SectionLabel from "../inspector/SectionLabel.jsx"
 import { embedFor, hostOf, openSource, splitSources } from "../inspector/sourceEmbed.js"
+import WebContext from "./WebContext.jsx"
 import { shareToDesk } from "../desk/shareToDesk.js"
 import ConflictContext from "../conflicts/ConflictContext.jsx"
 import { useTrackPhoto, TrackPhotoView } from "./TrackPhoto.jsx"
@@ -847,6 +848,8 @@ export default function InspectorPanel({
                 {/* A STREET REPORT (or a post standing for several): the pictures and
                     videos behind it, each opening the real thing (ReportMedia.jsx) */}
                 {(entityType === "police_action" || (entityType === "telegram" && (data?.street_report || data?.kind === "live_signal"))) && <ReportMedia item={data} />}
+                {/* what the web agent found about it, with its cited articles (WebContext.jsx, backend/web_agent.py) */}
+                <WebContext item={data} />
                 {(entityType === "frontline_claim" || entityType === "troop_movement" || entityType === "trajectory")
                     && <FrontlineClaimDetail type={entityType} data={data} />}
 
