@@ -10,7 +10,8 @@
  * assets": the team is what those assets are for.
  */
 import { Entity } from "resium"
-import { Color, DistanceDisplayCondition, HeightReference, LabelStyle, NearFarScalar, VerticalOrigin, Cartesian2, CallbackProperty } from "cesium"
+import { Color, DistanceDisplayCondition, HeightReference, LabelStyle, VerticalOrigin, Cartesian2, CallbackProperty } from "cesium"
+import { dotIcon, SIZE } from "../lib/mapIcons.js"
 import { useMemo, useRef } from "react"
 import { useLivePeople } from "../location/useLivePositions.js"
 import { positionStream } from "../location/positionStream.js"
@@ -19,11 +20,9 @@ import { useGlidingPosition, useRenderTick } from "./useGlidingPosition.js"
 import { getCurrentUser } from "../state/authStore.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 
-const dot = (fill, live) => `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-  <circle cx="20" cy="20" r="18" fill="${fill}" fill-opacity="${live ? 0.26 : 0.12}"/>
-  <circle cx="20" cy="20" r="8" fill="${fill}" stroke="#ffffff" stroke-width="3" ${live ? "" : 'stroke-dasharray="3 3"'}/>
-</svg>`)}`
-const ICONS = { "1|0": dot("#3b8cff", true), "0|0": dot("#3b8cff", false), "1|1": dot("#8FB4E8", true), "0|1": dot("#8FB4E8", false) }
+// THE ONE TYPOLOGY (lib/mapIcons.js): a team member is a blue dot, 12 px; hollow when not live, a dotted edge
+// for a city-level fix
+const teamDot = (live, coarse) => dotIcon({ role: "team", live, coarse }).uri
 const coarseOf = (p) => p.source === "ip" || (p.accuracy_m ?? 0) >= 1000
 
 function Person({ p, me }) {
@@ -40,10 +39,10 @@ function Person({ p, me }) {
     return (
         <Entity id={`team-${p.user_id}`} name={name} position={position}
                 description={`${name} — ${coarseOf(p) ? "city level, from their connection" : p.accuracy_m != null ? `within ${Math.round(p.accuracy_m)} m` : "live location"}`}
-                billboard={{ image: ICONS[`${live ? 1 : 0}|${coarseOf(p) ? 1 : 0}`], width: 30, height: 30, heightReference: HeightReference.CLAMP_TO_GROUND,
+                billboard={{ image: teamDot(live, coarseOf(p)), width: SIZE.team, height: SIZE.team, heightReference: HeightReference.CLAMP_TO_GROUND,
                              disableDepthTestDistance: MARKER_DEPTH_TEST_M, }}
                 label={{ text, font: "600 12.5px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
-                         style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 14),
+                         style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 9),
                          heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M,
                          distanceDisplayCondition: new DistanceDisplayCondition(0, 3_000_000) }} />
     )
@@ -53,6 +52,8 @@ export default function GlobeTeamLayer({ enabled = true }) {
     const people = useLivePeople(enabled)
     useRenderTick(enabled && people.length > 0, 1000)
     const uid = getCurrentUser()?.id
-    if (!enabled || !people.length) return null
-    return <>{people.map((p) => <Person key={p.user_id} p={p} me={String(p.user_id) === String(uid)} />)}</>
+    // you are the blue dot (GlobeMeLayer), never also a team dot on top of it (owner, 2026-10-23 evening)
+    const others = people.filter((p) => String(p.user_id) !== String(uid))
+    if (!enabled || !others.length) return null
+    return <>{others.map((p) => <Person key={p.user_id} p={p} me={false} />)}</>
 }

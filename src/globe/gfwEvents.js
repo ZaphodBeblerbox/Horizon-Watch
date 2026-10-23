@@ -8,19 +8,29 @@
  * the filled marks on this map mean "a thing is here now", and these
  * mean "a thing happened here".
  */
+import { markerIcon } from "../lib/mapIcons.js"
 
 /** Colour and shape per event kind. */
 export const KIND_STYLE = {
     // Two hulls meeting at sea is how a cargo moves with no port
     // record, so it gets the strongest colour of the four.
-    encounters:    { color: "#FFB020", shape: "diamond", label: "Encounter" },
+    encounters:    { color: "#9AA9BC", shape: "triangle", glyph: "encounter", label: "Encounter" },
     // AIS stopped and later resumed.
-    gaps:          { color: "#FF453A", shape: "triangle", label: "AIS gap" },
-    loitering:     { color: "#5AC8FA", shape: "circle", label: "Loitering" },
-    "port-visits": { color: "#8E8E93", shape: "square", label: "Port visit" },
+    gaps:          { color: "#9AA9BC", shape: "triangle", glyph: "gap", label: "AIS gap" },
+    loitering:     { color: "#9AA9BC", shape: "triangle", glyph: "loiter", label: "Loitering" },
+    "port-visits": { color: "#9AA9BC", shape: "triangle", glyph: "port_visit", label: "Port visit" },
 }
 
 export const KINDS = Object.keys(KIND_STYLE)
+
+/**
+ * The marker of one GFW event in the one typology (lib/mapIcons.js): a triangle (GFW derived it), the kind's
+ * glyph, neutral; amber when one of its vessels is watchlisted; drawn in the past state (it finished days ago).
+ */
+export function gfwIcon(kind, ev = null) {
+    const watched = !!(ev?.watchlisted || ev?.vessel?.watchlisted || ev?.sanctioned)
+    return markerIcon({ kind: "derived", glyph: styleFor(kind).glyph, priority: watched ? "urgent" : "alert", state: "past" })
+}
 
 export function styleFor(kind) {
     return KIND_STYLE[kind] || KIND_STYLE.loitering

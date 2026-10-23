@@ -19,12 +19,14 @@ import { altitudeFor, findingsBounds, getShownFindings, labelRanks, mapCaption, 
 import { cesiumRectDegrees, loadOverlayRadar, overlayUrl, retryOverlay, setOverlayOpacity, setOverlayView, subscribeOverlay, viewsFor } from "../lib/findingOverlay.js"
 import { subscribeSignalPin } from "../lib/signalPin.js"
 import { renderDuringFlight } from "./flightRender.js"
-import { getShapeMarkerDataUri, MARK_SIZE, MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { markerIcon } from "../lib/mapIcons.js"
 
 // The opened signal is a fusion signal: drawn as the map's own fusion mark
 // (GlobeDerivedAlertsLayer's triangle), never a ringed dot with its headline
 // left standing on the map — the headline is in the sheet that opened it.
-const FUSION_MARK = () => getShapeMarkerDataUri({ shape: "triangle", color: "#c4453c", size: MARK_SIZE.alert, strokeWidth: 1.5 })
+// the one typology (lib/mapIcons.js): a derived warning, the fusion glyph, selected (a notification opened it)
+const FUSION_MARK = () => markerIcon({ kind: "derived", glyph: "fusion", priority: "urgent", selected: true })
 
 export default function GlobeFindingsLayer() {
     const { viewer } = useCesium()
@@ -163,7 +165,7 @@ function useSignalPin(viewer) {
                 ent = viewer.entities.add({
                     id: `signal-pin-${Math.random().toString(36).slice(2, 8)}`,
                     position: Cartesian3.fromDegrees(p.lon, p.lat),
-                    billboard: { image: FUSION_MARK(), width: MARK_SIZE.alert, height: MARK_SIZE.alert,
+                    billboard: { image: FUSION_MARK().uri, width: FUSION_MARK().w, height: FUSION_MARK().h,
                                  heightReference: HeightReference.CLAMP_TO_GROUND,
                                  disableDepthTestDistance: MARKER_DEPTH_TEST_M },
                     properties: { signalPin: p },

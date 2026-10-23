@@ -17,23 +17,26 @@
  * the kind of small overstatement that makes an analyst stop trusting a
  * layer.
  */
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getShapeMarkerDataUri, MARK_SIZE, MARKER_MAX_CAMERA_M } from "./entityIcons.js"
+import { MARKER_MAX_CAMERA_M } from "./entityIcons.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { markerIcon, ICON_PX } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 
-const MARKER_SIZE = MARK_SIZE.fire
+const MARKER_SIZE = ICON_PX
 const REFRESH_MS = 5 * 60 * 1000
 
-/** Brightness temperature, in kelvin, as colour. */
-function colourFor(k) {
-    if (!k) return "var(--txt-4, #6f8fa8)"
-    if (k >= 360) return "var(--sev-critical, #d4553f)"   // intense
-    if (k >= 330) return "var(--sev-high, #e8a33d)"
-    return "var(--sev-medium, #c9a227)"                    // warm, common
+/**
+ * Brightness temperature → priority (lib/mapIcons.js): a fire is observed by a sensor (a square with a flame),
+ * urgent from 360 K, alert otherwise — never flash: a fire is not yet an alert to you.
+ */
+export function firePriority(k) {
+    return Number(k) >= 360 ? "urgent" : "alert"
 }
 
 export default function GlobeFiresLayer({ enabled = false, hours = 72 }) {
@@ -80,12 +83,20 @@ export default function GlobeFiresLayer({ enabled = false, hours = 72 }) {
         return () => ids.forEach(deleteEntity)
     }, [fires])
 
-    if (!enabled || !fires.length) return null
+    const marks = useMemo(() => fires.filter((f) => Number.isFinite(f.lat) && Number.isFinite(f.lon)).map((f) => ({
+        id: `fire-${f.id}`, lat: f.lat, lon: f.lon, size: MARKER_SIZE, pri: firePriority(f.brightness_k), image: markerIcon({ kind: "confirmed", glyph: "flame", priority: firePriority(f.brightness_k) }).uri, t: Date.parse(f.acquired_at || "") || 0,
+        title: f.label || "Thermal anomaly", line: [f.instrument || "VIIRS", f.satellite].filter(Boolean).join(" · "), f,
+    })), [fires])
+    const layout = useDeclutter("fires", marks, enabled)
+    useClusterRecords(layout)
+    if (!enabled || !layout.length) return null
 
     return (
         <>
-            {fires.map((f) => {
-                if (!Number.isFinite(f.lat) || !Number.isFinite(f.lon)) return null
+            {layout.map((g) => {
+                if (g.cluster) return <ClusterMark key={g.id} g={g} />
+                const f = g.item.f
+                const ic = markerIcon({ kind: "confirmed", glyph: "flame", priority: g.item.pri })
                 return (
                     <Entity
                         id={`fire-${f.id}`}
@@ -106,13 +117,9 @@ export default function GlobeFiresLayer({ enabled = false, hours = 72 }) {
                             + `</div>`
                         }
                         billboard={{
-                            image: getShapeMarkerDataUri({
-                                shape: "circle",
-                                color: colourFor(f.brightness_k),
-                                size: MARKER_SIZE,
-                            }),
-                            width: MARKER_SIZE,
-                            height: MARKER_SIZE,
+                            image: ic.uri,
+                            width: ic.w,
+                            height: ic.h,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             distanceDisplayCondition: new DistanceDisplayCondition(0, MARKER_MAX_CAMERA_M),
                             eyeOffset: new Cartesian3(0, 0, -50),

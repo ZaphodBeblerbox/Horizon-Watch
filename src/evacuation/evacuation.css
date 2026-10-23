@@ -1,7 +1,5 @@
 /* evacuation.css — the evacuation's map marks and the safe-house pin (both maps) */
 .plx-safehouse-pin { background: #2E9E5B !important; color: #fff !important; font-size: 16px; line-height: 23px !important; }
-.plx-evac-stop { width: 14px; height: 14px; margin: 6px; border-radius: 7px; background: #8fb4e8; border: 2px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
-.plx-evac-stop.border { background: #F5A524; border-radius: 3px; transform: rotate(45deg); }
 /* the safe-house layer's icon: a green house with a check, white rim */
 .plx-sh-icon { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; background: #2E9E5B; border: 2px solid #fff;
                box-shadow: 0 1px 4px rgba(0,0,0,.45); }

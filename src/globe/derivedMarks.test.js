@@ -27,12 +27,14 @@ describe("§A7 — detection is evaluated at the playhead", () => {
     })
 })
 
-describe("§A8 — the marks and their rings are screen-sized", () => {
-    it("draws its rings as pixel billboards, never ground ellipses", () => {
+describe("§A8 — the marks are screen-sized, in the one typology", () => {
+    it("draws one constant-size triangle in the developing state, never a ground ellipse or a separate ring", () => {
         // 85 km / 278 km ground ellipses swelled as the camera came down
-        // and were reported as the alert icons "blowing up" (2026-10-14).
+        // and were reported as the alert icons "blowing up" (2026-10-14);
+        // the 30-34 px ring images that replaced them were a second style.
         expect(layer).not.toMatch(/ellipse=\{/)
-        expect(layer).toMatch(/billboard=\{ringBillboard\(/)
+        expect(layer).not.toMatch(/ringBillboard|RING_PX/)
+        expect(layer).toMatch(/markerIcon\(\{ kind: "derived", glyph: kind, priority: derivedPriority\(x\), state: "developing" \}\)/)
         expect(layer).not.toMatch(/material:\s*new CallbackProperty/)
     })
 
@@ -51,15 +53,14 @@ describe("§A8 — the marks and their rings are screen-sized", () => {
         expect(layer).toMatch(/disableDepthTestDistance: MARKER_DEPTH_TEST_M/)
     })
 
-    it("draws one radial tick per modality", () => {
-        expect(layer).toMatch(/ringBillboard\("#f46043", "fusion", \(f\.mods \|\| \[\]\)\.length\)/)
-        expect(layer).toMatch(/tickBearings\(ticks\)/)
+    it("names how many kinds of evidence agree in the label, not in tick marks", () => {
+        expect(layer).toMatch(/label=\{labelOpts\(fusionLabel\(x\), labelColor\(x\)\)\}/)
     })
 })
 
 describe("§A9.1 — the threads are transient", () => {
     it("draws on hover and clears on leave", () => {
-        expect(layer).toMatch(/onMouseMove=\{\(_m, mv\) => \{ drawThreads\(f\)/)
+        expect(layer).toMatch(/onMouseMove=\{\(_m, mv\) => \{ drawThreads\(x\)/)
         expect(layer).toMatch(/onMouseLeave=\{\(\) => \{ clearThreads\(\); hideTip\(\) \}\}/)
     })
 

@@ -8,10 +8,14 @@
  */
 import { useEffect, useMemo, useRef } from "react"
 import { Entity, useCesium } from "resium"
-import { Cartesian2, Cartesian3, Color, LabelStyle, PolygonHierarchy, PolylineDashMaterialProperty, PolylineOutlineMaterialProperty, NearFarScalar } from "cesium"
+import { Cartesian2, Cartesian3, Color, LabelStyle, PolygonHierarchy, PolylineDashMaterialProperty, PolylineOutlineMaterialProperty } from "cesium"
 import { useSeaRoute } from "../routes/modes/MaritimeRoute.jsx"
 import { hazardColor, ringLatLngs } from "../routes/modes/maritimeCore.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { dotIcon } from "../lib/mapIcons.js"
+
+// the voyage's ends: the one typology's track dots (lib/mapIcons.js), hollow blue start, filled blue end
+const end = (role) => { const i = dotIcon({ role }); return { image: i.uri, width: i.w, height: i.h, disableDepthTestDistance: MARKER_DEPTH_TEST_M } }
 
 const line = (coords) => Cartesian3.fromDegreesArray(coords.flatMap(([lat, lon]) => [lon, lat]))
 const css = (c) => Color.fromCssColorString(c)
@@ -47,7 +51,7 @@ export default function GlobeSeaRouteLayer() {
         if (!plan?.candidates?.length) return []
         return [...plan.candidates].sort((a, b) => (a.key === sel) - (b.key === sel)).map((c) => {
             const on = c.key === sel
-            const color = c.recommended ? "#3ddc84" : on ? "#5cc8ff" : "#b8c0c8"
+            const color = c.recommended ? "#3B8CFF" : on ? "#5cc8ff" : "#b8c0c8"
             return { c, on, positions: line(c.coords),
                      material: on ? new PolylineOutlineMaterialProperty({ color: css(color), outlineColor: css("#0b2d3d"), outlineWidth: 2 })
                                   : new PolylineDashMaterialProperty({ color: css(color), dashLength: 20 }) }
@@ -87,15 +91,15 @@ export default function GlobeSeaRouteLayer() {
                 const mid = c.coords[Math.floor(c.coords.length / 2)]
                 return <Entity key={`srl-${c.key}`} id={`sea-route-label-${c.key}`} position={Cartesian3.fromDegrees(mid[1], mid[0])}
                                label={{ text: `${c.label}\n${c.days} days · ${c.distance_nm.toLocaleString("en-GB")} nm`, font: "600 13px -apple-system, 'Segoe UI', Roboto, sans-serif",
-                                        fillColor: css(c.recommended ? "#3ddc84" : "#e6e9ee"), outlineColor: Color.BLACK, outlineWidth: 3,
+                                        fillColor: css(c.recommended ? "#3B8CFF" : "#e6e9ee"), outlineColor: Color.BLACK, outlineWidth: 3,
                                         style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -14), disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             })}
             <Entity id="sea-origin" name={plan.origin.name || "Start"} position={Cartesian3.fromDegrees(plan.origin.lon, plan.origin.lat)}
-                    point={{ pixelSize: 13, color: css("#3b8cff"), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
+                    billboard={end("start")}
                     label={{ text: plan.origin.name || "Start", font: "600 12px -apple-system, 'Segoe UI', Roboto, sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                              style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -16), disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             <Entity id="sea-destination" name={plan.destination.name || "Destination"} position={Cartesian3.fromDegrees(plan.destination.lon, plan.destination.lat)}
-                    point={{ pixelSize: 13, color: css("#3ddc84"), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
+                    billboard={end("end")}
                     label={{ text: plan.destination.name || "Destination", font: "600 12px -apple-system, 'Segoe UI', Roboto, sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                              style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -16), disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
         </>

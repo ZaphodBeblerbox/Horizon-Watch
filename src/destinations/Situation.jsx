@@ -73,6 +73,8 @@ import { whenLabel } from "../utils/formatTime.js"
 import { hm } from "../utils/clock.js"
 import EndangeredCountryChips from "../components/EndangeredCountryChips.jsx"
 import { closeOpenedSignal } from "../lib/signalPin.js"
+import { markerUri } from "../lib/mapIcons.js"
+import MapLegend from "../components/MapLegend.jsx"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -90,6 +92,8 @@ const SEV_LEGEND = [
     { rank: 3, tier: "low",         label: "Low",      cls: "low" },
 ]
 const SEV_CLASS_BY_RANK = { 0: "critical", 1: "high", 2: "moderate", 3: "low" }
+// a severity tier's marker colour on the map: the one priority ramp (lib/mapIcons.js)
+const SEV_PRIORITY = { critical: "flash", significant: "urgent", elevated: "alert", low: "info" }
 
 // §3 — the five annotation tools, in this exact order.
 const ANNOTATION_TOOLS = [
@@ -329,7 +333,8 @@ function SeverityLegend({ legendCounts }) {
                 {SEV_LEGEND.map((s) => (
                     <div key={s.tier} className={`sev ${s.cls}`} style={{ justifyContent: "space-between", gap: 14 }}>
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            <span className={`dia ${s.cls}`} />
+                            {/* the marker colour this tier draws in (lib/mapIcons.js priority ramp) */}
+                            <img src={markerUri({ kind: "event", priority: SEV_PRIORITY[s.tier] })} width={14} height={14} alt="" />
                             <span style={{ color: "var(--txt-2)" }}>{s.label}</span>
                         </span>
                         <span style={{ font: "400 11px var(--mono)", color: "var(--txt-3)" }}>{legendCounts[s.rank]}</span>
@@ -2389,6 +2394,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         <div style={{ marginTop: 12 }}>
                             <SeverityLegend legendCounts={legendCounts} />
                         </div>
+                        <div className="card" style={{ marginTop: 12 }}>
+                            <span className="lbl">Map legend</span>
+                            <MapLegend compact />
+                        </div>
                         {/* ONE RED FADE FOR THE WHOLE SECTION, top to bottom (owner,
                             2026-10-11), not a fade on each row */}
                         <div style={{ marginTop: 12, padding: "10px 10px 8px", borderRadius: 8,
@@ -2458,6 +2467,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         </div>
                         <div style={{ marginTop: 12 }}>
                             <SeverityLegend legendCounts={legendCounts} />
+                        </div>
+                        <div className="card" style={{ marginTop: 12 }}>
+                            <span className="lbl">Map legend</span>
+                            <MapLegend compact />
                         </div>
                         {inspectorExtensions.map((Ext, i) => (
                             <Ext key={i} recordRef={selectedRef} record={selected} />

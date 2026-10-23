@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Entity } from "resium"
-import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
+import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
+import { SIZE } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterBadges from "./ClusterBadges.jsx"
 import API_BASE from "../apiBase.js"
 import { infraGlyphUri } from "./infraGlyphs.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
@@ -9,21 +12,16 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 // "facility" glyph as GlobeAirportLayer.jsx (see that file's comment; both
 // mirror src/inspector/adapters.js's adaptInfrastructure() collapse of every
 // real infrastructure sub-type to entityType "facility"). Importance tier
-// (Very Large/Large/Medium/Small) is still conveyed via size (ICON_SIZE
-// below), unchanged from before.
+// (Very Large/Large/Medium/Small) is in the card, not the size.
 // §I6.1 — a portal crane on a quay, with the boom overhanging the water.
 // Previously a generic lucide "facility" block, which said "a building is
 // here" about a container terminal.
-function getIcon(portSize, state = "nominal", theme = "dark") {
-    return infraGlyphUri("port", { state, theme, size: ICON_SIZE[portSize] || 22 })
+function getIcon() {
+    return infraGlyphUri("port")
 }
 
-const ICON_SIZE = {
-    "Very Large": 30,
-    "Large":      26,
-    "Medium":     22,
-    "Small":      18,
-}
+// ONE SIZE whatever the class (owner, 2026-10-23: no marker grows with data): infrastructure context is
+// lib/mapIcons.js SIZE.infra; the class is in the card.
 
 export default function GlobePortLayer({ enabled, viewBounds }) {
     const [ports, setPorts] = useState([])
@@ -68,10 +66,20 @@ export default function GlobePortLayer({ enabled, viewBounds }) {
         return () => ids.forEach(deleteEntity)
     }, [ports])
 
+    // ONE COLLISION PASS with every other point layer (screenDeclutter.js): no overlapping markers
+    const items = useMemo(() => ports.map((f) => {
+        const p = f.properties || {}
+        const [lon, lat] = f.geometry?.coordinates || []
+        return { id: `port-${p.system_id}`, lat, lon, size: SIZE.infra, pri: null, image: getIcon(p.port_size || "Small"), title: p.port_name || p.name || "Port", line: [p.port_size ? `${p.port_size} port` : null, p.country].filter(Boolean).join(" · ") }
+    }).filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)), [ports])
+    const layout = useDeclutter("ports", items, !!enabled)
+    const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))
+
     if (!enabled || !ports.length) return null
 
     return (
         <>
+            <ClusterBadges layout={layout} />
             {ports.map(f => {
                 const p = f.properties || {}
                 const [lon, lat] = f.geometry?.coordinates || []
@@ -79,9 +87,10 @@ export default function GlobePortLayer({ enabled, viewBounds }) {
                 // real [null, null] coordinate pair through) — same real
                 // crash class fixed in GlobeConnectorLinesLayer.jsx.
                 if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+                if (!single.has(`port-${p.system_id}`)) return null
                 const icon = getIcon(p.port_size || "Small")
                 if (!icon) return null
-                const sz = ICON_SIZE[p.port_size] || 18
+                const sz = SIZE.infra
 
                 return (
                     <Entity

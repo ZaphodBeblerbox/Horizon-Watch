@@ -3,10 +3,12 @@
  * drone strikes, shelling, naval strikes, assaults, territory taken and
  * interceptions (backend/strike_events.py, /api/strikes).
  *
- * One pin per event (strikes.js: glyph = act, colour = actor, size =
- * casualties, hollow = rough place, fading = age in its window). Markers
- * only: launch→target trajectories and frontline changes are drawn by
- * their own layers.
+ * One marker per event in the one typology (strikes.js → lib/mapIcons.js: a
+ * circle, a reported event; glyph = act; colour = priority for you, never
+ * the actor; one constant size; a rough place uncorroborated-style; fading =
+ * age in its window, through the billboard's alpha). It joins the shared
+ * collision pass (screenDeclutter.js). Markers only: launch→target
+ * trajectories and frontline changes are drawn by their own layers.
  *
  * TIME. `at` is the time strip's playhead (Situation's geoConfirmedEndDate,
  * a YYYY-MM-DD day or null for live): dragging it back shows only what had
@@ -22,16 +24,19 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { Entity, useCesium } from "resium"
 import {
-    Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference, LabelStyle, NearFarScalar,
+    Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference, LabelStyle,
     PolylineDashMaterialProperty, VerticalOrigin,
 } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import {
-    actorColor, filterStrikes, isHollow, strikeIconDims, strikeIconUri, strikeOpacity, strikeSize, strikesUrl,
+    actorColor, filterStrikes, isHollow, strikeIconUri, strikeOpacity, strikePriority, strikesUrl,
     dayLabel, strikeWindowHours, setCoveredIds, coversOf,
 } from "./strikes.js"
+import { ICON_PX } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 import { useStrikeSettings } from "./useStrikeSettings.js"
 
 const REFRESH_MS = 3 * 60_000
@@ -139,10 +144,18 @@ export default function GlobeStrikesLayer({ enabled = false, at = null }) {
         return pts.length > 1 ? Cartesian3.fromDegreesArray(pts.flatMap((e) => [+e.lon, +e.lat])) : null
     }, [replay, shown])
 
+    const marks = useMemo(() => shown.filter((e) => Number.isFinite(+e.lat) && Number.isFinite(+e.lon)).map((e) => ({
+        id: `strike-${e.id}`, lat: +e.lat, lon: +e.lon, size: ICON_PX, pri: strikePriority(e),
+        image: strikeIconUri({ event: e, hollow: isHollow(e), priority: strikePriority(e) }), t: Date.parse(e.time || "") || 0,
+        title: e.title || e.act_label || "Strike", line: [e.actor, e.target_name ? String(e.target_name).split(",")[0] : null].filter(Boolean).join(" · "), e,
+    })), [shown])
+    const layout = useDeclutter("strikes", marks, enabled)
+    useClusterRecords(layout)
+
     if (!enabled || (!shown.length && !replay)) return null
     return (
         <>
-            {shown.map((e) => <StrikeEntity key={e.id} e={e} atMs={atMs} />)}
+            {layout.map((g) => (g.cluster ? <ClusterMark key={g.id} g={g} /> : <StrikeEntity key={g.item.e.id} e={g.item.e} atMs={atMs} />))}
             {labels.map((c) => <CampaignLabel key={c.id} c={c} replayT={replay?.campaign?.id === c.id ? replay.t : null}
                 count={replay ? shown.length : null} />)}
             {path && (
@@ -157,19 +170,17 @@ export default function GlobeStrikesLayer({ enabled = false, at = null }) {
 }
 
 const StrikeEntity = memo(function StrikeEntity({ e, atMs }) {
-    const size = strikeSize(e)
     const opacity = strikeOpacity(e, atMs)
     const pos = useMemo(() => Cartesian3.fromDegrees(+e.lon, +e.lat, 0), [e.lon, e.lat])
-    const image = strikeIconUri({ act: e.act, color: actorColor(e.actor), size, hollow: isHollow(e), opacity })
-    const { width, height } = strikeIconDims(size)
+    const image = strikeIconUri({ event: e, hollow: isHollow(e), priority: strikePriority(e) })
     return (
         <Entity id={`strike-${e.id}`} name={e.title} position={pos}
             billboard={{
-                // a pin, like the asset icons: its tip is the place
-                image, width, height, verticalOrigin: VerticalOrigin.BOTTOM,
+                image, width: ICON_PX, height: ICON_PX,
+                // age within its window, as the marker's alpha (quantised so the billboard is not rebuilt each minute)
+                color: Color.WHITE.withAlpha(Math.round(opacity * 10) / 10),
                 heightReference: HeightReference.CLAMP_TO_GROUND,
-                distanceDisplayCondition: new DistanceDisplayCondition(0, 12_000_000),
-                
+                distanceDisplayCondition: new DistanceDisplayCondition(0, 60_000_000),
                 eyeOffset: new Cartesian3(0, 0, -80),
             }} />
     )
@@ -186,7 +197,7 @@ function CampaignLabel({ c, replayT = null, count = null }) {
                 text, font: "600 12px system-ui, -apple-system, Segoe UI, sans-serif",
                 fillColor: Color.fromCssColorString(actorColor(c.actor)),
                 outlineColor: Color.fromCssColorString("#05070C"), outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
-                verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -40),
+                verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -18),
                 heightReference: HeightReference.CLAMP_TO_GROUND,
                 distanceDisplayCondition: new DistanceDisplayCondition(200_000, replayT ? 20_000_000 : 6_000_000),
                 showBackground: true, backgroundColor: Color.fromCssColorString("#0B0F1A").withAlpha(0.72),

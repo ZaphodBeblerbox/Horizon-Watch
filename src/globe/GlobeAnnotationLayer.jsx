@@ -4,6 +4,7 @@ import {
     SceneTransforms, defined, Cartographic, Math as CesiumMath, Color, PolygonHierarchy,
 } from "cesium"
 import { useAnnotations, addAnnotation, renameAnnotation, removeAnnotation } from "../state/annotationStore.js"
+import { dotIcon, OURS } from "../lib/mapIcons.js"
 
 // GlobeAnnotationLayer.jsx — real map annotation drawing (select/marker/
 // route/area/measure), rendered as a plain component reading `viewerRef`
@@ -13,11 +14,13 @@ import { useAnnotations, addAnnotation, renameAnnotation, removeAnnotation } fro
 // by real screen coordinates — resium's declarative <Entity> tree can't
 // host that overlay.
 //
-// Gold #c8a04a is used for every annotation — the one color in the whole
+// Ours gold (lib/mapIcons.js OURS.gold) is used for every annotation — the one color in the whole
 // app never used for real data, so an analyst can never mistake a hand-
 // drawn annotation for an actual finding.
 
-const GOLD = Color.fromCssColorString("#c8a04a")
+const GOLD = Color.fromCssColorString(OURS.gold)
+// an annotation point: ours, the one typology's gold note dot, 10 px (lib/mapIcons.js dotIcon)
+const NOTE = dotIcon({ role: "note" })
 const KM_PER_NM = 1.852
 
 function haversineKm(a, b) {
@@ -61,7 +64,7 @@ export default function GlobeAnnotationLayer({ viewerRef, tool, isVisible }) {
             if (a.type === "marker") {
                 ent = viewer.entities.add({
                     id: `annotation-${a.id}`, position: positions[0],
-                    point: { pixelSize: 9, color: GOLD, outlineColor: Color.BLACK.withAlpha(0.6), outlineWidth: 1.5 },
+                    billboard: { image: NOTE.uri, width: NOTE.w, height: NOTE.h },
                     label: { text: a.name, font: "12px sans-serif", fillColor: GOLD, pixelOffset: new Cartesian2(0, -18), showBackground: true, backgroundColor: Color.fromCssColorString("#1A2433").withAlpha(0.8) },
                 })
             } else if (a.type === "route") {
@@ -104,7 +107,7 @@ export default function GlobeAnnotationLayer({ viewerRef, tool, isVisible }) {
         } else if (positions.length >= 2) {
             draftEntityRef.current = viewer.entities.add({ polyline: { positions, width: 2, material: GOLD.withAlpha(0.85) } })
         } else {
-            draftEntityRef.current = viewer.entities.add({ position: positions[0], point: { pixelSize: 7, color: GOLD } })
+            draftEntityRef.current = viewer.entities.add({ position: positions[0], billboard: { image: NOTE.uri, width: NOTE.w, height: NOTE.h } })
         }
     }
 

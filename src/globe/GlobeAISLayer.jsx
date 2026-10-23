@@ -3,7 +3,7 @@ import { Entity, useCesium } from "resium"
 import {
     Cartesian2, Color,
     CallbackProperty, Transforms, HeadingPitchRoll, ColorBlendMode,
-    NearFarScalar, DistanceDisplayCondition,
+    DistanceDisplayCondition,
 } from "cesium"
 import { vesselShipType } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
@@ -11,6 +11,7 @@ import { isMobile, AIS_CAP } from "./isMobile.js"
 import { safeCartesian, vesselHeading, bearingBetween } from "./markerOrientation.js"
 import { createMotion, VESSEL, live as liveMotion } from "./smoothMotion.js"
 import { shipIcon, headingBillboard } from "./farIcons.js"
+import { trafficTint } from "../lib/mapIcons.js"
 import { familyFor as hullFor, modelUrl as hullUrl,
          headingRadiansFromDegrees as hullHeadingFrom } from "./vesselModels.js"
 
@@ -249,7 +250,7 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
                 if (!near) {
                     return (
                         <Entity id={`ais-${v.mmsi}`} key={v.mmsi} position={position}
-                                billboard={headingBillboard(shipIcon(sanctioned ? "#FF453A" : "#8fb4e8"), usableHdg ?? 0, 14)} />
+                                billboard={headingBillboard(shipIcon(sanctioned ? "urgent" : "neutral"), usableHdg ?? 0)} />
                     )
                 }
 
@@ -282,7 +283,7 @@ export default function GlobeAISLayer({ vessels, viewBounds, sanctionedMmsis,
                             // read a name.
                             minimumPixelSize: 8,
                             maximumScale: 40000,
-                            color: sanctioned ? Color.fromCssColorString("#FF453A") : undefined,
+                            color: sanctioned ? Color.fromCssColorString(trafficTint("urgent")) : undefined,
                             colorBlendMode: ColorBlendMode.MIX,
                             colorBlendAmount: sanctioned ? 0.75 : 0,
                         }}

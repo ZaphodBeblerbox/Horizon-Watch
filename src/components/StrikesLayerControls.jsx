@@ -45,7 +45,7 @@ export default function StrikesLayerControls({ variant = "desktop" }) {
                         <button key={a.key} className={phone ? undefined : "chip"} aria-pressed={on} data-act={a.key} onClick={() => toggleStrikeAct(a.key)}
                                 title={`${on ? "Hide" : "Show"} ${a.label.toLowerCase()}`}
                                 style={{ ...chip, display: "flex", alignItems: "center", gap: 4, opacity: on ? 1 : 0.4, textAlign: "left" }}>
-                            <img src={strikeIconUri({ act: a.key, color: "#D7DCE4", size: 16 })} width={phone ? 20 : 16} height={phone ? 23 : 19} alt="" />
+                            <img src={strikeIconUri({ act: a.key })} width={phone ? 22 : 20} height={phone ? 22 : 20} alt="" />
                             {a.label}
                         </button>
                     )

@@ -6,14 +6,15 @@
  *
  * ONE GLYPH PER ACT — a bomb for an airstrike, a missile, a delta-wing
  * drone, an artillery shell, a ship, crossed swords, a flag for territory
- * taken, a shield for an interception — drawn in the asset-icon style
- * (GlobeAssetsLayer.jsx: a dark callout pin, a coloured rounded tile, a
- * line-drawn glyph), as the owner asked. COLOUR IS THE ACTOR, the same
- * colour for that actor everywhere. SIZE is what it did (casualties when
- * known). HOLLOW (dark tile, dashed outline) is a place known only roughly — an oblast,
- * a governorate, a GeoConfirmed camera position. FADING is age within the
- * event's persistence window (14 days for strikes, 30 for control).
+ * taken, a shield for an interception — inside the one typology's circle
+ * (lib/mapIcons.js: a strike is a reported event). COLOUR is the priority
+ * for you; the ACTOR's colour stays on lines, areas and in the card. One
+ * constant size (what it did is in the card). A place known only roughly
+ * (an oblast, a governorate, a GeoConfirmed camera position) is drawn
+ * uncorroborated-style. FADING is age within the event's persistence window
+ * (14 days for strikes, 30 for control), through the marker's opacity.
  */
+import { markerUri, ICON_PX, PRIORITY } from "../lib/mapIcons.js"
 
 export const STRIKE_ACTS = [
     { key: "airstrike", label: "Airstrike / bombing" },
@@ -68,12 +69,7 @@ export function actorColor(actor) {
 }
 
 // ── icons ───────────────────────────────────────────────────────────────
-// THE ASSET-ICON STYLE (globe/GlobeAssetsLayer.jsx icon()): a dark callout
-// pin pointing at the place, ringed in a colour, holding a filled rounded
-// tile with a line-drawn glyph in the 24-unit icon grid. Here the ring and
-// the tile are the ACTOR's colour; the glyph is the ACT. A place known only
-// roughly gets a hollow tile (dark, dashed outline) and its glyph in the
-// actor's colour instead. The pin is 48×56; its tip is the place.
+// The act's glyph (24-unit grid); the map draws it through lib/mapIcons.js GLYPH (same keys).
 export const STRIKE_GLYPH = {
     // an aerial bomb falling nose-down, with its tail fins
     airstrike: "M12 22c-2.9 0-4.6-2.7-4.6-6.6S9.1 8.2 12 8.2s4.6 3.3 4.6 7.2S14.9 22 12 22zM9.4 8.7 8 3h8l-1.4 5.7M12 3v5.2",
@@ -98,49 +94,46 @@ export function glyphFor(act) {
     return STRIKE_GLYPH[act] ? act : "airstrike"
 }
 
-/** The pin's on-screen box for a marker of width `size`; the tip is the place. */
-export function strikeIconDims(size = 26) {
+/** The marker's on-screen box: one constant size (lib/mapIcons.js SIZE.event), centred on the place. */
+export function strikeIconDims(size = ICON_PX) {
     const w = Math.round(size)
-    const h = Math.round(size * 56 / 48)
-    return { width: w, height: h, anchor: [Math.round(w / 2), h] }
+    return { width: w, height: w, anchor: [Math.round(w / 2), Math.round(w / 2)] }
 }
 
-const _cache = new Map()
-
-/**
- * The marker for one event, as an SVG data URI in the asset-pin style.
- * `hollow` = a place known only roughly; `opacity` is quantised to tenths
- * so the cache stays small. `size` is only the cache key's width hint —
- * the SVG is vector and the caller sets the drawn size (strikeIconDims).
- */
-export function strikeIconUri({ act = "airstrike", color = UNKNOWN_ACTOR_COLOR, size = 26, hollow = false, opacity = 1 } = {}) {
-    const op = Math.max(0.1, Math.min(1, Math.round((Number(opacity) || 1) * 10) / 10))
-    const g = glyphFor(act)
-    const key = `${g}:${color}:${hollow}:${op}`
-    if (_cache.has(key)) return _cache.get(key)
-    const tile = hollow
-        ? `<rect x="7" y="7" width="34" height="32" rx="4" fill="#0b1220" stroke="${color}" stroke-width="2" stroke-dasharray="4 3"/>`
-        : `<rect x="7" y="7" width="34" height="32" rx="4" fill="${color}"/>`
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 48 56" opacity="${op}">`
-        + `<path d="M24 55 L16 44 H8 a6 6 0 0 1 -6 -6 V8 a6 6 0 0 1 6 -6 H40 a6 6 0 0 1 6 6 V38 a6 6 0 0 1 -6 6 H32 Z" fill="#0b1220" stroke="${color}" stroke-width="3.5"/>`
-        + tile
-        + `<g transform="translate(10 9) scale(1.17)" fill="none" stroke="${hollow ? color : "#0b1220"}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${STRIKE_GLYPH[g]}"/></g>`
-        + `</svg>`
-    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-    _cache.set(key, uri)
-    return uri
-}
-
-/** Marker width by what the event did: casualties when known (the asset pins are 34). */
-export function strikeSize(e) {
+/** Priority for you: the server's when it sends one; else what the event did (in the card too, never in the size). */
+export function strikePriority(e) {
+    if (e?.priority && PRIORITY[e.priority]) return e.priority
     const c = e?.casualties
     const n = c ? (Number(c.killed) || 0) + (Number(c.injured) || 0) * 0.5 : 0
-    const base = e?.act === "control" ? 30 : 26
-    if (n >= 100) return base + 12
-    if (n >= 20) return base + 8
-    if (n >= 5) return base + 5
-    if (n >= 1) return base + 2
-    return base
+    return n >= 5 ? "urgent" : "alert"
+}
+
+/**
+ * The marker for one event: a strike is a REPORTED EVENT, so a circle (lib/mapIcons.js) with the act's glyph,
+ * coloured by priority for you, never by actor (the actor is in the card and on the lines). A place known only
+ * roughly (`hollow`) is drawn uncorroborated-style: faint with a dotted edge. `color` and `opacity` are accepted
+ * for old callers and ignored: age fades through the billboard / marker opacity (liveness.recencyAlpha).
+ */
+export function strikeIconUri({ act = "airstrike", hollow = false, priority = "alert", event = null } = {}) {
+    return markerUri({ kind: "event", glyph: event ? strikeGlyph(event) : glyphFor(act), priority, state: hollow ? "muted" : "live" })
+}
+
+// Shootings, gunmen, stabbings, police and domestic violence: crime and local security, never the bomb (owner,
+// 2026-10-23 evening). The backend files a text that names no weapon ("attack", "struck") as an airstrike with
+// weapon_stated false; on the map that is the generic impact, or the crime glyph when the words say so.
+const CRIME_RE = /\b(shoot\w*|shot(s| dead| and)?\b|gun(man|men|fire|shot)?s?\b|firearm|rifle|pistol|stabb\w*|knife|machete|murder\w*|homicide|domestic|femicide|kill(ed|ing)? (his|her) |police (shot|shoot|fire)|robber\w*|gang\w*|carjack\w*|kidnap\w*|hostage)/i
+/** The glyph an event draws: its act's, the crime glyph for shootings and local violence, the impact when no weapon is named. */
+export function strikeGlyph(e) {
+    const text = [e?.title, e?.act_label, ...(Array.isArray(e?.sources) ? e.sources.map((x) => x?.title) : [])].filter(Boolean).join(" ")
+    const unstated = !STRIKE_GLYPH[e?.act] || (e?.act === "airstrike" && e?.weapon_stated === false)
+    if (unstated && CRIME_RE.test(text)) return "crime"
+    if (e?.act === "airstrike" && e?.weapon_stated === false) return "strike"
+    return glyphFor(e?.act)
+}
+
+/** One constant size whatever the event did (owner, 2026-10-23: no marker grows with data). */
+export function strikeSize() {
+    return ICON_PX
 }
 
 export const isHollow = (e) => e?.precision === "region"

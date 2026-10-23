@@ -15,7 +15,7 @@
  *
  * Keep LIVE_WINDOW_MIN / CROWD_MAX_MIN the same as backend/live_signals.py.
  */
-import { badgeUri, EDGE, ICON_PX, PALETTE } from "./mapIcons.js"
+import { markerUri, clusterIcon, ICON_PX, PRIORITY, PRIORITY_RANK, priorityOf, topPriority } from "./mapIcons.js"
 export { ICON_PX }
 export const LIVE_WINDOW_MIN = 60
 export const CROWD_MAX_MIN = 180
@@ -29,24 +29,35 @@ export function stripEmoji(s) {
     return String(s).replace(EMOJI_RE, " ").replace(/[ \t]{2,}/g, " ").replace(/\s+([,.;:!?])/g, "$1").replace(/^[\s\-–—·|]+|[\s\-–—·|]+$/g, "")
 }
 
+// The nine acts: the glyph says which act; the colour is what it means to you (lib/mapIcons.js), never the act.
 export const ACTS = {
-    arrest: { label: "Arrest", color: PALETTE.red, glyph: "M9 16a3 3 0 106 0 3 3 0 00-6 0M9 16v-2M15 16v-2M12 19v2" },
-    shots_fired: { label: "Shots fired", color: PALETTE.red, glyph: "M7 16h8l3-2v4l-3-2M7 16l-2 4M10 13l1-2" },
-    explosion: { label: "Explosion", color: PALETTE.amber, glyph: "M16 7l1.5 4.5L22 12l-4 3 1.5 5L16 17l-3.5 3 1.5-5-4-3 4.5-.5z" },
-    strike: { label: "Strike", color: PALETTE.amber, glyph: "M16 6v9M12 12l4 5 4-5M9 22h14" },
-    missile_launch: { label: "Missile launch", color: PALETTE.red, glyph: "M10 22l10-12M17 9h4v4M9 18l3 3" },
-    missile_impact: { label: "Missile impact", color: PALETTE.red, glyph: "M16 8v7M13 12l3 4 3-4M10 21h12M12 18l-2 3M20 18l2 3" },
-    crowd_movement: { label: "Crowd", color: PALETTE.amber, glyph: "M11 15a2 2 0 104 0 2 2 0 00-4 0M17 15a2 2 0 104 0 2 2 0 00-4 0M8 22c.5-3 2-4.5 4-4.5s3.5 1.500 4 4.5M16 22c.5-3 2-4.500 4-4.500s3.500 1.500 4 4.500" },
-    troops_sighted: { label: "Troops", color: PALETTE.blue, glyph: "M8 22v-9l8-5 8 5v9M12 22v-5h8v5" },
-    police_intervention: { label: "Police", color: PALETTE.blue, glyph: "M16 7l7 3v5c0 4-3 6.500-7 8-4-1.500-7-4-7-8v-5z" },
+    arrest: { label: "Arrest", glyph: "arrest", impact: true },
+    shots_fired: { label: "Shots fired", glyph: "crime", impact: true },
+    explosion: { label: "Explosion", glyph: "explosion", impact: true },
+    strike: { label: "Strike", glyph: "strike", impact: true },
+    missile_launch: { label: "Missile launch", glyph: "missile_launch", impact: true },
+    missile_impact: { label: "Missile impact", glyph: "missile_impact", impact: true },
+    crowd_movement: { label: "Crowd", glyph: "crowd" },
+    troops_sighted: { label: "Troops", glyph: "troops" },
+    police_intervention: { label: "Police", glyph: "police" },
 }
 const FALLBACK = ACTS.police_intervention
 
-/** The badge: the shared style (lib/mapIcons.js), a circle for an act on the ground, the act's glyph inside. `muted` fainter. */
-export function actIcon(act, { muted = false, bearing = null } = {}) {
-    const a = ACTS[act] || FALLBACK
-    return badgeUri({ shape: "circle", color: a.color, glyph: a.glyph, bearing, muted })
+/** A signal's priority for you: the server's per-user priority when it sends one, else high impact = urgent, else alert. */
+export function signalPriority(s) {
+    if (s?.priority && PRIORITY[s.priority]) return s.priority
+    return s?.high_impact && !s?.muted ? "urgent" : "alert"
 }
+/** A signal's state: muted (nobody corroborated it), developing (the server says so), else live. */
+export const signalState = (s) => (s?.muted ? "muted" : s?.developing || s?.status === "developing" ? "developing" : "live")
+
+/** The badge: a circle (a reported event) with the act's glyph, the priority's colour, the state's rendering. */
+export function actIcon(act, { muted = false, bearing = null, priority = "alert", state = null } = {}) {
+    const a = ACTS[act] || FALLBACK
+    return markerUri({ kind: "event", glyph: a.glyph, priority, bearing, state: state || (muted ? "muted" : "live") })
+}
+/** The badge of one signal record. */
+export const signalIcon = (s) => actIcon(s?.act, { bearing: s?.direction?.bearing, priority: signalPriority(s), state: signalState(s) })
 
 const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t : NaN }
 
@@ -121,18 +132,32 @@ export function declutter(items, gap = 2) {
     })
 }
 
-/** The cluster's own size on screen, so a cluster is itself a box the collision pass can treat. */
-export const clusterSize = () => 30      // constant on-screen size, whatever the count
+/**
+ * A group's box on screen: ONE ICON PER PLACE (owner, 2026-10-23 evening) — a group is drawn as its most important
+ * member's own marker (representative()), so its box is that marker's size; never a count blob.
+ */
+export const clusterSize = (members = null) => (Array.isArray(members) && members.length
+    ? Math.max(...members.map((m) => m.size || ICON_PX)) : ICON_PX)
+
+/**
+ * Which member of a group is drawn: the highest priority for you (flash, urgent, alert, info), then the most recent
+ * (`t`, ms or ISO), then the first. Members read `pri` (or `sev` as a severity word) and `t`.
+ */
+export function representative(members) {
+    const rk = (m) => PRIORITY_RANK[priorityOf(m?.pri || m?.sev || null, "info")]
+    const tm = (m) => { const v = typeof m?.t === "number" ? m.t : Date.parse(m?.t || ""); return Number.isFinite(v) ? v : -Infinity }
+    return [...(members || [])].sort((a, b) => rk(a) - rk(b) || tm(b) - tm(a))[0] || null
+}
 
 /** Declutter to a fixed point: a cluster is bigger than a marker and may touch a neighbour, so merge again until none touch. */
 export function declutterAll(items, gap = 2) {
     let cur = items.map((it) => ({ ...it, members: [it] }))
     for (let guard = 0; guard < 8; guard++) {
-        const out = declutter(cur.map((g) => ({ id: g.id, x: g.x, y: g.y, sev: g.sev, size: g.members.length > 1 ? clusterSize(g.members.length) : g.size, _g: g })), gap)
+        const out = declutter(cur.map((g) => ({ id: g.id, x: g.x, y: g.y, sev: g.sev, size: g.members.length > 1 ? clusterSize(g.members) : g.size, _g: g })), gap)
         if (out.every((o) => !o.cluster)) break
         cur = out.map((o) => {
             const members = o.members.flatMap((m) => m._g.members)
-            return { id: members.length === 1 ? members[0].id : `cl:${members.map((m) => m.id).sort().join("|")}`, x: o.x, y: o.y, sev: members[0].sev, size: members.length === 1 ? members[0].size : clusterSize(members.length), members }
+            return { id: members.length === 1 ? members[0].id : `cl:${members.map((m) => m.id).sort().join("|")}`, x: o.x, y: o.y, sev: members[0].sev, size: members.length === 1 ? members[0].size : clusterSize(members), members }
         })
     }
     return cur.map((g) => ({ id: g.id, x: g.x, y: g.y, members: g.members.map((m) => m.members ? m.members[0] : m), cluster: g.members.length > 1 }))
@@ -152,17 +177,9 @@ export function labelsToShow(labels, markers) {
     return labels.filter((l) => l.show)
 }
 
-const _cl = {}
-/** A cluster's badge: the count on a dark disc. The same on the phone (m2-cluster) in spirit; the globe draws it as a billboard. */
-export function clusterIconUri(n) {
-    const d = clusterSize(n)
-    const key = `${d}|${n}`
-    if (_cl[key]) return _cl[key]
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${d * 2}" height="${d * 2}" viewBox="0 0 ${d} ${d}">
-      <circle cx="${d / 2}" cy="${d / 2}" r="${d / 2 - 1.5}" fill="#0b1220" stroke="#e8eaed" stroke-width="1.5"/>
-      <text x="${d / 2}" y="${d / 2 + 4.5}" text-anchor="middle" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#e8eaed">${n > 99 ? "99+" : n}</text></svg>`
-    _cl[key] = `data:image/svg+xml;base64,${typeof btoa === "function" ? btoa(svg) : Buffer.from(svg).toString("base64")}`
-    return _cl[key]
+/** A cluster's badge: lib/mapIcons.js clusterIcon, the same on the phone and the globe; `priorities` of its members. */
+export function clusterIconUri(n, priorities = null) {
+    return clusterIcon(n, priorities ? topPriority(priorities) : null).uri
 }
 
 /** Is a point on the near side of the globe seen from the camera (both ECEF, metres)? A sphere's horizon. */

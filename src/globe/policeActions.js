@@ -27,6 +27,7 @@
  * dark halo; no monospace.
  */
 import { freshAlpha } from "./freshness.js"
+import { markerIcon } from "../lib/mapIcons.js"
 
 export const POLICE_PATH = "/api/routes/demonstrations/street"
 export const POLICE_REFRESH_MS = 30_000
@@ -49,16 +50,13 @@ const TACTIC = {
 export const POLICE_TACTICS = Object.keys(TACTIC)
 export const tacticColour = (t) => (TACTIC[t] || TACTIC.footage).colour
 
-const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-const svgUri = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 const arr = (v) => (Array.isArray(v) ? v : [])
 const fin = (p) => p?.lat != null && p?.lon != null && p.lat !== "" && Number.isFinite(+p.lat) && Number.isFinite(+p.lon)
 const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t : NaN }
 const R = 6_371_000
 const STACK_PX = 30
 
-export function rgba(hex, a) {
+function rgba(hex, a) {
     const h = String(hex).replace("#", "")
     const n = parseInt(h.length === 3 ? h.split("").map((x) => x + x).join("") : h, 16)
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Math.round(a * 100) / 100})`
@@ -128,35 +126,16 @@ export function ageLabel(ageMin) {
 }
 
 // White glyphs on the tactic's disc (24 × 24, centre 12, 12).
-const GLYPH = {
-    tear_gas: `<circle cx="9" cy="13" r="3.4" fill="#fff"/><circle cx="13.5" cy="10.5" r="4" fill="#fff"/><circle cx="15.5" cy="14" r="3" fill="#fff"/>`,
-    kettle: `<circle cx="12" cy="12" r="5.5" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M12 3.5v4M12 16.5v4M3.5 12h4M16.5 12h4" stroke="#fff" stroke-width="2.4"/>`,
-    charge: `<path d="M6 8l4 4-4 4M11 8l4 4-4 4" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`,
-    police_arrival: `<path d="M12 5.5l5.5 2v4c0 3.4-2.4 5.8-5.5 7-3.1-1.2-5.5-3.6-5.5-7v-4z" fill="#fff"/>`,
-    arrests: `<circle cx="9" cy="12" r="3.2" fill="none" stroke="#fff" stroke-width="2"/><circle cx="15" cy="12" r="3.2" fill="none" stroke="#fff" stroke-width="2"/>`,
-    lbd: `<circle cx="12" cy="12" r="4.5" fill="none" stroke="#fff" stroke-width="1.8"/><circle cx="12" cy="12" r="1.6" fill="#fff"/><path d="M12 5v2.5M12 16.5V19M5 12h2.5M16.5 12H19" stroke="#fff" stroke-width="1.8"/>`,
-    gunfire: `<path d="M12 5l1.6 4.2 4.4.4-3.4 2.9 1 4.3L12 14.6 8.4 16.8l1-4.3L6 9.6l4.4-.4z" fill="#fff"/>`,
-    water_cannon: `<path d="M12 5.5c2.6 3.4 4 5.6 4 7.6a4 4 0 0 1-8 0c0-2 1.4-4.2 4-7.6z" fill="#fff"/>`,
-    barricade: `<rect x="5.5" y="9" width="13" height="5" fill="#fff"/><path d="M8 9l-2.5 5M12 9l-2.5 5M16 9l-2.5 5" stroke="#05070C" stroke-width="1.4"/><path d="M7.5 14v4M16.5 14v4" stroke="#fff" stroke-width="1.8"/>`,
-    fire: `<path d="M12 5c.5 2.6 3.8 4 3.8 7.6A3.8 3.8 0 0 1 8.2 13c0-1.6.9-2.6 1.7-3.4.1 1.2.7 1.9 1.4 2.1C11.2 9.6 11 7.4 12 5z" fill="#fff"/>`,
-    crowd: `<circle cx="8.5" cy="10" r="2" fill="#fff"/><circle cx="15.5" cy="10" r="2" fill="#fff"/><circle cx="12" cy="9" r="2.2" fill="#fff"/><path d="M5.5 17c.4-2.4 1.6-3.6 3-3.6s2.6 1.2 3 3.6M12.5 17c.4-2.4 1.6-3.6 3-3.6s2.6 1.2 3 3.6M8.6 16.5c.5-2.6 1.8-3.9 3.4-3.9s2.9 1.3 3.4 3.9" fill="#fff"/>`,
-    footage: `<rect x="5.5" y="8.5" width="9.5" height="7" rx="1.2" fill="#fff"/><path d="M15.5 11l3.5-2v6l-3.5-2z" fill="#fff"/>`,
-}
-
-function textW(t, size) { return Math.round(String(t).length * size * 0.58) }
-
-/** A tactic's mark: its disc and glyph, its words to the right; faded by age. {uri, width, height, anchor}. */
+// THE ONE TYPOLOGY (lib/mapIcons.js, owner 2026-10-23): a police act is a reported event, a circle with what it
+// is inside, coloured by priority (force used: urgent; the rest alert); the age fades its opacity (`alpha` as
+// the past state when old). No disc of its own, no words in the image: they are the card's.
+const TACTIC_GLYPH = { crowd: "crowd", fire: "flame", footage: "generic", barricade: "generic" }
+const FORCE = new Set(["kettle", "charge", "tear_gas", "water_cannon", "clashes", "kinetic", "arrests", "arrest"])
+/** A tactic's mark. {uri, width, height, anchor}. `label` is kept for old callers. */
 export function tacticIcon(tactic, label = "", alpha = 1) {
-    const c = tacticColour(tactic)
-    const text = String(label || "")
-    const width = 28 + (text ? textW(text, 11) + 6 : 0), height = 28
-    const a = Math.round(Math.max(0, Math.min(1, alpha)) * 100) / 100
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g opacity="${a}">`
-        + `<g transform="translate(2 2)"><circle cx="12" cy="12" r="11.2" fill="${c}" stroke="#05070C" stroke-opacity=".55" stroke-width="1.2"/>`
-        + (GLYPH[tactic] || GLYPH.footage) + "</g>"
-        + (text ? `<text x="30" y="18" font-family="${FONT}" font-size="11" font-weight="600" fill="#F2F4F7" stroke="#05070C" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(text)}</text>` : "")
-        + "</g></svg>"
-    return { uri: svgUri(svg), width, height, anchor: [14, 14] }
+    const i = markerIcon({ kind: "event", glyph: TACTIC_GLYPH[tactic] || (/arrest/.test(String(tactic)) ? "arrest" : "police"),
+                           priority: FORCE.has(tactic) ? "urgent" : "alert", state: alpha < 0.5 ? "past" : "live" })
+    return { uri: i.uri, width: i.w, height: i.h, anchor: i.anchor }
 }
 
 const short = (s) => (s ? String(s).split(",")[0].trim() : "")

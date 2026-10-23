@@ -25,9 +25,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { Entity, useCesium } from "resium"
 import {
-    CallbackProperty, Cartesian2, Cartesian3, Color, ColorBlendMode, DistanceDisplayCondition, HeadingPitchRoll,
-    HeightReference, LabelStyle, NearFarScalar, PolygonHierarchy, PolylineDashMaterialProperty, PolylineGlowMaterialProperty,
-    StripeMaterialProperty, StripeOrientation, Transforms, VerticalOrigin,
+    CallbackProperty, Cartesian2, Cartesian3, Color, DistanceDisplayCondition,
+    HeightReference, LabelStyle, PolygonHierarchy, PolylineDashMaterialProperty, PolylineGlowMaterialProperty,
+    StripeMaterialProperty, StripeOrientation, VerticalOrigin,
 } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
@@ -36,8 +36,9 @@ import {
     claimMapLabel, claimRing, claimStyle, milSymbol, movementArrow, movementLabel, movementStyle, movementSymbolPoint,
     overlayUrl, replaySeconds, sideColour, trajectoryPath,
 } from "./frontlineClaims.js"
-import { fmtMinutes, modelHeadingRad, pathLengthKm, positionAlong, shahedModelUri } from "./vesselThreat.js"
+import { fmtMinutes, pathLengthKm, positionAlong } from "./vesselThreat.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { markerIcon } from "../lib/mapIcons.js"
 
 const REFRESH_MS = 3 * 60_000
 const FONT = "600 12px system-ui, -apple-system, Segoe UI, sans-serif"
@@ -155,7 +156,8 @@ const MovementEntity = memo(function MovementEntity({ m }) {
     // ring arrow or a single arrow); the entity sits there, or at the head
     const at = movementSymbolPoint(m) || m.to
     const pos = useMemo(() => Cartesian3.fromDegrees(+at.lon, +at.lat), [at.lon, at.lat])
-    const sym = st.symbolAt ? milSymbol(m.sidc, { colour, size: 22 }) : {}
+    // the unit symbol, small and constant (lines and areas carry the side's colour)
+    const sym = st.symbolAt ? milSymbol(m.sidc, { colour, size: 12 }) : {}
     // later legs of a path more opaque; an open siege approach dashed
     const material = st.dash
         ? new PolylineDashMaterialProperty({ color: css(colour, st.alpha), dashLength: 12 })
@@ -212,17 +214,22 @@ const TrajectoryEntity = memo(function TrajectoryEntity({ t }) {
     )
 })
 
+const originIcon = (t) => markerIcon({ kind: "event", glyph: t.kind === "drone" ? "drone" : "missile", priority: "alert",
+                                         state: t.from?.assumed ? "muted" : "live" })
+
 function OriginEntity({ id, t, n }) {
     const colour = sideColour(t.side, t.colour)
     const pos = useMemo(() => Cartesian3.fromDegrees(+t.from.lon, +t.from.lat), [t.from.lon, t.from.lat])
     const text = `${t.from.assumed ? "Assumed origin" : "Launch point"} · ${t.from.name || "unnamed"}${n > 1 ? ` · ${n} flights` : ""}`
     return (
         <Entity id={id} name={text} position={pos}
-            point={{ pixelSize: 8, color: css("#0b1220"), outlineColor: css(colour), outlineWidth: 2,
-                     heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
+            // the launch point: the one typology's event circle with the weapon's glyph, 24 px; an assumed origin is
+            // drawn uncorroborated (muted); never a ring, a black dot or the side's colour on a point (owner, 2026-10-23)
+            billboard={{ image: originIcon(t).uri, width: originIcon(t).w, height: originIcon(t).h,
+                         heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M }}
             label={{
                 text, font: FONT, fillColor: css(colour), outlineColor: css("#05070C"), outlineWidth: 3,
-                style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -10),
+                style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.BOTTOM, pixelOffset: new Cartesian2(0, -14),
                 heightReference: HeightReference.CLAMP_TO_GROUND, showBackground: true,
                 backgroundColor: css("#0B0F1A", 0.72), backgroundPadding: new Cartesian2(5, 3),
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 4_000_000),
@@ -294,30 +301,13 @@ function TrajectoryReplay({ trajectories }) {
                 verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 26), showBackground: true,
                 backgroundColor: Color.BLACK.withAlpha(0.55), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             }
-            if (drone) {
-                // the Shahed/Geran-class model, as the vessel-of-concern simulation flies it
-                added.push(viewer.entities.add({
-                    id: `ftraj-replay-craft-${t.id}`,
-                    position: new CallbackProperty(() => { const p = posNow(); return Cartesian3.fromDegrees(p.lon, p.lat, p.alt) }, false),
-                    orientation: new CallbackProperty(() => {
-                        const p = posNow()
-                        return Transforms.headingPitchRollQuaternion(Cartesian3.fromDegrees(p.lon, p.lat, p.alt),
-                            new HeadingPitchRoll(modelHeadingRad(p.heading), 0, 0))
-                    }, false),
-                    model: { uri: shahedModelUri(), minimumPixelSize: 54, maximumScale: 60000, color: css("#d9cdb8"),
-                             colorBlendMode: ColorBlendMode.MIX, colorBlendAmount: 0.25,
-                             heightReference: HeightReference.RELATIVE_TO_GROUND },
-                    label,
-                }))
-            } else {
-                added.push(viewer.entities.add({
-                    id: `ftraj-replay-craft-${t.id}`,
-                    position: new CallbackProperty(() => at(posNow()), false),
-                    point: { pixelSize: 10, color: css("#fff4e0"), outlineColor: css(colour), outlineWidth: 3,
-                             disableDepthTestDistance: MARKER_DEPTH_TEST_M },
-                    label,
-                }))
-            }
+            // no craft flies the path (owner, 2026-10-23 evening: the animated drone read as a toy): the flown line
+            // grows, and its words ride at its head, text only
+            added.push(viewer.entities.add({
+                id: `ftraj-replay-head-${t.id}`,
+                position: new CallbackProperty(() => { const p = posNow(); return drone ? Cartesian3.fromDegrees(p.lon, p.lat) : at(p) }, false),
+                label,
+            }))
             const tick = () => {
                 render()
                 if (kmNow() < total) raf = requestAnimationFrame(tick)

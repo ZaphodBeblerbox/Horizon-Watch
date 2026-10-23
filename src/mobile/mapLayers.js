@@ -20,22 +20,19 @@
  */
 import { safeHouseIcon, placesLabel } from "../evacuation/safeHouseIcon.js"
 import API_BASE from "../apiBase.js"
-import { actIcon, cardText, liveSignalDrawn, mediaSources, ICON_PX } from "../lib/liveSignals.js"
-import { imageryIcon, badgeUri } from "../lib/mapIcons.js"
-import { PROTESTS_PATH, LIVE_REFRESH_MS, getFrame, setMeta, protestFeatures, refreshMs as protestsRefreshMs, KINDS as PROTEST_KINDS } from "../lib/protests.js"
+import { actIcon, signalIcon, signalPriority, cardText, liveSignalDrawn, mediaSources, representative, ICON_PX } from "../lib/liveSignals.js"
+import { imageryIcon, markerUri, markerIcon, pinIcon, infraIcon, dotIcon, priorityOf, SIZE } from "../lib/mapIcons.js"
+import { PROTESTS_PATH, LIVE_REFRESH_MS, getFrame, setMeta, protestFeatures, protestBadge, refreshMs as protestsRefreshMs } from "../lib/protests.js"
 import { myPosition } from "../location/liveShare.js"
 import { getCurrentUser } from "../state/authStore.js"
-import {
-    getShapeMarkerDataUri, getGeoConfirmedMarkerDataUri, getFacilityMarkerDataUri,
-    getEntityMarkerDataUri, GEOCONFIRMED_MARKER_SIZE, MARK_SIZE,
-} from "../globe/entityIcons.js"
+import { getGeoConfirmedMarkerDataUri, getFacilityMarkerDataUri } from "../globe/entityIcons.js"
 import { infraGlyphUri } from "../globe/infraGlyphs.js"
-import { styleFor as gfwStyleFor, summaryOf as gfwSummaryOf, ageLabel as gfwAgeLabel, KINDS as GFW_KINDS } from "../globe/gfwEvents.js"
+import { styleFor as gfwStyleFor, summaryOf as gfwSummaryOf, ageLabel as gfwAgeLabel, gfwIcon, KINDS as GFW_KINDS } from "../globe/gfwEvents.js"
 import { riskAlpha, buildA2ToA3, indexByIso3 } from "../globe/riskChoropleth.js"
 import { CAT } from "../components/timeStripMath.js"
-import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, filterByCountry, placesUrl } from "../globe/endangeredPlaces.js"
+import { placeIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, filterByCountry, placesUrl } from "../globe/endangeredPlaces.js"
 import {
-    actorColor, filterStrikes, isHollow, strikeIconDims, strikeIconUri, strikeOpacity, strikeSettings, strikeSize,
+    filterStrikes, isHollow, strikeIconUri, strikeOpacity, strikePriority, strikeSettings,
     strikeSummary, strikeWindowHours, strikesUrl,
 } from "../globe/strikes.js"
 import {
@@ -81,6 +78,16 @@ async function getJson(url, { ttlMs = 15_000, credentials = true } = {}) {
 const arr = (v) => (Array.isArray(v) ? v : [])
 const num = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v))
 const finite = (lat, lon) => Number.isFinite(num(lat)) && Number.isFinite(num(lon))
+/** A feature's time in ms (event, last update, report), for "most recent" among things at one place. */
+export function featureTime(f) {
+    if (Number.isFinite(f?.t)) return f.t
+    const r = f?.raw || {}
+    for (const v of [r.event_time, r.last_update, r.time, r.last_time, r.created_at, r.published_at, r.at, r.updated_at]) {
+        const t = typeof v === "number" ? v : Date.parse(v || "")
+        if (Number.isFinite(t)) return t
+    }
+    return NaN
+}
 const clampLat = (v) => Math.max(-90, Math.min(90, v))
 const clampLon = (v) => Math.max(-180, Math.min(180, v))
 
@@ -161,11 +168,12 @@ export function cullOrCluster(features, bounds, zoom, { noun = "points", prefix 
             const lon = list.reduce((a, f) => a + num(f.lon), 0) / list.length
             const sev = list.map((f) => f.severity).filter(Boolean)
                 .sort((a, b) => (SIG_RANK[a] ?? 9) - (SIG_RANK[b] ?? 9))[0] || null
-            const alarm = sev === "critical" || sev === "high" ? "red" : sev === "medium" ? "amber" : "grey"
-            const size = 30
+            // ONE ICON PER PLACE (owner, 2026-10-23 evening): the most important member's own marker, the rest in its card
+            const top = representative(list.map((f) => ({ ...f, t: featureTime(f) })))
             const named = list.slice(0, 8).map((f) => f.title).filter(Boolean)
             out.push({
-                id: `${prefix}-cl-${z}-${px}-${k}`, lat, lon, iconUri: clusterIconUri({ count: list.length, alarm, size }), size,
+                id: `${prefix}-cl-${z}-${px}-${k}`, lat, lon, iconUri: top.iconUri, size: top.size, collide: true,
+                iconWidth: top.iconWidth, iconHeight: top.iconHeight, iconAnchor: top.iconAnchor, pri: top.pri, t: top.t,
                 title: `${list.length} ${noun} here`, sub: "Zoom in to see each one", severity: sev,
                 raw: { kind: `${prefix}_cluster`, detail: `${named.join("; ")}${list.length > 8 ? `; and ${list.length - 8} more` : ""}.`,
                        lat, lon, count: list.length },
@@ -268,55 +276,22 @@ function utcMs(s) {
     return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(str) ? str : `${str}Z`)
 }
 
-// ── GDELT (globe/GlobeGdeltLayer.jsx colourFor, verbatim) ─────────────────
-function gdeltColourFor(goldstein) {
+// ── GDELT: news coverage, a diamond; Goldstein → priority (plan §4e) ─────
+function gdeltPriority(goldstein) {
     const g = typeof goldstein === "number" ? goldstein : 0
-    if (g <= -8) return "var(--sev-critical, #d4553f)"
-    if (g <= -5) return "var(--sev-high, #e8a33d)"
-    if (g < 0) return "var(--sev-medium, #c9a227)"
-    return "var(--txt-4, #6f8fa8)"
+    return g <= -8 ? "flash" : g <= -5 ? "urgent" : g < 0 ? "alert" : "info"
 }
-function gdeltSeverity(goldstein) {
-    const g = typeof goldstein === "number" ? goldstein : 0
-    return g <= -8 ? "critical" : g <= -5 ? "high" : g < 0 ? "medium" : "low"
-}
+const gdeltSeverity = (g) => ({ flash: "critical", urgent: "high", alert: "medium", info: "low" }[gdeltPriority(g)])
 
-// ── FIRMS (globe/GlobeFiresLayer.jsx colourFor, verbatim) ─────────────────
-function fireColourFor(k) {
-    if (!k) return "var(--txt-4, #6f8fa8)"
-    if (k >= 360) return "var(--sev-critical, #d4553f)"   // intense
-    if (k >= 330) return "var(--sev-high, #e8a33d)"
-    return "var(--sev-medium, #c9a227)"                    // warm, common
-}
+// ── FIRMS: observed by a sensor, a square with the flame; hot = urgent, never flash (a fire is not yet an alert to you)
+const firePriority = (k) => (k && k >= 360 ? "urgent" : "alert")
 
-// ── Imagery signals: the shared icon style (lib/mapIcons.js), the same module as the globe ──
+// ── Imagery signals: the shared typology (lib/mapIcons.js), the same module as the globe ──
 const imagerySignalIcon = imageryIcon
 
-// ── Our assets (globe/GlobeAssetsLayer.jsx icon, verbatim) ────────────────
-const ASSET_GLYPH = {
-    Vessels: "M3 15h18l-2.5 4.5H5.5zM6 15V9h7l3 6M9 9V5.5h2.5V9",
-    Aircraft: "M12 3v18M12 9l9 4v2l-9-2.5M12 9l-9 4v2l9-2.5M9.5 20l2.5-1.5 2.5 1.5",
-    Vehicles: "M3 16V9.5l2.5-3h9l3 4H21V16zM6.5 18.5a1.8 1.8 0 100-.01M16.5 18.5a1.8 1.8 0 100-.01",
-    Sites: "M3 20V10l5 3V10l5 3V7h3v13zM18 20V4h3v16",
-    Energy: "M13 2L5 13h6l-1 9 8-11h-6z",
-    Transport: "M4 20h16M6 20V12h12v8M9 12V7h6v5M12 7V3",
-    People: "M12 4a3.2 3.2 0 100 6.4A3.2 3.2 0 0012 4zM5 20c.8-4 3.6-6 7-6s6.2 2 7 6",
-    Telecoms: "M12 4v16M8.5 20l3.5-8 3.5 8M7 8a7 7 0 0 1 10 0M5 5a10 10 0 0 1 14 0",
-}
-const ASSET_RING = { high: "#E5484D", elevated: "#F5A524", low: "#8FB4E8", quiet: "#4CAF7A", unknown: "#9AA9BC" }
-const _assetIcons = {}
-function assetIcon(group, exposure) {
-    const key = `${group}|${exposure}`
-    if (_assetIcons[key]) return _assetIcons[key]
-    const ring = ASSET_RING[exposure] || ASSET_RING.unknown
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 48 56">
-      <path d="M24 55 L16 44 H8 a6 6 0 0 1 -6 -6 V8 a6 6 0 0 1 6 -6 H40 a6 6 0 0 1 6 6 V38 a6 6 0 0 1 -6 6 H32 Z" fill="#0b1220" stroke="${ring}" stroke-width="3.5"/>
-      <rect x="7" y="7" width="34" height="32" rx="4" fill="#C9A227"/>
-      <g transform="translate(10 9) scale(1.17)" fill="none" stroke="#0b1220" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${ASSET_GLYPH[group] || ASSET_GLYPH.Sites}"/></g>
-    </svg>`
-    _assetIcons[key] = `data:image/svg+xml;base64,${btoa(svg)}`
-    return _assetIcons[key]
-}
+// ── Our assets: ours, the pin (lib/mapIcons.js), its edge the exposure as priority ──
+const PIN = SIZE.pin
+const assetIcon = (group, exposure) => pinIcon({ glyph: group || "Sites", priority: priorityOf(exposure, "info") }).uri
 
 // ── Surge & fusion (globe/GlobeDerivedAlertsLayer.jsx, verbatim) ──────────
 function surgeLabel(s) {
@@ -332,33 +307,29 @@ function fusionLabel(f) {
     const n = (f.mods || []).length
     return n ? `${short} · ${n} kinds agree` : short
 }
-const derivedMark = (color) => getShapeMarkerDataUri({ shape: "triangle", color, size: MARK_SIZE.alert, strokeWidth: 1.5 })
-const SURGE_MARK = "#b7822c"
-const FUSION_MARK = "#c4453c"
+// derived warnings: a triangle with the surge / fusion glyph, the priority from the record
+const surgePriority = (x) => (x?.priority && priorityOf(x.priority) === x.priority ? x.priority : Number(x?.mult) >= 3 ? "urgent" : "alert")
+const fusionPriority = (x) => {
+    if (x?.priority) return priorityOf(x.priority)
+    const sev = String(x?.severity || x?.level || "").toLowerCase()
+    return sev === "critical" || sev === "flash" ? "flash" : "urgent"
+}
+const derivedMark = (glyph, priority) => markerUri({ kind: "derived", glyph, priority })
 
-// ── Facilities (globe/GlobeFacilitiesLayer.jsx, verbatim) ─────────────────
-const FAC_COLOUR = { military: "#C084FC", medical: "#3DDC97", security: "#3D8BFF" }
+// ── Facilities (globe/GlobeFacilitiesLayer.jsx): infrastructure context, a line glyph, one size ──
 const FAC_CATEGORY_LABEL = { military: "Military", medical: "Medical", security: "Police & fire" }
 const FAC_TYPE_TO_CATEGORY = {
     "Military Facility": "military",
     "Medical Facility": "medical",
     "Security Facility": "security",
 }
-const FAC_SIZE = 18
+const FAC_SIZE = SIZE.infra
 /** The desktop refuses (and the backend refuses) a view over 60 deg². */
 const FAC_MAX_SPAN_DEG2 = 60
 
-// ── Ports / airports (globe/GlobePortLayer.jsx, GlobeAirportLayer.jsx) ─────
-const PORT_ICON_SIZE = { "Very Large": 30, "Large": 26, "Medium": 22, "Small": 18 }
-const AIRPORT_ICON_SIZE = { large_airport: 34, medium_airport: 28, small_airport: 22, seaplane_base: 26 }
-
-// ── Chokepoints (globe/GlobeChokepointsLayer.jsx) ─────────────────────────
-const CHOKE_SIZE = 26
-let _chokeIcon = null
-function chokeIcon() {
-    if (!_chokeIcon) _chokeIcon = getEntityMarkerDataUri({ entityType: "zone", size: 26 })
-    return _chokeIcon
-}
+// ── Ports / airports / chokepoints: infrastructure context, one size (no size by class) ──
+const INFRA_PX = SIZE.infra
+const chokeIcon = () => infraIcon({ glyph: "chokepoint" }).uri
 
 // ── Airspace (globe/GlobeAirspaceLayer.jsx, verbatim) ─────────────────────
 const AIRSPACE_MAX_SPAN_DEG = 14
@@ -425,36 +396,8 @@ function infraLineStyle(f) {
     if (f.kind === "telecom_line") return { color: "#61B37A", width: 1.4, dashed: true }
     return { color: "#999999", width: 1.2, dashed: false }
 }
-const SOURCE_COLOR = { nuclear: "#E5D33A", coal: "#8B7B6B", gas: "#E58A3A", oil: "#9A6A40", wind: "#4FB4E8",
-                       solar: "#F2C230", hydro: "#3A7FE5", biomass: "#5FA05A", waste: "#8F8F6A", battery: "#B0B0FF" }
-const INFRA_GLYPH = {
-    power_plant: "M13 2 5 13h6l-1 9 8-11h-6z",
-    substation: "M4 6h16v12H4zM8 6v12M16 6v12M4 12h16",
-    wind_turbine: "M12 12 12 3M12 12l7.5 4.5M12 12l-7.5 4.5M12 12v10",
-    telecom_mast: "M12 4v18M8 22l4-10 4 10M7 7a7 7 0 0 1 10 0M5 4.5a10 10 0 0 1 14 0",
-    data_center: "M5 4h14v5H5zM5 10h14v5H5zM5 16h14v4H5zM8 6.5h.01M8 12.5h.01",
-    well: "M4 20h16M7 20l5-12 5 12M5 9l14-4M12 8v-4",
-    petroleum_site: "M4 20V10a4 4 0 0 1 8 0v10M12 20v-7a4 4 0 0 1 8 0v7M3 20h18",
-}
-const _infraIcons = new Map()
-function infraIconFor(f) {
-    const p = f.props || {}
-    const fill = f.kind === "power_plant" ? (SOURCE_COLOR[p.source] || "#E58A3A")
-        : f.kind === "substation" ? voltageColor(p.voltage)
-        : f.kind === "wind_turbine" ? SOURCE_COLOR.wind
-        : f.kind === "telecom_mast" || f.kind === "data_center" ? "#61B37A"
-        : "#B08850"
-    const key = `${f.kind}|${fill}`
-    if (_infraIcons.has(key)) return _infraIcons.get(key)
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-      <circle cx="20" cy="20" r="17" fill="#0b1220" stroke="${fill}" stroke-width="3"/>
-      <g transform="translate(8 8)" fill="none" stroke="${fill}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${INFRA_GLYPH[f.kind] || INFRA_GLYPH.power_plant}"/></g>
-    </svg>`
-    const uri = `data:image/svg+xml;base64,${btoa(svg)}`
-    _infraIcons.set(key, uri)
-    return uri
-}
-const INFRA_POINT_SIZE = { power_plant: 26, substation: 18, wind_turbine: 16, telecom_mast: 16, data_center: 20, well: 15, petroleum_site: 20 }
+/** A power or telecom site: infrastructure context, the kind's line glyph, neutral (colours stay on the lines). */
+const infraIconFor = (f) => infraIcon({ glyph: f?.kind || "power_plant" }).uri
 const infraZoom = (z) => Math.max(2, Math.min(15, Math.round(Number(z) || 2)))
 
 // AOIs have no map drawing on the desktop (the toggle is wired to nothing
@@ -470,10 +413,8 @@ async function loadGeoConfirmed({ bounds, hours }) {
     return cullPoints(arr(d?.placemarks).map((p) => ({
         id: `geoconfirmed-${p.id}`,
         lat: num(p.lat), lon: num(p.lon),
-        iconUri: getGeoConfirmedMarkerDataUri({
-            color: p.faction_color, invertColor: !!p.faction_invert_color, size: GEOCONFIRMED_MARKER_SIZE,
-        }),
-        size: GEOCONFIRMED_MARKER_SIZE,
+        iconUri: getGeoConfirmedMarkerDataUri(),
+        size: ICON_PX, collide: true, pri: "alert",
         title: p.title || p.name || "Geolocated event",
         sub: [p.faction, p.date_label].filter(Boolean).join(" · ") || null,
         severity: null,
@@ -482,13 +423,13 @@ async function loadGeoConfirmed({ bounds, hours }) {
 }
 
 async function loadGdelt({ bounds }) {
-    const size = MARK_SIZE.gdelt
+    const size = ICON_PX
     const d = await getJson(`${API_BASE}/api/gdelt/map-points?limit=1500`)
     return cullPoints(arr(d?.points).map((p) => ({
         id: `gdelt-${p.id}`,
         lat: num(p.lat), lon: num(p.lon),
-        iconUri: getShapeMarkerDataUri({ shape: "diamond", color: gdeltColourFor(p.goldstein), size }),
-        size,
+        iconUri: markerUri({ kind: "news", glyph: "news", priority: gdeltPriority(p.goldstein) }),
+        size, collide: true, pri: gdeltPriority(p.goldstein),
         title: p.title || p.original_title || "Wire report",
         sub: p.location_name || null,
         severity: gdeltSeverity(p.goldstein),
@@ -508,8 +449,8 @@ export function liveSignalFeatures(d, now = Date.now()) {
     return arr(d?.signals).filter((s) => finite(s.lat, s.lon) && liveSignalDrawn(s, now)).map((s) => {
         const c = cardText(s, now)
         return {
-            id: s.id, lat: num(s.lat), lon: num(s.lon), size: LS_SIZE, collide: true,
-            iconUri: actIcon(s.act, { muted: !!s.muted, bearing: s.direction?.bearing }),
+            id: s.id, lat: num(s.lat), lon: num(s.lon), size: LS_SIZE, collide: true, pri: signalPriority(s),
+            iconUri: signalIcon(s),
             title: c.title, sub: c.line, severity: s.muted ? null : (s.high_impact ? "high" : null),
             raw: { ...s, kind: "live_signal", headline: c.title, title: c.title, status_label: c.line, card_lines: c.lines,
                    sources: mediaSources(s), thumb_url: null, layerLabel: "Live signal" },
@@ -551,7 +492,7 @@ async function loadImagerySignals({ bounds, zoom }) {
     return cullOrCluster(rows.map((a) => ({
         id: `imgsig-${a.alert_id}`,
         lat: num(a.lat), lon: num(a.lon),
-        iconUri: imagerySignalIcon(a.severity), size: 22,
+        iconUri: imagerySignalIcon(a.severity), size: ICON_PX, collide: true, pri: priorityOf(a.severity, "alert"),
         title: a.title || a.alert_type || "Imagery signal",
         sub: a.region || null,
         severity: a.severity || null,
@@ -562,13 +503,13 @@ async function loadImagerySignals({ bounds, zoom }) {
 async function loadFires({ bounds }) {
     // GlobeView mounts GlobeFiresLayer without `hours`, so the desktop
     // always shows its 72-hour default rather than the signal window.
-    const size = MARK_SIZE.fire
+    const size = ICON_PX
     const d = await getJson(`${API_BASE}/api/fires?hours=72&limit=2000`)
     return cullPoints(arr(d?.fires).map((f) => ({
         id: `fire-${f.id}`,
         lat: num(f.lat), lon: num(f.lon),
-        iconUri: getShapeMarkerDataUri({ shape: "circle", color: fireColourFor(f.brightness_k), size }),
-        size,
+        iconUri: markerUri({ kind: "confirmed", glyph: "flame", priority: firePriority(f.brightness_k) }),
+        size, collide: true, pri: firePriority(f.brightness_k),
         title: f.label || "Thermal anomaly",
         sub: [f.instrument || "VIIRS", f.satellite, f.frp ? `${f.frp} MW` : null].filter(Boolean).join(" · "),
         severity: !f.brightness_k ? null : f.brightness_k >= 360 ? "critical" : f.brightness_k >= 330 ? "high" : "medium",
@@ -581,13 +522,13 @@ async function loadDerivedAlerts({ bounds }) {
         getJson(`${API_BASE}/api/alerts/surges`, { credentials: false }),
         getJson(`${API_BASE}/api/alerts/fusions`, { credentials: false }),
     ])
-    const size = MARK_SIZE.alert
+    const size = ICON_PX
     const feats = []
     for (const x of arr(s?.surges)) {
         const cat = CAT[x.cat] || { name: x.cat || "activity" }
         feats.push({
             id: `surge-${x.id}`, lat: num(x.lat), lon: num(x.lon),
-            iconUri: derivedMark(SURGE_MARK), size,
+            iconUri: derivedMark("surge", surgePriority(x)), size, collide: true, pri: surgePriority(x),
             title: `${String(cat.name).toLowerCase()} reporting surging around ${x.place || "this area"}`,
             sub: surgeLabel(x), severity: "high", raw: { ...x, kind: "surge" },
         })
@@ -595,7 +536,7 @@ async function loadDerivedAlerts({ bounds }) {
     for (const x of arr(f?.fusions)) {
         feats.push({
             id: `fusion-${x.id}`, lat: num(x.lat), lon: num(x.lon),
-            iconUri: derivedMark(FUSION_MARK), size,
+            iconUri: derivedMark("fusion", fusionPriority(x)), size, collide: true, pri: fusionPriority(x),
             title: x.headline || "Converging evidence",
             sub: [x.place, fusionLabel(x)].filter(Boolean).join(" · ") || null,
             severity: "critical", raw: { ...x, kind: "fusion" },
@@ -609,12 +550,10 @@ function gfwLoader(kind) {
         const d = await getJson(`${API_BASE}/api/gfw/events?kind=${encodeURIComponent(kind)}&days=14&limit=300`,
                                 { ttlMs: 5 * 60_000 })
         if (!d?.available) return []
-        const style = gfwStyleFor(kind)
-        const icon = getShapeMarkerDataUri({ shape: style.shape, color: style.color, size: 15, invert: true, strokeWidth: 1.6 })
         return cullPoints(arr(d.events).filter((ev) => ev?.id).map((ev) => ({
             id: `gfw-${kind}-${ev.id}`,
             lat: num(ev.lat), lon: num(ev.lon),
-            iconUri: icon, size: 15,
+            iconUri: gfwIcon(kind, ev).uri, size: ICON_PX, collide: true, pri: ev.watchlisted || ev.vessel?.watchlisted || ev.sanctioned ? "urgent" : "alert",
             title: gfwSummaryOf({ ...ev, kind }),
             sub: [gfwAgeLabel(ev.start), "satellite AIS, not live"].filter(Boolean).join(" · "),
             severity: null,
@@ -646,9 +585,9 @@ async function loadAssets({ bounds }) {
         id: `asset-${a.id}`,
         lat: num(a.position.lat), lon: num(a.position.lon),
         iconUri: assetIcon(a.group, a.exposure),
-        size: 34,
-        // Not square: the pin is 34 x 40 and stands on its point.
-        iconWidth: 34, iconHeight: 40, iconAnchor: [17, 40],
+        size: PIN.w, collide: true, pri: priorityOf(a.exposure, "info"),
+        // Not square: the pin is 30 x 36 and stands on its point.
+        iconWidth: PIN.w, iconHeight: PIN.h, iconAnchor: [PIN.w / 2, PIN.h],
         title: a.name || a.type_label || "Asset",
         sub: [a.type_label || a.kind_label || a.group, a.exposure ? `${a.exposure} exposure` : null].filter(Boolean).join(" · ") || null,
         severity: a.exposure || null,
@@ -661,7 +600,8 @@ async function loadSafeHouses({ bounds }) {
     const d = await getJson(`${API_BASE}/api/evacuations/safe-houses`, { ttlMs: 60_000 })
     return cullPoints(arr(d?.safe_houses).filter((h) => h.lat != null).map((h) => ({
         id: `safehouse-${h.id}`, lat: num(h.lat), lon: num(h.lon),
-        iconUri: safeHouseIcon(h.status === "closed"), size: 32, iconWidth: 30, iconHeight: 35, iconAnchor: [15, 35],
+        iconUri: safeHouseIcon(h.status === "closed"), size: PIN.w, iconWidth: PIN.w, iconHeight: PIN.h, iconAnchor: [PIN.w / 2, PIN.h],
+        collide: true, pri: "info",
         title: `Safe house — ${h.name}`,
         sub: [h.status === "closed" ? "closed" : `open${placesLabel(h)}`, h.contact].filter(Boolean).join(" · "),
         severity: null,
@@ -673,14 +613,7 @@ async function loadSafeHouses({ bounds }) {
 // Everyone sharing their live location (GET /api/my-assets/people), but
 // not you — you are the blue dot. A city-level fix (a desktop's connection)
 // is drawn pale and says so.
-const _personIcons = {}
-function personIcon(live, coarse) {
-    const k = `${live}|${coarse}`
-    if (_personIcons[k]) return _personIcons[k]
-    const fill = coarse ? "#8FB4E8" : "#3b8cff"
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="10" fill="${fill}" fill-opacity="${live ? 0.28 : 0.14}"/><circle cx="11" cy="11" r="5.5" fill="${fill}" stroke="#fff" stroke-width="2" ${live ? "" : 'stroke-dasharray="2 2"'}/></svg>`
-    return (_personIcons[k] = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`)
-}
+const personIcon = (live, coarse) => dotIcon({ role: "team", live, coarse }).uri
 
 async function loadPeople({ bounds }) {
     const d = await getJson(`${API_BASE}/api/my-assets/people?hours=24`, { ttlMs: 30_000 })
@@ -690,7 +623,7 @@ async function loadPeople({ bounds }) {
         return {
             id: `person-${p.user_id}`,
             lat: num(p.lat), lon: num(p.lon),
-            iconUri: personIcon(!!p.live, coarse), size: 22,
+            iconUri: personIcon(!!p.live, coarse), size: SIZE.team,
             title: p.name || "Team member",
             sub: [p.live ? "live" : "last shared", coarse ? "city level, from their connection" : p.accuracy_m != null ? `within ${Math.round(p.accuracy_m)} m` : null].filter(Boolean).join(" · "),
             severity: null,
@@ -704,7 +637,7 @@ async function loadChokepoints({ bounds }) {
     return cullPoints(arr(d?.chokepoints).map((c) => ({
         id: `choke-${c.id ?? c.system_id ?? c.name}`,
         lat: num(c.lat ?? c.center?.[0]), lon: num(c.lon ?? c.center?.[1]),
-        iconUri: chokeIcon(), size: CHOKE_SIZE,
+        iconUri: chokeIcon(), size: INFRA_PX, collide: true, pri: "info",
         title: c.name || "Chokepoint",
         sub: c.current_status || c.strategic_description || null,
         severity: null,
@@ -719,11 +652,10 @@ async function loadPorts({ bounds }) {
     return cullPoints(arr(d?.features).map((f) => {
         const p = f.properties || {}
         const [lon, lat] = f.geometry?.coordinates || []
-        const sz = PORT_ICON_SIZE[p.port_size] || 18
         return {
             id: `port-${p.system_id}`, lat: num(lat), lon: num(lon),
-            iconUri: infraGlyphUri("port", { state: "nominal", theme: "dark", size: PORT_ICON_SIZE[p.port_size || "Small"] || 22 }),
-            size: sz,
+            iconUri: infraGlyphUri("port"),
+            size: INFRA_PX, collide: true, pri: "info",
             title: p.port_name || p.name || "Port",
             sub: [p.port_size ? `${p.port_size} port` : null, p.country].filter(Boolean).join(" · ") || null,
             severity: null,
@@ -739,11 +671,10 @@ async function loadAirports({ bounds }) {
     return cullPoints(arr(d?.features).map((f) => {
         const p = f.properties || {}
         const [lon, lat] = f.geometry?.coordinates || []
-        const type = p.airport_type || "small_airport"
         return {
             id: `airport-${p.system_id}`, lat: num(lat), lon: num(lon),
-            iconUri: infraGlyphUri("airport", { theme: "dark", size: AIRPORT_ICON_SIZE[type] || 20 }),
-            size: AIRPORT_ICON_SIZE[p.airport_type] || 22,
+            iconUri: infraGlyphUri("airport"),
+            size: INFRA_PX, collide: true, pri: "info",
             title: p.airport_name || p.name || p.ident || "Airport",
             sub: [p.iata_code || p.icao_code, p.municipality, p.country_name].filter(Boolean).join(" · ") || null,
             severity: null,
@@ -760,13 +691,12 @@ function facilityLoader(category) {
         if (span > FAC_MAX_SPAN_DEG2) return []
         const d = await getJson(`${API_BASE}/api/facilities/in-viewport?${bboxQuery(b, 3)}`, { ttlMs: 60_000 })
         if (!d || d.refused) return []
-        const colour = FAC_COLOUR[category]
         return cullPoints(arr(d.facilities)
             .filter((f) => (f.category || FAC_TYPE_TO_CATEGORY[f.entity_type]) === category)
             .map((f) => ({
                 id: `facility-${f.system_id}`, lat: num(f.lat), lon: num(f.lon),
-                iconUri: getFacilityMarkerDataUri({ kind: f.kind, color: colour, size: FAC_SIZE }),
-                size: FAC_SIZE,
+                iconUri: getFacilityMarkerDataUri({ kind: f.kind }),
+                size: FAC_SIZE, collide: true, pri: "info",
                 title: f.name || `${String(f.kind || "site").replace(/_/g, " ")} (unnamed)`,
                 sub: [FAC_CATEGORY_LABEL[category], f.operator].filter(Boolean).join(" · ") || null,
                 severity: null,
@@ -806,7 +736,7 @@ async function loadPowerSites({ bounds, zoom }) {
     const d = await loadInfraRaw({ bounds, zoom })
     return cullPoints(arr(d?.features).filter((f) => f && !f.line).map((f) => ({
         id: f.id, lat: num(f.lat), lon: num(f.lon),
-        iconUri: infraIconFor(f), size: INFRA_POINT_SIZE[f.kind] || 16,
+        iconUri: infraIconFor(f), size: INFRA_PX, collide: true, pri: "info",
         title: f.title || String(f.kind || "site").replace(/_/g, " "),
         sub: String(f.kind || "").replace(/_/g, " ") || null,
         severity: null,
@@ -985,7 +915,7 @@ async function loadFlows({ bounds }) {
     return cullLines(out, normBounds(bounds))
 }
 
-const AOI_FRESH_COLOR = "#FF3B30"
+const AOI_FRESH_COLOR = "#E5484D"          // the flash colour of the one ramp (lib/mapIcons.js PRIORITY.flash)
 
 /** The zone's fresh finding ({count, text}) or null — /api/imagery/aois `findings.fresh`. */
 export function aoiFresh(z) {
@@ -1012,7 +942,7 @@ async function loadAois({ bounds }) {
         out.push({
             id: `aoi-${z.system_id || z.id}`, rings, color: fresh ? AOI_FRESH_COLOR : AOI_COLOR,
             fillOpacity: fresh ? 0.16 : z.status === "active" ? 0.10 : 0.04, weight: fresh ? 2.6 : 1.2,
-            className: fresh ? "m2-aoi-fresh" : undefined,
+            className: undefined,
             badge: fresh && centre ? { lat: centre[0], lon: centre[1], text: fresh.count > 0 ? String(fresh.count) : "!" } : null,
             title: fresh ? `${z.name || "Area of interest"} — new finding: ${fresh.text || "something new"}` : (z.name || "Area of interest"),
             raw: z,
@@ -1034,10 +964,9 @@ export const ENDANGERED_CLUSTER_BELOW = 10
 
 function endangeredFeature(p) {
     const hasCall = arr(p.calls).length > 0 && p.alarm !== "grey"
-    const size = hasCall ? (p.alarm === "red" ? 26 : 22) : 15
     return {
         id: `endangered-${p.id}`, lat: num(p.lat), lon: num(p.lon),
-        iconUri: placeIconUri({ kind: p.kind, alarm: p.alarm, hasCall, size }), size,
+        iconUri: placeIconUri({ kind: p.kind, alarm: p.alarm, hasCall }), size: ICON_PX, collide: true, pri: priorityOf(p.alarm, "info"),
         title: p.name || "Endangered place",
         sub: placeSubtitle(p),
         severity: placeSev(p),
@@ -1068,14 +997,16 @@ export function clusterPlaces(places, zoom, cellPx = 56) {
         const withCalls = list.filter((p) => arr(p.calls).length && p.alarm !== "grey")
         const lat = list.reduce((a, p) => a + num(p.lat), 0) / list.length
         const lon = list.reduce((a, p) => a + num(p.lon), 0) / list.length
-        const size = list.length >= 50 ? 36 : list.length >= 10 ? 32 : 28
+        const feats = list.map((p) => ({ ...endangeredFeature(p), t: featureTime({ raw: p }) }))
+        const top = representative(feats)
         const named = [...list].sort((a, b) => (ALARM_RANK[a.alarm] ?? 2) - (ALARM_RANK[b.alarm] ?? 2))
             .slice(0, 8).map((p) => `${p.name}${p.city ? ` (${p.city})` : ""}${arr(p.calls)[0] ? ` — ${p.calls[0].label_en}` : ""}`)
         const title = withCalls.length
             ? `${list.length} endangered places here — ${withCalls.length} with calls to act`
             : `${list.length} listed places here, no call`
         out.push({
-            id: `endangered-cl-${zoom}-${k}`, lat, lon, iconUri: clusterIconUri({ count: list.length, alarm, size }), size,
+            // ONE ICON PER PLACE (owner, 2026-10-23 evening): the worst, most recent place's own marker
+            id: `endangered-cl-${zoom}-${k}`, lat, lon, iconUri: top.iconUri, size: top.size, collide: true, pri: top.pri || priorityOf(alarm, "info"), t: top.t,
             title, sub: "Zoom in to see each place",
             severity: list.map(placeSev).sort((a, b) => SEV_RANK[a] - SEV_RANK[b])[0],
             raw: { kind: "endangered_cluster", detail: `${named.join("; ")}${list.length > 8 ? `; and ${list.length - 8} more` : ""}.`,
@@ -1103,12 +1034,10 @@ async function loadEndangered({ bounds, zoom }) {
 // replay on the phone.
 
 function strikeFeature(e, campaign = null) {
-    const size = strikeSize(e)
-    const { width, height, anchor } = strikeIconDims(size)
     return {
         id: `strike-${e.id}`, lat: num(e.lat), lon: num(e.lon),
-        iconUri: strikeIconUri({ act: e.act, color: actorColor(e.actor), size, hollow: isHollow(e), opacity: strikeOpacity(e) }),
-        size, iconWidth: width, iconHeight: height, iconAnchor: anchor,
+        iconUri: strikeIconUri({ event: e, hollow: isHollow(e), priority: strikePriority(e) }),
+        size: ICON_PX, collide: true, pri: strikePriority(e), opacity: strikeOpacity(e),
         title: e.title || e.act_label || "Strike",
         sub: [e.actor, e.target_name ? String(e.target_name).split(",")[0] : null].filter(Boolean).join(" · "),
         raw: { ...e, kind: "strike_event", detail: strikeSummary(e, campaign), url: e.sources?.find((s) => s?.url)?.url || null,
@@ -1202,7 +1131,7 @@ async function loadMovements({ bounds, zoom = 0 }) {
             out.push({
                 id: `fmove-label-${m.id}`, color: colour, weight: 0, coords: [[toLL(l.at), toLL(l.at)]],
                 marker: { lat: +l.at.lat, lon: +l.at.lon, iconUri: pill.uri, iconWidth: pill.width, iconHeight: pill.height,
-                          iconAnchor: l.siege ? [pill.anchor[0], pill.height + 6] : [pill.anchor[0], -6] },
+                          iconAnchor: l.siege ? [pill.anchor[0], pill.height + 6] : [pill.anchor[0], -6], label: true },
                 title: m.label || "Movement", sub: m.from_basis || null, raw,
             })
         }
@@ -1217,15 +1146,13 @@ async function loadTrajectories({ bounds }) {
         const path = trajectoryPath(t, { samples: 24 })
         if (path.length < 2) continue
         const colour = sideColour(t.side, t.colour)
-        const { width, height, anchor } = strikeIconDims(22)
+        // the launch end: a reported event (circle) with the weapon's glyph, 24 px; an assumed origin uncorroborated
+        // (owner, 2026-10-23 evening: no drone toy, no red ring, no black dot: the icons used everywhere else)
+        const o = markerIcon({ kind: "event", glyph: t.kind === "drone" ? "drone" : "missile", priority: "alert", state: t.from?.assumed ? "muted" : "live" })
         out.push({
             id: `ftraj-${t.id}`, color: colour, weight: 2, dash: t.from?.assumed ? "5 5" : null,
             coords: path.map(toLL),
-            // the weapon at the launch end, in the strikes layer's pin — hollow
-            // (the strikes layer's "place known only roughly") when assumed
-            marker: { lat: +t.from.lat, lon: +t.from.lon, iconWidth: width, iconHeight: height, iconAnchor: anchor,
-                      iconUri: strikeIconUri({ act: t.kind === "drone" ? "drone" : "missile", color: actorColor(t.actor), size: 22,
-                                               hollow: !!t.from.assumed }) },
+            marker: { lat: +t.from.lat, lon: +t.from.lon, iconWidth: o.w, iconHeight: o.h, iconAnchor: o.anchor, iconUri: o.uri },
             title: t.label || t.kind_label || "Trajectory",
             sub: t.from?.name ? `${t.from.assumed ? "assumed origin" : "from"} ${t.from.name}` : null,
             raw: { ...t, kind: "trajectory", lat: t.to?.lat, lon: t.to?.lon, detail: trajectorySummary(t),
@@ -1262,7 +1189,7 @@ export const PHONE_LAYERS = [
     // Protests — first, so it is easy to find (owner, 2026-10-23).
     {
         key: "protests", label: "Protests", group: G.protests, defaultOn: false, kind: "points", minZoom: 0,
-        refreshMs: LIVE_REFRESH_MS, legendIcon: badgeUri({ shape: "circle", color: PROTEST_KINDS.protest.color, glyph: PROTEST_KINDS.protest.glyph }),
+        refreshMs: LIVE_REFRESH_MS, legendIcon: protestBadge({ kind: "protest" }),
         load: loadProtests,
     },
     // Our assets — Situation's first group.
@@ -1282,7 +1209,7 @@ export const PHONE_LAYERS = [
     // Maritime (LAYER_GROUPS.maritime; live vessels are the phone's own).
     {
         key: "ports", label: "Ports", group: G.maritime, defaultOn: false, kind: "points", minZoom: 3,
-        legendIcon: infraGlyphUri("port", { state: "nominal", theme: "dark", size: 22 }), load: loadPorts,
+        legendIcon: infraGlyphUri("port"), load: loadPorts,
     },
     {
         key: "cables", label: "Submarine Cables", group: G.maritime, defaultOn: false, kind: "lines", minZoom: 0,
@@ -1290,14 +1217,14 @@ export const PHONE_LAYERS = [
     },
     {
         key: "chokepoints", label: "Chokepoints", group: G.maritime, defaultOn: false, kind: "points", minZoom: 0,
-        legendIcon: getEntityMarkerDataUri({ entityType: "zone", size: 26 }), load: loadChokepoints,
+        legendIcon: chokeIcon(), load: loadChokepoints,
     },
     ...GFW_KINDS.map((kind) => {
         const style = gfwStyleFor(kind)
         return {
             key: `gfw:${kind}`, label: GFW_LABEL[kind] || style.label, group: G.maritime,
             defaultOn: false, kind: "points", minZoom: 0,
-            legendIcon: getShapeMarkerDataUri({ shape: style.shape, color: style.color, size: 15, invert: true, strokeWidth: 1.6 }),
+            legendIcon: gfwIcon(kind).uri,
             load: gfwLoader(kind),
         }
     }),
@@ -1305,7 +1232,7 @@ export const PHONE_LAYERS = [
     // Air (LAYER_GROUPS.air; live aircraft are the phone's own).
     {
         key: "airports", label: "Airports", group: G.air, defaultOn: false, kind: "points", minZoom: 3,
-        legendIcon: infraGlyphUri("airport", { theme: "dark", size: 22 }), load: loadAirports,
+        legendIcon: infraGlyphUri("airport"), load: loadAirports,
     },
     {
         key: "gpsInterference", label: "Nav interference", group: G.air, defaultOn: false, kind: "areas", minZoom: 0,
@@ -1319,7 +1246,7 @@ export const PHONE_LAYERS = [
     // News.
     {
         key: "geoConfirmed", label: "Confirmed", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
-        legendIcon: getGeoConfirmedMarkerDataUri({ color: null, size: GEOCONFIRMED_MARKER_SIZE }), load: loadGeoConfirmed,
+        legendIcon: getGeoConfirmedMarkerDataUri(), load: loadGeoConfirmed,
     },
     // GDELT is not a map signal (owner, 2026-10-13): the country risk index only
     {
@@ -1329,7 +1256,7 @@ export const PHONE_LAYERS = [
     },
     {
         key: "strikes", label: "Strikes & control", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
-        legendIcon: strikeIconUri({ act: "airstrike", color: actorColor("Russia"), size: 22 }), load: loadStrikes,
+        legendIcon: strikeIconUri({ act: "airstrike" }), load: loadStrikes,
     },
     {
         key: "frontlineClaims", label: FRONTLINE_LAYERS[0].label, group: G.news, defaultOn: false, kind: "areas", minZoom: 0,
@@ -1341,7 +1268,7 @@ export const PHONE_LAYERS = [
     },
     {
         key: "trajectories", label: FRONTLINE_LAYERS[2].label, group: G.news, defaultOn: false, kind: "lines", minZoom: 0,
-        legendIcon: strikeIconUri({ act: "drone", color: actorColor("Russia"), size: 22 }), load: loadTrajectories,
+        legendIcon: lineSwatch(sideColour("red")), load: loadTrajectories,
     },
 
     // Imagery.
@@ -1351,7 +1278,7 @@ export const PHONE_LAYERS = [
     },
     {
         key: "fires", label: "Heat (thermal anomalies)", group: G.imagery, defaultOn: false, kind: "points", minZoom: 0,
-        legendIcon: getShapeMarkerDataUri({ shape: "circle", color: fireColourFor(340), size: MARK_SIZE.fire }), load: loadFires,
+        legendIcon: markerUri({ kind: "confirmed", glyph: "flame", priority: "alert" }), load: loadFires,
     },
 
     // Zones.
@@ -1363,7 +1290,7 @@ export const PHONE_LAYERS = [
     // Alerts.
     {
         key: "derivedAlerts", label: "Surge & fusion", group: G.alerts, defaultOn: false, kind: "points", minZoom: 0,
-        legendIcon: derivedMark(FUSION_MARK), load: loadDerivedAlerts,
+        legendIcon: derivedMark("fusion", "urgent"), load: loadDerivedAlerts,
     },
 
     // Context (CONTEXT_TOGGLES; graticule, marker labels and coverage are not drawn on the phone).
@@ -1395,17 +1322,17 @@ export const PHONE_LAYERS = [
     },
     {
         key: "facMilitary", label: "Military facilities", group: G.infra, defaultOn: false, kind: "points", minZoom: 7,
-        legendIcon: getFacilityMarkerDataUri({ kind: "military", color: FAC_COLOUR.military, size: FAC_SIZE }),
+        legendIcon: getFacilityMarkerDataUri({ kind: "military" }),
         load: facilityLoader("military"),
     },
     {
         key: "facMedical", label: "Medical facilities", group: G.infra, defaultOn: false, kind: "points", minZoom: 7,
-        legendIcon: getFacilityMarkerDataUri({ kind: "hospital", color: FAC_COLOUR.medical, size: FAC_SIZE }),
+        legendIcon: getFacilityMarkerDataUri({ kind: "hospital" }),
         load: facilityLoader("medical"),
     },
     {
         key: "facSecurity", label: "Security facilities", group: G.infra, defaultOn: false, kind: "points", minZoom: 7,
-        legendIcon: getFacilityMarkerDataUri({ kind: "police", color: FAC_COLOUR.security, size: FAC_SIZE }),
+        legendIcon: getFacilityMarkerDataUri({ kind: "police" }),
         load: facilityLoader("security"),
     },
     // Endangered places — under Infrastructure (owner, 2026-10-12).
@@ -1413,7 +1340,7 @@ export const PHONE_LAYERS = [
         key: "endangered", label: "Endangered places", group: G.infra,
         defaultOn: false,
         kind: "points", minZoom: 0,
-        legendIcon: placeIconUri({ kind: "fuel_depot", alarm: "red", hasCall: true, size: 22 }), load: loadEndangered,
+        legendIcon: placeIconUri({ kind: "fuel_depot", alarm: "amber", hasCall: true }), load: loadEndangered,
     },
 ]
 

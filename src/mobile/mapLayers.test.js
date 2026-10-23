@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { PHONE_LAYERS, layerGroups, _clearLayerCache } from "./mapLayers.js"
+import { PHONE_LAYERS, layerGroups, _clearLayerCache, clusterPlaces, featureTime } from "./mapLayers.js"
 
 describe("phone map layer registry", () => {
     afterEach(() => { vi.unstubAllGlobals(); _clearLayerCache() })
@@ -96,5 +96,86 @@ describe("aois — fresh findings", () => {
         expect(f[0].sub).toBe("Eyewitness, unverified, 8 min ago")
         expect(f[0].raw.sources[0]).toMatchObject({ media: "video", video_url: "/v" })
         expect(f[0].iconUri).toMatch(/^data:image\/svg\+xml/)
+    })
+})
+
+describe("every point marker comes from lib/mapIcons.js (one typology, owner 2026-10-23)", () => {
+    afterEach(() => { vi.unstubAllGlobals(); _clearLayerCache() })
+    const now = new Date().toISOString()
+    const P = { lat: 48.85, lon: 2.35 }
+    const BODY = [
+        ["/api/geoconfirmed", { placemarks: [{ id: 1, ...P, title: "x", faction_color: "#ff0000" }] }],
+        ["/api/telegram/signals/live", { signals: [{ id: "s1", act: "arrest", ...P, event_time: now, title: "Arrest" }] }],
+        ["/api/protests", { items: [{ id: "p1", kind: "protest", ...P }] }],
+        ["/api/alerts/surges", { surges: [{ id: 1, ...P, cat: "x", n: 3 }] }],
+        ["/api/alerts/fusions", { fusions: [{ id: 2, ...P, headline: "h" }] }],
+        ["/api/alerts?source=SAT-TASK", [{ alert_id: "a", ...P, severity: "high", created_at: now }]],
+        ["/api/fires", { fires: [{ id: 1, ...P, brightness_k: 370 }] }],
+        ["/api/gfw/events", { available: true, events: [{ id: 1, ...P, start: now }] }],
+        ["/api/my-assets/people", { people: [{ user_id: 99, ...P, at: now, live: true, name: "A" }] }],
+        ["/api/my-assets", { assets: [{ id: 1, group: "Vessels", exposure: "high", position: P }] }],
+        ["/api/evacuations/safe-houses", { safe_houses: [{ id: 1, ...P, name: "H" }] }],
+        ["/api/infrastructure/chokepoints", { chokepoints: [{ id: 1, ...P, name: "C" }] }],
+        ["/api/ports/in-viewport", { features: [{ properties: { system_id: 1, port_size: "Very Large" }, geometry: { coordinates: [P.lon, P.lat] } }] }],
+        ["/api/airports/in-viewport", { features: [{ properties: { system_id: 1, airport_type: "large_airport" }, geometry: { coordinates: [P.lon, P.lat] } }] }],
+        ["/api/facilities/in-viewport", { facilities: [{ system_id: 1, ...P, kind: "hospital", category: "medical" }, { system_id: 2, ...P, kind: "barracks", category: "military" }, { system_id: 3, ...P, kind: "police", category: "security" }] }],
+        ["/api/infra/features", { features: [{ id: "i1", kind: "power_plant", ...P, props: { source: "nuclear" } }] }],
+        ["/api/endangered-places", { places: [{ id: 1, ...P, kind: "refinery", alarm: "red", calls: [{ label_en: "x" }], country: "FR" }] }],
+        ["/api/strikes?", { events: [{ id: 1, ...P, act: "airstrike", time: now, casualties: { killed: 40 } }] }],
+    ]
+    it("each point layer's features: an image of the module (its edge, 2x a constant size), a constant size and a priority", async () => {
+        vi.stubGlobal("fetch", vi.fn(async (url) => {
+            const hit = BODY.find(([k]) => String(url).includes(k))
+            return { ok: !!hit, json: async () => (hit ? hit[1] : null) }
+        }))
+        const { EDGE, SIZE, svgOf } = await import("../lib/mapIcons.js")
+        const SIZES = new Set([SIZE.event, SIZE.pin.w, SIZE.infra, SIZE.traffic, SIZE.team, SIZE.me, SIZE.small, SIZE.cluster])
+        const bounds = { south: 48, north: 49.5, west: 1.5, east: 3 }
+        const seen = []
+        for (const l of PHONE_LAYERS.filter((x) => x.kind === "points")) {
+            const feats = await l.load({ bounds, zoom: 12, hours: 24 })
+            for (const f of feats) {
+                const svg = svgOf(f.iconUri)
+                expect(svg.includes(EDGE) || svg.includes("#FFFFFF"), l.key).toBe(true)
+                const w = Number(/width="([\d.]+)"/.exec(svg)[1])
+                expect(SIZES.has(w / 2), `${l.key} image ${w}`).toBe(true)
+                expect(SIZES.has(f.size), `${l.key} size ${f.size}`).toBe(true)
+                if (l.key !== "people") { expect(f.collide, l.key).toBe(true); expect(f.pri, l.key).toBeTruthy() }
+            }
+            if (feats.length) seen.push(l.key)
+        }
+        for (const k of ["geoConfirmed", "liveSignals", "protests", "derivedAlerts", "imagerySignals", "fires", "assets", "safeHouses",
+                         "people", "chokepoints", "ports", "airports", "facMedical", "power:sites", "endangered", "strikes", "gfw:encounters"]) {
+            expect(seen, k).toContain(k)
+        }
+    })
+})
+
+describe("one icon per place, the right glyph (owner, 2026-10-23 evening)", () => {
+    afterEach(() => { vi.unstubAllGlobals(); _clearLayerCache() })
+    const P = { lat: 48.85, lon: 2.35 }
+    it("two things at one place are drawn as ONE marker: the higher priority's own icon, never a count", async () => {
+        const { representative } = await import("../lib/liveSignals.js")
+        const { svgOf } = await import("../lib/mapIcons.js")
+        const a = { id: "a", pri: "alert", t: 2, iconUri: "A" }, b = { id: "b", pri: "urgent", t: 1, iconUri: "B" }
+        expect(representative([a, b]).iconUri).toBe("B")
+        // endangered places grouped at low zoom: the worst place's own icon, no count text
+        const g = clusterPlaces([{ id: 1, ...P, kind: "refinery", alarm: "grey" }, { id: 2, ...P, kind: "fuel_depot", alarm: "red", calls: [{ label_en: "x" }] }], 5)
+        expect(g).toHaveLength(1)
+        expect(svgOf(g[0].iconUri)).not.toMatch(/<text/)
+        expect(g[0].pri).toBe("flash")
+        expect(featureTime({ raw: { event_time: "2026-10-23T10:00:00Z" } })).toBe(Date.parse("2026-10-23T10:00:00Z"))
+    })
+    it("a shooting in the strikes layer draws the crime glyph, not the bomb", async () => {
+        const now = new Date().toISOString()
+        const ev = (id, title, extra = {}) => ({ id, ...P, act: "airstrike", weapon_stated: false, time: now, title, ...extra })
+        vi.stubGlobal("fetch", vi.fn(async (url) => ({ ok: String(url).includes("/api/strikes?"), json: async () => ({
+            events: [ev(1, "Gunman shot three people outside a bar"), ev(2, "Airstrike hits depot", { weapon_stated: true })] }) })))
+        const { GLYPH, svgOf } = await import("../lib/mapIcons.js")
+        const feats = await PHONE_LAYERS.find((l) => l.key === "strikes").load({ bounds: { south: 48, north: 49.5, west: 1.5, east: 3 }, zoom: 12 })
+        const byId = Object.fromEntries(feats.map((f) => [f.id, svgOf(f.iconUri)]))
+        expect(byId["strike-1"]).toContain(GLYPH.crime.d)
+        expect(byId["strike-1"]).not.toContain(GLYPH.airstrike.d)
+        expect(byId["strike-2"]).toContain(GLYPH.airstrike.d)
     })
 })

@@ -6,6 +6,14 @@
  * the safe point. Returns the bounds to fit.
  */
 import { ringStyle } from "./view.js"
+import { dotIcon, SIZE } from "../lib/mapIcons.js"
+import { safeHouseIcon } from "../evacuation/safeHouseIcon.js"
+
+// the route's points: the one typology's dots and pin (lib/mapIcons.js), a fifth larger on the phone like every marker
+const SCALE = 1.2
+const dotOf = (L, role) => { const i = dotIcon({ role }); const w = Math.round(i.w * SCALE); return L.icon({ iconUrl: i.uri, iconSize: [w, w], iconAnchor: [w / 2, w / 2] }) }
+const houseOf = (L) => { const w = Math.round(SIZE.pin.w * SCALE), h = Math.round(SIZE.pin.h * SCALE); return L.icon({ iconUrl: safeHouseIcon(false), iconSize: [w, h], iconAnchor: [w / 2, h] }) }
+const STOP_ROLE = { border: "stop", safe_point: "end" }
 import { isEvacuation, itineraryLines, itineraryStops } from "../evacuation/itinerary.js"
 
 const esc = (t) => String(t ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]))
@@ -35,14 +43,12 @@ export function drawPlan(L, group, plan, sel = null) {
             ln.coords.forEach((c) => pts.push(c))
         }
         for (const st of itineraryStops(plan, sel)) {
-            const html = st.kind === "safe_house" ? '<div class="plx-route-dest plx-safehouse-pin" title="Safe house">⌂</div>'
-                : st.kind === "safe_point" ? '<div class="plx-route-dest" title="Safe point">✓</div>'
-                : `<div class="plx-evac-stop ${st.kind}"></div>`
-            L.marker([st.lat, st.lon], { icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13], html }), keyboard: false })
+            const icon = st.kind === "safe_house" ? houseOf(L) : dotOf(L, STOP_ROLE[st.kind] || "endpoint")
+            L.marker([st.lat, st.lon], { icon, keyboard: false, title: st.kind === "safe_house" ? "Safe house" : st.kind === "safe_point" ? "Safe point" : "" })
                 .bindTooltip(esc(st.name || ""), { direction: "right", offset: [12, 0], permanent: st.kind !== "change" }).addTo(group)
             pts.push([st.lat, st.lon])
         }
-        L.marker([plan.origin.lat, plan.origin.lon], { icon: L.divIcon({ className: "", iconSize: [20, 20], iconAnchor: [10, 10], html: '<div class="plx-route-origin"></div>' }),
+        L.marker([plan.origin.lat, plan.origin.lon], { icon: dotOf(L, "me"),
                                                        zIndexOffset: 1000, keyboard: false, interactive: false }).addTo(group)
         return L.latLngBounds(pts)
     }
@@ -54,13 +60,13 @@ export function drawPlan(L, group, plan, sel = null) {
     }
     if (s) {
         L.polyline(s.coords, { color: "#0b1d3a", weight: 9, opacity: 0.55, interactive: false }).addTo(group)
-        L.polyline(s.coords, { color: "#5b9bff", weight: 5.5, opacity: 1, interactive: false, className: "plx-route-safest" }).addTo(group)
+        L.polyline(s.coords, { color: "#3B8CFF", weight: 5.5, opacity: 1, interactive: false, className: "plx-route-safest" }).addTo(group)
         s.coords.forEach((c) => pts.push(c))
         const d = s.coords[s.coords.length - 1]
-        L.marker(d, { icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="plx-route-dest" title="Safe point">✓</div>' }), keyboard: false })
+        L.marker(d, { icon: dotOf(L, "end"), keyboard: false, title: "Safe point" })
             .bindTooltip(esc(s.dest?.name || "Safe point"), { direction: "right", offset: [12, 0] }).addTo(group)
     }
-    L.marker([plan.origin.lat, plan.origin.lon], { icon: L.divIcon({ className: "", iconSize: [20, 20], iconAnchor: [10, 10], html: '<div class="plx-route-origin"></div>' }),
+    L.marker([plan.origin.lat, plan.origin.lon], { icon: dotOf(L, "me"),
                                                    zIndexOffset: 1000, keyboard: false, interactive: false }).addTo(group)
     return L.latLngBounds(pts)
 }

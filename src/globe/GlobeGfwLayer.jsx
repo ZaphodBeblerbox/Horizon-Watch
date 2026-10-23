@@ -12,17 +12,22 @@
  * how old the feed is. Nothing here should ever be mistaken for a live
  * contact.
  */
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
-import { Color, HeightReference, DistanceDisplayCondition, NearFarScalar } from "cesium"
+import { HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { getShapeMarkerDataUri, MARKER_MAX_CAMERA_M, MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { MARKER_MAX_CAMERA_M, MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 import { safeCartesian } from "./markerOrientation.js"
-import { styleFor, summaryOf, ageLabel, freshnessNote } from "./gfwEvents.js"
+import { styleFor, summaryOf, ageLabel, freshnessNote, gfwIcon } from "./gfwEvents.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
+import { ICON_PX } from "../lib/mapIcons.js"
 
-const SIZE = 15
+// The one typology (gfwEvents.gfwIcon → lib/mapIcons.js): a triangle (GFW derived it), the kind's glyph, neutral
+// or amber for a watchlisted vessel, drawn in the past state (it finished days ago), one constant size.
+const SIZE = ICON_PX
 const REFRESH_MS = 15 * 60 * 1000   // the feed moves in days; this is generous
 
 export default function GlobeGfwLayer({ enabled = false, kinds = [], days = 14, limit = 300 }) {
@@ -104,38 +109,41 @@ export default function GlobeGfwLayer({ enabled = false, kinds = [], days = 14, 
         return () => ids.forEach(deleteEntity)
     }, [byKind])
 
+    const marks = useMemo(() => Object.entries(byKind).flatMap(([kind, d]) => safeArray(d.events)
+        .filter((ev) => ev?.id && Number.isFinite(+ev.lat) && Number.isFinite(+ev.lon))
+        .map((ev) => {
+            const ic = gfwIcon(kind, ev)
+            return { id: `gfw-${kind}-${ev.id}`, lat: +ev.lat, lon: +ev.lon, size: SIZE, pri: ev.watchlisted || ev.vessel?.watchlisted || ev.sanctioned ? "urgent" : "alert",
+                     image: ic.uri, t: Date.parse(ev.start || "") || 0, title: summaryOf({ ...ev, kind }), line: [ageLabel(ev.start), "satellite AIS, not live"].filter(Boolean).join(" · "), ev, kind, ic }
+        })), [byKind])
+    const layout = useDeclutter("gfw", marks, enabled)
+    useClusterRecords(layout)
+
     if (!enabled) return null
 
     return (
         <>
-            {Object.entries(byKind).flatMap(([kind, d]) => {
-                const style = styleFor(kind)
-                const icon = getShapeMarkerDataUri({
-                    shape: style.shape, color: style.color, size: SIZE,
-                    // Hollow: these are records, not live contacts.
-                    invert: true, strokeWidth: 1.6,
-                })
-                return safeArray(d.events).map((ev) => {
-                    const position = safeCartesian(ev.lon, ev.lat, 0)
-                    if (!position || !ev.id) return null
-                    return (
-                        <Entity
-                            key={`gfw-${kind}-${ev.id}`}
-                            id={`gfw-${kind}-${ev.id}`}
-                            name={summaryOf(ev)}
-                            position={position}
-                            billboard={{
-                                image: icon,
-                                width: SIZE, height: SIZE,
-                                heightReference: HeightReference.CLAMP_TO_GROUND,
-                                disableDepthTestDistance: MARKER_DEPTH_TEST_M,
-                                distanceDisplayCondition:
-                                    new DistanceDisplayCondition(0, MARKER_MAX_CAMERA_M),
-                                
-                            }}
-                        />
-                    )
-                })
+            {layout.map((g) => {
+                if (g.cluster) return <ClusterMark key={g.id} g={g} />
+                const { ev, kind, ic } = g.item
+                const position = safeCartesian(ev.lon, ev.lat, 0)
+                if (!position) return null
+                return (
+                    <Entity
+                        key={`gfw-${kind}-${ev.id}`}
+                        id={`gfw-${kind}-${ev.id}`}
+                        name={summaryOf(ev)}
+                        position={position}
+                        billboard={{
+                            image: ic.uri,
+                            width: ic.w, height: ic.h,
+                            heightReference: HeightReference.CLAMP_TO_GROUND,
+                            disableDepthTestDistance: MARKER_DEPTH_TEST_M,
+                            distanceDisplayCondition:
+                                new DistanceDisplayCondition(0, MARKER_MAX_CAMERA_M),
+                        }}
+                    />
+                )
             })}
         </>
     )

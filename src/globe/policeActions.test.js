@@ -49,12 +49,12 @@ describe("geometry helpers", () => {
         expect(reportAlpha(12 * 60, 60)).toBeLessThan(1)
         expect(reportAlpha(25 * 60, 60)).toBe(0)
     })
-    it("tacticIcon: a data-URI SVG with the words, no monospace", () => {
+    it("tacticIcon: the one typology's event circle, constant 24 px, no words in the mark", () => {
         const ic = tacticIcon("tear_gas", "Tear gas · 17:55")
         const svg = decodeURIComponent(ic.uri.split(",")[1])
-        expect(svg).toContain("Tear gas · 17:55")
-        expect(svg).not.toMatch(/mono/i)
-        expect(ic.anchor).toEqual([14, 14])
+        expect(svg).toContain("<circle")
+        expect(svg).not.toMatch(/<text/)
+        expect(ic.anchor).toEqual([12, 12])
     })
 })
 
@@ -91,7 +91,7 @@ describe("policeFeatures", () => {
         const [k] = byType("police_line")
         expect(k.coords).toHaveLength(3)
         const mark = f.find((x) => x.id === "pol-mark-k")
-        expect(decodeURIComponent(mark.marker.iconUri)).toContain("Kettled — exits blocked (reported 17:50)")
+        expect(decodeURIComponent(mark.marker.iconUri)).toContain("<circle")   // one typology: the words are the card's
     })
     it("police moving in is an arrow from the street they came by", () => {
         const a = f.find((x) => x.id === "pol-arrow-p")
@@ -116,7 +116,7 @@ describe("policeFeatures", () => {
         const marks = f.filter((x) => x.type === "police_mark")
         expect(marks.map((x) => x.alpha)).toEqual(marks.map(() => 1))
         const c = f.find((x) => x.id === "pol-mark-chatelet")
-        expect(decodeURIComponent(c.marker.iconUri)).toContain('opacity="1"')
+        expect(decodeURIComponent(c.marker.iconUri)).not.toContain('opacity="0.45"')
         expect(f.some((x) => x.id === "pol-arrow-chatelet")).toBe(true)      // still current: its arrow too
     })
     it("the card lists the closed exits", () => {

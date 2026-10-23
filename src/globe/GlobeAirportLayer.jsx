@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Entity } from "resium"
-import { Cartesian3, HeightReference, NearFarScalar, DistanceDisplayCondition } from "cesium"
+import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
+import { SIZE } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterBadges from "./ClusterBadges.jsx"
 import API_BASE from "../apiBase.js"
 import { infraGlyphUri } from "./infraGlyphs.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
@@ -10,23 +13,17 @@ import { setEntity, deleteEntity } from "./entityStore.js"
 // (matching src/inspector/adapters.js's adaptInfrastructure(), which already
 // collapses airports/ports/cables/pipelines/etc. to entityType "facility"
 // for InspectorPanel — same real distinction, same resolution, applied
-// consistently here). Importance tier is still conveyed via size (ICON_SIZE
-// below), unchanged from before.
+// consistently here). Importance tier is in the card, not the size.
 // §I6.2 — one runway, two threshold bars, a terminal set clear of the strip.
 // Never a plane: "a plane on the ground must not be the same mark as a plane
 // in the air — that is a different object with different consequences." On a
 // map already showing live ADS-B, that is not a style preference.
-function getIcon(airportType, theme = "dark") {
-    return infraGlyphUri("airport", { theme, size: ICON_SIZE[airportType] || 20 })
+function getIcon() {
+    return infraGlyphUri("airport")
 }
 
-// Icon size varies by airport importance
-const ICON_SIZE = {
-    large_airport:  34,
-    medium_airport: 28,
-    small_airport:  22,
-    seaplane_base:  26,
-}
+// ONE SIZE whatever the class (owner, 2026-10-23: no marker grows with data): infrastructure context is
+// lib/mapIcons.js SIZE.infra; the class is in the card.
 
 export default function GlobeAirportLayer({ enabled, viewBounds }) {
     const [airports, setAirports] = useState([])
@@ -75,10 +72,20 @@ export default function GlobeAirportLayer({ enabled, viewBounds }) {
         return () => ids.forEach(deleteEntity)
     }, [airports])
 
+    // ONE COLLISION PASS with every other point layer (screenDeclutter.js): no overlapping markers
+    const items = useMemo(() => airports.map((f) => {
+        const p = f.properties || {}
+        const [lon, lat] = f.geometry?.coordinates || []
+        return { id: `airport-${p.system_id}`, lat, lon, size: SIZE.infra, pri: null, image: getIcon(p.airport_type || "small_airport"), title: p.airport_name || p.name || p.ident || "Airport", line: [p.iata_code || p.icao_code, p.municipality, p.country_name].filter(Boolean).join(" · ") }
+    }).filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)), [airports])
+    const layout = useDeclutter("airports", items, !!enabled)
+    const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))
+
     if (!enabled || !airports.length) return null
 
     return (
         <>
+            <ClusterBadges layout={layout} />
             {airports.map(f => {
                 const p = f.properties || {}
                 const [lon, lat] = f.geometry?.coordinates || []
@@ -87,9 +94,10 @@ export default function GlobeAirportLayer({ enabled, viewBounds }) {
                 // GlobeConnectorLinesLayer.jsx: a null coordinate must never
                 // reach Cesium's fromDegrees().
                 if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+                if (!single.has(`airport-${p.system_id}`)) return null
                 const icon = getIcon(p.airport_type || "small_airport")
                 if (!icon) return null
-                const sz = ICON_SIZE[p.airport_type] || 22
+                const sz = SIZE.infra
 
                 return (
                     <Entity

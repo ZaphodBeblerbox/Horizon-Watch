@@ -48,16 +48,15 @@ describe("demo situation — words and marks", () => {
         expect(scoreLabel(0.724)).toBe("est. 72%")
     })
 
-    it("icons: white words on a dark halo, colour in the mark, no monospace", () => {
+    it("icons: the one typology (a circle for a crowd, a triangle for a convergence point), constant 24 px, no text in the mark", () => {
         for (const ic of [crowdIcon("Concorde · 12 min ago", 0.5), convergenceIcon("1 · Élysée · est. 72%")]) {
             const svg = decodeURIComponent(ic.uri.split(",")[1])
-            expect(svg).toMatch(/fill="#F2F4F7"/)
-            expect(svg).toMatch(/paint-order="stroke"/)
-            expect(svg).not.toMatch(/mono/i)
-            expect(ic.width).toBeGreaterThan(30)
+            expect(svg).not.toMatch(/<text/)
+            expect(ic.width).toBe(24)
         }
-        expect(decodeURIComponent(crowdIcon("x", 0.5).uri)).toMatch(/opacity="0.5"/)
+        expect(decodeURIComponent(crowdIcon("x", 0.5).uri)).toMatch(/opacity="0.45"/)
         expect(decodeURIComponent(convergenceIcon("", { junction: true }).uri)).toMatch(/stroke-dasharray/)
+        expect(convergenceIcon("1 · Élysée").width).toBe(24)
     })
 
     it("cards carry the evidence: messages with times and links, and say estimate", () => {
@@ -92,7 +91,7 @@ describe("demo situation — features", () => {
         expect(fs[fs.length - 1].id).toBe("sit-conv-tgt-g:ely")
         const conv = fs[fs.length - 1]
         expect(conv.raw.estimate).toBe(true)
-        expect(conv.marker.iconAnchor[1]).toBe(17)
+        expect(conv.marker.iconAnchor[1]).toBe(12)
         const fresh = fs.find((f) => f.id === "sit-crowd-crowd-a"), old = fs.find((f) => f.id === "sit-crowd-crowd-b")
         expect(fresh.alpha).toBe(1); expect(old.alpha).toBe(1)          // both within hours: neither dimmed (owner, 2026-10-19)
         expect(fresh.raw.url).toBe("https://t.me/chan/2")
@@ -127,11 +126,11 @@ describe("demo situation — where a crowd probably is now", () => {
         expect(now.marker.lat).toBe(48.8675)
         const svg = decodeURIComponent(now.marker.iconUri.split(",")[1])
         expect(svg).toMatch(/stroke-dasharray/)
-        expect(svg).toMatch(/probably here now/)
+        expect(now.title).toMatch(/probably here now/)
         expect(svg).not.toMatch(/mono/i)
         expect(fs.find((f) => f.id === "sit-trail-crowd-a").dash).toBeTruthy()
         const seen = fs.find((f) => f.id === "sit-crowd-crowd-a")
-        expect(decodeURIComponent(seen.marker.iconUri)).toMatch(/Place de la Concorde · last seen 15:48 · 12 min ago/)
+        expect(decodeURIComponent(seen.marker.iconUri)).toContain("<circle")   // the words are the card's (one typology: no text in a mark)
         expect(seen.raw.detail).toMatch(/Probably near the dashed mark now \(estimate\): about 800 m on toward Palais de l'Élysée/)
         expect(seen.raw.detail).toMatch(/could be up to 800 m/)
         // the routed path hop drawn on its streets, solid
@@ -148,7 +147,7 @@ describe("demo situation — where a crowd probably is now", () => {
         expect(leg.dash).toBe("2 7")
         expect(leg.sub).toMatch(/walking route pending/)
         expect(fs.find((f) => f.id === "sit-now-crowd-a")).toBeUndefined()
-        expect(decodeURIComponent(fs.find((f) => f.id === "sit-crowd-crowd-a").marker.iconUri)).toMatch(/Place de la Concorde · 12 min ago/)
+        expect(fs.find((f) => f.id === "sit-crowd-crowd-a").title).toMatch(/Place de la Concorde, 12 min ago/)
     })
 
     it("the reach is a faint ground circle of its true size, shown from street level only", () => {

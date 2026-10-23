@@ -28,67 +28,35 @@ import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 import { showTip, hideTip } from "./mapTip.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
-import { getShapeMarkerDataUri, MARK_SIZE , MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
 import { SurgeTip, FusionTip } from "./DerivedTips.jsx"
 import { CAT } from "../components/timeStripMath.js"
-import { LABEL_MAX_DISTANCE_M, tickBearings } from "./derivedMarkGeometry.js"
+import { LABEL_MAX_DISTANCE_M } from "./derivedMarkGeometry.js"
+import { markerIcon, PRIORITY, ICON_PX } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterMark, { useClusterRecords } from "./ClusterMark.jsx"
 
-const AMBER = Color.fromCssColorString("#f5d98f")   // --sev-high
-const RED = Color.fromCssColorString("#f46043")     // --sev-critical
 const BG0 = Color.fromCssColorString("#14161f")     // --bg-0
 
 const labelCond = new DistanceDisplayCondition(0, LABEL_MAX_DISTANCE_M)
 
 /**
- * THE RINGS ARE A FIXED SIZE ON THE SCREEN, NEVER ON THE GROUND.
- *
- * They were ellipses with a real 85 km / 278 km radius, so they swelled as
- * the camera came down and sat across the map as a wall, with the mark they
- * describe lost inside — reported again and again as the alert icons
- * "blowing up". An alert's ring is now a pixel-sized image on the mark, the
- * same small size at every zoom; the region it stands for is in its tip.
+ * THE MARK, in the one typology (lib/mapIcons.js): a triangle, a warning we derived, with the surge's or the
+ * fusion's glyph, coloured by priority for you (the server's when it sends one, else urgent; red only for flash),
+ * drawn in the DEVELOPING state: the ring in the same colour that used to be a separate, larger ring image (RING
+ * images swelled the mark to 30-34 px next to 16; they are gone). One constant size at every zoom. How many kinds
+ * of evidence agree is in the label and the tip, not in tick marks.
  */
-const RING_PX = { surge: 30, fusion: 34 }
-const _ringCache = new Map()
-function ringUri(color, kind, ticks = 0) {
-    const key = `${kind}:${color}:${ticks}`
-    if (_ringCache.has(key)) return _ringCache.get(key)
-    const px = RING_PX[kind], S = 3, c = (px * S) / 2, r = c - 3 * S
-    const tickLines = tickBearings(ticks).map((b) => {
-        const t = (b * Math.PI) / 180
-        const x = (rad) => c + Math.sin(t) * rad, y = (rad) => c - Math.cos(t) * rad
-        return `<line x1="${x(r)}" y1="${y(r)}" x2="${x(r - 4 * S)}" y2="${y(r - 4 * S)}" stroke="${color}" stroke-width="${1.6 * S}" stroke-linecap="round"/>`
-    }).join("")
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px * S}" height="${px * S}">`
-        + `<circle cx="${c}" cy="${c}" r="${r}" fill="${color}" fill-opacity=".10" stroke="${color}" stroke-opacity=".8" stroke-width="${1.2 * S}"/>`
-        + `<circle cx="${c}" cy="${c}" r="${r * 0.62}" fill="none" stroke="${color}" stroke-opacity=".45" stroke-width="${S}"/>`
-        + tickLines + `</svg>`
-    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-    _ringCache.set(key, uri)
-    return uri
-}
-const ringBillboard = (color, kind, ticks) => ({
-    image: ringUri(color, kind, ticks), width: RING_PX[kind], height: RING_PX[kind],
-    heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M,
-})
-
-/**
- * The mark itself: a triangle, the universal caution form, matching
- * SHAPE_FOR_SOURCE.alert and every other point layer on this globe.
- *
- * It was a raw Cesium `point` at pixelSize 6 — a flat GPU disc with no shape
- * language and a 1px outline, which next to the supersampled shape markers
- * everywhere else is exactly what "low res" looks like. Drawn through the
- * shared marker path so it is rendered at MARKER_SUPERSAMPLE and downsampled.
- */
-function markBillboard(color, size = MARK_SIZE.alert) {
+export const derivedPriority = (x) => (x?.priority && PRIORITY[x.priority] ? x.priority : "urgent")
+function markBillboard(kind, x) {
+    const ic = markerIcon({ kind: "derived", glyph: kind, priority: derivedPriority(x), state: "developing" })
     return {
-        image: getShapeMarkerDataUri({ shape: "triangle", color, size, strokeWidth: 1.5 }),
-        width: size, height: size,
+        image: ic.uri, width: ic.w, height: ic.h,
         heightReference: HeightReference.CLAMP_TO_GROUND,
         disableDepthTestDistance: MARKER_DEPTH_TEST_M,
     }
 }
+const labelColor = (x) => Color.fromCssColorString(PRIORITY[derivedPriority(x)])
 
 /** What surged, and by how much against its own baseline. */
 export function surgeLabel(s) {
@@ -241,27 +209,25 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
                 polyline: {
                     positions: Cartesian3.fromDegreesArray(threadCoords),
                     width: 1.5,
-                    material: new PolylineDashMaterialProperty({ color: RED.withAlpha(0.75), dashLength: 6 }),
+                    material: new PolylineDashMaterialProperty({ color: labelColor(f).withAlpha(0.75), dashLength: 6 }),
                     clampToGround: true,
                 },
             })
             ds.entities.add({
                 id,
                 position: Cartesian3.fromDegrees(i.lon, i.lat, 0),
-                billboard: {
-                    image: getShapeMarkerDataUri({
-                        shape: "circle", color: "#c4453c",
-                        size: MARK_SIZE.alert - 4, invert: true, strokeWidth: 1.5,
-                    }),
-                    width: MARK_SIZE.alert - 4, height: MARK_SIZE.alert - 4,
-                    heightReference: HeightReference.CLAMP_TO_GROUND,
-                    disableDepthTestDistance: MARKER_DEPTH_TEST_M,
-                },
+                // a thread's end: the evidence is a report, so the one typology's event circle (no black dot; owner,
+                // 2026-10-23 evening), in the past state: it is what the fusion was built from
+                billboard: (() => {
+                    const ic = markerIcon({ kind: "event", glyph: "generic", priority: derivedPriority(f), state: "past" })
+                    return { image: ic.uri, width: ic.w, height: ic.h, heightReference: HeightReference.CLAMP_TO_GROUND,
+                             disableDepthTestDistance: MARKER_DEPTH_TEST_M }
+                })(),
                 // The modality, at the end of the line. This is the whole
                 // point of the threads: seeing at a glance whether the
                 // "independent" sources are in fact one incident reported
                 // four times.
-                label: labelOpts(i.kind_label || i.mod || "", RED),
+                label: labelOpts(i.kind_label || i.mod || "", labelColor(f)),
             })
         }
         threadIdsRef.current = ids
@@ -304,51 +270,49 @@ export default function GlobeDerivedAlertsLayer({ enabled = false, at = null, th
         showTip(content, rect.left + movement.endPosition.x, rect.top + movement.endPosition.y)
     }
 
+    const marks = useMemo(() => [
+        ...surges.filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)).map((x) => ({
+            id: `surge-${x.id}`, lat: x.lat, lon: x.lon, size: ICON_PX, pri: derivedPriority(x), kind: "surge", x, image: markBillboard("surge", x).image, t: Date.parse(x.last_at || x.updated_at || x.created_at || "") || 0,
+            title: `${String(CAT[x.cat]?.name || x.cat || "activity").toLowerCase()} reporting surging around ${x.place || "this area"}`, line: surgeLabel(x) })),
+        ...fusions.filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)).map((x) => ({
+            id: `fusion-${x.id}`, lat: x.lat, lon: x.lon, size: ICON_PX, pri: derivedPriority(x), kind: "fusion", x, image: markBillboard("fusion", x).image, t: Date.parse(x.last_at || x.updated_at || x.created_at || "") || 0,
+            title: x.headline || "Converging evidence", line: fusionLabel(x) })),
+    ], [surges, fusions])
+    const layout = useDeclutter("derivedAlerts", marks, enabled)
+    useClusterRecords(layout)
+
     if (!enabled) return null
 
     return (
         <>
-            {surges.map((s) => (
-                <Entity
-                    key={s.id}
-                    id={`surge-${s.id}`}
-                    position={Cartesian3.fromDegrees(s.lon, s.lat, 0)}
-                    onMouseMove={(_m, mv) => tipAt(<SurgeTip surge={s} nowMs={nowMs} />, mv)}
-                    onMouseLeave={hideTip}
-                    billboard={markBillboard("#b7822c")}
-                    /* "SURGE · 5" named neither the subject nor the size,
-                       which is the whole finding. The payload already
-                       carries the category and the multiple against this
-                       cell's own baseline; the label just never used them.
-                       "AIR ×13" reads at a glance and is falsifiable. */
-                    label={labelOpts(surgeLabel(s), AMBER)}
-                />
-            ))}
-            {surges.map((s) => (
-                <Entity key={`${s.id}-ring`} position={Cartesian3.fromDegrees(s.lon, s.lat, 0)}
-                        billboard={ringBillboard("#f5d98f", "surge", 0)} />
-            ))}
-
-            {fusions.map((f) => (
-                <Entity
-                    key={f.id}
-                    id={`fusion-${f.id}`}
-                    position={Cartesian3.fromDegrees(f.lon, f.lat, 0)}
-                    onMouseMove={(_m, mv) => { drawThreads(f); tipAt(<FusionTip fusion={f} nowMs={nowMs} />, mv) }}
-                    onMouseLeave={() => { clearThreads(); hideTip() }}
-                    billboard={markBillboard("#c4453c")}
-                    /* The count of INDEPENDENT ways of looking is the
-                       finding, so name them rather than counting them:
-                       "AIS+ADSB" says why it is worth believing. */
-                    label={labelOpts(fusionLabel(f), RED)}
-                />
-            ))}
-            {/* §A8 — ONE RADIAL TICK PER MODALITY, drawn in the ring. "The
-                tick count is the finding, rendered." */}
-            {fusions.map((f) => (
-                <Entity key={`${f.id}-ring`} position={Cartesian3.fromDegrees(f.lon, f.lat, 0)}
-                        billboard={ringBillboard("#f46043", "fusion", (f.mods || []).length)} />
-            ))}
+            {layout.map((g) => {
+                if (g.cluster) return <ClusterMark key={g.id} g={g} />
+                const { kind, x } = g.item
+                if (kind === "surge") return (
+                    <Entity
+                        key={x.id}
+                        id={`surge-${x.id}`}
+                        position={Cartesian3.fromDegrees(x.lon, x.lat, 0)}
+                        onMouseMove={(_m, mv) => tipAt(<SurgeTip surge={x} nowMs={nowMs} />, mv)}
+                        onMouseLeave={hideTip}
+                        billboard={markBillboard("surge", x)}
+                        /* "AIR ×13": the subject and the multiple against this cell's own baseline */
+                        label={labelOpts(surgeLabel(x), labelColor(x))}
+                    />
+                )
+                return (
+                    <Entity
+                        key={x.id}
+                        id={`fusion-${x.id}`}
+                        position={Cartesian3.fromDegrees(x.lon, x.lat, 0)}
+                        onMouseMove={(_m, mv) => { drawThreads(x); tipAt(<FusionTip fusion={x} nowMs={nowMs} />, mv) }}
+                        onMouseLeave={() => { clearThreads(); hideTip() }}
+                        billboard={markBillboard("fusion", x)}
+                        /* the INDEPENDENT ways of looking, named: why it is worth believing */
+                        label={labelOpts(fusionLabel(x), labelColor(x))}
+                    />
+                )
+            })}
         </>
     )
 }

@@ -11,6 +11,7 @@
  * a megaphone in a ring, the ring the severity's colour, solid where the
  * post placed it and dashed where it stands at the country's centre.
  */
+import { markerUri, priorityOf } from "../lib/mapIcons.js"
 
 export const MOOD_PREFIX = "Telegram mood"
 export const MOOD_PATH = "/api/alerts?source=telegram&since_hours=48&limit=0"
@@ -27,20 +28,10 @@ const KIND = {
 export const isMoodAlert = (a) => String(a?.alert_type || "").startsWith(MOOD_PREFIX)
 export const moodKind = (a) => KIND[a?.alert_type] || String(a?.alert_type || "").replace(/^Telegram mood:\s*/, "") || "Telegram mood"
 
-const _icons = new Map()
-/** The mark: a megaphone in a ring, `precise` solid, a country's centre dashed. */
-export function moodIconUri(sev, precise = true, size = 22) {
-    const c = SEV[String(sev || "").toLowerCase()] || SEV.high
-    const key = `${c}|${precise}|${size}`
-    if (_icons.has(key)) return _icons.get(key)
-    const S = 3, px = size * S, r = px / 2 - 2 * S
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">`
-        + `<circle cx="${px / 2}" cy="${px / 2}" r="${r}" fill="#0b1220" fill-opacity=".86" stroke="${c}" stroke-width="${2 * S}"${precise ? "" : ` stroke-dasharray="${3 * S} ${2 * S}"`}/>`
-        + `<g transform="translate(${px * 0.24} ${px * 0.27}) scale(${(px * 0.52) / 24})" fill="none" stroke="${c}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round">`
-        + `<path d="M3 10v4h3l7 4V6L6 10H3z"/><path d="M16 8.5c1.4 1 1.4 6 0 7M19 6c2.6 2 2.6 10 0 12"/></g></svg>`
-    const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-    _icons.set(key, uri)
-    return uri
+/** The mark, in the one typology (lib/mapIcons.js): a warning we derived (a triangle, the megaphone); a country's
+ *  centre (not `precise`) is drawn uncorroborated-style. */
+export function moodIconUri(sev, precise = true) {
+    return markerUri({ kind: "derived", glyph: "action", priority: priorityOf(sev, "urgent"), state: precise ? "live" : "muted" })
 }
 
 /** A call to violence says no time: after CALL_NO_TIME_H it is no longer a
