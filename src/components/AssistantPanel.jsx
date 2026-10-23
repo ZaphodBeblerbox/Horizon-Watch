@@ -1,9 +1,10 @@
 /**
- * AssistantPanel.jsx — the desktop assistant: a glass panel on the right,
- * between the top bar and the status bar, over the map (so a fly is seen).
- * Replaces ChatPanel.jsx, the mission chat that had no access to our data.
- * The conversation itself is src/assistant/AssistantThread.jsx, shared with
- * the phone.
+ * AssistantPanel.jsx — the desktop assistant away from the map: a glass
+ * panel on the right, between the top bar and the status bar. On the map
+ * the same conversation is the right column's Assistant tab instead
+ * (destinations/Situation.jsx, assistant/assistantDock.js). The
+ * conversation itself is src/assistant/AssistantThread.jsx, shared with the
+ * phone.
  */
 import AssistantThread from "../assistant/AssistantThread.jsx"
 
@@ -24,10 +25,10 @@ const PANEL = {
     flexDirection: "column",
 }
 
-export default function AssistantPanel({ mode = null, onClose }) {
+export default function AssistantPanel({ onClose }) {
     return (
         <aside style={PANEL} data-screen-label="Assistant" aria-label="Assistant">
-            <AssistantThread platform="desktop" mode={mode} onClose={onClose} />
+            <AssistantThread platform="desktop" onClose={onClose} />
         </aside>
     )
 }

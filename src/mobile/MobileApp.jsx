@@ -30,6 +30,7 @@ import GeneralFeed from "../general/GeneralFeed.jsx"
 import MAdmin from "./screens/MAdmin.jsx"
 import MAssistant from "./screens/MAssistant.jsx"
 import { assistantStatus } from "../assistant/assistantApi.js"
+import { startAssistant } from "../assistant/assistantStore.js"
 import { getCurrentUser, subscribeAuth } from "../state/authStore.js"
 import LocationPrompt from "../components/LocationPrompt.jsx"
 import LivePlayerHost, { watchLive } from "../telegram/LivePlayer.jsx"
@@ -162,7 +163,7 @@ export default function MobileApp() {
     useEffect(() => subscribeAuth(setMe), [])
     /* THE ASSISTANT (src/assistant): its own screen; what it flies to is shown
        on the map, with a chip back to the conversation. */
-    const [assistantMode, setAssistantMode] = useState(null)
+    // a set-up mode starts its own conversation; "chat" keeps the open one (assistantStore)
     const [backToAssistant, setBackToAssistant] = useState(false)
     useEffect(() => {
         const fly = (e) => {
@@ -172,7 +173,7 @@ export default function MobileApp() {
             setFocus({ lat: +d.lat, lon: +d.lon, _zoom: Number.isFinite(+d.zoom) ? +d.zoom : undefined, _t: Date.now() })
             setTab("map"); setBackToAssistant(true)
         }
-        const open = (e) => { setAssistantMode(e?.detail?.mode || "chat"); go("assistant") }
+        const open = (e) => { startAssistant(e?.detail?.mode || "chat"); go("assistant") }
         const toMap = () => { setMenu(false); setTab("map"); setBackToAssistant(true) }
         window.addEventListener("m2:assistant-fly", fly)
         window.addEventListener("m2:assistant-map", toMap)
@@ -188,7 +189,7 @@ export default function MobileApp() {
         assistantStatus().then((st) => {
             if (!st?.onboarding?.empty_profile) return
             try { localStorage.setItem(key, "1") } catch { /* private mode */ }
-            setAssistantMode("onboarding"); setTab("assistant")
+            startAssistant("onboarding"); setTab("assistant")
         }).catch(() => {})
     }, [me?.id]) // eslint-disable-line react-hooks/exhaustive-deps
     const more = me?.is_super_admin ? [...MORE, ["admin", "Admin", "g-gear"]] : MORE
@@ -277,7 +278,7 @@ export default function MobileApp() {
                 {tab === "admin" && me?.is_super_admin && <Pane on><MAdmin /></Pane>}
                 {tab === "profile" && <Pane on><MProfile /></Pane>}
                 {tab === "settings" && <Pane on><MSettings /></Pane>}
-                {tab === "assistant" && <Pane on><MAssistant mode={assistantMode} /></Pane>}
+                {tab === "assistant" && <Pane on><MAssistant /></Pane>}
             </main>
             {tab === "map" && backToAssistant && (
                 <button data-testid="m2-back-assistant" onClick={() => go("assistant")} style={{

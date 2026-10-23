@@ -80,8 +80,8 @@ describe("the conversation", () => {
         expect(s.messages.map((m) => m.role)).toEqual(["user", "assistant"])
         expect(s.messages[1].citations[0].ref).toBe("S1")
         expect(seen[0][1]).toEqual({ lat: 45.76, lon: 4.83, altitude: 60000 })
-        const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body)
-        expect(body.client.platform).toBe("desktop")
+        const turnCall = globalThis.fetch.mock.calls.find((c) => String(c[0]).endsWith("/api/assistant/turn"))
+        expect(JSON.parse(turnCall[1].body).client.platform).toBe("desktop")
     })
 
     it("onboarding: confirm calls /confirm, then the existing endpoint, then asks the next step", async () => {
@@ -105,7 +105,8 @@ describe("the conversation", () => {
         const p = getAssistant().messages.at(-1).proposals[0]
         expect(calls.some((c) => c[0] === "/api/theaters")).toBe(false)      // nothing written yet
         expect(await confirmAssistantProposal(p)).toBe(true)
-        expect(calls.map((c) => c[0])).toEqual(["/api/assistant/turn", "/api/assistant/turn", "/api/assistant/confirm", "/api/theaters"])
+        expect(calls.map((c) => c[0]).filter((u) => !u.startsWith("/api/assistant/conversations")))
+            .toEqual(["/api/assistant/turn", "/api/assistant/turn", "/api/assistant/confirm", "/api/theaters"])
         expect(getAssistant().messages.at(-2).proposals[0].state).toBe("done")
     })
 
@@ -121,7 +122,7 @@ describe("the conversation", () => {
         addFormProposal(p)
         expect(await confirmAssistantProposal(p)).toBe(false)
         expect(getAssistant().messages.at(-1).proposals[0]).toMatchObject({ state: "failed", why: "this proposal has expired; ask again" })
-        expect(calls.every((u) => u.endsWith("/api/assistant/confirm"))).toBe(true)
+        expect(calls.filter((u) => !u.includes("/api/assistant/conversations")).every((u) => u.endsWith("/api/assistant/confirm"))).toBe(true)
     })
 
     it("runConfirmed sends the planned request", async () => {

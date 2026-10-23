@@ -24,7 +24,21 @@ async function req(path, opts) {
     return body
 }
 
-export const askTurn = (body) => req("/api/assistant/turn", { method: "POST", body: JSON.stringify(body) })
+export const askTurn = (body, { signal } = {}) =>
+    req("/api/assistant/turn", { method: "POST", body: JSON.stringify(body), signal })
+
+/* Conversations, kept per user on the server (backend/assistant_history.py). */
+const C = "/api/assistant/conversations"
+const J = (method, body) => ({ method, body: JSON.stringify(body || {}) })
+export const listConversations = (limit = 50) => req(`${C}?limit=${limit}`).then((d) => d?.conversations || [])
+export const createConversation = (mode = "chat") => req(C, J("POST", { mode }))
+export const getConversation = (id) => req(`${C}/${encodeURIComponent(id)}`)
+export const renameConversation = (id, title) => req(`${C}/${encodeURIComponent(id)}`, J("PATCH", { title }))
+export const deleteConversation = (id) => req(`${C}/${encodeURIComponent(id)}`, { method: "DELETE" })
+export const appendMessages = (id, messages) => req(`${C}/${encodeURIComponent(id)}/messages`, J("POST", { messages }))
+export const stopTurn = (id, turnId) => req(`${C}/${encodeURIComponent(id)}/stop`, J("POST", { turn_id: turnId }))
+export const setProposalState = (id, mid, token, state, why) =>
+    req(`${C}/${encodeURIComponent(id)}/messages/${mid}`, J("PATCH", { token, state, why }))
 export const proposeForm = (kind, fields) =>
     req("/api/assistant/propose", { method: "POST", body: JSON.stringify({ kind, fields }) })
 export const assistantStatus = () => req("/api/assistant/status")

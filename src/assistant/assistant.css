@@ -69,7 +69,7 @@
 .plx-as-btn:disabled { opacity: .45; cursor: default; }
 .plx-as-foot { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--gline, rgba(255,255,255,.08)); }
 .plx-as-input { display: flex; gap: 8px; align-items: flex-end; }
-.plx-as-input textarea { flex: 1; min-height: 38px; max-height: 120px; resize: none; padding: 9px 12px; border-radius: 19px;
+.plx-as-input textarea { flex: 1; min-height: 38px; max-height: 140px; resize: none; overflow-y: auto; box-sizing: border-box; padding: 9px 12px; border-radius: 19px;
                          border: 1px solid var(--gline2, rgba(255,255,255,.18)); background: rgba(0,0,0,.18); color: var(--txt, #fff);
                          font: 400 13px/1.4 var(--font, system-ui, sans-serif); outline: none; }
 .plx-as-send { flex: none; width: 38px; height: 38px; border-radius: 19px; border: 0; display: grid; place-items: center;
@@ -85,6 +85,47 @@
 .plx-as-dots i:nth-child(2) { animation-delay: .2s } .plx-as-dots i:nth-child(3) { animation-delay: .4s }
 @keyframes plx-as-dot { 0%, 100% { opacity: .3 } 50% { opacity: 1 } }
 @media (prefers-reduced-motion: reduce) { .plx-as-dots i { animation: none } }
+/* the full chat: copy / retry under a message, stop, the list of conversations */
+.plx-as-head h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plx-as-tools { margin-top: 4px; display: flex; gap: 10px; opacity: 0; transition: opacity 120ms ease; }
+.plx-as-msg:hover .plx-as-tools, .plx-as-msg:focus-within .plx-as-tools, .plx-as-tools[data-show="true"] { opacity: 1; }
+@media (hover: none) { .plx-as-tools { opacity: .8; } }
+.plx-as-tools button { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; cursor: pointer;
+                       color: var(--txt3, rgba(233,237,243,.55)); font: 400 11px var(--font, system-ui, sans-serif); }
+.plx-as-tools button:hover { color: var(--txt, #fff); }
+.plx-as-tools button:disabled { opacity: .4; cursor: default; }
+.plx-as-msg[data-stopped="true"] { color: var(--txt3, rgba(233,237,243,.55)); font-style: normal; }
+.plx-as-send[data-stop="true"] { color: var(--txt, #fff); background: rgba(255,255,255,.18); }
+.plx-as-history { gap: 4px; }
+.plx-as-newchat { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; margin-bottom: 6px; border-radius: 12px;
+                  border: 1px solid var(--gline2, rgba(255,255,255,.18)); background: rgba(255,255,255,.06); color: var(--txt, #fff);
+                  font: 500 12.5px var(--font, system-ui, sans-serif); cursor: pointer; }
+.plx-as-conv { display: flex; align-items: flex-start; gap: 4px; border-radius: 12px; border: 1px solid transparent; }
+.plx-as-conv:hover, .plx-as-conv[data-current="true"] { background: rgba(255,255,255,.05); border-color: var(--gline, rgba(255,255,255,.08)); }
+.plx-as-conv-open { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border: 0; background: none;
+                    color: var(--txt2, rgba(233,237,243,.8)); text-align: left; cursor: pointer; font: 400 12px/1.35 var(--font, system-ui, sans-serif); }
+.plx-as-conv-open b { color: var(--txt, #fff); font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plx-as-conv-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plx-as-conv-open small { color: var(--txt3, rgba(233,237,243,.5)); font-size: 10.5px; }
+.plx-as-conv-tools { flex: none; display: flex; padding-top: 4px; }
+.plx-as-conv-tools .plx-as-iconbtn { width: 28px; height: 28px; }
+.plx-as-conv-tools [data-armed="true"] { color: #ff6b6b; background: rgba(255,107,107,.12); }
+.plx-as-rename { flex: 1; display: flex; gap: 6px; padding: 6px; }
+.plx-as-rename input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--gline2, rgba(255,255,255,.18));
+                       background: rgba(0,0,0,.18); color: var(--txt, #fff); font: 400 12.5px var(--font, system-ui, sans-serif); outline: none; }
+.plx-as-rename button { border: 0; background: none; color: var(--txt, #fff); font: 600 12px var(--font, system-ui, sans-serif); cursor: pointer; }
+/* the map's right column: Inspector | Assistant (destinations/Situation.jsx) */
+.plx-rcol-head { display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); flex-shrink: 0; }
+.plx-rcol-tab { height: 26px; padding: 0 10px; border: 0; border-radius: 13px; background: transparent; cursor: pointer;
+                color: var(--txt-3, rgba(233,237,243,.55)); font: 600 11px var(--font, system-ui, sans-serif); letter-spacing: .01em; }
+.plx-rcol-tab:hover { color: var(--txt, #fff); }
+.plx-rcol-tab[aria-selected="true"] { color: var(--txt, #fff); background: rgba(255,255,255,.09); }
+.plx-rcol-x { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 13px; background: none;
+              color: var(--txt-3, rgba(233,237,243,.55)); cursor: pointer; padding: 0; }
+.plx-rcol-x:hover { color: var(--txt, #fff); background: rgba(255,255,255,.07); }
+[data-testid="right-column-assistant"] .plx-as-head { padding: 8px 10px 8px; }
+[data-testid="right-column-assistant"] .plx-as-log { padding: 12px 10px; }
+[data-theme="light"] .plx-rcol-tab[aria-selected="true"] { background: rgba(0,0,0,.07); }
 /* light theme on the desktop */
 [data-theme="light"] .plx-as-msg[data-role="user"], [data-theme="light"] .plx-as-btn, [data-theme="light"] .plx-as-send { background: rgba(0,0,0,.07); }
 [data-theme="light"] .plx-as-input textarea, [data-theme="light"] .plx-as-form input, [data-theme="light"] .plx-as-form select { background: rgba(255,255,255,.6); }

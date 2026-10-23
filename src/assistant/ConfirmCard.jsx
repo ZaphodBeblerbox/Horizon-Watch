@@ -5,6 +5,7 @@
  * user's own session: assistantApi.confirmProposal).
  */
 import { runAssistantActions } from "./assistantActions.js"
+import { proposalState } from "./assistantStore.js"
 
 const KIND = { theater: "New theater", asset: "New asset", interests: "Follow", alerts: "Interruptions" }
 
@@ -23,7 +24,7 @@ export function MiniArea({ place }) {
 
 export default function ConfirmCard({ proposal, onConfirm, onEdit, onSkip, platform = "desktop" }) {
     const p = proposal
-    const st = p.state || "pending"
+    const st = proposalState(p)          // a pending token past its 10 minutes reads expired
     const show = () => p.place && runAssistantActions([{ intent: "navigate", slots: {
         lat: p.place.lat, lon: p.place.lon, place: p.place.label,
         zoom: p.place.zoom ?? (p.place.radius_km > 200 ? 6 : p.place.radius_km > 40 ? 8 : 11),
@@ -50,7 +51,7 @@ export default function ConfirmCard({ proposal, onConfirm, onEdit, onSkip, platf
             ) : (
                 <div className="plx-as-card-state">
                     {st === "done" && <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 8.5l3.2 3L13 4.5" /></svg>}
-                    {st === "done" ? "Created." : "Skipped."}
+                    {st === "done" ? "Created." : st === "expired" ? "Expired. Ask again to make a new proposal." : "Skipped."}
                 </div>
             )}
         </div>
