@@ -85,7 +85,7 @@ describe("the map and the card", () => {
         const [pt] = protestPoints({ protests: [PROTEST, { ...PROTEST, id: "x", lat: null }] }, NOW)
         expect(pt.key).toBe("ongoing")
         expect(pt.iconUri).toMatch(/^data:image\/svg\+xml/)
-        expect(decodeURIComponent(pt.iconUri)).toContain("Ongoing · since 14:00")
+        expect(decodeURIComponent(pt.iconUri)).toContain("<circle")   // one typology: the status words are the card's
     })
     it("a protest that is over is no longer on the map (owner, 2026-10-19)", () => {
         const over = [{ ...PROTEST, id: "e", status: { key: "ended" } }, { ...PROTEST, id: "n", status: { key: "no_show" } }]

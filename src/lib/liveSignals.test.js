@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { stripEmoji, liveSignalDrawn, cardText, declutterAll, labelsToShow, actIcon, ACTS, mediaSources } from "./liveSignals.js"
+import { stripEmoji, liveSignalDrawn, cardText, declutterAll, labelsToShow, actIcon, ACTS, mediaSources, representative } from "./liveSignals.js"
 
 const NOW = Date.parse("2026-10-22T16:00:00Z")
 const ago = (m) => new Date(NOW - m * 60_000).toISOString()
@@ -77,5 +77,19 @@ describe("labels", () => {
         const markers = [{ x: 100, y: 100, size: 28 }]
         const labels = [{ id: "over", x: 95, y: 90, w: 60, h: 14 }, { id: "ok", x: 130, y: 90, w: 60, h: 14 }, { id: "clash", x: 140, y: 95, w: 60, h: 14 }]
         expect(labelsToShow(labels, markers).map((l) => l.id)).toEqual(["ok"])
+    })
+})
+
+describe("one icon per place (owner, 2026-10-23 evening)", () => {
+    it("the most important member is drawn: priority first, then the most recent", () => {
+        expect(representative([{ id: "a", pri: "alert", t: 5 }, { id: "b", pri: "urgent", t: 1 }, { id: "c", pri: "urgent", t: 3 }]).id).toBe("c")
+        expect(representative([{ id: "a", pri: "info" }, { id: "b", sev: "critical" }]).id).toBe("b")
+    })
+    it("a group's box is its drawn marker's, not a count blob", () => {
+        const out = declutterAll([{ id: "a", x: 100, y: 100, size: 24 }, { id: "b", x: 104, y: 98, size: 24 }, { id: "c", x: 160, y: 100, size: 24 }])
+        expect(out).toHaveLength(2)
+    })
+    it("shots fired is not the bomb", () => {
+        expect(ACTS.shots_fired.glyph).toBe("crime")
     })
 })

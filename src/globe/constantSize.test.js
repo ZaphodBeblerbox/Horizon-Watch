@@ -39,7 +39,9 @@ describe("every layer's markers come from lib/mapIcons.js (one typology)", () =>
     // A marker image built anywhere else is a second style. Allowed: text labels (a label is not a marker) and
     // the frontline unit symbol (milsymbol, drawn on a line, constant size).
     const OWN_SVG = /data:image\/svg\+xml/
-    const ALLOW = { "src/mobile/mapLayers.js": /textLabelUri|lineSwatch|areaSwatch/, "src/globe/frontlineClaims.js": /milSymbol|pillUri/ }
+    // entityIcons.js keeps the lucide glyphs of the ontology graph (ForceGraph), which is not a map
+    const ALLOW = { "src/mobile/mapLayers.js": /textLabelUri|lineSwatch|areaSwatch/, "src/globe/frontlineClaims.js": /milSymbol|pillUri/,
+                    "src/globe/entityIcons.js": /entityMarkerDataUri|entityMarkerSvg/ }
     it("no layer file builds its own SVG marker image", () => {
         for (const f of ALL) {
             const s = read(f)
@@ -57,16 +59,17 @@ describe("every layer's markers come from lib/mapIcons.js (one typology)", () =>
             expect(read(f), f).not.toMatch(/pixelSize\s*:/)
         }
     })
-    it("the phone draws no divIcon marker of its own (labels and the freshness line aside)", () => {
+    it("the phone draws no divIcon marker of its own (a wrapper round the module's image, the selected ring aside)", () => {
+        // a divIcon may only wrap the module's image (a ship turned to its heading, the team's dot with its name
+        // label), be the selected ring or a text label; any other divIcon is a marker style of its own
         for (const f of PHONE) {
             const s = read(f)
-            const n = (s.match(/L\.divIcon\(/g) || []).length
-            const allowed = (s.match(/L\.divIcon\([^)]*m2-team-label|data-fresh/g) || []).length
-            expect(n - allowed, f).toBe(0)
+            const calls = s.split(/L\.divIcon\(/).slice(1).map((c) => c.slice(0, 400))
+            for (const c of calls) expect(/<img src="\$\{|m2-picked|html: `<span /.test(c) ? "" : c.slice(0, 120), `${f} divIcon`).toBe("")
         }
     })
     it("every layer imports the one module", () => {
-        const drawing = ALL.filter((f) => /billboard|L\.marker\(|iconUri|L\.icon\(/.test(read(f)))
+        const drawing = ALL.filter((f) => /billboard=\{\{|billboard:\s*\{|L\.marker\(|iconUri:|L\.icon\(/.test(read(f)))
         for (const f of drawing) expect(read(f), f).toMatch(/lib\/mapIcons\.js|\.\/mapIcons\.js|liveSignals\.js|protests\.js|strikes\.js|endangeredPlaces\.js|farIcons\.js|infraGlyphs\.js|entityIcons\.js|safeHouseIcon\.js|gfwEvents\.js|mapLayers\.js/)
     })
 })

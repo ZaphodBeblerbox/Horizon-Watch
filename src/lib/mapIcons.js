@@ -39,7 +39,7 @@ export const OURS = { gold: "#C9A227", blue: "#3B8CFF" }
 export const TRAFFIC = "#C9D4E3"         // a ship or an aircraft nobody flagged
 export const SELECTED = "#FFFFFF"
 /** On-screen pixels. Constant at every zoom. */
-export const SIZE = { event: 24, traffic: 16, infra: 18, pin: { w: 30, h: 36 }, me: 14, team: 12, dot: 12, small: 10, cluster: 30 }
+export const SIZE = { event: 24, traffic: 16, infra: 18, pin: { w: 30, h: 36 }, me: 16, team: 12, dot: 12, small: 10, cluster: 30 }
 export const ICON_PX = SIZE.event
 export const CLUSTER_PX = SIZE.cluster
 /** The phone draws every marker a fifth larger than the desktop (owner, 2026-10-17), all of them. */
@@ -85,6 +85,7 @@ export const GLYPH = {
     crowd: g("M11 15a2 2 0 104 0 2 2 0 00-4 0M17 15a2 2 0 104 0 2 2 0 00-4 0M8 22c.5-3 2-4.5 4-4.5s3.5 1.5 4 4.5M16 22c.5-3 2-4.5 4-4.5s3.5 1.5 4 4.5", { box: 32 }),
     troops: g("M8 22v-9l8-5 8 5v9M12 22v-5h8v5", { box: 32 }),
     police: g("M16 7l7 3v5c0 4-3 6.5-7 8-4-1.5-7-4-7-8v-5z", { box: 32 }),
+    crime: g("M3.5 8h15.5v3.6h-7.2l-1.3 2.6H8.3L7 19.5H3.9l1.6-7.9H3.5zM19 9.2h1.5M10.5 11.6v2.6"),
     placard: g("M11 9h10v7H11zM16 16v8M13 24h6", { box: 32 }),
     clash: g("M10 10l12 12M22 10L10 22M16 7v3M16 22v3", { box: 32 }),
     // strikes & control (globe/strikes.js acts)
@@ -284,7 +285,7 @@ export function infraIcon({ glyph = "port", priority = null, state = "live" } = 
 
 // ── dots: you, the team, a track's points, an annotation ────────────────────
 /**
- * role: me (14, blue, white edge) | team (12, blue) | start (hollow blue) | end (filled blue) | stop (amber) |
+ * role: me (16: a small blue dot with a soft blue glow, nothing else; owner, 2026-10-23) | team (12, blue) | start (hollow blue) | end (filled blue) | stop (amber) |
  * now (blue, white ring) | endpoint (10 hollow, in `priority`) | note (10 gold). `live` false = hollow;
  * `coarse` = a dotted edge (a city-level fix). `label`: a short text inside (a stop's number).
  */
@@ -297,6 +298,14 @@ export function dotIcon({ role = "team", live = true, coarse = false, label = nu
         const edge = role === "me" || role === "team" || role === "now" ? SELECTED : EDGE
         const r = c - (role === "me" ? 1.5 : 1.25)
         const dash = coarse ? ` stroke-dasharray="1.6 1.6"` : ""
+        if (role === "me") {
+            // a small blue glowing dot only: no white ring, no dotted circle; not live = the same dot, fainter, no glow
+            const me = svgOpen(S, S, live ? 1 : 0.6)
+                + `<defs><radialGradient id="g"><stop offset="0.35" stop-color="${OURS.blue}" stop-opacity="0.55"/><stop offset="1" stop-color="${OURS.blue}" stop-opacity="0"/></radialGradient></defs>`
+                + (live ? `<circle cx="${c}" cy="${c}" r="${c}" fill="url(#g)"/>` : "")
+                + `<circle cx="${c}" cy="${c}" r="4.2" fill="${OURS.blue}" stroke="#8FBCFF" stroke-width="1"/></svg>`
+            return { uri: enc(me), w: S, h: S, anchor: [c, c], kind: "dot" }
+        }
         let svg = svgOpen(S, S)
         svg += hollow
             ? `<circle cx="${c}" cy="${c}" r="${r}" fill="${EDGE}" fill-opacity="0.6" stroke="${col}" stroke-width="${role === "me" ? 2 : STROKE}"${dash}/>`
@@ -350,7 +359,7 @@ export const LEGEND = {
         { key: "traffic", label: "Ship, aircraft", icon: () => trafficIcon({ kind: "ship" }) },
         { key: "infra", label: "Infrastructure", icon: () => infraIcon({ glyph: "port" }) },
         { key: "you", label: "You, the team", icon: () => dotIcon({ role: "me" }) },
-        { key: "cluster", label: "Several here", icon: () => clusterIcon(4, "urgent") },
+        { key: "place", label: "Several things at one place: the most important is drawn, its card lists the others", icon: () => markerIcon({ kind: "event", glyph: "crowd", priority: "urgent" }) },
     ],
     colours: [
         { key: "flash", label: "Flash", icon: () => markerIcon({ kind: "event", priority: "flash" }) },

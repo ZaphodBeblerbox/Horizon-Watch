@@ -81,11 +81,14 @@ describe("constant pixel sizes, one edge", () => {
         expect(svg(clusterIcon(5))).toContain(PRIORITY.alert)
         expect(svg(clusterIcon(5, "urgent"))).toContain(">5<")
     })
-    it("dots: you 14 with a white edge, the team 12, hollow when not live", () => {
-        expect(dotIcon({ role: "me" }).w).toBe(14)
-        expect(svg(dotIcon({ role: "me" }))).toContain('stroke="#FFFFFF"')
+    it("dots: you a small blue glowing dot (no white or dotted ring), the team 12, hollow when not live", () => {
+        expect(dotIcon({ role: "me" }).w).toBe(16)
+        expect(svg(dotIcon({ role: "me" }))).not.toContain('stroke="#FFFFFF"')
+        expect(svg(dotIcon({ role: "me" }))).not.toContain("stroke-dasharray")
+        expect(svg(dotIcon({ role: "me" }))).toContain("radialGradient")
+        expect(svg(dotIcon({ role: "me", live: false }))).not.toContain("stroke-dasharray")
         expect(dotIcon({ role: "team" }).w).toBe(12)
-        expect(svg(dotIcon({ role: "me", live: false }))).toContain('fill-opacity="0.6"')
+        expect(svg(dotIcon({ role: "team", live: false }))).toContain('fill-opacity="0.6"')
     })
 })
 

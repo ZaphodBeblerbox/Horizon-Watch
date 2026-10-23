@@ -15,7 +15,7 @@
  *
  * Keep LIVE_WINDOW_MIN / CROWD_MAX_MIN the same as backend/live_signals.py.
  */
-import { markerUri, clusterIcon, ICON_PX, CLUSTER_PX, PRIORITY, topPriority } from "./mapIcons.js"
+import { markerUri, clusterIcon, ICON_PX, PRIORITY, PRIORITY_RANK, priorityOf, topPriority } from "./mapIcons.js"
 export { ICON_PX }
 export const LIVE_WINDOW_MIN = 60
 export const CROWD_MAX_MIN = 180
@@ -32,7 +32,7 @@ export function stripEmoji(s) {
 // The nine acts: the glyph says which act; the colour is what it means to you (lib/mapIcons.js), never the act.
 export const ACTS = {
     arrest: { label: "Arrest", glyph: "arrest", impact: true },
-    shots_fired: { label: "Shots fired", glyph: "shots_fired", impact: true },
+    shots_fired: { label: "Shots fired", glyph: "crime", impact: true },
     explosion: { label: "Explosion", glyph: "explosion", impact: true },
     strike: { label: "Strike", glyph: "strike", impact: true },
     missile_launch: { label: "Missile launch", glyph: "missile_launch", impact: true },
@@ -132,18 +132,32 @@ export function declutter(items, gap = 2) {
     })
 }
 
-/** The cluster's own size on screen, so a cluster is itself a box the collision pass can treat. */
-export const clusterSize = () => CLUSTER_PX      // constant on-screen size, whatever the count
+/**
+ * A group's box on screen: ONE ICON PER PLACE (owner, 2026-10-23 evening) — a group is drawn as its most important
+ * member's own marker (representative()), so its box is that marker's size; never a count blob.
+ */
+export const clusterSize = (members = null) => (Array.isArray(members) && members.length
+    ? Math.max(...members.map((m) => m.size || ICON_PX)) : ICON_PX)
+
+/**
+ * Which member of a group is drawn: the highest priority for you (flash, urgent, alert, info), then the most recent
+ * (`t`, ms or ISO), then the first. Members read `pri` (or `sev` as a severity word) and `t`.
+ */
+export function representative(members) {
+    const rk = (m) => PRIORITY_RANK[priorityOf(m?.pri || m?.sev || null, "info")]
+    const tm = (m) => { const v = typeof m?.t === "number" ? m.t : Date.parse(m?.t || ""); return Number.isFinite(v) ? v : -Infinity }
+    return [...(members || [])].sort((a, b) => rk(a) - rk(b) || tm(b) - tm(a))[0] || null
+}
 
 /** Declutter to a fixed point: a cluster is bigger than a marker and may touch a neighbour, so merge again until none touch. */
 export function declutterAll(items, gap = 2) {
     let cur = items.map((it) => ({ ...it, members: [it] }))
     for (let guard = 0; guard < 8; guard++) {
-        const out = declutter(cur.map((g) => ({ id: g.id, x: g.x, y: g.y, sev: g.sev, size: g.members.length > 1 ? clusterSize(g.members.length) : g.size, _g: g })), gap)
+        const out = declutter(cur.map((g) => ({ id: g.id, x: g.x, y: g.y, sev: g.sev, size: g.members.length > 1 ? clusterSize(g.members) : g.size, _g: g })), gap)
         if (out.every((o) => !o.cluster)) break
         cur = out.map((o) => {
             const members = o.members.flatMap((m) => m._g.members)
-            return { id: members.length === 1 ? members[0].id : `cl:${members.map((m) => m.id).sort().join("|")}`, x: o.x, y: o.y, sev: members[0].sev, size: members.length === 1 ? members[0].size : clusterSize(members.length), members }
+            return { id: members.length === 1 ? members[0].id : `cl:${members.map((m) => m.id).sort().join("|")}`, x: o.x, y: o.y, sev: members[0].sev, size: members.length === 1 ? members[0].size : clusterSize(members), members }
         })
     }
     return cur.map((g) => ({ id: g.id, x: g.x, y: g.y, members: g.members.map((m) => m.members ? m.members[0] : m), cluster: g.members.length > 1 }))

@@ -114,8 +114,21 @@ export function strikePriority(e) {
  * roughly (`hollow`) is drawn uncorroborated-style: faint with a dotted edge. `color` and `opacity` are accepted
  * for old callers and ignored: age fades through the billboard / marker opacity (liveness.recencyAlpha).
  */
-export function strikeIconUri({ act = "airstrike", hollow = false, priority = "alert" } = {}) {
-    return markerUri({ kind: "event", glyph: glyphFor(act), priority, state: hollow ? "muted" : "live" })
+export function strikeIconUri({ act = "airstrike", hollow = false, priority = "alert", event = null } = {}) {
+    return markerUri({ kind: "event", glyph: event ? strikeGlyph(event) : glyphFor(act), priority, state: hollow ? "muted" : "live" })
+}
+
+// Shootings, gunmen, stabbings, police and domestic violence: crime and local security, never the bomb (owner,
+// 2026-10-23 evening). The backend files a text that names no weapon ("attack", "struck") as an airstrike with
+// weapon_stated false; on the map that is the generic impact, or the crime glyph when the words say so.
+const CRIME_RE = /\b(shoot\w*|shot(s| dead| and)?\b|gun(man|men|fire|shot)?s?\b|firearm|rifle|pistol|stabb\w*|knife|machete|murder\w*|homicide|domestic|femicide|kill(ed|ing)? (his|her) |police (shot|shoot|fire)|robber\w*|gang\w*|carjack\w*|kidnap\w*|hostage)/i
+/** The glyph an event draws: its act's, the crime glyph for shootings and local violence, the impact when no weapon is named. */
+export function strikeGlyph(e) {
+    const text = [e?.title, e?.act_label, ...(Array.isArray(e?.sources) ? e.sources.map((x) => x?.title) : [])].filter(Boolean).join(" ")
+    const unstated = !STRIKE_GLYPH[e?.act] || (e?.act === "airstrike" && e?.weapon_stated === false)
+    if (unstated && CRIME_RE.test(text)) return "crime"
+    if (e?.act === "airstrike" && e?.weapon_stated === false) return "strike"
+    return glyphFor(e?.act)
 }
 
 /** One constant size whatever the event did (owner, 2026-10-23: no marker grows with data). */

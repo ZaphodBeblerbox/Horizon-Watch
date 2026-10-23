@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
     STRIKE_ACTS, STRIKE_GLYPH, glyphFor, strikeIconUri, strikeIconDims, strikeSize, strikeOpacity, visibleAt,
-    filterStrikes, actorColor, ACTOR_COLOR, UNKNOWN_ACTOR_COLOR, strikePriority,
+    filterStrikes, actorColor, ACTOR_COLOR, UNKNOWN_ACTOR_COLOR, strikePriority, strikeGlyph,
 } from "./strikes.js"
 import { EDGE, STROKE, PRIORITY, ICON_PX } from "../lib/mapIcons.js"
 import { playheadMs } from "./GlobeStrikesLayer.jsx"
@@ -45,6 +45,18 @@ describe("strike icons", () => {
         expect(strikePriority({ casualties: { killed: 30 } })).toBe("urgent")
         expect(strikePriority({})).toBe("alert")
         expect(strikePriority({ priority: "flash" })).toBe("flash")
+    })
+})
+
+describe("the right glyph for the act (owner, 2026-10-23 evening)", () => {
+    it("a shooting or local violence is the crime glyph, never the bomb", () => {
+        expect(strikeGlyph({ act: "airstrike", weapon_stated: false, title: "Gunman opens fire at a market, 3 killed" })).toBe("crime")
+        expect(strikeGlyph({ act: "airstrike", weapon_stated: false, title: "Man stabbed his wife in domestic attack" })).toBe("crime")
+        expect(strikeGlyph({ act: "airstrike", weapon_stated: false, title: "Strike hit the polyclinic" })).toBe("strike")
+        expect(strikeGlyph({ act: "airstrike", weapon_stated: true, title: "Airstrike on the depot" })).toBe("airstrike")
+        expect(strikeGlyph({ act: "interception", title: "Air defence shot down 12 drones" })).toBe("interception")
+        expect(decodeURIComponent(strikeIconUri({ event: { act: "airstrike", weapon_stated: false, title: "shots fired near the school" } })))
+            .not.toBe(decodeURIComponent(strikeIconUri({ act: "airstrike" })))
     })
 })
 

@@ -30,6 +30,7 @@
  * Colour only in icons and lines; every word white on a dark halo.
  */
 
+import { markerIcon } from "../lib/mapIcons.js"
 import { freshAlpha } from "./freshness.js"
 
 export const SITUATION_PATH = "/api/routes/demonstrations/situation"
@@ -39,9 +40,6 @@ export const CONVERGE_COLOUR = "#FF5C7A"       // a target, distinct from any cr
 export const ROUTE_COLOUR = "#F5A524"
 export const ESTIMATE_NOTE = "Estimate from Telegram calls and reports and walking times, not a confirmed prediction"
 
-const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-const svgUri = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t : NaN }
 const short = (place) => (place ? String(place).split(",")[0].trim() : "")
 const arr = (v) => (Array.isArray(v) ? v : [])
@@ -75,31 +73,20 @@ export function scoreLabel(score) {
     return Number.isFinite(s) ? `est. ${Math.round(s * 100)}%` : "estimate"
 }
 
-function textW(t, size) { return Math.round(String(t).length * size * 0.58) }
 
-/** A crowd: amber ring and dot, words to its right; faded by age. {uri, width, height, anchor}. */
+// THE ONE TYPOLOGY (lib/mapIcons.js, owner 2026-10-23): a crowd is a reported event (a circle, the crowd glyph), its
+// "probably here now" estimate the same marker uncorroborated (muted), a probable convergence point a warning we
+// derived (a triangle, the fusion glyph; a junction muted). One constant size, no rings, no text in the image: the
+// words are the card's. `label` is kept for old callers; `alpha` is the age fade.
+const asOld = (i) => ({ uri: i.uri, width: i.w, height: i.h, anchor: i.anchor })
+/** A crowd. {uri, width, height, anchor}. */
 export function crowdIcon(label, alpha = 1) {
-    const text = String(label || "")
-    const width = 24 + textW(text, 11) + 6, height = 22
-    const a = Math.round(alpha * 100) / 100
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g opacity="${a}">`
-        + `<circle cx="11" cy="11" r="8" fill="${rgba(CROWD_COLOUR, 0.25)}" stroke="${CROWD_COLOUR}" stroke-width="2.4"/>`
-        + `<circle cx="11" cy="11" r="3.2" fill="${CROWD_COLOUR}"/>`
-        + (text ? `<text x="23" y="15" font-family="${FONT}" font-size="11" font-weight="600" fill="#F2F4F7" stroke="#05070C" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(text)}</text>` : "")
-        + "</g></svg>"
-    return { uri: svgUri(svg), width, height, anchor: [11, 11] }
+    return asOld(markerIcon({ kind: "event", glyph: "crowd", priority: "urgent", state: alpha < 0.75 ? "past" : "live" }))
 }
 
-/** Where a crowd probably is now: a dashed amber ring, no dot (nobody saw it there), words to its right. */
-export function nowIcon(label, alpha = 1) {
-    const text = String(label || "")
-    const width = 24 + textW(text, 11) + 6, height = 22
-    const a = Math.round(alpha * 100) / 100
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g opacity="${a}">`
-        + `<circle cx="11" cy="11" r="8" fill="${rgba(CROWD_COLOUR, 0.12)}" stroke="${CROWD_COLOUR}" stroke-width="2" stroke-dasharray="3.2 2.6"/>`
-        + (text ? `<text x="23" y="15" font-family="${FONT}" font-size="11" font-weight="600" font-style="italic" fill="#F2F4F7" stroke="#05070C" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(text)}</text>` : "")
-        + "</g></svg>"
-    return { uri: svgUri(svg), width, height, anchor: [11, 11] }
+/** Where a crowd probably is now: the same marker, uncorroborated. */
+export function nowIcon() {
+    return asOld(markerIcon({ kind: "event", glyph: "crowd", priority: "urgent", state: "muted" }))
 }
 
 /** A ground circle (radius in metres) as a closed line: it keeps its size on the ground at every zoom. */
@@ -127,24 +114,9 @@ export function lastSeenLabel(g, ageMin) {
     return [short(g?.place), g?.hhmm ? `last seen ${g.hhmm}` : "last seen", ageLabel(ageMin)].filter(Boolean).join(" · ")
 }
 
-/** A probable convergence point: two rings, a cross and a centre, its words below. Junctions get one ring, dashed. */
+/** A probable convergence point: a derived warning (triangle, fusion glyph); a junction is less certain (muted). */
 export function convergenceIcon(label, { junction = false } = {}) {
-    const text = String(label || "")
-    const tw = textW(text, 11)
-    const width = Math.max(34, tw + 10), height = 34 + (text ? 16 : 0)
-    const cx = width / 2
-    const c = CONVERGE_COLOUR
-    const rings = junction
-        ? `<circle cx="${cx}" cy="17" r="11" fill="none" stroke="${c}" stroke-width="2" stroke-dasharray="4 3"/>`
-        : `<circle cx="${cx}" cy="17" r="15" fill="none" stroke="${c}" stroke-width="1.6" stroke-opacity="0.75"/>`
-          + `<circle cx="${cx}" cy="17" r="9.5" fill="${rgba(c, 0.18)}" stroke="${c}" stroke-width="2.4"/>`
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
-        + rings
-        + `<path d="M${cx} 3v6M${cx} 25v6M${cx - 14} 17h6M${cx + 8} 17h6" stroke="${c}" stroke-width="1.6"/>`
-        + `<circle cx="${cx}" cy="17" r="3" fill="${c}"/>`
-        + (text ? `<text x="${cx}" y="${height - 4}" text-anchor="middle" font-family="${FONT}" font-size="11" font-weight="600" fill="#F2F4F7" stroke="#05070C" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(text)}</text>` : "")
-        + "</svg>"
-    return { uri: svgUri(svg), width, height, anchor: [Math.round(cx), 17] }
+    return asOld(markerIcon({ kind: "derived", glyph: "fusion", priority: "urgent", state: junction ? "muted" : "live" }))
 }
 
 const hhmmUtc = (iso) => { const t = ms(iso); return Number.isFinite(t) ? `${new Date(t).toISOString().slice(11, 16)} UTC` : "" }

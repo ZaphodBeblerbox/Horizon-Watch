@@ -19,9 +19,9 @@
  * Colour lives in the icons only; every word is plain.
  */
 import { demoStale } from "./freshness.js"
+import { markerIcon } from "../lib/mapIcons.js"
 
 export const PROTEST_SIZE = 24
-const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 /** The status's colour, in the mark only. */
 export const STATUS_COLOUR = {
     planned: "#9AA9BC", starting: "#F5A524", ongoing: "#F5A524", dispersing: "#C9A15A", ended: "#6B7686", no_show: "#6B7686",
@@ -29,8 +29,6 @@ export const STATUS_COLOUR = {
 
 const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t : NaN }
 const arr = (v) => (Array.isArray(v) ? v : [])
-const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-const svgUri = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 const STARTING_MIN = 15
 const FRESH_MIN = 30
 
@@ -144,26 +142,12 @@ export function crowdSources(p) {
     return p?.crowd?.by_source_label || null
 }
 
-function textW(t, size) { return Math.round(String(t).length * size * 0.58) }
-
-/** The map mark: a ring (dashed when not yet begun, solid and filled while
- *  under way, faint once over) with a crowd glyph, the status beside it. */
-export function protestIcon(key, label = "") {
-    const c = STATUS_COLOUR[key] || STATUS_COLOUR.planned
-    const text = String(label || "")
-    const width = 28 + (text ? textW(text, 11) + 8 : 0), height = 26
-    const live = key === "ongoing" || key === "starting"
-    const over = key === "ended" || key === "no_show"
-    const ring = key === "planned"
-        ? `<circle cx="13" cy="13" r="10.5" fill="#0b1220" stroke="${c}" stroke-width="2" stroke-dasharray="3.4 2.6"/>`
-        : `<circle cx="13" cy="13" r="10.5" fill="${live ? c : "#0b1220"}" fill-opacity="${live ? 0.95 : 1}" stroke="${c}" stroke-width="2"/>`
-    const ink = live ? "#0b1220" : c
-    const glyph = `<g fill="${ink}" opacity="${over ? 0.7 : 1}"><circle cx="9.6" cy="11" r="1.6"/><circle cx="13" cy="10" r="1.8"/><circle cx="16.4" cy="11" r="1.6"/>`
-        + "<path d=\"M7.6 16c.4-1.9 1.1-2.8 2-2.8s1.6.9 2 2.8zM11 16c.4-2.2 1.1-3.2 2-3.2s1.6 1 2 3.2zM14.4 16c.4-1.9 1.1-2.8 2-2.8s1.6.9 2 2.8z\"/></g>"
-    const halo = live ? `<circle cx="13" cy="13" r="12.4" fill="none" stroke="${c}" stroke-opacity="0.45" stroke-width="1.2"/>` : ""
-    const words = text ? `<text x="29" y="17" font-family="${FONT}" font-size="11" font-weight="600" fill="#F2F4F7" stroke="#05070C" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(text)}</text>` : ""
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${halo}${ring}${glyph}${words}</svg>`
-    return { uri: svgUri(svg), width, height, anchor: [13, 13] }
+/** The mark, in the one typology (lib/mapIcons.js): a circle with the placard; announced = upcoming (dashed),
+ *  under way = live, over = past (hollow, faint). The status words are the card's. */
+export function protestIcon(key) {
+    const state = key === "planned" ? "upcoming" : key === "ended" || key === "no_show" ? "past" : "live"
+    const i = markerIcon({ kind: "event", glyph: "placard", priority: "alert", state })
+    return { uri: i.uri, width: i.w, height: i.h, anchor: i.anchor }
 }
 
 
