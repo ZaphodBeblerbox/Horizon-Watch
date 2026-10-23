@@ -68,7 +68,10 @@ export function BriefBlock({ ev, compact = false }) {
 }
 
 function FollowButton({ item, onChange }) {
-    const t = useMemo(() => followTargetOf(item), [item])
+    // an item from the Following list carries its own target (a protest's place); anything else derives one
+    const t = useMemo(() => (typeof item?.target === "string"
+        ? { target: item.target, kind: item.kind || "event", label: item.label || item.headline, lat: item.lat, lon: item.lon }
+        : followTargetOf(item)), [item])
     const [on, setOn] = useState(!!item?.followed)
     const [busy, setBusy] = useState(false)
     useEffect(() => {
@@ -95,6 +98,14 @@ function FollowButton({ item, onChange }) {
             {on ? "Following" : "Follow"}
         </button>
     )
+}
+
+/** The event's own timeline and a followed place's (crowd and police positions), newest first, one line per thing. */
+export function mergeTimelines(a, b) {
+    const seen = new Set()
+    return [...arr(a), ...arr(b)]
+        .sort((x, y) => String(y.at || "").localeCompare(String(x.at || "")))
+        .filter((e) => { const k = `${e.kind}|${e.text}|${String(e.at || "").slice(0, 16)}`; if (seen.has(k)) return false; seen.add(k); return true })
 }
 
 function Timeline({ entries }) {
@@ -165,9 +176,10 @@ export default function EventDetail({ item, variant = "desk", embedded = false, 
         return () => { live = false; clearInterval(t) }
     }, [eid, lat, lon]) // eslint-disable-line react-hooks/exhaustive-deps
     // a followed protest or place: its own timeline (the crowd's and the police's positions)
-    const target = followTargetOf(item)?.target
+    // a followed protest or place keeps its own target (protest:...): its timeline has the crowd and police positions
+    const target = (typeof item?.target === "string" && !item.target.startsWith("ev_")) ? item.target : followTargetOf(item)?.target
     const loadFollowTl = () => {
-        if (!target || eid) return
+        if (!target || target.startsWith("ev_")) return
         getTimeline(target).then((d) => setFollowTl(d?.items || null))
     }
     useEffect(() => {
@@ -218,7 +230,7 @@ export default function EventDetail({ item, variant = "desk", embedded = false, 
                     </div>
                 </section>
             )}
-            <Timeline entries={eid ? ev?.timeline : followTl} />
+            <Timeline entries={mergeTimelines(ev?.timeline, followTl)} />
             <Around data={around} onOpenItem={onOpenItem} />
         </div>
     )
