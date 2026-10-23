@@ -7,6 +7,11 @@
 import { useEffect, useState } from "react"
 import { fetchVesselThreat } from "../../state/vesselThreatStore.js"
 import { SIM_LABEL, fmtMinutes, mmsiOf } from "../../globe/vesselThreat.js"
+import { markerIcon, dotIcon, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
+
+// markers in the one typology (lib/mapIcons.js): the vessel of concern a derived warning (triangle, flash), the targets
+// in reach small dots (urgent for the ranked ones, neutral otherwise); the reach rings are lines
+const img = (L, i) => { const w = Math.round(i.w * PHONE_ICON_SCALE), h = Math.round(i.h * PHONE_ICON_SCALE); return L.icon({ iconUrl: i.uri, iconSize: [w, h], iconAnchor: [w / 2, h / 2] }) }
 
 const RING = ["#ff5a4f", "#ff9f43", "#ffd166"]
 
@@ -65,7 +70,7 @@ export function drawVesselThreat(L, g, d) {
   ;(d.markers || []).forEach((t) => {
     const rank = (d.targets || []).findIndex((x) => x.name === t.name && x.lat === t.lat)
     const top = rank >= 0
-    const m = L.circleMarker([t.lat, t.lon], { radius: top ? 7 : 4, color: "#000", weight: 1, fillColor: top ? "#ff3b30" : "#c9c9c9", fillOpacity: top ? 1 : 0.8 })
+    const m = L.marker([t.lat, t.lon], { icon: img(L, dotIcon({ role: "endpoint", priority: top ? "urgent" : "alert" })), keyboard: false })
       .bindTooltip(`${top ? `${rank + 1}. ` : ""}${t.name} · ${t.type_label} · ${Math.round(t.distance_km)} km · ~${fmtMinutes(t.flight_min)}`)
     m.addTo(g)
   })
@@ -77,7 +82,7 @@ export function drawVesselThreat(L, g, d) {
       icon: L.divIcon({ className: "", html: `<span style="font:600 11px var(--font);color:#ffe2b8;background:rgba(0,0,0,.6);padding:2px 5px;border-radius:4px;white-space:nowrap">Simulation · ~${fmtMinutes(t0.flight_min)} to ${t0.name}</span>` }),
     }).addTo(g)
   }
-  L.circleMarker([lat, lon], { radius: 9, color: "#fff", weight: 3, fillColor: "#ff3b30", fillOpacity: 1 })
+  L.marker([lat, lon], { icon: img(L, markerIcon({ kind: "derived", glyph: "Vessels", priority: "flash" })), keyboard: false, zIndexOffset: 600 })
     .bindTooltip(`${d.synthetic ? "SYNTHETIC — " : ""}${d.vessel.name || `MMSI ${d.mmsi}`} · ${d.assessment?.score}/100`, { permanent: true, direction: "top" })
     .addTo(g)
   const r = Math.min(...(d.rings_km || [300]).filter((k) => k >= 250), 400)

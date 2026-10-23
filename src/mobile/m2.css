@@ -94,15 +94,12 @@
 .m2-hscroll.m2-live { align-items: flex-start; }
 .m2-clamp4 { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 
-/* The blue dot: where you are (location/liveShare.js). */
-/* a small constant-size dot: no halo, no pulse, no glow (owner, 2026-10-23) */
-.m2-me { width: 14px; height: 14px; margin: 2px; border-radius: 50%; background: #2f7cf6; border: 2.5px solid #fff; }
+/* The blue dot (where you are), the team's dots, clusters and badges are images from lib/mapIcons.js:
+   constant size, no halo, no pulse, no glow (owner, 2026-10-23). */
 
 /* A watched area whose latest scans found something new (mapLayers.loadAois). */
 .m2-aoi-fresh { animation: m2-aoi-pulse 1.8s ease-in-out infinite; }
 @keyframes m2-aoi-pulse { 0%, 100% { stroke-opacity: 1; } 50% { stroke-opacity: .35; } }
-.m2-aoi-badge { width: 22px; height: 22px; border-radius: 50%; background: #FF3B30; color: #fff; font-size: 11px; font-weight: 700;
-                display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 0 0 4px rgba(255, 59, 48, .25); }
 @media (prefers-reduced-motion: reduce) { .m2-aoi-fresh { animation: none; } }
 
 /* ── PHONE v2 (2026-10-10): its own dark palette and round shapes ───────────
@@ -269,12 +266,9 @@
 
 /* THE TEAM, LIVE (MMap liveMarks): a blue dot with the name and how fresh it is.
    Pale and dashed: a city-level fix, from a connection. Grey ring: not live. */
-.m2-team { position: relative; width: 22px; height: 22px; }
-.m2-team > i { position: absolute; inset: 5px; border-radius: 50%; background: #3b8cff; border: 2px solid #fff;
-               }
-.m2-team.coarse > i { background: #8FB4E8; border-style: dashed; }
-.m2-team:not(.live) > i { opacity: .6; }
-.m2-team-label { position: absolute; left: 26px; top: -1px; white-space: nowrap; pointer-events: none; display: flex; flex-direction: column;
+.m2-team { position: relative; width: 100%; height: 100%; }
+.m2-team > img { display: block; }
+.m2-team-label { position: absolute; left: calc(100% + 5px); top: -1px; white-space: nowrap; pointer-events: none; display: flex; flex-direction: column;
                  font-size: 11.5px; line-height: 1.25; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.9), 0 0 6px rgba(0,0,0,.7); }
 .m2-team-label b { font-weight: 600; }
 .m2-team-label small { font-size: 10.5px; color: rgba(255,255,255,.82); }
@@ -387,10 +381,6 @@
 .m2-picked { width: 40px; height: 40px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 4px rgba(0, 0, 0, .35), 0 0 18px rgba(255, 255, 255, .35);
              animation: m2-picked-in .4s var(--m2-ease); }
 @keyframes m2-picked-in { from { transform: scale(1.6); opacity: 0 } to { transform: none; opacity: 1 } }
-/* a group of points, before you zoom in (MMap clustering) */
-.m2-cluster { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; color: #fff; font-size: 12.5px; font-weight: 650;
-              font-variant-numeric: tabular-nums; background: rgba(16, 19, 25, .78); border: 1.5px solid rgba(255, 255, 255, .55);
-              box-shadow: 0 4px 14px rgba(0, 0, 0, .4); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 /* an alert opened from its notification, found in the list */
 .m2-row.found { background: rgba(255, 255, 255, .08); }
 .m2-found-detail { padding: 0 12px 12px 32px; font-size: 13.5px; line-height: 1.5; color: var(--txt2); }

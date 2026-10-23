@@ -8,7 +8,7 @@
 import { getShownFindings, subscribeFindings, clearFindings, labelRanks, mapCaption, MAP_LABELS, TONE } from "../lib/findings.js"
 import { leafletImageBounds, loadOverlayRadar, overlayUrl, retryOverlay, setOverlayOpacity, setOverlayView, subscribeOverlay, viewsFor } from "../lib/findingOverlay.js"
 import { subscribeSignalPin } from "../lib/signalPin.js"
-import { getShapeMarkerDataUri, MARK_SIZE } from "../globe/entityIcons.js"
+import { markerIcon, PHONE_ICON_SCALE } from "../lib/mapIcons.js"
 
 /** Leaflet bounds [[s, w], [n, e]] for a box [w, s, e, n]. Pure. */
 export const leafletBounds = (b) => [[b[1], b[0]], [b[3], b[2]]]
@@ -153,10 +153,9 @@ export function attachSignalPin(L, map) {
         if (m) { m.remove(); m = null }
         if (!p) return
         // the map's own fusion mark, as on the desktop globe — no standing headline
-        const px = MARK_SIZE.alert
+        const i = markerIcon({ kind: "derived", glyph: "fusion", priority: "urgent" }), px = Math.round(i.w * PHONE_ICON_SCALE)
         m = L.marker([p.lat, p.lon], {
-            icon: L.icon({ iconUrl: getShapeMarkerDataUri({ shape: "triangle", color: "#c4453c", size: px, strokeWidth: 1.5 }),
-                           iconSize: [px, px], iconAnchor: [px / 2, px / 2] }),
+            icon: L.icon({ iconUrl: i.uri, iconSize: [px, px], iconAnchor: [px / 2, px / 2] }),
             keyboard: false, zIndexOffset: 2000, interactive: false,
         })
         m.addTo(map)

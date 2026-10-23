@@ -9,6 +9,9 @@
  * Each live marker may carry a freshness line ("live · 3 s ago"), an
  * element marked data-fresh in its icon; refresh() rewrites only that text,
  * once a second, without touching the marker.
+ *
+ * It draws nothing of its own: every icon it carries is the caller's, built by lib/mapIcons.js (dotIcon for you
+ * and the team, pinIcon for an asset), so a moving marker looks exactly like a still one.
  */
 import { createGlide } from "../location/glide.js"
 
