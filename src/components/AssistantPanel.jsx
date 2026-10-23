@@ -1,6 +1,5 @@
 /**
- * AssistantPanel.jsx — the desktop assistant away from the map: a glass
- * panel on the right, between the top bar and the status bar. On the map
+ * AssistantPanel.jsx — the desktop assistant away from the map. On the map
  * the same conversation is the right column's Assistant tab instead
  * (destinations/Situation.jsx, assistant/assistantDock.js). The
  * conversation itself is src/assistant/AssistantThread.jsx, shared with the
@@ -8,26 +7,27 @@
  */
 import AssistantThread from "../assistant/AssistantThread.jsx"
 
+/* THE SAME FRAME AS THE INSPECTOR (owner, 2026-10-23): the map's right
+   column is 312px (--pane-r), 12px in from the edge, 10px under the top bar,
+   down to --pane-bottom, in the same frosted pane-glass; it slides in. */
 const PANEL = {
     position: "fixed",
     top: "var(--top, 40px)",
-    right: 0,
-    bottom: "var(--status, 0px)",
-    width: 380,
-    maxWidth: "calc(100vw - 60px)",
+    marginTop: 10,
+    right: 12,
+    bottom: "calc(var(--status, 0px) + var(--pane-bottom, 22px))",
+    width: "var(--pane-r, 312px)",
+    maxWidth: "calc(100vw - 24px)",
     zIndex: 620,
-    background: "var(--glass, rgba(14,17,23,.86))",
-    backdropFilter: "blur(22px) saturate(1.15)",
-    WebkitBackdropFilter: "blur(22px) saturate(1.15)",
-    borderLeft: "1px solid var(--gline, rgba(255,255,255,.08))",
-    boxShadow: "var(--gshadow, none)",
+    border: "1px solid var(--gline)",
     display: "flex",
     flexDirection: "column",
+    minHeight: 0,
 }
 
 export default function AssistantPanel({ onClose }) {
     return (
-        <aside style={PANEL} data-screen-label="Assistant" aria-label="Assistant">
+        <aside className="pane-glass plx-as-panel" style={PANEL} data-screen-label="Assistant" aria-label="Assistant" data-testid="assistant-panel">
             <AssistantThread platform="desktop" onClose={onClose} />
         </aside>
     )

@@ -12,7 +12,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react"
 import "./assistant.css"
 import ConfirmCard from "./ConfirmCard.jsx"
 import AssistantForms from "./AssistantForms.jsx"
-import { openCitation } from "./assistantActions.js"
+import { openCitation, openCitationSource } from "./assistantActions.js"
 import {
     useAssistant, sendAssistant, confirmAssistantProposal, skipAssistantProposal, skipAssistantStep, dismissAssistantProposal,
     addFormProposal, startAssistant, setAssistantPlatform, setAssistantDraft, stopAssistant, retryAssistant, unanswered,
@@ -89,7 +89,11 @@ function Message({ m, platform, onEdit, busy }) {
                     {m.citations.map((c) => (
                         <button key={c.ref} className="plx-as-src" data-testid="assistant-citation" onClick={() => openCitation(c, platform)}>
                             <b>{c.ref}</b><span>{c.label}{ago(c.when) ? ` · ${ago(c.when)}` : ""}</span>
-                            {c.url && <a href={c.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>source</a>}
+                            {c.kind === "web" && <i className="plx-as-web">web</i>}
+                            {c.url && c.kind !== "web" && (
+                                <span role="button" tabIndex={0} className="plx-as-srclink" data-testid="assistant-source"
+                                      onClick={(e) => { e.stopPropagation(); openCitationSource(c) }}
+                                      onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); openCitationSource(c) } }}>source</span>)}
                         </button>))}
                 </div>
             )}

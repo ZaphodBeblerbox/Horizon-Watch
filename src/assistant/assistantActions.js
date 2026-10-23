@@ -97,8 +97,24 @@ export function citationRoute(c) {
              kind: c.kind === "live_signal" ? "live_signal" : undefined }
 }
 
+/** A cited source read inside Parallax (components/SourceViewer.jsx): a Telegram or X post in its
+ *  embed, anything else as a card (title, source, date, summary) with the original a secondary link.
+ *  Never a navigation away (owner, 2026-10-23). */
+export function sourceCard(c) {
+    return { title: c?.label || c?.title || "", source: c?.source || null, summary: c?.summary || null,
+             when: c?.when || null, place: c?.place || null,
+             note: c?.kind === "web" ? "Found on the web; not our own reporting." : null }
+}
+
+export function openCitationSource(c) {
+    if (!c) return
+    window.dispatchEvent(new CustomEvent("akili:open-source", { detail: { url: c.url || null, card: sourceCard(c) } }))
+}
+
 export async function openCitation(c, platform = "desktop") {
     if (!c) return
+    // a web finding has no item of ours to open: it is read in the source viewer
+    if (c.kind === "web") { openCitationSource(c); return }
     // the signal opener moves the map and opens the item on either surface
     try {
         const { openSignal } = await import("../notify/openSignal.js")
@@ -107,6 +123,8 @@ export async function openCitation(c, platform = "desktop") {
     if (c.lat != null && c.lon != null) {
         const { events } = planActions([{ intent: "navigate", slots: { lat: c.lat, lon: c.lon, zoom: 12, altitude: 40000, place: c.label } }], platform)
         for (const [n, d] of events) window.dispatchEvent(new CustomEvent(n, { detail: d }))
+    } else {
+        openCitationSource(c)
     }
 }
 

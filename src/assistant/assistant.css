@@ -32,7 +32,8 @@
 .plx-as-src:hover { background: rgba(255,255,255,.06); }
 .plx-as-src b { flex: none; font-weight: 600; color: var(--txt, #fff); }
 .plx-as-src span { flex: 1; min-width: 0; }
-.plx-as-src a { flex: none; color: var(--txt3, rgba(233,237,243,.55)); font-size: 11px; }
+.plx-as-src a, .plx-as-srclink { flex: none; color: var(--txt3, rgba(233,237,243,.55)); font-size: 11px; text-decoration: underline; text-underline-offset: 2px; }
+.plx-as-web { flex: none; font-style: normal; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--txt3, rgba(233,237,243,.55)); border: 1px solid var(--gline, rgba(255,255,255,.12)); border-radius: 6px; padding: 0 4px; }
 .plx-as-done { margin-top: 6px; font-size: 11px; color: var(--txt3, rgba(233,237,243,.55)); display: flex; align-items: center; gap: 6px; }
 .plx-as-done svg { color: #7aa7ff; }
 .plx-as-choices { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
@@ -126,6 +127,10 @@
 [data-testid="right-column-assistant"] .plx-as-head { padding: 8px 10px 8px; }
 [data-testid="right-column-assistant"] .plx-as-log { padding: 12px 10px; }
 [data-theme="light"] .plx-rcol-tab[aria-selected="true"] { background: rgba(0,0,0,.07); }
+/* the chat slides in where the Inspector was (same column, same size) */
+[data-testid="right-column-assistant"], .plx-as-panel { animation: plx-as-in 220ms cubic-bezier(.2,.8,.2,1); }
+@keyframes plx-as-in { from { transform: translateX(14px); opacity: 0 } to { transform: none; opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { [data-testid="right-column-assistant"], .plx-as-panel { animation: none } }
 /* light theme on the desktop */
 [data-theme="light"] .plx-as-msg[data-role="user"], [data-theme="light"] .plx-as-btn, [data-theme="light"] .plx-as-send { background: rgba(0,0,0,.07); }
 [data-theme="light"] .plx-as-input textarea, [data-theme="light"] .plx-as-form input, [data-theme="light"] .plx-as-form select { background: rgba(255,255,255,.6); }

@@ -30,9 +30,11 @@ export function embedFor(url, { dark = false } = {}) {
     return null
 }
 
-/** Ask the shell to show this source in its in-console viewer. */
-export function openSource(url) {
-    window.dispatchEvent(new CustomEvent("akili:open-source", { detail: { url } }))
+/** Ask the shell to show this source in its in-console viewer. A `card`
+ *  ({title, source, summary, when, place}) lets a source with no embed (a news
+ *  page, a web finding) be read there too instead of opening a tab. */
+export function openSource(url, card = null) {
+    window.dispatchEvent(new CustomEvent("akili:open-source", { detail: { url, card } }))
 }
 
 const URLS = /https?:\/\/[^\s,]+/g
