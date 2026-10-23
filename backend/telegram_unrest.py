@@ -238,7 +238,8 @@ def trend(rows: list, now: _dt.datetime, hours: int = 24) -> dict:
     rate = h / n if n else 0.0
     base_h = sum(1 for r in base if _int(_get(r, "mood_tension")) >= 2)
     base_raw = base_h / len(base) if base else None
-    p = max(base_raw or 0.0, RATE_FLOOR)
+    # a baseline where every post was hostile (p = 1) has no spread: keep p inside (0, 1)
+    p = min(max(base_raw or 0.0, RATE_FLOOR), 1 - RATE_FLOOR)
     ratio = rate / p if n else 0.0
     z = (h - n * p) / math.sqrt(n * p * (1 - p)) if n else 0.0
     mean = lambda rs: round(sum(_int(_get(r, "mood_tension")) for r in rs) / len(rs), 2) if rs else None  # noqa: E731

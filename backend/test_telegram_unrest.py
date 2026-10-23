@@ -184,3 +184,11 @@ def test_cards_reach_whoever_watches_the_country():
     cards = tma.cards_for({"assets": [], "theaters": [], "countries": {"iran"}}, [a])
     assert len(cards) == 1 and cards[0]["reason"] == "Iran — a country you watch"
     assert tma.cards_for({"assets": [], "theaters": [], "countries": set()}, [a]) == []
+
+
+def test_a_baseline_where_every_post_was_hostile_does_not_divide_by_zero():
+    """Production 2026-10-23: every baseline post at tension >= 2 made p = 1 and the
+    z-score divided by zero, which dropped the unrest reading from the risk index."""
+    base = [post(24 * d + 3, ch=f"c{d % 4}", t=3) for d in range(2, 12)]
+    d = tu.trend(base + heated(), NOW, 24)
+    assert d["direction"] in ("rising", "steady", "falling", None) or "direction" in d
