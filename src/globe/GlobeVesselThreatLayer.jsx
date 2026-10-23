@@ -7,26 +7,24 @@
 import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import {
-  BoundingSphere, CallbackProperty, Cartesian2, Cartesian3, Color, ColorBlendMode, DistanceDisplayCondition,
-  HeadingPitchRoll, HorizontalOrigin, LabelStyle, PolylineDashMaterialProperty,
-  PolylineGlowMaterialProperty, Transforms, VerticalOrigin, HeadingPitchRange, Math as CMath,
+  BoundingSphere, CallbackProperty, Cartesian2, Cartesian3, Color, DistanceDisplayCondition,
+  HorizontalOrigin, LabelStyle, PolylineDashMaterialProperty,
+  PolylineGlowMaterialProperty, VerticalOrigin, HeadingPitchRange, Math as CMath,
 } from "cesium"
 import { getVesselThreat, subscribeVesselThreat } from "../state/vesselThreatStore.js"
 import {
-  SIM_LABEL, buildFlightPath, fmtMinutes, flightMinutes, modelHeadingRad, pathLengthKm, positionAlong,
-  ringPoints, shahedModelUri,
+  SIM_LABEL, buildFlightPath, fmtMinutes, flightMinutes, pathLengthKm, positionAlong,
 } from "./vesselThreat.js"
 import { renderDuringFlight } from "./flightRender.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
-import { markerIcon, dotIcon } from "../lib/mapIcons.js"
+import { markerIcon } from "../lib/mapIcons.js"
 
 // The one typology (lib/mapIcons.js): the vessel of concern is a warning we derived (a triangle, flash); the
-// candidate targets are 10 px hollow dots, the top ten urgent, the rest alert. No ground circles.
+// top ten targets are places at risk (triangles, urgent). No ground circles, no rings, no dots.
 const bb = (ic) => ({ image: ic.uri, width: ic.w, height: ic.h, disableDepthTestDistance: MARKER_DEPTH_TEST_M })
 
 const FONT = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
 const FONT_SM = "12px -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
-const RING_COLORS = ["#ff5a4f", "#ff9f43", "#ffd166"]
 const SIM_SECONDS = 24          // the flight is replayed compressed; the label shows real minutes
 
 const deg2 = (p, h = 0) => Cartesian3.fromDegrees(p.lon, p.lat, h)
@@ -60,26 +58,7 @@ export default function GlobeVesselThreatLayer() {
       const v = data.vessel
       const c = { lat: v.lat, lon: v.lon }
       const pre = `vthreat-${data.mmsi}`
-      // Rings (drone reach at public open-source figures).
-      ;(data.rings_km || []).forEach((km, i) => {
-        const pts = ringPoints(c, km, 180)
-        add({
-          id: `${pre}-ring-${km}`,
-          polyline: {
-            positions: pts.map((p) => deg2(p)), width: 2, clampToGround: false,
-            material: new PolylineDashMaterialProperty({ color: Color.fromCssColorString(RING_COLORS[i] || "#ffd166").withAlpha(0.95), dashLength: 18 }),
-          },
-        })
-        add({
-          id: `${pre}-ringlabel-${km}`,
-          position: deg2(pts[0], 200),
-          label: {
-            text: `${km.toLocaleString("en-GB")} km — drone reach`, font: FONT_SM, fillColor: Color.fromCssColorString(RING_COLORS[i] || "#ffd166"),
-            outlineColor: Color.BLACK, outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.BOTTOM,
-            disableDepthTestDistance: MARKER_DEPTH_TEST_M,
-          },
-        })
-      })
+      // No reach rings (owner, 2026-10-23 evening: no big circles on the map); the reach is in the card.
       // Last 24 h trail.
       const trail = (data.trail || []).map(([la, lo]) => ({ lat: la, lon: lo }))
       if (trail.length > 1) {
@@ -89,21 +68,22 @@ export default function GlobeVesselThreatLayer() {
             material: new PolylineGlowMaterialProperty({ color: Color.fromCssColorString("#4fc3f7"), glowPower: 0.2 }) },
         })
       }
-      // Targets: the in-range markers, the top ten highlighted and named.
+      // Targets: the top ten in reach, each a place at risk we derived (a triangle, urgent), named; the rest are in
+      // the card (no dots on the map; owner, 2026-10-23 evening: choose the most important)
       const top = new Set((data.targets || []).map((t) => `${t.name}|${t.lat}|${t.lon}`))
-      ;(data.markers || []).forEach((t, i) => {
-        const isTop = top.has(`${t.name}|${t.lat}|${t.lon}`)
+      ;(data.markers || []).filter((t) => top.has(`${t.name}|${t.lat}|${t.lon}`)).forEach((t, i) => {
+        const isTop = true
         const rank = isTop ? data.targets.findIndex((x) => x.name === t.name && x.lat === t.lat) + 1 : null
         add({
           id: `${pre}-tgt-${i}`,
           name: t.name,
           position: deg2(t, 50),
-          billboard: bb(dotIcon({ role: "endpoint", priority: isTop ? "urgent" : "alert" })),
+          billboard: bb(markerIcon({ kind: "derived", glyph: "warning", priority: "urgent" })),
           label: isTop ? {
             text: `${rank}. ${t.name} · ${Math.round(t.distance_km)} km`,
             font: FONT_SM, fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
             style: LabelStyle.FILL_AND_OUTLINE, horizontalOrigin: HorizontalOrigin.LEFT, verticalOrigin: VerticalOrigin.CENTER,
-            pixelOffset: new Cartesian2(10, 0), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
+            pixelOffset: new Cartesian2(16, 0), disableDepthTestDistance: MARKER_DEPTH_TEST_M,
             distanceDisplayCondition: new DistanceDisplayCondition(0, 4e6),
           } : undefined,
         })
@@ -166,11 +146,8 @@ export default function GlobeVesselThreatLayer() {
         id: `${pre}-drone`,
         name: "Simulated drone",
         position: new CallbackProperty(posNow, false),
-        orientation: new CallbackProperty(() => {
-          const p = positionAlong(path, kmNow())
-          return Transforms.headingPitchRollQuaternion(deg2(p, p.alt), new HeadingPitchRoll(modelHeadingRad(p.heading), 0, 0))
-        }, false),
-        model: { uri: shahedModelUri(), minimumPixelSize: 72, maximumScale: 60000, color: Color.fromCssColorString("#d9cdb8"), colorBlendMode: ColorBlendMode.MIX, colorBlendAmount: 0.25 },
+        // no flying model (owner, 2026-10-23 evening: the animated drone read as a toy): the flown line grows and the
+        // words ride at its head
         label: {
           text: new CallbackProperty(() => {
             const left = flightMinutes(total - kmNow(), cruise)

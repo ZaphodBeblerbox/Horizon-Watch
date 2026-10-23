@@ -52,6 +52,8 @@ export default function GlobeTeamLayer({ enabled = true }) {
     const people = useLivePeople(enabled)
     useRenderTick(enabled && people.length > 0, 1000)
     const uid = getCurrentUser()?.id
-    if (!enabled || !people.length) return null
-    return <>{people.map((p) => <Person key={p.user_id} p={p} me={String(p.user_id) === String(uid)} />)}</>
+    // you are the blue dot (GlobeMeLayer), never also a team dot on top of it (owner, 2026-10-23 evening)
+    const others = people.filter((p) => String(p.user_id) !== String(uid))
+    if (!enabled || !others.length) return null
+    return <>{others.map((p) => <Person key={p.user_id} p={p} me={false} />)}</>
 }
