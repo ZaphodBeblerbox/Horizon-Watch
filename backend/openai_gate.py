@@ -88,14 +88,19 @@ ASSISTANT = "assistant"
 # live in that module; each call carries a search fee on top of the tokens.
 WEB_AGENT = "web_agent"
 
+# The evolving brief of one event (events.py, DATAMINR_PLAN B3): rewritten only
+# when someone watches the place and something material changed; code drops
+# every uncited fact. gpt-4o-mini, at most 300 tokens out.
+BRIEF = "brief"
+
 KNOWN_PURPOSES = frozenset({
-    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT, WEB_AGENT,
+    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT, WEB_AGENT, BRIEF,
     "constellation",      # filling gaps between entities in the graph
     "summarise",          # a one-line precis of a long wire report
     "translate",
 })
 
-_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT, WEB_AGENT})
+_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT, WEB_AGENT, BRIEF})
 
 DEFAULT_MODEL = "gpt-4o-mini"
 
@@ -215,13 +220,132 @@ def quota_paused(now: float | None = None) -> bool:
     return _QUOTA["until"] > (now if now is not None else _t.time())
 
 
+# ── per-purpose shares and daily pacing (DATAMINR_PLAN §2.4, B0) ────────
+# Each purpose has a monthly share of OPENAI_BUDGET_USD; a busy day for one
+# can no longer starve the others. Purposes not listed share what is left of
+# the budget (the reserve). Within its share a purpose spends at most
+# (share left) / (days left in the month, today included) x PACE_FACTOR a
+# day, so a burst on the 3rd cannot eat the month.
+DEFAULT_SHARES = "live_incident:16,brief:4,assistant:7,web_agent:3,voice:1,explain:2,fusion:2,context:1,outlook:1"
+PACE_FACTOR = 1.5
+RESERVE = "reserve"
+
+
+def shares() -> dict[str, float]:
+    raw = os.getenv("OPENAI_PURPOSE_SHARES")
+    raw = DEFAULT_SHARES if raw is None else raw
+    out: dict[str, float] = {}
+    for part in raw.split(","):
+        name, _, usd = part.partition(":")
+        try:
+            if name.strip():
+                out[name.strip()] = max(0.0, float(usd))
+        except ValueError:
+            continue
+    return out
+
+
+RESERVE_MIN_FRACTION = 0.075         # $3 of $40: what unlisted purposes (enrich, forecast) share at least
+
+
+def effective_shares() -> dict[str, float]:
+    """The shares, scaled down when they would leave less than RESERVE_MIN_FRACTION of the budget (a lower
+    OPENAI_BUDGET_USD shrinks every share alike)."""
+    sh = shares()
+    room = budget_usd() * (1 - RESERVE_MIN_FRACTION)
+    total = sum(sh.values())
+    if total > room > 0:
+        return {k: v * room / total for k, v in sh.items()}
+    return sh
+
+
+def reserve_usd() -> float:
+    return max(0.0, budget_usd() - sum(effective_shares().values()))
+
+
+def _days_left(now: datetime) -> int:
+    import calendar
+    last = calendar.monthrange(now.year, now.month)[1]
+    return last - now.day + 1
+
+
+_SPEND_CACHE: dict = {"at": 0.0, "key": None, "v": ({}, {})}
+SPEND_CACHE_S = 5.0
+
+
+def _spend(now: datetime) -> tuple[dict, dict]:
+    """({purpose: usd this month}, {purpose: usd today}); read from the usage log at most every SPEND_CACHE_S."""
+    import time as _t
+    key = now.strftime("%Y-%m-%d")
+    if _SPEND_CACHE["key"] == key and _t.time() - _SPEND_CACHE["at"] < SPEND_CACHE_S:
+        return _SPEND_CACHE["v"]
+    try:
+        import usage_tracker
+        v = (usage_tracker.openai_purpose_spend(month=month_key(now)), usage_tracker.openai_purpose_spend(day=key))
+    except Exception:                                          # noqa: BLE001
+        v = ({}, {})
+    _SPEND_CACHE.update(at=_t.time(), key=key, v=v)
+    return v
+
+
+def purpose_budget(purpose: str, now: datetime | None = None) -> dict:
+    """What `purpose` may spend: its share (or the reserve, shared by every unlisted purpose), what it spent this
+    month and today, and today's pace allowance."""
+    now = now or datetime.now(timezone.utc)
+    sh = effective_shares()
+    month, today = _spend(now)
+    if purpose in sh:
+        share, members = sh[purpose], {purpose}
+    else:
+        share, members = reserve_usd(), {p for p in set(month) | set(today) | {purpose} if p not in sh}
+    spent_m = sum(month.get(p, 0.0) for p in members)
+    spent_d = sum(today.get(p, 0.0) for p in members)
+    left_before_today = max(0.0, share - (spent_m - spent_d))
+    allowance = left_before_today / _days_left(now) * PACE_FACTOR
+    return {"purpose": purpose, "pool": purpose if purpose in sh else RESERVE, "share_usd": round(share, 4),
+            "spent_month_usd": round(spent_m, 5), "spent_today_usd": round(spent_d, 5),
+            "today_allowance_usd": round(allowance, 5), "days_left": _days_left(now)}
+
+
+def refusal(purpose: str, now: datetime | None = None) -> str | None:
+    """Why `purpose` may not call the model now, or None. The one place that says it."""
+    if not is_enabled(purpose):
+        return f"purpose '{purpose}' is not in HW_OPENAI_PURPOSES"
+    if not os.getenv("OPENAI_API_KEY"):
+        return "no OPENAI_API_KEY"
+    if quota_paused():
+        return "OpenAI credit exhausted (all model passes paused)"
+    if over_budget():
+        return "monthly OpenAI budget spent (OPENAI_BUDGET_USD)"
+    b = purpose_budget(purpose, now)
+    if b["spent_month_usd"] >= b["share_usd"]:
+        return f"'{purpose}' spent its monthly share (${b['share_usd']:.2f}, {b['pool']})"
+    if b["spent_today_usd"] >= b["today_allowance_usd"]:
+        return f"'{purpose}' reached today's pace (${b['today_allowance_usd']:.3f} of ${b['share_usd']:.2f})"
+    return None
+
+
+REFUSED: dict[str, dict] = {}
+
+
+def note_refused(purpose: str, why: str) -> None:
+    r = REFUSED.setdefault(purpose, {"count": 0, "last": None, "why": None})
+    if (r["last"] or "")[:10] != datetime.now(timezone.utc).strftime("%Y-%m-%d"):
+        # said loudly once a day per purpose: a silent cut-off is a defect (memory: silent failure pattern)
+        print(f"[openai] '{purpose}' refused, rule path meanwhile: {why} (GET /api/ai/budget)", flush=True)
+    r["count"] += 1
+    r["last"] = datetime.now(timezone.utc).isoformat()
+    r["why"] = why
+
+
 def get_client(purpose: str, api_key: str | None = None):
     """The OpenAI client for this purpose, or None.
 
     None when: the purpose is off, no key is configured, the SDK is not
-    installed, the month's budget is spent, or the account answered "no
-    credit" in the last QUOTA_PAUSE_S. Every caller treats None as "do it
-    without a model", which is the behaviour they have anyway.
+    installed, the month's budget is spent, the purpose's own share or
+    today's pace is spent, or the account answered "no credit" in the last
+    QUOTA_PAUSE_S. Every caller treats None as "do it without a model",
+    which is the behaviour they have anyway.
     """
     if not is_enabled(purpose):
         return None
@@ -231,6 +355,10 @@ def get_client(purpose: str, api_key: str | None = None):
     if quota_paused():
         return None
     if over_budget():
+        return None
+    b = purpose_budget(purpose)
+    if b["spent_month_usd"] >= b["share_usd"] or b["spent_today_usd"] >= b["today_allowance_usd"]:
+        note_refused(purpose, refusal(purpose) or "share or pace spent")
         return None
     try:
         from openai import OpenAI
@@ -258,4 +386,6 @@ def status() -> dict:
         "credit_exhausted_since": _QUOTA["since"],
         "credit_errors": _QUOTA["hits"],
         "credit_last_error": _QUOTA["last"],
+        "shares": {k: round(v, 2) for k, v in effective_shares().items()},
+        "reserve_usd": round(reserve_usd(), 2),
     }

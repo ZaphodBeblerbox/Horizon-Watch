@@ -34,6 +34,7 @@ function useHere() {
 import { devicePosition, saveHere } from "../../components/LocationPrompt.jsx"
 import { dropStaleDemos } from "../../globe/freshness.js"
 import { untranslatedLang } from "../../lib/titleLang.js"
+import { DevelopingList, FollowingList } from "../../events/EventLists.jsx"
 
 const SEVR = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
 
@@ -143,6 +144,17 @@ export default function MHome({ onShowOnMap, onOpen }) {
                             <b> Share</b> <span aria-hidden>⎋</span>, then <b>Add to Home Screen</b>, open Parallax from there and turn on alerts in Profile.</span>
                     </div>
                 )}
+            </div>
+
+            {/* DEVELOPING IN YOUR AREAS (DATAMINR_PLAN B1-B2): events ranked by your priority, each with its
+                status and evolving brief; then what you follow. A tap opens the event, never another screen. */}
+            <div className="m2-h" style={{ marginTop: 4 }}>Developing in your areas</div>
+            <div className="m2-card" style={{ padding: "4px 14px" }} data-testid="m2-developing">
+                <DevelopingList variant="phone" onOpen={(ev) => setOpen({ ...ev, headline: ev.headline, event_id: ev.id })} limit={5} />
+            </div>
+            <div className="m2-h">Following</div>
+            <div className="m2-card" style={{ padding: "4px 14px" }} data-testid="m2-following">
+                <FollowingList variant="phone" onOpen={(f) => setOpen(f)} />
             </div>
 
             <div className="m2-h" style={{ marginTop: 4 }}>{forYou.length ? "For you" : mine.has || here ? "Nothing near you — the most severe worldwide" : "Most severe right now"}</div>

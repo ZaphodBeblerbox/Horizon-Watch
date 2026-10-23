@@ -129,7 +129,7 @@ def atom_of(row: dict) -> dict | None:
             "lat": float(row["lat"]), "lon": float(row["lon"]), "text": text, "first_hand": first_hand,
             "certainty": (a.get("model") or {}).get("certainty"), "direction": a.get("direction_resolved") or v.get("direction"),
             "media": row.get("media") or "none", "thumb": row.get("thumb"), "read_by": row.get("read_by"),
-            "summary_en": row.get("summary_en"),
+            "summary_en": row.get("summary_en"), "precision": row.get("precision"),
             "country_code": row.get("country_code")}
 
 
@@ -257,6 +257,8 @@ def build(atoms: list[dict], media_by_atom: dict | None = None, now: _dt.datetim
             "muted": muted, "high_impact": primary_act in li.HIGH_IMPACT,
             "media": media[0] if media else None, "all_media": media[:4],
             "direction": direction, "sources": srcs, "channels": chans, "msg_id": primary["msg_id"], "channel": primary["channel"],
+            # the reports it stands for, as event members (events.py): the stored event's id rides on the signal
+            "refs": [f"tg:{a['channel']}:{a['msg_id']}" for a in grp],
         })
     out.sort(key=lambda s: s["event_time"], reverse=True)
     return out
@@ -323,7 +325,7 @@ def read_atoms(con, since: _dt.datetime) -> list[dict]:
         if "live_verdict" not in cols or "event_time" not in cols:
             return []
         want = ["channel", "msg_id", "channel_title", "topic_id", "posted_at", "text", "summary_en", "media", "thumb", "lat", "lon",
-                "place", "country_code", "event_time", "live_verdict", "live_json", "first_hand", "read_by"]
+                "place", "precision", "country_code", "event_time", "live_verdict", "live_json", "first_hand", "read_by"]
         sel = ", ".join(c if c in cols else f"NULL AS {c}" for c in want)
         rows = [dict(r) for r in con.execute(
             f"SELECT {sel} FROM telegram_posts WHERE live_verdict IN ('live','rule-live') AND event_time >= ?"
@@ -370,6 +372,9 @@ def signals(db_path: str | None = None) -> list[dict]:
                 out = web_agent.decorate(out)
             except Exception as e:                    # noqa: BLE001 — never takes the Telegram signals with it
                 print(f"[live-signals] error: web agent decorate: {type(e).__name__}: {e}", flush=True)
+            # each signal carries its stored event's id, status and evolving brief (events.py, DATAMINR_PLAN B1)
+            import events as _events
+            _events.annotate(out, lambda s: s.get("refs"), con=con)
             _STATUS["reads"] += 1
             _STATUS["last_count"] = len(out)
             _STATUS["last_error"] = None
@@ -397,8 +402,19 @@ def notification_cards(sigs: list[dict] | None = None, cap: int = 25) -> list[di
         sev = "moderate" if s["muted"] else "high"
         if s["corroboration"]["n_sources"] >= 3 and s["high_impact"]:
             sev = "critical"
+        ev = s.get("event") or {}
+        brief = ev.get("brief") or {}
         cards.append({
-            "id": s["id"], "kind": "telegram", "sev": sev, "title": s["title"],
+            # ONE EVENT, ONE CARD, ONE TAG (DATAMINR_PLAN B2): a signal that belongs to a stored event is that event's
+            # card; event_watch.personalize sets the per-user priority and the update's id (ev:<id>:v<n>)
+            "id": f"ev:{s['event_id']}" if s.get("event_id") else s["id"], "event_id": s.get("event_id"),
+            "event_key": f"ev:{s['event_id']}" if s.get("event_id") else None,
+            "event_status": ev.get("status"), "first_seen": ev.get("first_seen"), "last_update": ev.get("last_update"),
+            "brief_version": brief.get("version"), "brief_summary": brief.get("summary"),
+            "what_changed": brief.get("what_changed"), "brief_significant": brief.get("significant"),
+            "brief_at": brief.get("created_at"), "high_impact": s["high_impact"],
+            "corroboration_level": s["corroboration"]["level"], "n_sources": s["corroboration"]["n_sources"],
+            "kind": "telegram", "sev": sev, "title": s["title"],
             "reason": s["corroboration"]["line"], "lat": s["lat"], "lon": s["lon"], "country_code": s["country_code"],
             "region": s["place"], "created_at": s["event_time"], "source": s.get("source_kind") or "telegram", "live_signal": True,
             "act": s["act"], "url": (s["sources"][0]["url"] if s["sources"] else None),

@@ -1,4 +1,7 @@
 import StatementsSection from "./StatementsSection.jsx"
+import EventDetail from "../events/EventDetail.jsx"
+// what opens with the event and what is around it (a point on the map, a signal, an alert, a protest)
+const EVENT_DETAIL_TYPES = new Set(["telegram", "signal", "alert", "protest", "police_action", "fusion", "strike_event", "gdelt", "news", "endangered_place", "imagery", "firms", "event"])
 import WatchWithSatellites, { canWatch } from "./WatchWithSatellites.jsx"
 import ImagerySignalSection from "./ImagerySignalSection.jsx"
 import { addToBriefing } from "../state/briefingBasket.js"
@@ -850,6 +853,12 @@ export default function InspectorPanel({
                 {(entityType === "police_action" || (entityType === "telegram" && (data?.street_report || data?.kind === "live_signal"))) && <ReportMedia item={data} />}
                 {/* what the web agent found about it, with its cited articles (WebContext.jsx, backend/web_agent.py) */}
                 <WebContext item={data} />
+                {/* THE EVENT AND EVERYTHING AROUND IT (owner, 2026-10-23: "clicking a point must show everything
+                    relevant around it"): status, the evolving cited brief, Follow, the timeline, and the related
+                    items near it in space and time across domains (events/EventDetail.jsx, /api/around) */}
+                {EVENT_DETAIL_TYPES.has(entityType) && data?.kind !== "live_cluster" && Number.isFinite(Number(data?.lat ?? data?.latitude))
+                    && <EventDetail key={data?.event_id || data?.id || identity?.title} variant="desk" embedded
+                        item={{ ...data, lat: Number(data?.lat ?? data?.latitude), lon: Number(data?.lon ?? data?.longitude), headline: identity?.title }} />}
                 {(entityType === "frontline_claim" || entityType === "troop_movement" || entityType === "trajectory")
                     && <FrontlineClaimDetail type={entityType} data={data} />}
 

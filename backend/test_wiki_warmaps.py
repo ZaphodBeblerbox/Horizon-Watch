@@ -137,7 +137,7 @@ def test_every_war_is_offered_even_without_a_legend():
     a war is and where its boundaries run is legible without knowing the
     sides' names. They are offered; the sides are labelled unidentified."""
     rows = {t["key"]: t for t in w.theatres()}
-    for key in ("myanmar", "libya", "somalia", "mali"):
+    for key in ("myanmar", "libya", "somalia"):   # Mali names its sides since 02a336c
         assert rows[key]["available"] is True, key
         assert rows[key]["legend_known"] is False, key
         assert rows[key]["reason"], f"{key} must say why its sides are unnamed"

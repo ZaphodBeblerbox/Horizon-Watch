@@ -50,6 +50,7 @@ import { drawTrack } from "../trackLeaflet.js"
 import { openRoutePanel, subscribeRoutePanel, getRoutePanel } from "../../routes/store.js"
 import { drawPlan } from "../../routes/routeLayer.leaflet.js"
 import { confirmAction } from "../../ui/confirm.js"
+import { setAttention } from "../../state/attention.js"
 const WINDOWS = [24, 48, 72]
 const FLOORS = [["all", "All"], ["high", "High +"], ["critical", "Critical"]]
 const RANK = { critical: 0, significant: 1, high: 1, elevated: 2, moderate: 2, medium: 2, low: 3 }
@@ -184,7 +185,13 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         labels.style.zIndex = 350
         labels.style.pointerEvents = "none"
         map.current.on("zoomend", () => setZoom(map.current.getZoom()))
-        map.current.on("moveend", () => { setBounds(map.current.getBounds()); setTimeout(() => { prog.current = false }, 60) })
+        map.current.on("moveend", () => {
+            const b = map.current.getBounds()
+            setBounds(b)
+            // what this user looks at: the server spends model calls there first (state/attention.js)
+            setAttention({ viewport: { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() } })
+            setTimeout(() => { prog.current = false }, 60)
+        })
         // the map moved by a finger puts the card away (MPeek; MobileApp's listens too)
         const gesture = () => { setOpen(null); window.dispatchEvent(new CustomEvent("m2:map-gesture")) }
         map.current.on("dragstart", gesture)

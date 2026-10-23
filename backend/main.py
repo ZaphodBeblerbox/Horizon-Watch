@@ -495,6 +495,9 @@ app.include_router(_voice_ai_router.router)
 # The one assistant of desktop, phone and voice — see assistant.py.
 from routers import assistant as _assistant_router
 app.include_router(_assistant_router.router)
+# Events with stable ids, following, attention and the model budget — routers/events_api.py (DATAMINR_PLAN B0-B4).
+from routers import events_api as _events_api_router
+app.include_router(_events_api_router.router)
 # A watch zone's automatic findings as boxes on the ground — routers/zone_findings.py.
 from routers import zone_findings as _zone_findings_router
 app.include_router(_zone_findings_router.router)
@@ -12583,6 +12586,26 @@ async def _event_watch_loop():
         await asyncio.sleep(60)
 
 
+async def _events_loop():
+    """Every 30 s: each live-gated report joins its stored event (events.py, DATAMINR_PLAN B1), other domains
+    (situations, FIRMS fires, imagery, fusion points) join, and each event whose story changed gets its next
+    brief version — rewritten by the model only where someone watches (attention.py). Rows in SQLite only:
+    WORKER_ONLY. A failed pass is counted and logged, never silent."""
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="events")
+    await asyncio.sleep(60)
+    import events as _events
+    while True:
+        try:
+            out = await asyncio.get_running_loop().run_in_executor(_pool, _events.reconcile)
+            if out.get("assigned") or out.get("versions"):
+                print(f"[events] {out}", flush=True)
+        except Exception as _e:                              # noqa: BLE001
+            _events._bump("failed_passes")
+            _loop_error("events", _e, every=10)
+        await asyncio.sleep(30)
+
+
 async def _warning_resend_loop():
     """Every 30 s: a warning nobody acknowledged is pushed again after
     asset_warnings.RESEND_S, up to MAX_SENDS times. In the web process (not
@@ -16945,6 +16968,7 @@ async def startup_event():
     _spawn(_live_incident_loop)
     _spawn(_web_agent_loop)
     _spawn(_event_watch_loop)
+    _spawn(_events_loop)
     _spawn(_exit_watch_loop)
     _spawn(_warning_resend_loop)
     _spawn(_conflict_context_loop)
@@ -29866,6 +29890,8 @@ def api_get_notifications(
     try:
         import event_watch as _ew
         _c = _ew.concern_of(_uid) if _uid else None
+        # an event's card made this user's: their priority, New event vs Update, the update's id (DATAMINR_PLAN B2)
+        items = _ew.personalize(items, _uid, _c) if _uid else items
         for it in items:
             it["push"] = bool(_c is not None and _ew.notifies(it, _c))
     except Exception as ex:                                 # noqa: BLE001
@@ -29874,6 +29900,98 @@ def api_get_notifications(
 
 
 _TG_CARDS_CACHE: dict = {}
+
+
+def _around_sync(lat: float, lon: float, at: str | None, event_id: str | None, domain: str | None,
+                 radius_km: float, hours: float) -> dict:
+    """GET /api/around: the clicked point's event (its other reports) and everything relevant near it in space
+    and time across domains (around.py), ranked and deduplicated. Every input is a shared, already-built list."""
+    import around as _ar
+    out = {"event": None, "same_event": [], "related": [], "errors": {}}
+    excl = set()
+    if event_id:
+        try:
+            import events as _events
+            con = _events.connect()
+            try:
+                ev = _events.get(con, event_id, full=True)
+            finally:
+                con.close()
+            if ev:
+                out["event"] = {k: ev.get(k) for k in ("id", "status", "status_label", "headline", "first_seen", "last_update",
+                                                       "corroboration", "brief", "significant_brief", "members_count")}
+                out["same_event"] = ev.get("members") or []
+                excl = {m["ref"] for m in out["same_event"]}
+                at = at or ev.get("first_seen")
+        except Exception as e:                              # noqa: BLE001
+            out["errors"]["event"] = f"{type(e).__name__}: {e}"
+    items = []
+    lat_d = radius_km / 111.0
+    lon_d = radius_km / max(1.0, 111.0 * math.cos(math.radians(lat)))
+
+    def near(x):
+        try:
+            return abs(float(x.get("lat")) - lat) <= lat_d and abs(float(x.get("lon", x.get("lng"))) - lon) <= lon_d
+        except (TypeError, ValueError):
+            return False
+    try:
+        import live_signals as _ls
+        items += [_ar.from_signal(s) for s in _ls.signals() if near(s) and s.get("event_id") != event_id]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["live_signals"] = f"{type(e).__name__}: {e}"
+    try:
+        import telegram_ingest as _tg
+        items += [_ar.from_post(p) for p in _tg.published(max(6, int(hours) + 1), pins=True) if near(p)]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["telegram"] = f"{type(e).__name__}: {e}"
+    with _SURFACE_POOL_LOCK:
+        pool = [x for x in _SURFACE_POOL if isinstance(x, dict) and near(x)]
+    items += [_ar.from_surface(x) for x in pool if not str(x.get("source_type") or "").startswith("telegram")]
+    try:
+        from database import Alert as _Al
+        since = datetime.utcnow() - timedelta(hours=max(hours, 6))
+        with get_db() as db:
+            rows = (db.query(_Al.alert_id, _Al.alert_type, _Al.title, _Al.lat, _Al.lon, _Al.created_at, _Al.severity)
+                    .filter(_Al.created_at >= since, _Al.lat.between(lat - lat_d, lat + lat_d), _Al.lon.between(lon - lon_d, lon + lon_d))
+                    .order_by(_Al.created_at.desc()).limit(300).all())
+        items += [_ar.from_alert({"alert_id": r[0], "alert_type": r[1], "title": r[2], "lat": r[3], "lon": r[4],
+                                  "created_at": r[5].replace(tzinfo=timezone.utc).isoformat() if r[5] else None, "severity": r[6]})
+                  for r in rows]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["alerts"] = f"{type(e).__name__}: {e}"
+    try:
+        with _AIS_LOCK:
+            vs = [dict(v) for v in list(_AIS_VESSELS.values()) if isinstance(v, dict) and near(v)]
+        items += [_ar.from_vessel(v) for v in vs[:200]]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["ais"] = f"{type(e).__name__}: {e}"
+    try:
+        acs = [dict(a) for a in list(_GLOBAL_ADSB_CACHE.values()) if isinstance(a, dict) and near(a)]
+        items += [_ar.from_aircraft(a) for a in acs[:200]]
+    except Exception as e:                                  # noqa: BLE001
+        out["errors"]["adsb"] = f"{type(e).__name__}: {e}"
+    center = {"lat": lat, "lon": lon, "at": at, "domain": domain or "live_signal"}
+    out["related"] = _ar.rank(center, items, radius_km=radius_km, hours=hours, exclude_refs=excl)
+    out["counts"] = {}
+    for r in out["related"]:
+        out["counts"][r["domain"]] = out["counts"].get(r["domain"], 0) + 1
+    out["radius_km"], out["hours"] = radius_km, hours
+    for k, v in out["errors"].items():
+        print(f"[around] error: {k}: {v}", flush=True)
+    return out
+
+
+@app.get("/api/around")
+async def api_around(request: Request, lat: float, lon: float, at: str | None = None, event_id: str | None = None,
+                     domain: str | None = None, km: float = 5.0, hours: float = 6.0):
+    """Everything relevant around a clicked point (around.py): the other reports of its event, then related items
+    near it in space and time from every domain, ranked, deduplicated, each saying why it is there."""
+    _get_current_user(request)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(status_code=400, detail="bad position")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _around_sync, lat, lon, at, event_id, domain,
+                                      max(0.5, min(km, 50.0)), max(0.5, min(hours, 48.0)))
 
 
 def _telegram_report_cards(hours: int, cap: int = 25) -> list:
@@ -31721,6 +31839,12 @@ async def api_patch_own_settings(request: Request):
         # reference, and flag_modified() is the standard, explicit fix for
         # mutable JSON columns regardless (belt and suspenders, not either/or).
         merged = _deep_merge_settings(copy.deepcopy(u.settings or {}), body)
+        # the alert rules (DATAMINR_PLAN B4) are stored validated: bad thresholds, mutes or hours are dropped
+        _al = (merged.get("interests") or {}).get("alerts") if isinstance(merged.get("interests"), dict) else None
+        if isinstance(_al, dict):
+            import event_watch as _ew_s
+            merged["interests"]["alerts"] = {**{k: v for k, v in _al.items() if k not in (
+                "thresholds", "mutes", "quiet_hours", "hourly_cap", "digest", "tz", "level")}, **_ew_s.validate_alerts(_al)}
         u.settings = merged
         flag_modified(u, "settings")
         db.commit()

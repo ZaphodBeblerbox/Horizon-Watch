@@ -1073,11 +1073,35 @@ def spent_counts(con, now: _dt.datetime) -> dict:
     return {"hour": h, "day": d[0], "usd_day": round(d[1], 5)}
 
 
+# WITHIN ITS SHARE (DATAMINR_PLAN B0): 2,000 calls a day at ~$0.0009 is ~$54 a month, more than the whole
+# budget. The day's cap is also what the purpose's monthly share allows per day at EST_CALL_USD a call
+# (live_incident:16 -> ~590 a day), and openai_gate paces the spend itself on top.
+EST_CALL_USD = float(os.getenv("LIVE_INCIDENT_EST_CALL_USD", "0.0009") or 0.0009)
+QUEUE_MAX_AGE_MIN = 30                # a post that waited this long for the model goes to the rule path
+
+
+def share_day_cap(now: _dt.datetime | None = None) -> int:
+    import calendar
+
+    import openai_gate
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    share = openai_gate.effective_shares().get(openai_gate.LIVE_INCIDENT)
+    if share is None:
+        share = openai_gate.reserve_usd()
+    days = calendar.monthrange(now.year, now.month)[1]
+    return max(0, int(share / days / max(EST_CALL_USD, 1e-6)))
+
+
+def per_day(now: _dt.datetime | None = None) -> int:
+    return min(PER_DAY, share_day_cap(now))
+
+
 def budget(con, now: _dt.datetime | None = None) -> dict:
     now = now or _dt.datetime.now(_dt.timezone.utc)
     c = spent_counts(con, now)
-    return {**c, "per_hour": PER_HOUR, "per_day": PER_DAY,
-            "left": max(0, min(PER_HOUR - c["hour"], PER_DAY - c["day"]))}
+    pd = per_day(now)
+    return {**c, "per_hour": PER_HOUR, "per_day": pd, "per_day_env": PER_DAY, "share_day_cap": share_day_cap(now),
+            "left": max(0, min(PER_HOUR - c["hour"], pd - c["day"]))}
 
 
 # ── the pass ────────────────────────────────────────────────────────────────
@@ -1158,7 +1182,7 @@ def gate_reason() -> str | None:
         return "OpenAI credit exhausted (all model passes paused)"
     if openai_gate.over_budget():
         return "monthly OpenAI budget spent (OPENAI_BUDGET_USD)"
-    return None
+    return openai_gate.refusal(openai_gate.LIVE_INCIDENT)       # its share, today's pace
 
 
 _GATE_LOG = {"at": 0.0}
@@ -1229,7 +1253,9 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
             # ONLY WHAT SOMEONE WATCHES (owner, 2026-10-23, watch_gate.py): a post outside every user's profile
             # gets no model call; the rule reading (telegram_ingest, rule_decide) is all it gets
             r["_focus"] = False
+            r["_score"] = 0.0
             if watch is not None or (WATCH_GATE and extract_fn is None):
+                import attention
                 import watch_gate
                 try:
                     w_ok, focus, w_why = watch_gate.judge(r, watch, _chat_cc(r["channel"]))
@@ -1240,6 +1266,7 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
                     out["not_watched"] += 1
                     _bump("skipped_not_watched")
                     watch_gate.STATUS["not_watched"] += 1
+                    attention._bump("live_incident", "skipped_not_watched")
                     con.execute("UPDATE telegram_posts SET live_checked=1, live_at=?, live_verdict=? WHERE channel=? AND msg_id=?",
                                 (iso(now), f"skipped: not watched by any user ({w_why}); rule path only"[:300], r["channel"], r["msg_id"]))
                     continue
@@ -1248,6 +1275,16 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
                     watch_gate.STATUS["focus"] += 1
                     out["focus"] += 1
                 r["_focus"] = focus
+                # THE QUEUE ORDER (DATAMINR_PLAN §2.3): watch x (1 + look) x importance; a post's importance is
+                # not known before the model (0.3), so the place decides: an asset over a theater over a country,
+                # and what someone has on screen now first
+                try:
+                    wv, _ = attention.post_watch(r, watch, _chat_cc(r["channel"]))
+                    h = watch_gate.hints(r, _chat_cc(r["channel"]))
+                    la, lo = (h["points"][0] if h["points"] else (None, None))
+                    r["_score"] = attention.score({"watch": max(wv, 0.25), "lat": la, "lon": lo})["score"]
+                except Exception as e:                                  # noqa: BLE001
+                    print(f"[live-incident] error: attention score: {type(e).__name__}: {e}", flush=True)
             todo.append(r)
         con.commit()
         if not todo:
@@ -1262,7 +1299,7 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
             return out
         # stable: a focus area first (a city-scale theater, a position: Paris on Saturday), then strong event words,
         # newest first within
-        todo.sort(key=lambda r: (not r.get("_focus"), r["_drone"]))
+        todo.sort(key=lambda r: (not r.get("_focus"), -r.get("_score", 0.0), r["_drone"]))
         left = budget(con, now)["left"]
         extract_fn = extract_fn or (lambda t, p, n, rg: extract(t, p, n, rg))
         geo_budget = [GEOCODES_PER_PASS]
@@ -1287,13 +1324,27 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
             else:
                 seen_hash[r["_hash"]] = r
                 fresh.append(r)
+        waiting = fresh[PER_PASS:]
         fresh = fresh[:PER_PASS]
         if len(fresh) > left:
             out["capped"] = len(fresh) - left
             _bump("capped", out["capped"])
             if left <= 0 or STATUS.get("capped", 0) % 50 == 1:
                 print(f"[live-incident] CAP reached ({budget(con, now)}): {out['capped']} posts wait for the next window", flush=True)
+            waiting = fresh[max(left, 0):] + waiting
             fresh = fresh[:max(left, 0)]
+        # the lowest scores wait for the next pass; one that has waited QUEUE_MAX_AGE_MIN goes to the rule path
+        old = iso(now - _dt.timedelta(minutes=QUEUE_MAX_AGE_MIN))
+        for r in waiting:
+            if (r.get("posted_at") or "") < old:
+                out["dropped_to_rules"] = out.get("dropped_to_rules", 0) + 1
+                _bump("dropped_to_rules")
+                con.execute("UPDATE telegram_posts SET live_checked=1, live_at=?, live_verdict=? WHERE channel=? AND msg_id=?",
+                            (iso(now), f"skipped: waited over {QUEUE_MAX_AGE_MIN} min for the model; rule path only",
+                             r["channel"], r["msg_id"]))
+        out["queued"] = len(waiting) - out.get("dropped_to_rules", 0)
+        with _STATUS_LOCK:
+            STATUS["queue"] = out["queued"]
         from concurrent.futures import ThreadPoolExecutor
 
         def call(r):
@@ -1363,7 +1414,7 @@ def status() -> dict:
     with _STATUS_LOCK:
         out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in STATUS.items()}
     out.update({"enabled": ENABLED, "model": MODEL, "window_min": LIVE_WINDOW_MIN, "per_hour": PER_HOUR,
-                "per_day": PER_DAY, "watch_gate_on": WATCH_GATE})
+                "per_day": per_day(), "per_day_env": PER_DAY, "watch_gate_on": WATCH_GATE})
     try:
         import watch_gate
         out["watch_gate"] = watch_gate.status()            # model calls only for what a user watches

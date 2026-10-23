@@ -67,7 +67,7 @@ def concern_of(uid: str) -> dict:
         hit = _concern_cache.get(uid)
         if hit and time.time() - hit[0] < CONCERN_TTL_S:
             return hit[1]
-    c = {"assets": [], "theaters": [], "countries": set(), "topics": set(), "only_mine": None}
+    c = {"assets": [], "theaters": [], "countries": set(), "topics": set(), "only_mine": None, "alerts": {}}
     try:
         import owned_assets as oa
         for a in oa.list_for(uid):
@@ -85,9 +85,12 @@ def concern_of(uid: str) -> dict:
                 v = t.view or {}
                 if v.get("lat") is not None and v.get("lon") is not None:
                     c["theaters"].append({"lat": float(v["lat"]), "lon": float(v["lon"]),
-                                          "reach": theater_reach_km(v), "name": t.name})
+                                          "reach": theater_reach_km(v), "name": t.name, "id": str(t.id)})
             u = db.query(User).filter(User.id == uid).first()
             interests = ((u.settings or {}).get("interests") or {}) if u else {}
+            # the user's alert rules (thresholds, mutes, quiet hours, hourly cap, digest), read by event_watch;
+            # written by Settings › Alerts and by the assistant's confirmed proposal (DATAMINR_PLAN B4)
+            c["alerts"] = interests.get("alerts") if isinstance(interests.get("alerts"), dict) else {}
             c["countries"] = {str(x).strip().lower() for x in (interests.get("countries") or []) if x}
             c["topics"] = {str(x).strip().lower() for x in (interests.get("topics") or []) if x}
             c["only_mine"] = interests.get("onlyMine") if isinstance(interests.get("onlyMine"), bool) else None
@@ -178,6 +181,25 @@ def why(ev: dict, c: dict) -> tuple[str, str] | None:
     if name and name.lower() in c["countries"]:
         return f"{name} — a country you watch", "country"
     return None
+
+
+def proximity(ev: dict, c: dict) -> dict | None:
+    """why(), with the distance: {reason, strength, km, theater_id}. km is the distance to the nearest asset (or
+    "where you are") for an asset match, to the theater's centre for a theater, None for a country."""
+    w = why(ev, c)
+    if not w:
+        return None
+    lat, lon = ev.get("lat"), ev.get("lon")
+    out = {"reason": w[0], "strength": w[1], "km": None, "theater_id": None}
+    if w[1] == "asset":
+        out["km"] = min(km(a["lat"], a["lon"], lat, lon) for a in c["assets"] if km(a["lat"], a["lon"], lat, lon) <= a["radius"])
+    elif w[1] == "theater":
+        for t in c["theaters"]:
+            d = km(t["lat"], t["lon"], lat, lon)
+            if d <= t["reach"]:
+                out["km"], out["theater_id"] = d, t.get("id")
+                break
+    return out
 
 
 # ── the per-user filter ─────────────────────────────────────────────────────

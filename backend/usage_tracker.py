@@ -131,6 +131,44 @@ def _save(data: dict[str, Any]) -> None:
 # is what makes a future spend spike traceable in minutes — filter by
 # call_type/item_id/model instead of re-running this whole audit.
 CALL_LOG_MAX = 1000
+OPENAI_DAYS_KEPT = 40
+OPENAI_MONTHS_KEPT = 13
+
+# call_type → openai_gate purpose, for call sites that log a call_type only. The
+# Telegram readers and the vision pass run on ENRICH; the fusion write-up is FUSION.
+CALL_TYPE_PURPOSE = {"telegram": "enrich", "telegram_vision": "enrich", "assess": "enrich", "fusion_narrative": "fusion",
+                     "forecast_draft": "forecast", "forecast_read": "forecast", "forecast": "forecast"}
+
+
+def purpose_of_call_type(call_type: str | None) -> str:
+    ct = (call_type or "").strip() or "unknown"
+    return CALL_TYPE_PURPOSE.get(ct, ct)
+
+
+def openai_purpose_spend(month: str | None = None, day: str | None = None) -> dict:
+    """{purpose: usd} for a month ("YYYY-MM") or a UTC day ("YYYY-MM-DD") from the running sums, and for a month
+    also from the capped call log (the larger of the two per purpose: the sums start empty on the day this ships)."""
+    with _lock:
+        data = _load()
+    if day:
+        return dict((data.get("openai_days") or {}).get(day) or {})
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    sums = dict((data.get("openai_months") or {}).get(month) or {})
+    logged: dict = {}
+    for e in data.get("call_log", []) or []:
+        if not (e.get("model") or "").lower().startswith("gpt-") or not isinstance(e.get("ts"), (int, float)):
+            continue
+        if datetime.fromtimestamp(e["ts"], timezone.utc).strftime("%Y-%m") != month:
+            continue
+        p = e.get("purpose") or purpose_of_call_type(e.get("call_type"))
+        logged[p] = logged.get(p, 0.0) + float(e.get("cost") or 0.0)
+    return {p: max(sums.get(p, 0.0), logged.get(p, 0.0)) for p in set(sums) | set(logged)}
+
+
+def openai_day_calls(day: str) -> dict:
+    with _lock:
+        data = _load()
+    return dict((data.get("openai_day_calls") or {}).get(day) or {})
 
 
 def record_call(
@@ -141,6 +179,7 @@ def record_call(
     model:         str | None = None,  # e.g. "claude-haiku-4-5-20251001" — drives correct per-model pricing
     item_id:       str = "",           # the real item this call acted on (fusion_id, article url, zone_id, ...)
     extra_cost_usd: float = 0.0,       # a per-call fee on top of the tokens (OpenAI's web search tool: web_agent.py)
+    purpose:       str | None = None,  # the openai_gate purpose (per-purpose shares); derived from call_type when absent
 ) -> None:
     """Accumulate token counts and cost after a successful Claude call, and
     append one real structured entry to the per-call audit log."""
@@ -148,8 +187,28 @@ def record_call(
     cost  = (input_tokens * price_in) + (output_tokens * price_out) + max(0.0, float(extra_cost_usd or 0.0))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     now   = time.time()
+    is_openai = (model or "").lower().startswith("gpt-")
+    if is_openai and not purpose:
+        purpose = purpose_of_call_type(call_type)
     with _lock:
         data = _load()
+        if is_openai:
+            # PER-PURPOSE SPEND THAT SURVIVES THE LOG'S CAP (DATAMINR_PLAN B0). The call log keeps the last
+            # CALL_LOG_MAX entries only: at live_incident's volume that is two days, so a month summed from it
+            # under-counted and the monthly ceiling could never be reached. These running sums are per month and
+            # per UTC day, per purpose; days older than OPENAI_DAYS_KEPT are dropped.
+            month = today[:7]
+            om = data.setdefault("openai_months", {}).setdefault(month, {})
+            om[purpose] = round(om.get(purpose, 0.0) + cost, 6)
+            od = data.setdefault("openai_days", {}).setdefault(today, {})
+            od[purpose] = round(od.get(purpose, 0.0) + cost, 6)
+            oc = data.setdefault("openai_day_calls", {}).setdefault(today, {})
+            oc[purpose] = oc.get(purpose, 0) + 1
+            for k in ("openai_days", "openai_day_calls"):
+                for d in sorted(data[k])[:-OPENAI_DAYS_KEPT]:
+                    data[k].pop(d, None)
+            for m in sorted(data["openai_months"])[:-OPENAI_MONTHS_KEPT]:
+                data["openai_months"].pop(m, None)
         data["total_input_tokens"]  = data.get("total_input_tokens",  0) + input_tokens
         data["total_output_tokens"] = data.get("total_output_tokens", 0) + output_tokens
         data["total_cost_usd"]      = data.get("total_cost_usd",      0.0) + cost
@@ -191,6 +250,7 @@ def record_call(
             "ts": now,
             "model": model or "unknown",
             "call_type": call_type,
+            **({"purpose": purpose} if is_openai else {}),
             "item_id": item_id[:200] if item_id else "",
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
@@ -481,9 +541,14 @@ def openai_cost_for_month(month: str) -> float:
     Summed from the per-call log rather than from a running total, because a
     running total cannot be scoped to a month without a second counter that
     can drift from the log it is supposed to summarise.
+
+    The log is capped at CALL_LOG_MAX entries (two days of live_incident), so
+    the per-month running sums written by record_call are read too, and the
+    larger of the two is the answer (DATAMINR_PLAN B0).
     """
     with _lock:
         data = _load()
+        sums = sum(float(v or 0.0) for v in ((data.get("openai_months") or {}).get(month) or {}).values())
         total = 0.0
         for entry in data.get("call_log", []) or []:
             model = (entry.get("model") or "").lower()
@@ -497,4 +562,4 @@ def openai_cost_for_month(month: str) -> float:
                 continue
             if datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m") == month:
                 total += float(entry.get("cost") or 0.0)
-        return total
+        return max(total, sums)

@@ -187,6 +187,7 @@ import { ALERT_TYPE as VESSEL_ALERT_TYPE } from "./globe/vesselThreat.js"
 import { exportPdf } from "./print/printSurface.jsx"
 import { MODE_FRAME } from "./plx6/modeWindow.js"
 import { setActiveTheater } from "./state/filing.js"
+import { setAttention } from "./state/attention.js"
 import Dossiers from "./destinations/Dossiers.jsx"
 import Constellation from "./destinations/Constellation.jsx"
 import Profile from "./destinations/Profile.jsx"
@@ -808,7 +809,9 @@ export default function App() {
        lands in whatever case was last used. */
     useEffect(() => {
         setActiveTheater((theaters.find((t) => t.id === theaterId) || {}).name || null)
-    }, [theaterId, theaters])
+        // the active theater is what this user is looking at (state/attention.js, DATAMINR_PLAN B0)
+        if (authUser) setAttention({ active_theater_id: theaterId || null })
+    }, [theaterId, theaters, authUser?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const [plxNarrow, setPlxNarrow] = useState(() => window.innerWidth < 1200)
     const [plxClock, setPlxClock] = useState("")
@@ -1178,6 +1181,8 @@ export default function App() {
                 mmsi: i.mmsi || (i.alert_type === VESSEL_ALERT_TYPE ? i.entity_id : null) || null,
                 // reaches a closed app only when the server says so (event_watch.notifies)
                 push: i.push === true,
+                // an event's update replaces its earlier card (event_watch.personalize: ev:<id>:v<n>)
+                eventKey: i.event_key || null, label: i.event_key ? (i.alert_type || null) : null,
                 // WHEN IT HAPPENED, in the order the fields mean it.
                 // created_at is when the ROW was written, which for a
                 // backfilled or late-ingested event is now — and an event

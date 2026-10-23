@@ -66,7 +66,7 @@ function Card({ n, onOpen, onAcknowledge, onBasket }) {
                 <div className="nc-head">
                     <i className={`dia ${n.sev}`} />
                     <svg><use href={`#${kind.icon}`} /></svg>
-                    <span className="k">{kind.name}</span>
+                    <span className="k">{n.label || kind.name}</span>
                     <span className="t">{zulu(n.ts)}</span>
                     <button
                         className="nc-x"
