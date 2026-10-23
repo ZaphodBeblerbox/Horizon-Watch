@@ -6,18 +6,20 @@
  * nothing drew it. Owner, 2026-10-11: "we should have some kind of
  * indicator where something was detected". Every watch zone is a thin
  * outline; a zone whose latest scans found something new (backend
- * zone_change.py → `findings.fresh` on /api/imagery/aois) is a red,
- * pulsing outline with the count and what was found as its label.
+ * zone_change.py → `findings.fresh` on /api/imagery/aois) is a thicker
+ * outline with the one count badge (ringed urgent) and what was found as its label.
  */
-import { useEffect, useMemo, useState } from "react"
-import { Entity, useCesium } from "resium"
-import { CallbackProperty, Cartesian2, Cartesian3, Color, ColorMaterialProperty, DistanceDisplayCondition,
+import { useEffect, useState } from "react"
+import { Entity } from "resium"
+import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference,
          LabelStyle, VerticalOrigin } from "cesium"
+import { OURS, EDGE, SIZE, clusterIcon } from "../lib/mapIcons.js"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
 
-const PLAIN = Color.fromCssColorString("#3D8BFF")
-const FRESH = Color.fromCssColorString("#FF3B30")
+// THE ONE TYPOLOGY (lib/mapIcons.js): a zone is ours, so its outline is our blue; a fresh finding is the one
+// badge (the count, ringed urgent) at a constant size, never a red pulsing outline
+const PLAIN = Color.fromCssColorString(OURS.blue)
 
 /** [lon, lat] ring of a zone: its polygon, else its bbox. */
 export function zoneRing(z) {
@@ -56,22 +58,6 @@ export default function GlobeAoisLayer({ enabled = false }) {
         return () => { live = false; clearInterval(iv) }
     }, [enabled])
 
-    // One shared pulse for every fresh outline: alpha 0.35 → 1 → 0.35 over 1.6 s.
-    const pulse = useMemo(() => new ColorMaterialProperty(new CallbackProperty(() => {
-        const t = (Date.now() % 1600) / 1600
-        return FRESH.withAlpha(0.35 + 0.65 * (0.5 - 0.5 * Math.cos(t * 2 * Math.PI)))
-    }, false)), [])
-
-    // The globe renders on request (requestRenderMode), so a pulse needs a
-    // nudge: a few frames a second, only while a fresh zone is on screen.
-    const { viewer } = useCesium()
-    const anyFresh = zones.some((z) => aoiStyle(z).fresh)
-    useEffect(() => {
-        if (!enabled || !anyFresh || !viewer) return undefined
-        const iv = setInterval(() => { if (!viewer.isDestroyed()) viewer.scene.requestRender() }, 160)
-        return () => clearInterval(iv)
-    }, [enabled, anyFresh, viewer])
-
     if (!enabled || !zones.length) return null
     return (
         <>
@@ -86,16 +72,18 @@ export default function GlobeAoisLayer({ enabled = false }) {
                 return [
                     <Entity key={`aoi-${z.system_id}`} id={`aoi-${z.system_id}`} name={z.name}
                         description={st.label || z.name}
-                        polyline={{ positions: pos, width: st.fresh ? 3.5 : 1.4, clampToGround: true,
-                                    material: st.fresh ? pulse : PLAIN.withAlpha(z.status === "active" ? 0.85 : 0.45) }} />,
+                        polyline={{ positions: pos, width: st.fresh ? 3 : 1.4, clampToGround: true,
+                                    material: PLAIN.withAlpha(st.fresh || z.status === "active" ? 0.9 : 0.45) }} />,
                     st.fresh && centre ? (
                         <Entity key={`aoi-l-${z.system_id}`} id={`aoi-l-${z.system_id}`} position={centre}
+                            billboard={{ image: clusterIcon(Math.max(1, Number(z.findings?.fresh?.count) || 1), "urgent").uri, width: SIZE.cluster, height: SIZE.cluster,
+                                         heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e7 }}
                             label={{ text: st.label.length > 70 ? `${st.label.slice(0, 69)}…` : st.label,
                                      font: "600 13px system-ui, -apple-system, sans-serif",
-                                     fillColor: Color.WHITE, outlineColor: Color.fromCssColorString("#7a0f0a"), outlineWidth: 3,
+                                     fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                                      style: LabelStyle.FILL_AND_OUTLINE, verticalOrigin: VerticalOrigin.BOTTOM,
-                                     pixelOffset: new Cartesian2(0, -6), showBackground: true,
-                                     backgroundColor: FRESH.withAlpha(0.85), backgroundPadding: new Cartesian2(7, 4),
+                                     pixelOffset: new Cartesian2(0, -(SIZE.cluster / 2 + 4)), showBackground: true,
+                                     backgroundColor: Color.fromCssColorString(EDGE).withAlpha(0.85), backgroundPadding: new Cartesian2(7, 4),
                                      distanceDisplayCondition: new DistanceDisplayCondition(0, 6_000_000) }} />
                     ) : null,
                 ]

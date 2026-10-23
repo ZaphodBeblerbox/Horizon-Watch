@@ -17,12 +17,15 @@
  * show. They appear when the camera is near enough for the question to
  * be a local one.
  */
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Entity } from "resium"
 import { Cartesian3, HeightReference, DistanceDisplayCondition } from "cesium"
 import API_BASE from "../apiBase.js"
 import { safeArray } from "../utils/safeArray.js"
-import { getFacilityMarkerDataUri, MARK_SIZE } from "./entityIcons.js"
+import { getFacilityMarkerDataUri } from "./entityIcons.js"
+import { SIZE } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterBadges from "./ClusterBadges.jsx"
 import { setEntity, deleteEntity } from "./entityStore.js"
 
 // Country or region scale, never the globe. Nobody needs every hospital
@@ -131,18 +134,28 @@ export default function GlobeFacilitiesLayer({ types = [], viewBounds = null,
         return () => ids.forEach(deleteEntity)
     }, [rows])
 
+    const typesKey = types.join("|")
+    const shown = useMemo(() => {
+        const wanted = new Set(types.map((t) => TYPE_TO_CATEGORY[t] || t))
+        return rows.filter((f) => wanted.has(f.category || TYPE_TO_CATEGORY[f.entity_type]) && COLOUR[f.category || TYPE_TO_CATEGORY[f.entity_type]])
+    }, [rows, typesKey]) // eslint-disable-line react-hooks/exhaustive-deps
+    // ONE COLLISION PASS with every other point layer (screenDeclutter.js)
+    const items = useMemo(() => shown.filter((f) => Number.isFinite(f.lat) && Number.isFinite(f.lon)).map((f) => ({
+        id: `facility-${f.system_id}`, lat: f.lat, lon: f.lon, size: SIZE.infra, pri: null,
+        title: f.name || `${String(f.kind || "site").replace(/_/g, " ")} (unnamed)`, line: CATEGORY_LABEL[f.category] || "" })), [shown])
+    const layout = useDeclutter("facilities", items, !!enabled)
+    const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))
     if (!enabled || !rows.length) return null
-    const wanted = new Set(types.map((t) => TYPE_TO_CATEGORY[t] || t))
-    const shown = rows.filter((f) =>
-        wanted.has(f.category || TYPE_TO_CATEGORY[f.entity_type]))
 
     return (
         <>
+            <ClusterBadges layout={layout} />
             {shown.map((f) => {
                 if (!Number.isFinite(f.lat) || !Number.isFinite(f.lon)) return null
                 const cat = f.category || TYPE_TO_CATEGORY[f.entity_type]
                 const colour = COLOUR[cat]
                 if (!colour) return null
+                if (!single.has(`facility-${f.system_id}`)) return null
                 return (
                     <Entity
                         id={`facility-${f.system_id}`}
@@ -151,13 +164,11 @@ export default function GlobeFacilitiesLayer({ types = [], viewBounds = null,
                         name={f.name || f.kind}
                         billboard={{
                             // The glyph says WHICH KIND at a glance — a
-                            // cross, a shield, a flame, crossed swords —
-                            // which is the thing a reader actually needs
-                            // and a coloured square never gave them.
-                            image: getFacilityMarkerDataUri({
-                                kind: f.kind, color: colour, size: 18,
-                            }),
-                            width: 18, height: 18,
+                            // cross, a shield, a flame, crossed swords — in
+                            // the one typology's infrastructure line glyph
+                            // (lib/mapIcons.js): neutral, 18 px, kind by glyph only.
+                            image: getFacilityMarkerDataUri({ kind: f.kind }),
+                            width: SIZE.infra, height: SIZE.infra,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             distanceDisplayCondition:
                                 new DistanceDisplayCondition(0, MAX_CAMERA_M),

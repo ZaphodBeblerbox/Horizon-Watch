@@ -1,12 +1,14 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Entity, useCesium } from "resium"
 import {
     Cartesian3, Cartesian2, Color, HeightReference,
     PolygonHierarchy, ClassificationType,
-    NearFarScalar, DistanceDisplayCondition,
+    DistanceDisplayCondition,
 } from "cesium"
 import API_BASE from "../apiBase.js"
-import { getEntityMarkerDataUri } from "./entityIcons.js"
+import { infraIcon, SIZE } from "../lib/mapIcons.js"
+import { useDeclutter } from "./screenDeclutter.js"
+import ClusterBadges from "./ClusterBadges.jsx"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { showTip, hideTip } from "./mapTip.js"
 
@@ -16,13 +18,10 @@ import { showTip, hideTip } from "./mapTip.js"
 // this point icon) keeps the chokepoint visible/clickable at any zoom level.
 // Lazily built (not at module load) so importing this file never touches
 // the DOM.
-let _chokeIcon = null
-function getChokeIcon() {
-    if (!_chokeIcon) {
-        _chokeIcon = getEntityMarkerDataUri({ entityType: "zone", size: 26 })
-    }
-    return _chokeIcon
-}
+// THE ONE TYPOLOGY (lib/mapIcons.js): infrastructure context, a line glyph (two coasts narrowing), neutral, 18 px;
+// the strait's area outlined neutral (the orange is retired: colour on this map is priority)
+const getChokeIcon = () => infraIcon({ glyph: "chokepoint" }).uri
+const AREA = "#9AA9BC"
 
 export default function GlobeChokepointsLayer({ enabled }) {
     const [data, setData] = useState([])
@@ -85,10 +84,18 @@ export default function GlobeChokepointsLayer({ enabled }) {
         return () => ids.forEach(deleteEntity)
     }, [data])
 
+    // ONE COLLISION PASS with every other point layer (screenDeclutter.js)
+    const items = useMemo(() => data.map((c) => ({ id: `choke-${c.id ?? c.system_id ?? c.name ?? "Chokepoint"}`, lat: +(c.lat ?? c.center?.[0]), lon: +(c.lon ?? c.center?.[1]),
+                                                   size: SIZE.infra, pri: null, title: c.name || "Chokepoint", line: c.current_status || "" }))
+                          .filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)), [data])
+    const layout = useDeclutter("chokepoints", items, !!enabled)
+    const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))
+
     if (!enabled || !data.length) return null
 
     return (
         <>
+            <ClusterBadges layout={layout} />
             {data.map(c => {
                 const lat  = c.lat  ?? c.center?.[0]
                 const lon  = c.lon  ?? c.center?.[1]
@@ -111,19 +118,19 @@ export default function GlobeChokepointsLayer({ enabled }) {
                         position={Cartesian3.fromDegrees(lon, lat, 0)}
                         onMouseMove={(_m, mv) => tipFor(c, mv)}
                         onMouseLeave={hideTip}
-                        billboard={{
+                        billboard={single.has(entityId) ? {
                             image:           getChokeIcon(),
-                            width:           26,
-                            height:          26,
+                            width:           SIZE.infra,
+                            height:          SIZE.infra,
                             heightReference: HeightReference.CLAMP_TO_GROUND,
                             
                             distanceDisplayCondition: new DistanceDisplayCondition(0, 10_000_000),
-                        }}
+                        } : undefined}
                         polygon={polyPositions.length >= 3 ? {
                             hierarchy:          new PolygonHierarchy(polyPositions),
-                            material:           Color.fromCssColorString("#FF6D00").withAlpha(0.12),
+                            material:           Color.fromCssColorString(AREA).withAlpha(0.12),
                             outline:            true,
-                            outlineColor:       Color.fromCssColorString("#FF6D00").withAlpha(0.8),
+                            outlineColor:       Color.fromCssColorString(AREA).withAlpha(0.8),
                             outlineWidth:       2,
                             height:             0,
                             classificationType: ClassificationType.TERRAIN,
@@ -131,7 +138,7 @@ export default function GlobeChokepointsLayer({ enabled }) {
                         label={{
                             text:             name,
                             font:             "bold 11px Arial",
-                            fillColor:        Color.fromCssColorString("#FF6D00"),
+                            fillColor:        Color.fromCssColorString(AREA),
                             outlineColor:     Color.fromCssColorString("#0F1721"),
                             outlineWidth:     2,
                             style:            2,

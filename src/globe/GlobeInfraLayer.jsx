@@ -21,10 +21,11 @@ import { useEffect, useRef } from "react"
 import { useCesium } from "resium"
 import {
     BillboardCollection, PolylineCollection, LabelCollection, Cartesian3, Cartesian2, Color, Material,
-    VerticalOrigin, HorizontalOrigin, LabelStyle, DistanceDisplayCondition, NearFarScalar, Math as CesiumMath,
+    VerticalOrigin, HorizontalOrigin, LabelStyle, DistanceDisplayCondition, Math as CesiumMath,
 } from "cesium"
 import API_BASE from "../apiBase.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
+import { infraIcon, SIZE } from "../lib/mapIcons.js"
 
 /** OpenInfraMap's voltage scale. */
 export function voltageColor(kv) {
@@ -52,36 +53,11 @@ export function lineStyle(f) {
     return { color: "#999999", width: 1.2, dashed: false }
 }
 
-const SOURCE_COLOR = { nuclear: "#E5D33A", coal: "#8B7B6B", gas: "#E58A3A", oil: "#9A6A40", wind: "#4FB4E8",
-                       solar: "#F2C230", hydro: "#3A7FE5", biomass: "#5FA05A", waste: "#8F8F6A", battery: "#B0B0FF" }
-const GLYPH = {
-    power_plant: "M13 2 5 13h6l-1 9 8-11h-6z",
-    substation: "M4 6h16v12H4zM8 6v12M16 6v12M4 12h16",
-    wind_turbine: "M12 12 12 3M12 12l7.5 4.5M12 12l-7.5 4.5M12 12v10",
-    telecom_mast: "M12 4v18M8 22l4-10 4 10M7 7a7 7 0 0 1 10 0M5 4.5a10 10 0 0 1 14 0",
-    data_center: "M5 4h14v5H5zM5 10h14v5H5zM5 16h14v4H5zM8 6.5h.01M8 12.5h.01",
-    well: "M4 20h16M7 20l5-12 5 12M5 9l14-4M12 8v-4",
-    petroleum_site: "M4 20V10a4 4 0 0 1 8 0v10M12 20v-7a4 4 0 0 1 8 0v7M3 20h18",
-}
-const _icons = new Map()
-function iconFor(f) {
-    const p = f.props || {}
-    const fill = f.kind === "power_plant" ? (SOURCE_COLOR[p.source] || "#E58A3A")
-        : f.kind === "substation" ? voltageColor(p.voltage)
-        : f.kind === "wind_turbine" ? SOURCE_COLOR.wind
-        : f.kind === "telecom_mast" || f.kind === "data_center" ? "#61B37A"
-        : "#B08850"
-    const key = `${f.kind}|${fill}`
-    if (_icons.has(key)) return _icons.get(key)
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-      <circle cx="20" cy="20" r="17" fill="#0b1220" stroke="${fill}" stroke-width="3"/>
-      <g transform="translate(8 8)" fill="none" stroke="${fill}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${GLYPH[f.kind] || GLYPH.power_plant}"/></g>
-    </svg>`
-    const uri = `data:image/svg+xml;base64,${btoa(svg)}`
-    _icons.set(key, uri)
-    return uri
-}
-const POINT_SIZE = { power_plant: 26, substation: 18, wind_turbine: 16, telecom_mast: 16, data_center: 20, well: 15, petroleum_site: 20 }
+// THE ONE TYPOLOGY (lib/mapIcons.js): a plant, a substation, a turbine, a mast, a data centre, a well, a petroleum
+// site are infrastructure context, a line glyph with no fill, neutral, 18 px whatever the plant's size or voltage;
+// voltage and fuel colours stay on the LINES only (owner, 2026-10-23).
+const iconFor = (f) => infraIcon({ glyph: f.kind in GLYPH ? f.kind : "power_plant" }).uri
+const GLYPH = { power_plant: 1, substation: 1, wind_turbine: 1, telecom_mast: 1, data_center: 1, well: 1, petroleum_site: 1 }
 
 /** Zoom level the backend thinks in, from the camera's height above the ground. */
 export function zoomForHeight(h) {
@@ -132,8 +108,8 @@ export default function GlobeInfraLayer({ enabled = false }) {
                         lines.add({ positions: Cartesian3.fromDegreesArray(pts.flat()), width: st.width, material: mat(st.color, st.dashed), id: pickId })
                     }
                 } else {
-                    points.add({ position: Cartesian3.fromDegrees(f.lon, f.lat), image: iconFor(f), width: POINT_SIZE[f.kind] || 16,
-                                 height: POINT_SIZE[f.kind] || 16, id: pickId, 
+                    points.add({ position: Cartesian3.fromDegrees(f.lon, f.lat), image: iconFor(f), width: SIZE.infra,
+                                 height: SIZE.infra, id: pickId,
                                  disableDepthTestDistance: 5e4 })
                     if (zoom >= 11 && f.props?.name && (f.kind === "power_plant" || f.kind === "substation" || f.kind === "data_center" || f.kind === "petroleum_site")) {
                         labels.add({ position: Cartesian3.fromDegrees(f.lon, f.lat), text: String(f.title).slice(0, 40), font: "600 12px sans-serif",

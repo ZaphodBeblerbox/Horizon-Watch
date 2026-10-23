@@ -5,7 +5,7 @@ vi.mock("cesium", () => {
     const C = { fromCssColorString: () => ({ withAlpha: () => ({}) }) }
     return { CallbackProperty: function () {}, Cartesian2: function () {}, Cartesian3: { fromDegrees: () => ({}), fromDegreesArray: () => [] },
              Color: { ...C, WHITE: {} }, ColorMaterialProperty: function () {}, DistanceDisplayCondition: function () {},
-             LabelStyle: {}, VerticalOrigin: {} }
+             LabelStyle: {}, VerticalOrigin: {}, HeightReference: {} }
 })
 
 const { zoneRing, aoiStyle } = await import("./GlobeAoisLayer.jsx")
