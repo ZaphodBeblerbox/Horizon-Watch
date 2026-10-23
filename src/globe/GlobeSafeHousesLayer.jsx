@@ -1,13 +1,16 @@
 /**
  * GlobeSafeHousesLayer.jsx — the SAFE HOUSES layer (owner, 2026-10-12): every
- * safe house this user can see (GET /api/evacuations/safe-houses), a green
- * house-with-a-check pin — grey when closed — named close in, with how many
+ * safe house this user can see (GET /api/evacuations/safe-houses), ours, so the
+ * one typology's pin (lib/mapIcons.js): a gold tile with a house and a check, the
+ * past state (hollow, faint) when closed — named close in, with how many
  * places are free. A click opens it like any asset (entityStore "owned_asset").
  * The register's own pins (GlobeAssetsLayer) leave safe houses to this layer.
  */
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Entity } from "resium"
-import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference, LabelStyle, NearFarScalar, VerticalOrigin } from "cesium"
+import { Cartesian2, Cartesian3, Color, DistanceDisplayCondition, HeightReference, LabelStyle, VerticalOrigin } from "cesium"
+import { SIZE, clusterIcon } from "../lib/mapIcons.js"
+import { useDeclutter, clusterRecord } from "./screenDeclutter.js"
 import { listSafeHouses } from "../evacuation/api.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
 import { safeHouseIcon, placesLabel } from "../evacuation/safeHouseIcon.js"
@@ -31,15 +34,29 @@ export default function GlobeSafeHousesLayer({ enabled = true }) {
         }))
         return () => houses.forEach((h) => deleteEntity(`safehouse-${h.id}`))
     }, [houses])
+    // ONE COLLISION PASS with every other point layer (screenDeclutter.js)
+    const items = useMemo(() => houses.map((h) => ({ id: `safehouse-${h.id}`, lat: +h.lat, lon: +h.lon, size: SIZE.pin.h, pri: "info",
+                                                     title: `Safe house — ${h.name}`, line: h.status === "closed" ? "closed" : "open" })), [houses])
+    const layout = useDeclutter("safeHouses", items, enabled)
+    const clusters = layout.filter((g) => g.cluster)
+    useEffect(() => {
+        clusters.forEach((g) => setEntity(g.id, "telegram", clusterRecord(g)))
+        return () => clusters.forEach((g) => deleteEntity(g.id))
+    }, [layout]) // eslint-disable-line react-hooks/exhaustive-deps
     if (!enabled) return null
-    return houses.map((h) => (
+    const single = new Set(layout.filter((g) => !g.cluster).map((g) => g.id))
+    return [...clusters.map((g) => (
+        <Entity key={g.id} id={g.id} name={`${g.members.length} here`} position={Cartesian3.fromDegrees(g.lon, g.lat, 0)}
+                billboard={{ image: clusterIcon(g.members.length, g.pri).uri, width: SIZE.cluster, height: SIZE.cluster,
+                             heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e7, eyeOffset: new Cartesian3(0, 0, -150) }} />
+    )), ...houses.filter((h) => single.has(`safehouse-${h.id}`)).map((h) => (
         <Entity key={h.id} id={`safehouse-${h.id}`} name={`Safe house — ${h.name}`} position={Cartesian3.fromDegrees(h.lon, h.lat)}
-                billboard={{ image: safeHouseIcon(h.status === "closed"), width: 32, height: 38, verticalOrigin: VerticalOrigin.BOTTOM,
+                billboard={{ image: safeHouseIcon(h.status === "closed"), width: SIZE.pin.w, height: SIZE.pin.h, verticalOrigin: VerticalOrigin.BOTTOM,
                              heightReference: HeightReference.CLAMP_TO_GROUND, eyeOffset: new Cartesian3(0, 0, -150),
                              }}
                 label={{ text: `${h.name}${h.status === "closed" ? " · closed" : placesLabel(h)}`, font: "600 13px sans-serif",
                          fillColor: Color.fromCssColorString("#d8ffe6"), outlineColor: Color.BLACK, outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE,
                          verticalOrigin: VerticalOrigin.TOP, pixelOffset: new Cartesian2(0, 6), heightReference: HeightReference.CLAMP_TO_GROUND,
                          distanceDisplayCondition: new DistanceDisplayCondition(0, 900_000) }} />
-    ))
+    ))]
 }

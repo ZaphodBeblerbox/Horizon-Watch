@@ -1,25 +1,30 @@
 /**
  * GlobeAssetTrackLayer.jsx — the shown track on the globe (location/track.js):
- * the line coloured by age (older fades), an amber numbered point at each
+ * the line coloured by age (older fades), an amber numbered dot at each
  * stop of 10 minutes or more (its description says arrived, left, how
- * long), a green start, a blue end, and while replaying the line up to the
- * scrubber with a white marker where they were then. Flies to the track
+ * long), a hollow blue start, a filled blue end, and while replaying the line
+ * up to the scrubber with a ringed blue dot where they were then. Every dot is
+ * the one typology's (lib/mapIcons.js dotIcon), constant in size; no green. Flies to the track
  * when it is first shown.
  */
 import { useEffect, useMemo, useRef } from "react"
 import { Entity, useCesium } from "resium"
-import { Cartesian2, Cartesian3, Color, HeightReference, LabelStyle, PolylineDashMaterialProperty, VerticalOrigin } from "cesium"
+import { Cartesian2, Cartesian3, Color, HeightReference, LabelStyle, PolylineDashMaterialProperty } from "cesium"
 import { useTrackState } from "../location/TrackPanel.jsx"
 import { ageSegments, upTo, positionAt, stopLabel, tsOf, dayHm } from "../location/track.js"
 import { useRenderTick } from "./useGlidingPosition.js"
 import { MARKER_DEPTH_TEST_M } from "./entityIcons.js"
+import { dotIcon } from "../lib/mapIcons.js"
 
 // LINES A FEW METRES UP, NOT CLAMPED: a ground polyline needs GPU support some
 // machines (and headless checks) lack, and then draws nothing; with a
 // depth-fail material the line still shows where terrain rises over it.
 const flat = (coords) => Cartesian3.fromDegreesArrayHeights(coords.flatMap(([lat, lon]) => [lon, lat, 4]))
-const point = (color, size = 12) => ({ pixelSize: size, color, outlineColor: Color.WHITE, outlineWidth: 2,
-                                       heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M })
+/** A track's dot as a billboard: start, end, stop (with its number), now (lib/mapIcons.js dotIcon). */
+const dot = (role, label = null) => {
+    const i = dotIcon({ role, label })
+    return { image: i.uri, width: i.w, height: i.h, heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M }
+}
 
 export default function GlobeAssetTrackLayer() {
     const s = useTrackState()
@@ -59,24 +64,21 @@ export default function GlobeAssetTrackLayer() {
             ))}
             {(s.data.stops || []).map((st, i) => (s.scrubT != null && Date.parse(st.arrived) > s.scrubT) ? null : (
                 <Entity key={`stop-${i}`} id={`track-stop-${i}`} name={`Stop ${i + 1}`} description={stopLabel(st)}
-                        position={Cartesian3.fromDegrees(st.lon, st.lat)} point={point(Color.fromCssColorString("#f5a524"), 14)}
-                        label={{ text: String(i + 1), font: "700 11px sans-serif", fillColor: Color.BLACK, style: LabelStyle.FILL,
-                                 verticalOrigin: VerticalOrigin.CENTER, heightReference: HeightReference.CLAMP_TO_GROUND,
-                                 disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
+                        position={Cartesian3.fromDegrees(st.lon, st.lat)} billboard={dot("stop", i + 1)} />
             ))}
             <Entity id="track-start" name="Start of the track" description={dayHm(s0.at)} position={Cartesian3.fromDegrees(s0.lon, s0.lat)}
-                    point={point(Color.fromCssColorString("#3ddc84"), 13)}
+                    billboard={dot("start")}
                     label={{ text: "Start", font: "600 12px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK, outlineWidth: 3,
                              style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -16), heightReference: HeightReference.CLAMP_TO_GROUND,
                              disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             {now ? (
-                <Entity id="track-now" position={Cartesian3.fromDegrees(now.lon, now.lat)} point={point(Color.WHITE, 15)}
+                <Entity id="track-now" position={Cartesian3.fromDegrees(now.lon, now.lat)} billboard={dot("now")}
                         label={{ text: dayHm(new Date(now.at).toISOString()), font: "600 12px sans-serif", fillColor: Color.WHITE, outlineColor: Color.BLACK,
                                  outlineWidth: 3, style: LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cartesian2(0, -18),
                                  heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: MARKER_DEPTH_TEST_M }} />
             ) : (
                 <Entity id="track-end" name="Latest position" description={dayHm(e.at)} position={Cartesian3.fromDegrees(e.lon, e.lat)}
-                        point={point(Color.fromCssColorString("#3b8cff"), 15)} />
+                        billboard={dot("end")} />
             )}
         </>
     )

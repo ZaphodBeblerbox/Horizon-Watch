@@ -3,7 +3,7 @@ import { Entity, useCesium } from "resium"
 import {
     Cartesian3, Cartesian2, Color,
     CallbackProperty, Transforms, HeadingPitchRoll, ColorBlendMode,
-    NearFarScalar, DistanceDisplayCondition,
+    DistanceDisplayCondition,
 } from "cesium"
 import { acClassify } from "./iconUtils.js"
 import { setEntity, deleteEntity } from "./entityStore.js"
@@ -11,6 +11,7 @@ import { isMobile, ADSB_CAP } from "./isMobile.js"
 import { safeCartesian } from "./markerOrientation.js"
 import { createMotion, AIRCRAFT, live as liveMotion } from "./smoothMotion.js"
 import { planeIcon, headingBillboard } from "./farIcons.js"
+import { trafficTint } from "../lib/mapIcons.js"
 import { familyForDrawing, isSurfaceVehicle, modelUrl, modelHeadingRadians } from "./aircraftModels.js"
 
 const adsbLat = (ac) => ac.lat ?? ac.latitude
@@ -332,10 +333,11 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
                 // Far out every aircraft is an icon (farIcons.js); close in,
                 // the budget's nearest are airframes.
                 if (!near) {
-                    const fill = watchlisted ? "#F5A524" : classification === "military" ? "#e0b45a" : "#c9d4e3"
+                    // one traffic tone (lib/mapIcons.js): neutral; amber = watchlisted or military of interest, the same as the phone
+                    const tone = watchlisted || classification === "military" ? "urgent" : "neutral"
                     return (
                         <Entity id={`adsb-${icao}`} key={icao || `${lat}-${lon}`} position={position}
-                                billboard={headingBillboard(planeIcon(fill), Number.isFinite(motionRef.current.get(icao)?.track) ? motionRef.current.get(icao).track : track, 15)} />
+                                billboard={headingBillboard(planeIcon(tone), Number.isFinite(motionRef.current.get(icao)?.track) ? motionRef.current.get(icao).track : track)} />
                     )
                 }
                 const family = modelled.get(icao) || null
@@ -369,9 +371,9 @@ export default function GlobeADSBLayer({ aircraft, viewBounds, watchlistedIcaos,
                             maximumScale: 20000,
                             // The watchlist signal has to survive the switch
                             // from glyph to model.
-                            color: watchlisted ? Color.fromCssColorString("#FFB020") : undefined,
+                            color: watchlisted || classification === "military" ? Color.fromCssColorString(trafficTint("urgent")) : undefined,
                             colorBlendMode: ColorBlendMode.MIX,
-                            colorBlendAmount: watchlisted ? 0.7 : 0,
+                            colorBlendAmount: watchlisted || classification === "military" ? 0.7 : 0,
                         }}
                         label={isMobile ? undefined : {
                             text:       cs || icao,
