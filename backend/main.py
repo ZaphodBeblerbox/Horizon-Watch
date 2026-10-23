@@ -493,6 +493,9 @@ app.include_router(_voice_ai_router.router)
 # The one assistant of desktop, phone and voice — see assistant.py.
 from routers import assistant as _assistant_router
 app.include_router(_assistant_router.router)
+# Events with stable ids, following, attention and the model budget — routers/events_api.py (DATAMINR_PLAN B0-B4).
+from routers import events_api as _events_api_router
+app.include_router(_events_api_router.router)
 # A watch zone's automatic findings as boxes on the ground — routers/zone_findings.py.
 from routers import zone_findings as _zone_findings_router
 app.include_router(_zone_findings_router.router)
@@ -12566,6 +12569,26 @@ async def _event_watch_loop():
         await asyncio.sleep(60)
 
 
+async def _events_loop():
+    """Every 30 s: each live-gated report joins its stored event (events.py, DATAMINR_PLAN B1), other domains
+    (situations, FIRMS fires, imagery, fusion points) join, and each event whose story changed gets its next
+    brief version — rewritten by the model only where someone watches (attention.py). Rows in SQLite only:
+    WORKER_ONLY. A failed pass is counted and logged, never silent."""
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="events")
+    await asyncio.sleep(60)
+    import events as _events
+    while True:
+        try:
+            out = await asyncio.get_running_loop().run_in_executor(_pool, _events.reconcile)
+            if out.get("assigned") or out.get("versions"):
+                print(f"[events] {out}", flush=True)
+        except Exception as _e:                              # noqa: BLE001
+            _events._bump("failed_passes")
+            _loop_error("events", _e, every=10)
+        await asyncio.sleep(30)
+
+
 async def _warning_resend_loop():
     """Every 30 s: a warning nobody acknowledged is pushed again after
     asset_warnings.RESEND_S, up to MAX_SENDS times. In the web process (not
@@ -16901,6 +16924,7 @@ async def startup_event():
     _spawn(_telegram_vision_loop)
     _spawn(_live_incident_loop)
     _spawn(_event_watch_loop)
+    _spawn(_events_loop)
     _spawn(_exit_watch_loop)
     _spawn(_warning_resend_loop)
     _spawn(_conflict_context_loop)
@@ -29809,6 +29833,8 @@ def api_get_notifications(
     try:
         import event_watch as _ew
         _c = _ew.concern_of(_uid) if _uid else None
+        # an event's card made this user's: their priority, New event vs Update, the update's id (DATAMINR_PLAN B2)
+        items = _ew.personalize(items, _uid, _c) if _uid else items
         for it in items:
             it["push"] = bool(_c is not None and _ew.notifies(it, _c))
     except Exception as ex:                                 # noqa: BLE001
@@ -31658,6 +31684,12 @@ async def api_patch_own_settings(request: Request):
         # reference, and flag_modified() is the standard, explicit fix for
         # mutable JSON columns regardless (belt and suspenders, not either/or).
         merged = _deep_merge_settings(copy.deepcopy(u.settings or {}), body)
+        # the alert rules (DATAMINR_PLAN B4) are stored validated: bad thresholds, mutes or hours are dropped
+        _al = (merged.get("interests") or {}).get("alerts") if isinstance(merged.get("interests"), dict) else None
+        if isinstance(_al, dict):
+            import event_watch as _ew_s
+            merged["interests"]["alerts"] = {**{k: v for k, v in _al.items() if k not in (
+                "thresholds", "mutes", "quiet_hours", "hourly_cap", "digest", "tz", "level")}, **_ew_s.validate_alerts(_al)}
         u.settings = merged
         flag_modified(u, "settings")
         db.commit()

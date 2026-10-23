@@ -68,6 +68,7 @@ WORKER_ONLY = frozenset({
     "_imminence_loop",
     "_trajectory_loop",
     "_rss_pulse_loop",              # rss_items / rss_country_day for the risk index
+    "_events_loop",                 # events / event_members / event_briefs (events.py, DATAMINR_PLAN B1)
 })
 
 #: Checked, and deliberately NOT in the list above.
