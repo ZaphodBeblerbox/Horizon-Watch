@@ -60,6 +60,7 @@ import RiskIndexPanel from "../components/RiskIndexPanel.jsx"
 import CoveragePanel from "../components/CoveragePanel.jsx"
 import InspectorPanel from "../components/InspectorPanel.jsx"
 import LayerGroup from "../components/LayerGroup.jsx"
+import ProtestFrames from "../components/ProtestFrames.jsx"
 import TimeStrip from "../components/TimeStrip.jsx"
 import VoiceBar from "../voice/VoiceBar.jsx"
 import { setVoiceSelection } from "../voice/voiceContext.js"
@@ -418,6 +419,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // (GlobeLiveSignalsLayer). It replaced the Telegram, Unrest & protests, Protests & crowds and Mood
     // layers. With News, like the others: News itself is off until chosen.
     const [liveSignalsOn, setLiveSignalsOn] = useState(true)
+    // THE PROTESTS LAYER (owner, 2026-10-23: "on the desktop version I can't actually toggle the protest movements
+    // at all"): its own switch at the top of the panel, NOT under a group — a switch under News was greyed out and
+    // disabled until News was on, and every group starts off. Off by default like every layer (globe/GlobeProtestsLayer.jsx).
+    const [protestsOn, setProtestsOn] = useState(false)
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
@@ -488,6 +493,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         geoConfirmed: [geoConfirmedOn, setGeoConfirmedOn],
         gdelt: [gdeltOn, setGdeltOn],
         liveSignals: [liveSignalsOn, setLiveSignalsOn],
+        protests: [protestsOn, setProtestsOn],
         strikes: [strikesOn, setStrikesOn],
         frontlineClaims: [claimsOn, setClaimsOn],
         movements: [movementsOn, setMovementsOn],
@@ -1267,6 +1273,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         satellite_image: [satImageOn, setSatImageOn, "imagery"],
         gdelt: [gdeltOn, setGdeltOn, "news"],
         live_signals: [liveSignalsOn, setLiveSignalsOn, "news"],
+        protests: [protestsOn, setProtestsOn],
         strikes: [strikesOn, setStrikesOn, "news"],
         geoconfirmed: [geoConfirmedOn, setGeoConfirmedOn, "news"],
         gps_interference: [gpsInterferenceOn, setGpsInterferenceOn, "air"],
@@ -1474,6 +1481,17 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     onDelete={(viewId) => { deleteActiveSessionView(viewId).catch(() => toast("Could not delete view", { icon: "i-alert" })) }}
                     onSaveCurrent={(name) => { saveCurrentAsView(name).catch(() => toast("Could not save view", { icon: "i-alert" })) }}
                 />
+
+                <LayerGroup id="protests" title="Protests" activeCount={protestsOn ? 1 : 0}>
+                    <div data-testid="protests-row">
+                        <SubLayerRow
+                            label="Protests"
+                            hint="Protests where you watch: live now (crowds, police action, arrests, the crowd's and the police's movement), what took place today, and what is announced for the coming days · from Telegram, read by the live gate · only your theaters, assets and countries"
+                            on={protestsOn} parentOn={true}
+                            onToggle={() => setProtestsOn((v) => !v)} />
+                    </div>
+                    {protestsOn && <ProtestFrames variant="desktop" />}
+                </LayerGroup>
 
                 <LayerGroup id="our-assets" title="Our assets" activeCount={(assetsOn ? 1 : 0) + (teamOn ? 1 : 0) + (safeHousesOn ? 1 : 0)}>
                     <SubLayerRow
@@ -2104,6 +2122,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         geoConfirmedEnabled={groupsOnV.news && geoConfirmedOn}
                         gdeltEnabled={groupsOnV.news && gdeltOn}
                         liveSignalsEnabled={groupsOnV.news && liveSignalsOn}
+                        protestsEnabled={protestsOn}
                         strikesEnabled={groupsOnV.news && strikesOn}
                         frontlineClaimsEnabled={groupsOnV.news && claimsOn}
                         movementsEnabled={groupsOnV.news && movementsOn}

@@ -114,6 +114,9 @@ WHAT A SIGNAL IS (the owner's whole vocabulary, 2026-10-22; event_type is exactl
 - crowd_movement: a protest, rally or march that is ON THE GROUND NOW at a place (set `direction` when the text says where it moves).
 - troops_sighted: troops, armed forces or military vehicles seen at a place.
 - police_intervention: police acting at a place: tear gas, a charge, LBD or rubber bullets, a kettle, an eviction under way.
+POLICE IS NOT THE MILITARY: police_intervention is law enforcement in a civil or protest setting (police, gendarmerie, CRS,
+BAC, BRAV-M, riot police, Polizei, carabinieri, Guardia Civil). Army, troops, soldiers, armoured vehicles, columns, brigades,
+artillery, ZSU/VSU, Russian or Ukrainian forces, the IDF, any war front: troops_sighted (or strike), never police_intervention.
 NOT SIGNALS (is_live = false, and say which in reject_class): opinion (a view, a comment, an insult, politics talk, a
 slogan, an editorial, an analysis; even when it uses violent words), statement (what an official or a party says or
 threatens), recap (a summary of past days, a toll, statistics), past_story (a story told in the past tense by a
@@ -196,6 +199,7 @@ SCHEMA = {
 
 # What the app has seen of it since start (counts for /api/telegram/status).
 STATUS = {"passes": 0, "extracted": 0, "live": 0, "rejected": 0, "unplaced": 0, "reused": 0, "skipped_prefilter": 0,
+          "model_calls": 0, "skipped_not_watched": 0, "focus_first": 0,
           "capped": 0, "model_out_passes": 0, "failed_calls": 0, "failed_passes": 0, "last_error": None,
           "last_live": None, "last_pass_at": None, "rejections": {}}
 _STATUS_LOCK = threading.Lock()
@@ -411,6 +415,11 @@ def rule_decide(text: str | None, posted_at: str | None, now: _dt.datetime | Non
     if not hit:
         out["why"] = "no act of the vocabulary named by words"
         return out
+    if hit[0] == "police_intervention":
+        import force_context
+        if force_context.is_military(body):
+            out["why"] = "police words in war reporting: troops, not police (force_context)"
+            return out
     out.update(ok=True, act=hit[0], quote=hit[1], why="act named, present-tense cue, no earlier time, recent post")
     return out
 
@@ -545,6 +554,12 @@ def verify(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
     et = raw.get("event_type")
     if et not in ACTS:
         bad.append(f"event type '{et}' is not one of the signal acts")
+    # POLICE IS NOT THE MILITARY (owner, 2026-10-23; force_context.py): a police act read out of war
+    # reporting is troops, never police — the model's word is checked against the text
+    if et == "police_intervention":
+        import force_context
+        if force_context.is_military(text):
+            et = "troops_sighted"
     cert = raw.get("certainty")
     if cert not in ("verified", "unverified"):
         bad.append("certainty missing")
@@ -1077,6 +1092,14 @@ def _chat_context(chan: str) -> tuple[str, str]:
         return chan, ""
 
 
+def _chat_cc(chan: str) -> str | None:
+    try:
+        import telegram_signals
+        return telegram_signals.chat_context(chan).get("country")
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
 def _write(con, row: dict, d: dict, raw: dict | None, cost: float, now: _dt.datetime, model: str) -> None:
     audit = dict(d["audit"])
     audit["model_name"] = model
@@ -1114,7 +1137,7 @@ def candidates(con, now: _dt.datetime, limit: int = 400) -> list[dict]:
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(
-            "SELECT channel, msg_id, channel_title, posted_at, text, role, chat_kind, read_by, lat, claim, headline,"
+            "SELECT channel, msg_id, channel_title, posted_at, text, role, chat_kind, read_by, lat, lon, country_code, claim, headline,"
             " live_verdict FROM telegram_posts WHERE live_checked IS NULL AND posted_at >= ? AND text IS NOT NULL"
             " AND COALESCE(role,'') != 'ignore' ORDER BY posted_at DESC LIMIT ?", (since, limit)).fetchall()
     finally:
@@ -1152,7 +1175,11 @@ def _note_gate_closed() -> None:
         print(f"[live-incident] NOT RUNNING — no model: {why}. Posts are read by rule (telegram_rules) meanwhile.", flush=True)
 
 
-def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geocode=None, gate_ok=None) -> dict:
+WATCH_GATE = os.getenv("LIVE_INCIDENT_WATCH_GATE", "1").strip() != "0"
+
+
+def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geocode=None, gate_ok=None,
+             watch=None) -> dict:
     """One pass over the posts of the last LIVE_WINDOW_MIN. `extract_fn(text,
     published_at, source_name, source_region)` → (raw, cost) | (None, 0) when
     no model; default is `extract`. Failures are counted and logged loudly."""
@@ -1162,7 +1189,7 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
         import telegram_ingest
         con = telegram_ingest._con()
     out = {"considered": 0, "live": 0, "rejected": 0, "unplaced": 0, "reused": 0, "skipped": 0, "capped": 0,
-           "failed": 0, "model_out": False}
+           "failed": 0, "model_out": False, "not_watched": 0, "focus": 0}
     try:
         ensure_columns(con)
         with _STATUS_LOCK:
@@ -1199,6 +1226,28 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
                 continue
             r["_drone"] = drone
             r["_hash"] = text_hash(r["text"])
+            # ONLY WHAT SOMEONE WATCHES (owner, 2026-10-23, watch_gate.py): a post outside every user's profile
+            # gets no model call; the rule reading (telegram_ingest, rule_decide) is all it gets
+            r["_focus"] = False
+            if watch is not None or (WATCH_GATE and extract_fn is None):
+                import watch_gate
+                try:
+                    w_ok, focus, w_why = watch_gate.judge(r, watch, _chat_cc(r["channel"]))
+                except Exception as e:                                  # noqa: BLE001
+                    print(f"[live-incident] error: watch gate: {type(e).__name__}: {e}", flush=True)
+                    w_ok, focus, w_why = True, False, "gate error: open"
+                if not w_ok:
+                    out["not_watched"] += 1
+                    _bump("skipped_not_watched")
+                    watch_gate.STATUS["not_watched"] += 1
+                    con.execute("UPDATE telegram_posts SET live_checked=1, live_at=?, live_verdict=? WHERE channel=? AND msg_id=?",
+                                (iso(now), f"skipped: not watched by any user ({w_why}); rule path only"[:300], r["channel"], r["msg_id"]))
+                    continue
+                watch_gate.STATUS["watched"] += 1
+                if focus:
+                    watch_gate.STATUS["focus"] += 1
+                    out["focus"] += 1
+                r["_focus"] = focus
             todo.append(r)
         con.commit()
         if not todo:
@@ -1211,7 +1260,9 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
             _bump("model_out_passes")
             _note_gate_closed()
             return out
-        todo.sort(key=lambda r: (r["_drone"], ""))                      # stable: strong event words first, newest first within
+        # stable: a focus area first (a city-scale theater, a position: Paris on Saturday), then strong event words,
+        # newest first within
+        todo.sort(key=lambda r: (not r.get("_focus"), r["_drone"]))
         left = budget(con, now)["left"]
         extract_fn = extract_fn or (lambda t, p, n, rg: extract(t, p, n, rg))
         geo_budget = [GEOCODES_PER_PASS]
@@ -1259,6 +1310,8 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
                 return "failed"
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="live-incident-call") as pool:
             answers = list(pool.map(call, fresh))
+        _bump("model_calls", len(fresh))
+        _bump("focus_first", sum(1 for r in fresh if r.get("_focus")))
         raw_by_hash = {}
         for r, ans in zip(fresh, answers):
             out["considered"] += 1
@@ -1310,7 +1363,12 @@ def status() -> dict:
     with _STATUS_LOCK:
         out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in STATUS.items()}
     out.update({"enabled": ENABLED, "model": MODEL, "window_min": LIVE_WINDOW_MIN, "per_hour": PER_HOUR,
-                "per_day": PER_DAY})
+                "per_day": PER_DAY, "watch_gate_on": WATCH_GATE})
+    try:
+        import watch_gate
+        out["watch_gate"] = watch_gate.status()            # model calls only for what a user watches
+    except Exception as e:                                   # noqa: BLE001
+        out["watch_gate"] = {"error": f"{type(e).__name__}: {e}"}
     try:
         out["gate_closed_because"] = gate_reason()          # None: the model is available
     except Exception as e:                                   # noqa: BLE001

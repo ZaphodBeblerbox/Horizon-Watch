@@ -12292,6 +12292,19 @@ async def api_telegram_live_incidents(request: Request):
     return _pf.lists({"incidents": await loop.run_in_executor(_executor, _tg.live_incidents)}, user, "incidents")
 
 
+@app.get("/api/protests")
+async def api_protests(request: Request, frame: str = Query("live", pattern="^(live|today|upcoming)$")):
+    """THE PROTESTS LAYER (protests.py, owner 2026-10-23): live now (on the ground now: crowds, police acts,
+    arrests, announced protests with a fresh report, the crowd's and the police's movement), today (what happened
+    since local midnight there), upcoming (announced for the next 7 days, a real date and a named place). Built
+    once for everybody (SharedCache), filtered by the asking user's profile after; `counts` and `note` say what the
+    other frames hold when this one is empty."""
+    import protests as _pr
+    user = await _profile_user(request)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _pr.for_user, user, frame)
+
+
 @app.get("/api/telegram/signals/live")
 async def api_telegram_live_signals():
     """THE signals of the map and the notifications (live_signals.py, owner 2026-10-22): the owner's acts at

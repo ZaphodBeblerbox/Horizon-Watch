@@ -165,6 +165,9 @@ export const TRACK_TOGGLES = [
  * `gfw:<kind>` is one Global Fishing Watch event kind.
  */
 export const SUB_LAYERS = [
+    // Its own switch, under no group (owner, 2026-10-23; globe/GlobeProtestsLayer.jsx, mobile/mapLayers.js "protests")
+    { key: "protests",        label: "Protests",                 parent: null,
+      hint: "Protests where you watch: live now, what took place today, and what is announced for the coming days" },
     { key: "assets",          label: "Our assets",               parent: null },
     { key: "endangered",      label: "Endangered places",        parent: null },
     { key: "imagerySignals",  label: "Imagery signals",          parent: "imagery" },
