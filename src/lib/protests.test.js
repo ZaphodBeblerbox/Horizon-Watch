@@ -118,9 +118,10 @@ describe("protests layer: marks and cards", () => {
         setMeta({ frame: "live", counts: { live: 0, today: 3, upcoming: 2 }, note: "Nothing live in your areas right now. 3 protests today, 2 upcoming." })
         for (const v of ["phone", "desktop"]) {
             const html = renderToStaticMarkup(createElement(ProtestFrames, { variant: v }))
-            expect(html).toContain("Live now 0")
-            expect(html).toContain("Today 3")
-            expect(html).toContain("Upcoming 2")
+            const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")
+            expect(text).toContain("Live now 0")
+            expect(text).toContain("Today 3")
+            expect(text).toContain("Upcoming 2")
             expect(html).toContain("Nothing live in your areas right now.")
         }
     })
