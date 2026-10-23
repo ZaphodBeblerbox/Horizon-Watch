@@ -26,7 +26,7 @@ import { freshness, presence } from "../../location/glide.js"
 import { createLiveMarkers } from "../liveMarkers.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { LiveNow } from "../../telegram/LivePlayer.jsx"
-import { PHONE_LAYERS, layerGroups, forgetAssets } from "../mapLayers.js"
+import { PHONE_LAYERS, layerGroups, forgetAssets, featureTime } from "../mapLayers.js"
 import EndangeredCountryChips, { useEndangeredCountries, useEndangeredActive } from "../../components/EndangeredCountryChips.jsx"
 import StrikesLayerControls from "../../components/StrikesLayerControls.jsx"
 import { useStrikeSettings } from "../../globe/useStrikeSettings.js"
@@ -35,8 +35,8 @@ import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
 import { closeOpenedSignal } from "../../lib/signalPin.js"
-import { declutterAll } from "../../lib/liveSignals.js"
-import { trafficIcon, trafficTone, dotIcon, clusterIcon, topPriority, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
+import { declutterAll, representative } from "../../lib/liveSignals.js"
+import { trafficIcon, trafficTone, dotIcon, markerIcon, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
 import MapLegend from "../../components/MapLegend.jsx"
 import ProtestFrames, { useProtestFrame } from "../../components/ProtestFrames.jsx"
 import { setTheaterScope } from "../theaterScope.js"
@@ -94,14 +94,10 @@ const scaled = (f, dw = 16) => {
     const a = f.iconAnchor ? [Math.round(f.iconAnchor[0] * PHONE_ICON_SCALE), Math.round(f.iconAnchor[1] * PHONE_ICON_SCALE)] : [w / 2, h / 2]
     return { w, h, a }
 }
-// NO TWO MARKERS OVERLAP (owner, 2026-10-22/23): every point of every layer joins one collision pass in screen
-// pixels; markers whose boxes touch become ONE cluster badge (lib/mapIcons.js clusterIcon, ringed in the highest
-// priority inside, one constant size) that opens a list. Zooming in separates them.
-const clusterIconFor = (n, pris) => {
-    const c = clusterIcon(n, topPriority(pris))
-    const d = Math.round(c.w * PHONE_ICON_SCALE)
-    return L.icon({ iconUrl: c.uri, iconSize: [d, d], iconAnchor: [d / 2, d / 2], className: "m2-cluster-badge" })
-}
+// NO TWO MARKERS OVERLAP, ONE ICON PER PLACE (owner, 2026-10-22/23): every point of every layer joins one
+// collision pass in screen pixels; markers whose boxes touch are drawn as ONE icon, the most important member's own
+// marker (liveSignals.representative: priority for you, then the most recent), never a count badge; its card lists
+// the others. Zooming in separates them.
 // the card's point: the selected state, a white ring, constant size
 const pickedIcon = L.divIcon({ className: "", iconSize: [40, 40], iconAnchor: [20, 20], html: '<div class="m2-picked"></div>' })
 
@@ -315,6 +311,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
             const a = f.raw || {}
             const linked = a.identifiers?.user_id
             if (linked && a.kind === "person" && on.people) continue        // shown as the person itself
+            if (linked && a.kind === "person" && me && String(linked) === String(uid)) continue     // you: the blue dot only
             if (linked && me?.live && String(linked) === String(uid)) { liveAssets.set(a.id, { lat: me.lat, lon: me.lon, at: me.at, f }); continue }
             const sp = stream.asset(a.id)
             if (sp && sp.at >= (Date.parse(a.position?.as_of || "") || 0)) liveAssets.set(a.id, { lat: sp.lat, lon: sp.lon, at: sp.at, gapMs: sp.prevAt ? sp.at - sp.prevAt : undefined, f })
@@ -387,27 +384,22 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 if (l.key === "geoConfirmed" && covered.has(f.id)) return
                 // A PERSON'S OWN "(live)" ASSET is that person: drawn once, as the
                 // person (the blue dot for you, the team marker for others), never twice
+                if (l.key === "assets" && f.raw?.kind === "person" && me && String(f.raw?.identifiers?.user_id || "") === String(uid)) return    // you: the blue dot only
                 if (l.key === "assets" && f.raw?.kind === "person" && f.raw?.identifiers?.user_id && on.people) return
                 if (l.kind === "areas") {
                     if (!f.rings) return
                     want.set(`a:${key}`, { sig: `${f.color}|${f.strokeColor}|${f.fillOpacity}|${f.weight}|${f.dash}|${f.rings.length}|${JSON.stringify(f.rings[0]?.[0])}|${f.badge?.text || ""}`, make: () => {
                         const a = L.polygon(f.rings, { color: f.strokeColor || f.color, weight: f.weight ?? 1, fillColor: f.color, fillOpacity: f.fillOpacity ?? 0.15, dashArray: f.dash || undefined, interactive: !!f.title, className: f.className })
                         if (f.title) a.on("click", tap(f, l, key))
-                        // A count on the area (a zone with a fresh finding).
-                        if (f.badge && Number.isFinite(+f.badge.lat) && Number.isFinite(+f.badge.lon)) {
-                            const fg = L.featureGroup([a])
-                            const n = Number(f.badge.text)
-                            const c = clusterIcon(Number.isFinite(n) && n > 0 ? n : "!", "flash"), d = Math.round(c.w * PHONE_ICON_SCALE)
-                            const bm = L.marker([+f.badge.lat, +f.badge.lon], {
-                                icon: L.icon({ iconUrl: c.uri, iconSize: [d, d], iconAnchor: [d / 2, d / 2], className: "m2-aoi-badge" }),
-                                keyboard: false, zIndexOffset: 400,
-                            })
-                            if (f.title) bm.on("click", tap(f, l, key))
-                            fg.addLayer(bm)
-                            return fg
-                        }
                         return a
                     } })
+                    // a zone with a fresh finding: a warning we derived (the detection triangle) at its centre, in the
+                    // one collision pass like every other point
+                    if (f.badge && Number.isFinite(+f.badge.lat) && Number.isFinite(+f.badge.lon)) {
+                        const b = markerIcon({ kind: "derived", glyph: "detection", priority: "urgent" })
+                        points.push({ key: `${key}:fresh`, l, lat: +f.badge.lat, lon: +f.badge.lon,
+                                      f: { ...f, lat: +f.badge.lat, lon: +f.badge.lon, iconUri: b.uri, size: b.w, pri: "urgent", sub: f.badge.text ? `${f.badge.text} new` : null } })
+                    }
                 } else if (l.kind === "lines") {
                     if (!f.coords) return
                     want.set(`l:${key}`, { sig: `${f.color}|${f.weight}|${f.dash}|${f.coords.length}|${JSON.stringify(f.coords[0]?.[0])}|${f.marker?.iconUri?.length || 0}`, make: () => {
@@ -415,12 +407,18 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         if (f.title) ln.on("click", tap(f, l, key))
                         // a symbol on the line (a movement's unit, a flight's weapon)
                         const mk = f.marker
-                        if (mk?.iconUri && Number.isFinite(+mk.lat) && Number.isFinite(+mk.lon)) {
+                        if (mk?.label && mk?.iconUri && Number.isFinite(+mk.lat) && Number.isFinite(+mk.lon)) {
                             const { w, h, a } = scaled({ iconWidth: mk.iconWidth || 18, iconHeight: mk.iconHeight || 18, iconAnchor: mk.iconAnchor })
                             return L.featureGroup([ln, L.marker([+mk.lat, +mk.lon], { icon: L.icon({ iconUrl: mk.iconUri, iconSize: [w, h], iconAnchor: a }), keyboard: false }).on("click", tap(f, l, key))])
                         }
                         return ln
                     } })
+                    const mk = f.marker
+                    if (mk && !mk.label && mk.iconUri && Number.isFinite(+mk.lat) && Number.isFinite(+mk.lon)) {
+                        points.push({ key: `${key}:mark`, l, lat: +mk.lat, lon: +mk.lon,
+                                      f: { ...f, lat: +mk.lat, lon: +mk.lon, iconUri: mk.iconUri, iconWidth: mk.iconWidth, iconHeight: mk.iconHeight,
+                                           iconAnchor: mk.iconAnchor, size: Math.max(mk.iconWidth || 0, mk.iconHeight || 0) || 24, pri: f.pri || "alert" } })
+                    }
                 } else {
                     if (!Number.isFinite(+f.lat) || !Number.isFinite(+f.lon) || !f.iconUri) return
                     const rank = RANK[String(f.severity || "").toLowerCase()] ?? 3
@@ -447,7 +445,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 const q = m.project([p.lat, p.lon], z0)
                 const { w, h, a } = scaled(p.f)
                 // the box the marker covers on screen (a pin stands above its point)
-                return { id: p.key, x: q.x - a[0] + w / 2, y: q.y - a[1] + h / 2, size: Math.max(w, h), sev: p.f.severity || null, _p: p }
+                return { id: p.key, x: q.x - a[0] + w / 2, y: q.y - a[1] + h / 2, size: Math.max(w, h), sev: p.f.severity || null,
+                         pri: p.f.pri || null, t: featureTime(p.f), _p: p }
             }))
             for (const g of groups) {
                 if (!g.cluster) {
@@ -459,13 +458,17 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     }).on("click", tap(p.f, p.l, p.key)) })
                     continue
                 }
-                const list = g.members.map((mm) => mm._p)
-                const lat = list.reduce((x, p) => x + p.lat, 0) / list.length, lon = list.reduce((x, p) => x + p.lon, 0) / list.length
+                // ONE ICON: the most important member's own marker at its own place; the card lists the others
+                const top = representative(g.members.map((mm) => ({ pri: mm.pri, t: mm.t, _p: mm._p })))._p
+                const others = g.members.map((mm) => mm._p).filter((p) => p !== top)
+                const list = [top, ...others]
                 const key = `lc:${list.map((p) => p.key).sort().join("|")}`
-                const pris = list.map((p) => p.f.pri).filter(Boolean)
-                want.set(key, { sig: `${list.length}|${lat.toFixed(5)}|${lon.toFixed(5)}|${topPriority(pris)}`, make: () => L.marker([lat, lon], { icon: clusterIconFor(list.length, pris), keyboard: false, zIndexOffset: 300 })
-                    .on("click", () => setOpen({ kind: "live_cluster", headline: `${list.length} here`, title: `${list.length} here`, lat, lon, _key: key,
-                                                  cluster: list.map((p) => ({ title: p.f.title, line: p.f.sub })) })) })
+                const { w, h, a } = scaled(top.f)
+                const head = `${top.f.title || top.l.label} · ${others.length} more here`
+                want.set(key, { sig: `${top.f.iconUri}|${w}|${h}|${top.lat}|${top.lon}|${list.length}`, make: () => L.marker([top.lat, top.lon], {
+                    icon: L.icon({ iconUrl: top.f.iconUri, iconSize: [w, h], iconAnchor: a }), keyboard: false, zIndexOffset: 300,
+                }).on("click", () => setOpen({ kind: "live_cluster", headline: head, title: head, lat: top.lat, lon: top.lon, _key: key,
+                                               cluster: list.map((p) => ({ title: p.f.title || p.l.label, line: p.f.sub })) })) })
             }
         }
         const kept = drawn.current
@@ -516,7 +519,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const m = map.current
         if (!m) return
         if (picked.current) { picked.current.remove(); picked.current = null }
-        if (open && Number.isFinite(+open.lat) && Number.isFinite(+open.lon)) {
+        if (open && open._key !== "me" && !open._me && Number.isFinite(+open.lat) && Number.isFinite(+open.lon)) {
             picked.current = L.marker([+open.lat, +open.lon], { icon: pickedIcon, interactive: false, keyboard: false, zIndexOffset: -100 }).addTo(m)
         }
     }, [open?.lat, open?.lon, open?._key]) // eslint-disable-line react-hooks/exhaustive-deps

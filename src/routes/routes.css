@@ -57,13 +57,6 @@
 .plx-swatch { margin-top: 8px; height: 5px; border-radius: 3px; background: #8fb4e8; }
 .plx-swatch.safest { background: #3ddc84; }
 .plx-swatch.fastest { background: none; border-top: 4px dashed #9aa3ad; height: 0; }
-.plx-route-origin { width: 18px; height: 18px; border-radius: 9px; background: #3b8cff; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(59,140,255,.25); }
-.plx-route-dest { width: 26px; height: 26px; border-radius: 13px; background: #3ddc84; color: #0b1a10; font-weight: 700; text-align: center; line-height: 26px; border: 2px solid #fff; }
 .leaflet-tooltip.plx-hazard-label { background: rgba(229,72,77,.92); color: #fff; border: 0; border-radius: 6px; font-size: 11.5px; padding: 3px 7px; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
 .leaflet-tooltip.plx-hazard-label::before { border-top-color: rgba(229,72,77,.92); }
-.m2-track-stop { width: 20px; height: 20px; border-radius: 10px; background: #f5a524; color: #1a1205; font: 700 11px/20px sans-serif; text-align: center; border: 2px solid #fff; }
-.m2-track-start { width: 20px; height: 20px; border-radius: 10px; background: #3ddc84; color: #0b1a10; font: 700 11px/20px sans-serif; text-align: center; border: 2px solid #fff; }
-.m2-track-end { width: 22px; height: 22px; border-radius: 11px; background: #3b8cff; border: 3px solid #fff; box-shadow: 0 0 0 5px rgba(59,140,255,.3); }
-.m2-track-now { width: 22px; height: 22px; border-radius: 11px; background: #fff; border: 4px solid #3b8cff; box-shadow: 0 0 0 5px rgba(59,140,255,.35); }
 .plx-getout { background: #b3261e !important; color: #fff !important; }
-.m2 .plx-route-dest { background: #f4f5f7; color: #0a0b0d; }

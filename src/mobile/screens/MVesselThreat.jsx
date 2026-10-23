@@ -1,19 +1,18 @@
 // Phone: a Russia-linked vessel loitering off Europe, from its alert card.
 // The sheet shows the vessel-of-concern score, its reasons and the top ten
 // targets in reach; "Show live on the map" draws it on the Leaflet map
-// (drawVesselThreat): rings, the last 24 h trail, target markers, and a
+// (drawVesselThreat): the last 24 h trail, target markers, and a
 // dashed line to the top target with the drone's time to target — the
 // phone's version of the desktop's simulated flight.
 import { useEffect, useState } from "react"
 import { fetchVesselThreat } from "../../state/vesselThreatStore.js"
 import { SIM_LABEL, fmtMinutes, mmsiOf } from "../../globe/vesselThreat.js"
-import { markerIcon, dotIcon, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
+import { markerIcon, infraIcon, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
 
 // markers in the one typology (lib/mapIcons.js): the vessel of concern a derived warning (triangle, flash), the targets
-// in reach small dots (urgent for the ranked ones, neutral otherwise); the reach rings are lines
+// in reach the typology's infrastructure glyphs (urgent for the ranked ones); no reach rings, no dots (owner, 2026-10-23)
 const img = (L, i) => { const w = Math.round(i.w * PHONE_ICON_SCALE), h = Math.round(i.h * PHONE_ICON_SCALE); return L.icon({ iconUrl: i.uri, iconSize: [w, h], iconAnchor: [w / 2, h / 2] }) }
 
-const RING = ["#ff5a4f", "#ff9f43", "#ffd166"]
 
 export function VesselThreatBlock({ s, onShowOnMap, onClose }) {
   const mmsi = mmsiOf(s, s?.id)
@@ -54,23 +53,31 @@ export function VesselThreatBlock({ s, onShowOnMap, onClose }) {
   )
 }
 
-const circle = (L, lat, lon, km, color) => L.circle([lat, lon], { radius: km * 1000, color, weight: 2, dashArray: "8 6", fill: false, interactive: false })
+// A target in reach is infrastructure context: the typology's line glyph for what it is (owner, 2026-10-23 evening:
+// no big circles, no black dots; the icons used everywhere else). The ranked ones in the urgent colour.
+const targetGlyph = (t) => {
+  const k = `${t.type || ""} ${t.type_label || ""}`.toLowerCase()
+  if (/port|harbou?r|terminal|lng/.test(k)) return "port"
+  if (/air(port|field|base)/.test(k)) return "airport"
+  if (/power|plant|nuclear|substation|grid/.test(k)) return "power_plant"
+  if (/refiner|oil|fuel|depot/.test(k)) return "refinery"
+  if (/cable|telecom|data/.test(k)) return "telecom_mast"
+  if (/military|naval|base/.test(k)) return "military"
+  return "Sites"
+}
 
 /** Draw the live view into a Leaflet layer group; returns bounds to fit. */
 export function drawVesselThreat(L, g, d) {
   g.clearLayers()
   if (!d?.vessel) return null
   const { lat, lon } = d.vessel
-  ;(d.rings_km || []).forEach((km, i) => {
-    circle(L, lat, lon, km, RING[i] || RING[2]).addTo(g)
-    L.marker([lat + km / 111.2, lon], { interactive: false, icon: L.divIcon({ className: "", html: `<span style="font:600 11px var(--font);color:${RING[i] || RING[2]};text-shadow:0 0 3px #000;white-space:nowrap">${km.toLocaleString("en-GB")} km</span>` }) }).addTo(g)
-  })
+  // the reach is in the card's words (the drone's range), not drawn as big rings on the map
   const trail = (d.trail || []).map(([a, b]) => [a, b])
   if (trail.length > 1) L.polyline([...trail, [lat, lon]], { color: "#4fc3f7", weight: 3 }).addTo(g)
   ;(d.markers || []).forEach((t) => {
     const rank = (d.targets || []).findIndex((x) => x.name === t.name && x.lat === t.lat)
     const top = rank >= 0
-    const m = L.marker([t.lat, t.lon], { icon: img(L, dotIcon({ role: "endpoint", priority: top ? "urgent" : "alert" })), keyboard: false })
+    const m = L.marker([t.lat, t.lon], { icon: img(L, infraIcon({ glyph: targetGlyph(t), priority: top ? "urgent" : null })), keyboard: false })
       .bindTooltip(`${top ? `${rank + 1}. ` : ""}${t.name} · ${t.type_label} · ${Math.round(t.distance_km)} km · ~${fmtMinutes(t.flight_min)}`)
     m.addTo(g)
   })

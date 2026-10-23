@@ -20,8 +20,8 @@
  */
 import { safeHouseIcon, placesLabel } from "../evacuation/safeHouseIcon.js"
 import API_BASE from "../apiBase.js"
-import { actIcon, signalIcon, signalPriority, cardText, liveSignalDrawn, mediaSources, ICON_PX } from "../lib/liveSignals.js"
-import { imageryIcon, markerUri, pinIcon, infraIcon, dotIcon, priorityOf, SIZE } from "../lib/mapIcons.js"
+import { actIcon, signalIcon, signalPriority, cardText, liveSignalDrawn, mediaSources, representative, ICON_PX } from "../lib/liveSignals.js"
+import { imageryIcon, markerUri, markerIcon, pinIcon, infraIcon, dotIcon, priorityOf, SIZE } from "../lib/mapIcons.js"
 import { PROTESTS_PATH, LIVE_REFRESH_MS, getFrame, setMeta, protestFeatures, protestBadge, refreshMs as protestsRefreshMs } from "../lib/protests.js"
 import { myPosition } from "../location/liveShare.js"
 import { getCurrentUser } from "../state/authStore.js"
@@ -30,7 +30,7 @@ import { infraGlyphUri } from "../globe/infraGlyphs.js"
 import { styleFor as gfwStyleFor, summaryOf as gfwSummaryOf, ageLabel as gfwAgeLabel, gfwIcon, KINDS as GFW_KINDS } from "../globe/gfwEvents.js"
 import { riskAlpha, buildA2ToA3, indexByIso3 } from "../globe/riskChoropleth.js"
 import { CAT } from "../components/timeStripMath.js"
-import { placeIconUri, clusterIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, filterByCountry, placesUrl } from "../globe/endangeredPlaces.js"
+import { placeIconUri, worstAlarm, placeSubtitle, placeDetail, rememberWithin7, filterByCountry, placesUrl } from "../globe/endangeredPlaces.js"
 import {
     filterStrikes, isHollow, strikeIconUri, strikeOpacity, strikePriority, strikeSettings,
     strikeSummary, strikeWindowHours, strikesUrl,
@@ -78,6 +78,16 @@ async function getJson(url, { ttlMs = 15_000, credentials = true } = {}) {
 const arr = (v) => (Array.isArray(v) ? v : [])
 const num = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v))
 const finite = (lat, lon) => Number.isFinite(num(lat)) && Number.isFinite(num(lon))
+/** A feature's time in ms (event, last update, report), for "most recent" among things at one place. */
+export function featureTime(f) {
+    if (Number.isFinite(f?.t)) return f.t
+    const r = f?.raw || {}
+    for (const v of [r.event_time, r.last_update, r.time, r.last_time, r.created_at, r.published_at, r.at, r.updated_at]) {
+        const t = typeof v === "number" ? v : Date.parse(v || "")
+        if (Number.isFinite(t)) return t
+    }
+    return NaN
+}
 const clampLat = (v) => Math.max(-90, Math.min(90, v))
 const clampLon = (v) => Math.max(-180, Math.min(180, v))
 
@@ -158,12 +168,12 @@ export function cullOrCluster(features, bounds, zoom, { noun = "points", prefix 
             const lon = list.reduce((a, f) => a + num(f.lon), 0) / list.length
             const sev = list.map((f) => f.severity).filter(Boolean)
                 .sort((a, b) => (SIG_RANK[a] ?? 9) - (SIG_RANK[b] ?? 9))[0] || null
-            const alarm = sev === "critical" || sev === "high" ? "red" : sev === "medium" ? "amber" : "grey"
-            const size = 30
+            // ONE ICON PER PLACE (owner, 2026-10-23 evening): the most important member's own marker, the rest in its card
+            const top = representative(list.map((f) => ({ ...f, t: featureTime(f) })))
             const named = list.slice(0, 8).map((f) => f.title).filter(Boolean)
             out.push({
-                id: `${prefix}-cl-${z}-${px}-${k}`, lat, lon, iconUri: clusterIconUri({ count: list.length, alarm }), size, collide: true,
-                pri: priorityOf(alarm, "info"),
+                id: `${prefix}-cl-${z}-${px}-${k}`, lat, lon, iconUri: top.iconUri, size: top.size, collide: true,
+                iconWidth: top.iconWidth, iconHeight: top.iconHeight, iconAnchor: top.iconAnchor, pri: top.pri, t: top.t,
                 title: `${list.length} ${noun} here`, sub: "Zoom in to see each one", severity: sev,
                 raw: { kind: `${prefix}_cluster`, detail: `${named.join("; ")}${list.length > 8 ? `; and ${list.length - 8} more` : ""}.`,
                        lat, lon, count: list.length },
@@ -932,7 +942,7 @@ async function loadAois({ bounds }) {
         out.push({
             id: `aoi-${z.system_id || z.id}`, rings, color: fresh ? AOI_FRESH_COLOR : AOI_COLOR,
             fillOpacity: fresh ? 0.16 : z.status === "active" ? 0.10 : 0.04, weight: fresh ? 2.6 : 1.2,
-            className: fresh ? "m2-aoi-fresh" : undefined,
+            className: undefined,
             badge: fresh && centre ? { lat: centre[0], lon: centre[1], text: fresh.count > 0 ? String(fresh.count) : "!" } : null,
             title: fresh ? `${z.name || "Area of interest"} — new finding: ${fresh.text || "something new"}` : (z.name || "Area of interest"),
             raw: z,
@@ -987,14 +997,16 @@ export function clusterPlaces(places, zoom, cellPx = 56) {
         const withCalls = list.filter((p) => arr(p.calls).length && p.alarm !== "grey")
         const lat = list.reduce((a, p) => a + num(p.lat), 0) / list.length
         const lon = list.reduce((a, p) => a + num(p.lon), 0) / list.length
-        const size = SIZE.cluster
+        const feats = list.map((p) => ({ ...endangeredFeature(p), t: featureTime({ raw: p }) }))
+        const top = representative(feats)
         const named = [...list].sort((a, b) => (ALARM_RANK[a.alarm] ?? 2) - (ALARM_RANK[b.alarm] ?? 2))
             .slice(0, 8).map((p) => `${p.name}${p.city ? ` (${p.city})` : ""}${arr(p.calls)[0] ? ` — ${p.calls[0].label_en}` : ""}`)
         const title = withCalls.length
             ? `${list.length} endangered places here — ${withCalls.length} with calls to act`
             : `${list.length} listed places here, no call`
         out.push({
-            id: `endangered-cl-${zoom}-${k}`, lat, lon, iconUri: clusterIconUri({ count: list.length, alarm }), size, collide: true, pri: priorityOf(alarm, "info"),
+            // ONE ICON PER PLACE (owner, 2026-10-23 evening): the worst, most recent place's own marker
+            id: `endangered-cl-${zoom}-${k}`, lat, lon, iconUri: top.iconUri, size: top.size, collide: true, pri: top.pri || priorityOf(alarm, "info"), t: top.t,
             title, sub: "Zoom in to see each place",
             severity: list.map(placeSev).sort((a, b) => SEV_RANK[a] - SEV_RANK[b])[0],
             raw: { kind: "endangered_cluster", detail: `${named.join("; ")}${list.length > 8 ? `; and ${list.length - 8} more` : ""}.`,
@@ -1024,7 +1036,7 @@ async function loadEndangered({ bounds, zoom }) {
 function strikeFeature(e, campaign = null) {
     return {
         id: `strike-${e.id}`, lat: num(e.lat), lon: num(e.lon),
-        iconUri: strikeIconUri({ act: e.act, hollow: isHollow(e), priority: strikePriority(e) }),
+        iconUri: strikeIconUri({ event: e, hollow: isHollow(e), priority: strikePriority(e) }),
         size: ICON_PX, collide: true, pri: strikePriority(e), opacity: strikeOpacity(e),
         title: e.title || e.act_label || "Strike",
         sub: [e.actor, e.target_name ? String(e.target_name).split(",")[0] : null].filter(Boolean).join(" · "),
@@ -1119,7 +1131,7 @@ async function loadMovements({ bounds, zoom = 0 }) {
             out.push({
                 id: `fmove-label-${m.id}`, color: colour, weight: 0, coords: [[toLL(l.at), toLL(l.at)]],
                 marker: { lat: +l.at.lat, lon: +l.at.lon, iconUri: pill.uri, iconWidth: pill.width, iconHeight: pill.height,
-                          iconAnchor: l.siege ? [pill.anchor[0], pill.height + 6] : [pill.anchor[0], -6] },
+                          iconAnchor: l.siege ? [pill.anchor[0], pill.height + 6] : [pill.anchor[0], -6], label: true },
                 title: m.label || "Movement", sub: m.from_basis || null, raw,
             })
         }
@@ -1134,13 +1146,12 @@ async function loadTrajectories({ bounds }) {
         const path = trajectoryPath(t, { samples: 24 })
         if (path.length < 2) continue
         const colour = sideColour(t.side, t.colour)
-        const o = dotIcon({ role: "endpoint", priority: "alert" })
+        // the launch end: a reported event (circle) with the weapon's glyph, 24 px; an assumed origin uncorroborated
+        // (owner, 2026-10-23 evening: no drone toy, no red ring, no black dot: the icons used everywhere else)
+        const o = markerIcon({ kind: "event", glyph: t.kind === "drone" ? "drone" : "missile", priority: "alert", state: t.from?.assumed ? "muted" : "live" })
         out.push({
             id: `ftraj-${t.id}`, color: colour, weight: 2, dash: t.from?.assumed ? "5 5" : null,
             coords: path.map(toLL),
-            // the weapon at the launch end, in the strikes layer's pin — hollow
-            // (the strikes layer's "place known only roughly") when assumed
-            // the launch end: a small hollow circle (plan §4e: trajectory origin), the same on both maps
             marker: { lat: +t.from.lat, lon: +t.from.lon, iconWidth: o.w, iconHeight: o.h, iconAnchor: o.anchor, iconUri: o.uri },
             title: t.label || t.kind_label || "Trajectory",
             sub: t.from?.name ? `${t.from.assumed ? "assumed origin" : "from"} ${t.from.name}` : null,
