@@ -67,7 +67,7 @@ def _clean_meta(meta) -> dict:
         return {}
     out = {}
     for k in ("citations", "actions", "proposals", "ask", "forms", "refused", "stopped", "step", "chips",
-              "path", "fromForm", "voice", "error"):
+              "path", "fromForm", "voice", "error", "draft"):
         if k in meta and meta[k] is not None:
             out[k] = meta[k]
     props = []
@@ -305,6 +305,32 @@ def finish_turn(uid: str, cid: str, turn_id: str, out: dict, mode: str | None = 
 def mark_stopped(uid: str, cid: str, turn_id: str, now: float | None = None) -> int | None:
     """The user pressed Stop: "Stopped." becomes the turn's answer; a late answer is not kept."""
     return finish_turn(uid, cid, turn_id, {"reply": "Stopped.", "stopped": True}, now=now) if turn_id else None
+
+
+DRAFT_KEYS = ("short", "long", "state", "post_id")
+
+
+def set_draft(uid: str, cid: str, mid: int, patch: dict) -> dict:
+    """A post draft's edited text and whether it went to the Desk."""
+    with A._db_lock:
+        con = _con()
+        try:
+            _own(con, uid, cid)
+            r = con.execute("SELECT meta FROM assistant_messages WHERE id=? AND conv_id=? AND uid=?",
+                            (int(mid), cid, str(uid))).fetchone()
+            if not r:
+                raise NotFound("message not found")
+            meta = json.loads(r[0] or "{}")
+            if not isinstance(meta.get("draft"), dict):
+                raise NotFound("no draft on that message")
+            for k in DRAFT_KEYS:
+                if k in (patch or {}):
+                    meta["draft"][k] = str(patch[k])[:MAX_CONTENT] if patch[k] is not None else None
+            con.execute("UPDATE assistant_messages SET meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), int(mid)))
+            con.commit()
+        finally:
+            con.close()
+    return {"ok": True}
 
 
 def set_proposal_state(uid: str, cid: str, mid: int, token: str, state: str, why: str | None = None) -> dict:

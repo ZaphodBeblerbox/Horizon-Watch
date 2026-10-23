@@ -109,6 +109,24 @@ async def confirm(request: Request):
         raise HTTPException(400, str(e))
 
 
+@router.post("/draft_post")
+async def draft_post(request: Request):
+    """'Write a post' from an item: {item} -> {short, long, citations, path}. One model call at most
+    (counted in the daily caps); a code template when the model is off. Posts nothing."""
+    import assistant_post
+    me = _me(request)
+    body = await request.json()
+    item = (body or {}).get("item") if isinstance(body, dict) else None
+    if not isinstance(item, dict):
+        raise HTTPException(400, "send the item to write about")
+    if len(str(item)) > 20000:
+        raise HTTPException(400, "that item is too large")
+    try:
+        return await asyncio.to_thread(assistant_post.draft_post, str(me["id"]), item)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/status")
 async def status(request: Request):
     import assistant
@@ -193,5 +211,7 @@ async def stop(cid: str, request: Request):
 async def patch_message(cid: str, mid: int, request: Request):
     me = _me(request)
     b = await _json(request)
+    if isinstance(b.get("draft"), dict):
+        return await _call(_h().set_draft, str(me["id"]), cid, mid, b["draft"])
     return await _call(_h().set_proposal_state, str(me["id"]), cid, mid, str(b.get("token") or ""),
                        str(b.get("state") or ""), b.get("why"))
