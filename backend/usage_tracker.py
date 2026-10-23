@@ -140,11 +140,12 @@ def record_call(
     headline:      str = "",
     model:         str | None = None,  # e.g. "claude-haiku-4-5-20251001" — drives correct per-model pricing
     item_id:       str = "",           # the real item this call acted on (fusion_id, article url, zone_id, ...)
+    extra_cost_usd: float = 0.0,       # a per-call fee on top of the tokens (OpenAI's web search tool: web_agent.py)
 ) -> None:
     """Accumulate token counts and cost after a successful Claude call, and
     append one real structured entry to the per-call audit log."""
     price_in, price_out = _price_for(model, call_type)
-    cost  = (input_tokens * price_in) + (output_tokens * price_out)
+    cost  = (input_tokens * price_in) + (output_tokens * price_out) + max(0.0, float(extra_cost_usd or 0.0))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     now   = time.time()
     with _lock:

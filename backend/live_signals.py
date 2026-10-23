@@ -365,6 +365,11 @@ def signals(db_path: str | None = None) -> list[dict]:
         con = sqlite3.connect(db_path, timeout=30) if db_path else tg._con()
         try:
             out = read(con)
+            try:                                      # the web agent's context and its corroborated web signals (web_agent.py)
+                import web_agent
+                out = web_agent.decorate(out)
+            except Exception as e:                    # noqa: BLE001 — never takes the Telegram signals with it
+                print(f"[live-signals] error: web agent decorate: {type(e).__name__}: {e}", flush=True)
             _STATUS["reads"] += 1
             _STATUS["last_count"] = len(out)
             _STATUS["last_error"] = None
@@ -395,7 +400,7 @@ def notification_cards(sigs: list[dict] | None = None, cap: int = 25) -> list[di
         cards.append({
             "id": s["id"], "kind": "telegram", "sev": sev, "title": s["title"],
             "reason": s["corroboration"]["line"], "lat": s["lat"], "lon": s["lon"], "country_code": s["country_code"],
-            "region": s["place"], "created_at": s["event_time"], "source": "telegram", "live_signal": True,
+            "region": s["place"], "created_at": s["event_time"], "source": s.get("source_kind") or "telegram", "live_signal": True,
             "act": s["act"], "url": (s["sources"][0]["url"] if s["sources"] else None),
             "media": (s["media"] or {}).get("kind"), "thumb_url": (s["media"] or {}).get("thumb_url"),
             "channel": s["channel"], "msg_id": s["msg_id"],

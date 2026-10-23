@@ -81,14 +81,21 @@ LIVE_INCIDENT = "live_incident"
 # asks something the rule path cannot answer; capped per user per day.
 ASSISTANT = "assistant"
 
+# The web agent (web_agent.py, owner 2026-10-23): one Responses API call with
+# the web_search tool, for a question the assistant could not answer from our
+# data, an important incident in a watched place ("what happened at Trappes"),
+# or a watched area's recent incidents (off by default). Its own daily caps
+# live in that module; each call carries a search fee on top of the tokens.
+WEB_AGENT = "web_agent"
+
 KNOWN_PURPOSES = frozenset({
-    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT,
+    VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT, WEB_AGENT,
     "constellation",      # filling gaps between entities in the graph
     "summarise",          # a one-line precis of a long wire report
     "translate",
 })
 
-_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT})
+_DEFAULT_ALLOWED = frozenset({VOICE, EXPLAIN, ENRICH, FORECAST, OUTLOOK, FUSION, CONTEXT, LIVE_INCIDENT, ASSISTANT, WEB_AGENT})
 
 DEFAULT_MODEL = "gpt-4o-mini"
 

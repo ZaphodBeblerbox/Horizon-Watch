@@ -424,6 +424,8 @@ import routers.graph as _graph_router
 app.include_router(_graph_router.router)
 app.include_router(_tile_proxy_router.router)
 app.include_router(_my_assets_router.router)
+from routers import web_agent as _web_agent_router            # GET /api/web-agent/status (web_agent.py)
+app.include_router(_web_agent_router.router)
 import position_stream as _position_stream                  # live positions pushed to viewers (SSE)
 app.include_router(_position_stream.router)
 import asset_warnings as _asset_warnings                    # a WARNING sent by hand to a person in the field (takes their screen)
@@ -13962,6 +13964,32 @@ async def _live_incident_loop():
         await asyncio.sleep(20)
 
 
+async def _web_agent_loop():
+    """The web agent (web_agent.py, owner 2026-10-23): every 60 s, one research call for an important live
+    signal at a watched point that has none ("what happened at Trappes"), and, only with
+    WEB_AGENT_AUTOPLACE=1, a search of one watched area for corroborated incidents we do not have. Caps in
+    that module. Server only (no spend from a laptop; WEB_AGENT_LOCAL=1 for a deliberate local test), on a
+    thread of its own; a failed pass is counted, logged and on /api/web-agent/status."""
+    import telegram_ingest as _tg
+    if not (_tg.on_server() or os.getenv("WEB_AGENT_LOCAL") == "1"):
+        return
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _pool = _TPE(max_workers=1, thread_name_prefix="web-agent")
+    await asyncio.sleep(150)
+    import web_agent as _wa
+    while True:
+        try:
+            if not HEAVY_FEEDS_PAUSED and _wa.ENABLED:
+                out = await asyncio.get_running_loop().run_in_executor(_pool, _wa.run_once)
+                e, a = out.get("enrich") or {}, out.get("autoplace") or {}
+                if e.get("enriched") or a.get("placed") or a.get("merged") or e.get("error") or a.get("error"):
+                    print(f"[web-agent] {out}", flush=True)
+        except Exception as _e:                              # noqa: BLE001
+            _wa.note_error("loop", _e)
+            _loop_error("web-agent", _e, every=10)
+        await asyncio.sleep(60)
+
+
 async def _telegram_mood_alert_loop():
     """Calls for armed conflict rising on Telegram about a country
     (telegram_mood_alert.py, owner 2026-10-11), and each single call to
@@ -16915,6 +16943,7 @@ async def startup_event():
     _spawn(_telegram_loop)
     _spawn(_telegram_vision_loop)
     _spawn(_live_incident_loop)
+    _spawn(_web_agent_loop)
     _spawn(_event_watch_loop)
     _spawn(_exit_watch_loop)
     _spawn(_warning_resend_loop)
