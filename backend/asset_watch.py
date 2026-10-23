@@ -7,9 +7,14 @@ makes something matter to one user is that it is near something of theirs —
 a strike 12 km from their tanker is a card for them however routine the feed
 calls it. So each user's assets are ranked against every signal in their
 radius (the asset register's own ranking, routers/my_assets.situation) and
-the ones that count become cards that say which asset and how far:
+the ones that count become cards that say which asset and how far. The
+headline is the signal's own; the line under it (reason) says how near,
+once and in plain words (owner, 2026-10-23: "… — 2 km from Second Probe
+(live) (your person)" read awkwardly and said it twice, title and subtitle):
 
-    "Drone strike on Ras Isa terminal — 18 km from MT Aurora (your tanker)"
+    Drone strike on Ras Isa terminal
+    18 km from your tanker MT Aurora     (a person: "2 km from Second Probe";
+                                          your own live position: "2 km from you")
 
 What counts: high or critical within the radius, or anything in the inner
 quarter of it, in the last 24 hours. Ranking an asset reads several sources,
@@ -19,6 +24,7 @@ set (empty the first time, filled a few seconds later).
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -40,10 +46,27 @@ def counts(sig: dict, radius_km: float) -> bool:
     return sev in ("critical", "high", "significant") or (sig.get("km") or 1e9) <= radius_km / 4
 
 
-def cards_for(asset: dict, sit: dict) -> list[dict]:
+def display_name(asset: dict) -> str:
+    """The asset's name as a person says it: a live-position asset is named
+    "<name> (live)" (routers/my_assets.live), which is bookkeeping."""
+    return re.sub(r"\s*\(live\)\s*$", "", str(asset.get("name") or "")).strip() or "your asset"
+
+
+def near_whom(asset: dict, uid: str | None = None) -> str:
+    """Who or what the distance is measured from, in plain words."""
+    ids = asset.get("identifiers") if isinstance(asset.get("identifiers"), dict) else {}
+    if uid and str(ids.get("user_id") or "") == str(uid):
+        return "you"
+    if str(asset.get("kind") or "").lower() == "person":
+        return display_name(asset)
+    label = (asset.get("kind_label") or "asset").lower()
+    return f"your {label} {display_name(asset)}"
+
+
+def cards_for(asset: dict, sit: dict, uid: str | None = None) -> list[dict]:
     """Notification cards for one asset's ranked situation."""
     out = []
-    label = (asset.get("kind_label") or "asset").lower()
+    whom = near_whom(asset, uid)
     for s in sit.get("signals") or []:
         if not counts(s, asset.get("radius_km") or 50):
             continue
@@ -52,13 +75,13 @@ def cards_for(asset: dict, sit: dict) -> list[dict]:
         out.append({
             "id": f"asset:{asset['id']}:{s.get('id')}",
             "signal_id": s.get("id"),
-            "title": f"{title} — {dist} from {asset['name']} (your {label})",
+            "title": title,
             "sev": _SEV.get(str(s.get("severity") or "").lower(), "moderate"),
-            "reason": f"within {round(asset.get('radius_km') or 0)} km of your {label} {asset['name']}",
+            "reason": f"{dist} from {whom}",
             "notify": True, "kind": "asset",
             "alert_type": "Asset exposure", "source": s.get("source"),
             "lat": s.get("lat"), "lon": s.get("lon"),
-            "entity_id": asset["id"], "entity_name": asset["name"],
+            "entity_id": asset["id"], "entity_name": display_name(asset), "_whom": whom,
             "asset_id": asset["id"],
             "created_at": s.get("when"),
             "_km": s.get("km"), "_dist": dist, "_title": title,
@@ -82,12 +105,15 @@ def merge(cards: list[dict]) -> list[dict]:
         first = cs[0]
         names = [c["entity_name"] for c in cs]
         listed = ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) <= 4 else f"{', '.join(names[:3])} and {len(names) - 3} more"
+        rest = [c.get("_whom") or c["entity_name"] for c in cs[1:]]
+        also = (rest[0] if len(rest) == 1 else ", ".join(rest[:-1]) + f" and {rest[-1]}" if len(rest) <= 3
+                else f"{', '.join(rest[:2])} and {len(rest) - 2} more")
         rank = ["critical", "high", "moderate", "low"]
         out.append({**first,
                     "id": f"asset:sig:{key}",
-                    "title": f"{first['_title']} — {first['_dist']} from {listed} (your assets)",
+                    "title": first["_title"],
                     "sev": min((c["sev"] for c in cs), key=lambda v: rank.index(v) if v in rank else 9),
-                    "reason": f"near {len(cs)} of your assets: {listed}",
+                    "reason": f"{first['_dist']} from {first.get('_whom') or first['entity_name']}, also near {also}",
                     "entity_name": listed,
                     "asset_ids": [c["asset_id"] for c in cs]})
     return out
@@ -100,12 +126,12 @@ def _rebuild(uid: str) -> None:
         cards: list[dict] = []
         for a in oa.list_for(uid):
             try:
-                cards += cards_for(a, situation(a))
+                cards += cards_for(a, situation(a), uid)
             except Exception as e:                       # noqa: BLE001 — one asset never blanks the rest
                 print(f"[asset_watch] {a.get('name')}: {type(e).__name__}: {e}", flush=True)
         cards = merge(cards)
         for c in cards:
-            for k in ("_km", "_dist", "_title"):
+            for k in ("_km", "_dist", "_title", "_whom"):
                 c.pop(k, None)
         cards.sort(key=lambda c: str(c.get("created_at") or ""), reverse=True)
         with _lock:

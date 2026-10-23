@@ -179,6 +179,13 @@ def gather(at: dict, radius_km: float, hours: int = 72) -> list[dict]:
     with m._SURFACE_POOL_LOCK:
         pool = list(m._SURFACE_POOL)
     for it in pool:
+        # GDELT IS NOT A SIGNAL (owner, 2026-10-13; /api/surface drops it too):
+        # the pool's raw GDELT rows put a Turkish opinion headline and a Danish
+        # news round-up on a phone's "For you" as "2 km from" a person
+        # (2026-10-23). GDELT reaches an asset only as a judged act of force,
+        # below, under the judge's English headline.
+        if str(it.get("source") or "").lower() == "gdelt" or str(it.get("id") or "").startswith("gdelt_"):
+            continue
         la, lo = it.get("lat"), it.get("lon")
         if inside(la, lo):
             items.append({"id": f"pool:{it.get('id')}", "title": it.get("headline") or it.get("title"), "lat": la, "lon": lo,
@@ -683,7 +690,12 @@ async def asset_situation(asset_id: str, request: Request):
     a = oa.get(asset_id, _uid(user))
     if not a:
         raise HTTPException(404, "no such asset")
-    return await asyncio.get_event_loop().run_in_executor(None, situation, a)
+
+    def run():
+        s = situation(a)
+        import title_translate                               # the headlines its owner reads, in English
+        return {**s, "signals": title_translate.apply(s.get("signals") or [], ("title",))}
+    return await asyncio.get_event_loop().run_in_executor(None, run)
 
 
 @router.post("/{asset_id}/brief")

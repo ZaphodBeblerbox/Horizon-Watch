@@ -12,7 +12,8 @@ def test_one_card_per_signal():
     out = aw.merge(a + b + other)
     assert len(out) == 2
     m = next(c for c in out if c["id"] == "asset:sig:s1")
-    assert m["title"] == "Strike on a depot — 2 km from Office and Plant 3 (your assets)"
+    assert m["title"] == "Strike on a depot"
+    assert m["reason"] == "2 km from your site Office, also near your site Plant 3"
     assert m["asset_ids"] == ["B", "A"]
     single = next(c for c in out if c["signal_id"] == "s2")
     assert single["id"] == "asset:C:s2"

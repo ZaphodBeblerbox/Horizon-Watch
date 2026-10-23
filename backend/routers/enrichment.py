@@ -256,7 +256,8 @@ async def enrich_text(request: Request):
 def enrichment_status(request: Request):
     _me(request)
     import openai_gate
-    return {**openai_gate.status(), "cached": len(_load())}
+    import title_translate                                   # headlines put into English, same purpose
+    return {**openai_gate.status(), "cached": len(_load()), "title_translate": title_translate.status()}
 
 
 # ── the empty WHO column ─────────────────────────────────────────────────

@@ -12280,7 +12280,18 @@ async def api_telegram_posts(request: Request, hours: int = Query(72, ge=1, le=7
     out = {"posts": await loop.run_in_executor(_executor, functools.partial(_tg.published, hours, pins=pins))}
     if statements:
         out["statements"] = await loop.run_in_executor(_executor, _tg.statements, hours)
-    return _pf.lists(out, user, "posts", "statements")
+    _sc = _pf.scope(user)
+    out = _pf.lists(out, user, "posts", "statements", sc=_sc)
+    try:
+        # headlines in English (title_translate.py): a model call only for posts
+        # in someone's profile; an unscoped list reads the cache only
+        import title_translate as _tt
+        if isinstance(out.get("posts"), list):
+            out["posts"] = await loop.run_in_executor(_executor, functools.partial(
+                _tt.apply, out["posts"], ("headline",), enqueue=_sc.active))
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[telegram/posts] translate: {type(ex).__name__}: {ex}", flush=True)
+    return out
 
 
 @app.get("/api/telegram/incidents/live")
@@ -12558,7 +12569,10 @@ async def _event_watch_loop():
     while True:
         try:
             import event_watch as _ew
-            n = await asyncio.to_thread(_ew.sweep, _send_push, lambda uid: _profile_cards(uid, _notification_feed(uid, limit=60, hours=6)))
+            import title_translate as _tt
+            # a push leaves in English: this loop is in the background, so it waits for the translation
+            n = await asyncio.to_thread(_ew.sweep, _send_push, lambda uid: _tt.apply(
+                _profile_cards(uid, _notification_feed(uid, limit=60, hours=6)), ("title",), wait=True))
             if n:
                 print(f"[event-watch] pushed {n}", flush=True)
         except Exception as e:                              # noqa: BLE001
@@ -17768,6 +17782,11 @@ def get_surface_pool(request: Request, response: FastAPIResponse):
     import profile_filter as _pf
     _sc = _pf.scope(_get_current_user(request))
     enriched, _hidden = _sc.filter(enriched)
+    try:
+        import title_translate as _tt
+        enriched = _tt.apply(enriched, ("headline", "title"))
+    except Exception as e:
+        _loop_error("surface-translate", e)
     return {
         "items": enriched,
         "profile": _sc.block(_hidden),
@@ -29803,6 +29822,14 @@ def api_get_notifications(
     except Exception as ex:                                 # noqa: BLE001
         print(f"[notifications] profile filter: {type(ex).__name__}: {ex}", flush=True)
         items = items[:limit]
+    # EVERY HEADLINE IN ENGLISH (owner, 2026-10-23): only what this user is
+    # about to read, from the cache or queued for one batched model call
+    # (title_translate.py); meanwhile the original says its language.
+    try:
+        import title_translate as _tt
+        items = _tt.apply(items, ("title",))
+    except Exception as ex:                                 # noqa: BLE001
+        print(f"[notifications] translate: {type(ex).__name__}: {ex}", flush=True)
     # WHAT A NOTIFICATION IS, decided once (event_watch.notifies): `push`
     # marks what reaches a closed app — the phone's push and the desktop
     # app's macOS notification alike — so the two devices cannot disagree.
@@ -30251,7 +30278,10 @@ def _notification_feed(uid: str | None, limit: int = 60, hours: int = 48, includ
     newest: dict = {}
     for o in out:
         k = re.sub(r"\s+", " ", str(o.get("title") or o.get("id"))).strip().lower()
-        if k not in newest or str(o.get("created_at") or "") > str(newest[k].get("created_at") or ""):
+        # a card about YOUR asset carries the title of the signal it is about
+        # (asset_watch.py); it stands for that signal, with its "2 km from …"
+        mine_k = (o.get("kind") == "asset", str(o.get("created_at") or ""))
+        if k not in newest or mine_k > (newest[k].get("kind") == "asset", str(newest[k].get("created_at") or "")):
             newest[k] = o
     out = list(newest.values())
 

@@ -12,9 +12,21 @@ def test_cards_name_the_asset_and_the_distance():
     ]}
     cards = aw.cards_for(A, sit)
     assert [c["signal_id"] for c in cards] == ["s1", "s3"]
-    assert cards[0]["title"] == "Drone strike on Ras Isa terminal — 18 km from MT Aurora (your tanker)"
-    assert cards[0]["reason"] == "within 80 km of your tanker MT Aurora"
+    # the headline is the signal's; how near is said once, under it
+    assert cards[0]["title"] == "Drone strike on Ras Isa terminal"
+    assert cards[0]["reason"] == "18 km from your tanker MT Aurora"
     assert cards[0]["kind"] == "asset" and cards[0]["asset_id"] == "a1" and cards[0]["sev"] == "high"
+
+
+def test_a_person_is_named_plainly_and_your_own_position_is_you():
+    sit = {"signals": [{"id": "s1", "title": "State of emergency in France", "severity": "high", "km": 2.2, "age_h": 1}]}
+    probe = {"id": "p1", "name": "Second Probe (live)", "kind": "person", "kind_label": "Person", "radius_km": 50,
+             "identifiers": {"user_id": "u2"}}
+    c = aw.cards_for(probe, sit, uid="u1")[0]
+    assert c["title"] == "State of emergency in France"
+    assert c["reason"] == "2 km from Second Probe"
+    assert "(live)" not in c["entity_name"] and "your person" not in c["reason"]
+    assert aw.cards_for(probe, sit, uid="u2")[0]["reason"] == "2 km from you"
 
 
 def test_no_user_no_cards():
