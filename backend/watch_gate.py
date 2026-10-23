@@ -109,10 +109,11 @@ def build(concerns: list[dict], country_at=None) -> dict:
         n += 1
         countries |= {norm_country(x) for x in c.get("countries") or () if x}
         for a in c.get("assets") or []:
-            pts.append({"lat": a["lat"], "lon": a["lon"], "reach": float(a["radius"]), "focus": True, "name": a.get("name")})
+            pts.append({"lat": a["lat"], "lon": a["lon"], "reach": float(a["radius"]), "focus": True, "name": a.get("name"),
+                        "kind": "asset"})
         for t in c.get("theaters") or []:
             pts.append({"lat": t["lat"], "lon": t["lon"], "reach": float(t["reach"]), "focus": float(t["reach"]) <= FOCUS_KM,
-                        "name": t.get("name")})
+                        "name": t.get("name"), "kind": "theater"})
     for p in pts:
         countries |= countries_near(p["lat"], p["lon"], p["reach"], country_at)
     return {"open": n == 0, "points": pts, "countries": countries, "users_with_profile": n}
