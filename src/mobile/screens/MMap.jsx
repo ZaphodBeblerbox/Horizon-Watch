@@ -35,7 +35,7 @@ import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
 import { closeOpenedSignal, setSignalPinLayer } from "../../lib/signalPin.js"
-import { declutterAll, representative } from "../../lib/liveSignals.js"
+import { declutterAll, representative, samePlace } from "../../lib/liveSignals.js"
 import { trafficIcon, trafficTone, dotIcon, markerIcon, withCount, PHONE_ICON_SCALE, PULSE, pulseRingIcon } from "../../lib/mapIcons.js"
 import { createNewTracker } from "../../lib/newOnMap.js"
 import MapLegend from "../../components/MapLegend.jsx"
@@ -458,7 +458,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     const { w, h, a } = scaled(x.p.f)
                     const ring = pulseRingIcon(x.p.f.pri || x.p.f.severity || "alert").uri
                     const mk = L.marker([x.p.lat, x.p.lon], {
-                        icon: L.divIcon({ className: "m2-pulse", html: `<img alt="" src="${ring}" width="${w}" height="${h}">`, iconSize: [w, h], iconAnchor: a }),
+                        icon: L.divIcon({ className: "m2-pulse", html: `<img src="${ring}" alt="" width="${w}" height="${h}">`, iconSize: [w, h], iconAnchor: a }),
                         interactive: false, keyboard: false, zIndexOffset: 1500,
                     }).addTo(pulseG.current)
                     setTimeout(() => { try { mk.remove() } catch { /* map gone */ } }, PULSE.ms + 100)
@@ -480,16 +480,23 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                                        interactive: true, className: "m2-track-path" }).on("click", tap(p.f, p.l, p.key)) })
         }
         if (collide.length) {
-            const groups = declutterAll(collide.map((p) => {
-                const q = m.project([p.lat, p.lon], z0)
-                const { w, h, a } = scaled(p.f)
-                // the box the marker covers on screen (a pin stands above its point)
-                return { id: p.key, x: q.x - a[0] + w / 2, y: q.y - a[1] + h / 2, size: Math.max(w, h), sev: p.f.severity || null,
-                         pri: p.f.pri || null, t: featureTime(p.f), _p: p }
+            // RINGS ONLY FOR ONE SPOT (owner, 2026-10-24): things within SAME_PLACE_M of each other are one place (one
+            // icon, its count, a ring on tap); things at different places are their own icons. Where different places
+            // would cover each other on screen, the most important shows and the others pop in as you zoom closer.
+            const places = samePlace(collide).map((ms) => {
+                const top = representative(ms.map((p) => ({ pri: p.f.pri || null, t: featureTime(p.f), _p: p })))._p
+                return { top, list: [top, ...ms.filter((p) => p !== top)] }
+            })
+            const groups = declutterAll(places.map((e) => {
+                const q = m.project([e.top.lat, e.top.lon], z0)
+                const { w, h, a } = scaled(e.top.f)
+                return { id: e.top.key, x: q.x - a[0] + w / 2, y: q.y - a[1] + h / 2, size: Math.max(w, h) + (e.list.length > 1 ? 8 : 0),
+                         sev: e.top.f.severity || null, pri: e.top.f.pri || null, t: featureTime(e.top.f), _e: e }
             }))
             for (const g of groups) {
-                if (!g.cluster) {
-                    const p = g.members[0]._p, { w, h, a } = scaled(p.f)
+                const e = g.cluster ? representative(g.members.map((mm) => ({ pri: mm.pri, t: mm.t, _e: mm._e })))._e : g.members[0]._e
+                if (e.list.length === 1) {
+                    const p = e.top, { w, h, a } = scaled(p.f)
                     const op = Number.isFinite(p.f.opacity) ? Math.round(p.f.opacity * 10) / 10 : 1
                     want.set(`p:${p.key}`, { sig: `${p.f.iconUri}|${w}|${h}|${p.lat}|${p.lon}|${op}`, make: () => L.marker([p.lat, p.lon], {
                         icon: L.icon({ iconUrl: p.f.iconUri, iconSize: [w, h], iconAnchor: a, className: "m2-pop" }), keyboard: false, opacity: op,
@@ -497,12 +504,12 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     }).on("click", tap(p.f, p.l, p.key)) })
                     continue
                 }
-                // ONE ICON PER PLACE, TAP TO SEE ALL (owner, 2026-10-24): the most important member's own marker with
-                // the count in its corner; a tap pops the others out in a ring around it, each on a thin line back to
-                // the place and each opening its own card; a tap on the map (or a zoom) folds them back
-                const top = representative(g.members.map((mm) => ({ pri: mm.pri, t: mm.t, _p: mm._p })))._p
-                const others = g.members.map((mm) => mm._p).filter((p) => p !== top)
-                const list = [top, ...others]
+                // ONE SPOT, SEVERAL THINGS: the most important member's own marker with the count in its corner; a tap
+                // pops the others out in a ring around it, each on a thin line back to the spot and each opening its
+                // own card; a tap on the map (or a zoom) folds them back
+                const top = e.top
+                const others = e.list.slice(1)
+                const list = e.list
                 const key = `lc:${list.map((p) => p.key).sort().join("|")}`
                 const { w, h, a } = scaled(top.f)
                 if (spider === key) {
