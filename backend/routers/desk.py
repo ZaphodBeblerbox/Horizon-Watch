@@ -114,7 +114,8 @@ def _visible_post(db, post_id: str, me: dict):
     p = db.query(Post).filter(Post.id == post_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="no such post")
-    top = db.query(Post).filter(Post.id == p.parent_id).first() if p.parent_id else p
+    # a comment on a feed item ("item:<id>") is read by its own audience
+    top = db.query(Post).filter(Post.id == p.parent_id).first() if (p.parent_id and not p.parent_id.startswith("item:")) else p
     if not top or not can_read(top, me):
         raise HTTPException(status_code=404, detail="no such post")
     return p
@@ -216,6 +217,54 @@ def list_replies(post_id: str, request: Request):
         return {"replies": [_post_dict(p, people, acks, mine) for p in rows]}
 
 
+# ── comments on a feed item (owner, 2026-10-24: "the desk like X") ──────
+# A General item (a Telegram post, a GeoConfirmed event, one of our alerts)
+# is not a Post, but its full view has comments like a team post does. They
+# are Post rows whose parent_id is "item:<the item's id>", so reading,
+# audience and deletion are the desk's own rules: a comment goes to the
+# author's company (everyone when the account has none), like a new post.
+
+ITEM_KEY = re.compile(r"^[A-Za-z0-9:/_.~-]{1,160}$")
+
+
+def item_parent(key: str) -> str:
+    key = (key or "").strip()
+    if not ITEM_KEY.match(key):
+        raise HTTPException(status_code=400, detail="not an item id")
+    return f"item:{key}"
+
+
+@router.get("/item-comments")
+def list_item_comments(key: str, request: Request):
+    from database import Post, get_db
+    me = _me(request)
+    parent = item_parent(key)
+    with get_db() as db:
+        rows = _readable(db.query(Post).filter(Post.parent_id == parent), me).order_by(Post.created_at.asc()).limit(200).all()
+        people, acks, mine, _ = _decorate(db, rows, me["id"])
+        return {"comments": [_post_dict(p, people, acks, mine) for p in rows]}
+
+
+@router.post("/item-comments")
+async def add_item_comment(request: Request):
+    """Body: {key, body}. The item is not checked against a table: a comment
+    names what it is about, and is read only by the author's audience."""
+    from database import Post, get_db
+    me = _me(request)
+    body = await request.json()
+    parent = item_parent(str(body.get("key") or ""))
+    text = (body.get("body") or "").strip()[:MAX_BODY]
+    if not text:
+        raise HTTPException(status_code=400, detail="an empty comment says nothing")
+    with get_db() as db:
+        audience, company, shared = _audience_of(db, {"audience": None}, me)
+        p = Post(author_user_id=me["id"], parent_id=parent, body=text,
+                 audience=audience, audience_company=company, shared_with=shared)
+        db.add(p); db.commit(); db.refresh(p)
+        people, acks, mine, _ = _decorate(db, [p], me["id"])
+        return _post_dict(p, people, acks, mine)
+
+
 @router.post("/posts")
 async def create_post(request: Request):
     """Publish. Body: {body, theater?, urgency?, attachment?, parent_id?,
@@ -243,6 +292,8 @@ async def create_post(request: Request):
     with get_db() as db:
         if parent_id:
             parent = _visible_post(db, parent_id, me)
+            if (parent.parent_id or "").startswith("item:"):
+                raise HTTPException(status_code=400, detail="answer a comment on an item under the item")
             if parent.parent_id:
                 # One level. A reply to a reply to a reply is a chat, and
                 # there is a chat.
@@ -603,9 +654,12 @@ def read_since(db, user_id: str) -> datetime.datetime:
 
 def unseen_posts(db, me: dict, since: datetime.datetime, limit: int = 200) -> list:
     """Posts by others, readable by me, after `since`, newest first."""
+    from sqlalchemy import or_
     from database import Post
     rows = _readable(db.query(Post), me).filter(
         Post.author_user_id != me["id"], Post.deleted_at.is_(None),
+        # comments on feed items are read in the item's full view, not announced
+        or_(Post.parent_id.is_(None), ~Post.parent_id.like("item:%")),
         Post.created_at > since).order_by(Post.created_at.desc()).limit(limit).all()
     parents = {p.parent_id for p in rows if p.parent_id}
     if parents:
