@@ -12519,7 +12519,7 @@ def api_general(request: Request, before: str = "", limit: int = Query(40, ge=5,
     import general_feed as _gf
     want = tuple(k for k in kinds.split(",") if k in _gf.KINDS) or _gf.KINDS
     import profile_filter as _pf
-    return _pf.paged(_get_current_user(request), lambda b, n: _gf.feed(_akili_db_path(), b, n, want), before or None, limit, "items")
+    return _pf.paged(_get_current_user(request), lambda b, n: _gf.cached_feed(_akili_db_path(), b, n, want), before or None, limit, "items")
 
 
 @app.get("/api/telegram/live")

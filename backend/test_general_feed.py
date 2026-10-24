@@ -200,3 +200,16 @@ def test_single_kind_and_old_cursor_still_work(tmp_path):
     assert d["next"].startswith("g=") and "t=" not in d["next"]
     old = g.feed(p, before="2026-10-11T12:00:00", limit=10)                           # a plain time: every kind from there
     assert old["items"] and all(i["at"] < "2026-10-11T12:00:00" for i in old["items"])
+
+
+def test_cached_feed_reads_once_and_hands_out_copies(monkeypatch):
+    calls = []
+    monkeypatch.setattr(g, "_PAGES", None)
+    monkeypatch.setattr(g, "feed", lambda db, b, n, k: calls.append((b, n)) or {"items": [{"id": "a", "at": "x"}], "next": None})
+    one = g.cached_feed("db", None, 30, ("telegram",))
+    one["items"][0]["why"] = "annotated by one reader's filter"
+    two = g.cached_feed("db", None, 30, ("telegram",))
+    assert calls == [(None, 30)]
+    assert "why" not in two["items"][0]
+    g.cached_feed("db", "s=2026-10-24T00:00:00", 30, ("telegram",))
+    assert len(calls) == 2
