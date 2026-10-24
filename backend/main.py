@@ -489,6 +489,9 @@ app.include_router(_strikes_router.router)
 # Observations published to the desk — see routers/desk.py.
 from routers import desk as _desk_router
 app.include_router(_desk_router.router)
+# A cited source read as our own post card, its summary on click — see source_card.py.
+from routers import sources as _sources_router
+app.include_router(_sources_router.router)
 # The spoken sentence the rule parser could not place — see routers/voice_ai.py.
 from routers import voice_ai as _voice_ai_router
 app.include_router(_voice_ai_router.router)
