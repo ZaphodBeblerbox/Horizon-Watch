@@ -615,6 +615,11 @@ def for_user(user, frame: str = "live") -> dict:
         k, h = sc.filter(snap.get(f) or [])
         kept[f] = k
         hidden += h
+    try:                                                       # the user's own visible user reports (field_reports.py)
+        import field_reports
+        kept["live"] = kept["live"] + sc.filter(field_reports.protest_items(user))[0]
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[protests] error: user reports: {type(e).__name__}: {e}", flush=True)
     counts = {f: len([i for i in kept[f] if i["kind"] not in ("crowd_track", "police_track")]) for f in FRAMES}
     frame = frame if frame in FRAMES else "live"
     return {"frame": frame, "items": kept[frame], "counts": counts, "note": empty_note(counts, frame),

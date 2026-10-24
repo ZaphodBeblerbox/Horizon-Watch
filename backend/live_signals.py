@@ -372,6 +372,11 @@ def signals(db_path: str | None = None) -> list[dict]:
                 out = web_agent.decorate(out)
             except Exception as e:                    # noqa: BLE001 — never takes the Telegram signals with it
                 print(f"[live-signals] error: web agent decorate: {type(e).__name__}: {e}", flush=True)
+            try:                                      # user reports to 'everyone' (field_reports.py): this answer is shared by all
+                import field_reports
+                out = field_reports.add_to_signals(out)
+            except Exception as e:                    # noqa: BLE001
+                print(f"[live-signals] error: user reports: {type(e).__name__}: {e}", flush=True)
             # each signal carries its stored event's id, status and evolving brief (events.py, DATAMINR_PLAN B1)
             import events as _events
             _events.annotate(out, lambda s: s.get("refs"), con=con)

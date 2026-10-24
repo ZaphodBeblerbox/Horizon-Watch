@@ -1007,8 +1007,18 @@ def _other_alerts(since: _dt.datetime) -> list[dict]:
         return []
 
 
+def _user_reports(now: _dt.datetime) -> list[dict]:
+    """Active user reports to 'everyone' (field_reports.py), as members of kind 'user'."""
+    try:
+        import field_reports
+        return field_reports.event_members(now)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[events] error: user reports: {type(e).__name__}: {e}", flush=True)
+        return []
+
+
 def reconcile(con=None, now: _dt.datetime | None = None, *, atoms=None, situations=None, others=None, client=None,
-              brief_fn=None, concerns=None, watch=None, attention_rows=None) -> dict:
+              brief_fn=None, concerns=None, watch=None, attention_rows=None, user_reports=None) -> dict:
     """One pass (every 30 s in the worker): every live-gated report of the last hours joins its event, other
     domains join, and every event touched or still within a day is re-briefed when something changed."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
@@ -1018,6 +1028,7 @@ def reconcile(con=None, now: _dt.datetime | None = None, *, atoms=None, situatio
     out = {"assigned": 0, "joined_other": 0, "versions": 0, "model_versions": 0}
     try:
         ensure_tables(con)
+        own_atoms = atoms is None
         if atoms is None:
             import live_signals as ls
             atoms = ls.read_atoms(con, now - _dt.timedelta(hours=LOOKBACK_H))
@@ -1036,6 +1047,12 @@ def reconcile(con=None, now: _dt.datetime | None = None, *, atoms=None, situatio
                 out["joined_other"] += 1
         for o in (_other_alerts(now - _dt.timedelta(hours=LOOKBACK_H)) if others is None else others):
             if attach_other(con, o["kind"], o["ref"], float(o["lat"]), float(o["lon"]), o.get("at"), label=o.get("label"), now=now):
+                out["joined_other"] += 1
+        # user reports to 'everyone' (field_reports.py) join like the other domains, never create an event, and are not
+        # an independent source (corroboration() does not count kind 'user'); read only on a live pass (atoms not given)
+        for o in (user_reports if user_reports is not None else (_user_reports(now) if own_atoms else [])):
+            if attach_other(con, "user", o["ref"], float(o["lat"]), float(o["lon"]), o.get("at"), act=o.get("act"),
+                            label=o.get("label"), now=now, channel="User report"):
                 out["joined_other"] += 1
         con.commit()
         cs = all_concerns() if concerns is None else concerns
