@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest"
 import { readFileSync, readdirSync } from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
-import { showTip, hideTip, getTip, subscribeTip, tipPosition } from "./mapTip.js"
+import { showTip, hideTip, getTip, subscribeTip, tipPosition, setTipSuppressed, tipSuppressed } from "./mapTip.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -102,5 +102,32 @@ describe("§6 — never per-layer tooltips (static guard)", () => {
         }
         walk(root)
         expect(hits).toEqual(["MapTip.jsx"])
+    })
+})
+
+describe("no hover card while the Inspector shows an item (owner, 2026-10-24)", () => {
+    it("suppressing hides what is up and blocks every layer's showTip until released", () => {
+        showTip("Vessel A", 10, 10)
+        expect(getTip()).not.toBeNull()
+        setTipSuppressed(true)
+        expect(getTip()).toBeNull()
+        expect(tipSuppressed()).toBe(true)
+        showTip("Vessel B", 20, 20)
+        expect(getTip()).toBeNull()
+        setTipSuppressed(false)
+        showTip("Vessel B", 20, 20)
+        expect(getTip().content).toBe("Vessel B")
+        hideTip()
+    })
+
+    it("the Situation screen suppresses it from what the Inspector shows, and a click puts it away", () => {
+        const here = path.dirname(fileURLToPath(import.meta.url))
+        const sit = readFileSync(path.join(here, "../destinations/Situation.jsx"), "utf8")
+        expect(sit).toMatch(/setTipSuppressed\(inspectorShowing\)/)
+        expect(sit).toMatch(/inspectorShowing = [^\n]*inspectorPopup \|\| selected/)
+        const tipJsx = readFileSync(path.join(here, "../components/MapTip.jsx"), "utf8")
+        expect(tipJsx).toMatch(/addEventListener\("pointerdown"/)
+        const pop = readFileSync(path.join(here, "GlobePopup.jsx"), "utf8")
+        expect(pop).toMatch(/clickedIdRef\.current === entityId/)
     })
 })

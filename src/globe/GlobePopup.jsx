@@ -121,6 +121,8 @@ export default function GlobePopup({
     // The rendered node for the currently hovered entity, so moving the
     // pointer within one entity repositions the card without rebuilding it.
     const tipContentRef = useRef(null)
+    // the marker just clicked: no hover card over it until the pointer leaves it (owner, 2026-10-24)
+    const clickedIdRef = useRef(null)
     const handlerRef = useRef(null)
 
     // Reports whether THIS GlobePopup instance's own real docked
@@ -208,6 +210,8 @@ export default function GlobePopup({
                     const stored = getEntity(picked.id.id)
                     if (stored && HOVER_TYPES.has(stored.type)) {
                         const entityId = picked.id.id
+                        if (clickedIdRef.current === entityId) { hideTip(); return }
+                        clickedIdRef.current = null
                         // Only re-run normalizeEntity when the hovered entity
                         // actually changes, not on every mousemove pixel while
                         // still hovering the same one.
@@ -242,6 +246,7 @@ export default function GlobePopup({
                     }
                 }
                 hoveredIdRef.current = null
+                clickedIdRef.current = null
                 hideTip()
             }, ScreenSpaceEventType.MOUSE_MOVE)
 
@@ -269,6 +274,7 @@ export default function GlobePopup({
                 if (defined(picked) && picked.id) {
                     const entity   = picked.id
                     const entityId = entity.id
+                    clickedIdRef.current = entityId
                     const pos = entity.position?.getValue(viewer.clock.currentTime)
                     const sp  = pos ? SceneTransforms.worldToWindowCoordinates(viewer.scene, pos) : null
                     const x   = sp ? sp.x : click.position.x

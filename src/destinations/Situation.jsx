@@ -38,6 +38,7 @@ import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
 import MapMeta from "../components/MapMeta.jsx"
 import MapTip from "../components/MapTip.jsx"
+import { setTipSuppressed } from "../globe/mapTip.js"
 import { LAYER_GROUPS, CONTEXT_TOGGLES, SEVERITY_FLOORS, TIME_WINDOWS, nothingOn } from "../components/layerRailConfig.js"
 import { defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
 
@@ -871,6 +872,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const rightTab = useRightTab()
     const [assistantMounted, setAssistantMounted] = useState(rightTab === "assistant")
     useEffect(() => { if (rightTab === "assistant") setAssistantMounted(true) }, [rightTab])
+    // the map's hover card is hidden while the Inspector shows an item (owner, 2026-10-24)
+    const inspectorShowing = !asCanvas && !rightMin && rightTab === "inspector" && !!(inspectorPopup || selected)
+    useEffect(() => { setTipSuppressed(inspectorShowing) }, [inspectorShowing])
+    useEffect(() => () => setTipSuppressed(false), [])
     useEffect(() => { if (selected) setRightTab("inspector") }, [selected])
     // ONE WINDOW ON THE RIGHT (ui/sideWindows.js): a spoken answer takes the
     // inspector's place; opening the inspector folds the answer away.
