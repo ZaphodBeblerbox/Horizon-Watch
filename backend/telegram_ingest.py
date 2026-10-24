@@ -883,6 +883,23 @@ def classify_by_rules(con, rows) -> dict:
                     hit, place, pcc, why = None, None, None, f"not live by rule: {rd['why']}"
         elif x["event_type"]:
             why = "talk about an event, not a report of one (read by rule)"
+        presence = None
+        if verdict is None and not telegram_rules.is_warning_only(text):
+            # police or a crowd moving at a place the gazetteer knows, said now in a recent post (owner, 2026-10-24):
+            # live by the same movement rule as the extractor's (live_incident.presence_verdict)
+            import live_incident
+            try:
+                presence = live_incident.presence_verdict(text, r[7], country_code=cc)
+            except Exception as e:                             # noqa: BLE001
+                print(f"[telegram] error: presence rule {chan}/{mid}: {type(e).__name__}: {e}", flush=True)
+                presence = None
+            if presence is not None:
+                pin = presence["pin"]
+                hit = {"lat": pin["lat"], "lon": pin["lon"], "display_name": pin.get("display_name")}
+                place, pcc, why = pin["name"], pin.get("country_code"), None
+                verdict, event_time = "rule-live", presence["event_time"]
+                rule_act, rule_quote = presence["act"], presence["quote"]
+                x = {**x, "relevant": True}
         if telegram_rules.is_warning_only(text):
             hit, place, pcc, verdict, event_time, why = None, None, None, None, None, "an alert or an all-clear, not an incident"
             x = {**x, "relevant": False}
@@ -893,7 +910,13 @@ def classify_by_rules(con, rows) -> dict:
         headline = x["headline"]
         ev_type = x["event_type"]
         live_json = None
-        if hit and place and rule_act:
+        if presence is not None and hit:
+            headline = live_incident.card_headline(rule_act, rule_quote, place, presence["audit"]["verify"].get("context"),
+                                                   presence.get("direction"))
+            ev_type = live_incident.ACT_EVENT_TYPE.get(rule_act, ev_type)
+            live_json = json.dumps({"rule": {"act": rule_act, "quote": rule_quote, "place": place}, **presence["audit"]},
+                                   ensure_ascii=False)
+        elif hit and place and rule_act:
             import live_incident
             headline = live_incident.card_headline(rule_act, rule_quote, place.split(",")[0])
             ev_type = live_incident.ACT_EVENT_TYPE.get(rule_act, ev_type)
@@ -907,7 +930,7 @@ def classify_by_rules(con, rows) -> dict:
             " live_verdict=?, event_time=?, live_json=COALESCE(?, live_json)"
             " WHERE channel=? AND msg_id=?",
             (int(bool(x["relevant"])), (headline or "")[:200], ev_type, place or (x["places"][0] if x["places"] else None),
-             "town" if hit else None, (pcc or (x["countries"][0] if x["countries"] else "") or "").lower(),
+             (live_incident.PIN_LEVELS.get(presence["level"], "city") if presence is not None and hit else ("town" if hit else None)), (pcc or (x["countries"][0] if x["countries"] else "") or "").lower(),
              hit and hit["lat"], hit and hit["lon"], hit and hit.get("display_name"),
              None if hit else why, claim,
              int(media != "none" and role in ("local", "group", "official")), verdict, event_time, live_json, chan, mid))
