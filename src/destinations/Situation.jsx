@@ -77,6 +77,7 @@ import { markerUri } from "../lib/mapIcons.js"
 import MapLegend from "../components/MapLegend.jsx"
 import AssistantThread from "../assistant/AssistantThread.jsx"
 import { useRightTab, setRightTab } from "../assistant/assistantDock.js"
+import { subscribeReports, openReportForm } from "../lib/fieldReports.js"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -430,6 +431,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // at all"): its own switch at the top of the panel, NOT under a group — a switch under News was greyed out and
     // disabled until News was on, and every group starts off. Off by default like every layer (globe/GlobeProtestsLayer.jsx).
     const [protestsOn, setProtestsOn] = useState(false)
+    // USER REPORTS (owner, 2026-10-24; globe/GlobeFieldReportsLayer.jsx): off like every layer; sending, ending or
+    // deleting a report turns it on, so what you just did is on the map
+    const [userReportsOn, setUserReportsOn] = useState(false)
+    useEffect(() => subscribeReports(() => setUserReportsOn(true)), [])
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
@@ -501,6 +506,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         gdelt: [gdeltOn, setGdeltOn],
         liveSignals: [liveSignalsOn, setLiveSignalsOn],
         protests: [protestsOn, setProtestsOn],
+        userReports: [userReportsOn, setUserReportsOn],
         strikes: [strikesOn, setStrikesOn],
         frontlineClaims: [claimsOn, setClaimsOn],
         movements: [movementsOn, setMovementsOn],
@@ -1509,6 +1515,16 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                     {protestsOn && <ProtestFrames variant="desktop" />}
                 </LayerGroup>
 
+                <LayerGroup id="user-reports" title="User reports" activeCount={userReportsOn ? 1 : 0}>
+                    <div data-testid="user-reports-row">
+                        <SubLayerRow
+                            label="User reports"
+                            hint="What people report seeing on the ground (police, crowds, clashes, roadblocks, fire, explosions, shots), each until it expires · unverified, said so on the marker · right-click the map to report"
+                            on={userReportsOn} parentOn={true}
+                            onToggle={() => setUserReportsOn((v) => !v)} />
+                    </div>
+                </LayerGroup>
+
                 <LayerGroup id="our-assets" title="Our assets" activeCount={(assetsOn ? 1 : 0) + (teamOn ? 1 : 0) + (safeHousesOn ? 1 : 0)}>
                     <SubLayerRow
                         label="Assets in the register"
@@ -2076,6 +2092,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             <path d="M5.5 4l1-1.6h3L10.5 4" />
                         </svg>
                     </button>
+                    {/* Report what you see, at the view's centre (globe/GlobeFieldReportsLayer.jsx; right-click: at a point) */}
+                    <button onClick={() => openReportForm()} title="Report what you see (or right-click the map)" data-testid="map-report-btn"
+                        style={{ flex: "none", whiteSpace: "nowrap", height: 24, padding: "0 8px", display: "flex", alignItems: "center", gap: 4,
+                                 background: "none", border: "1px solid var(--line-soft)", borderRadius: 3, cursor: "pointer", color: "var(--txt-3)", font: "500 11px var(--font)" }}>
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M8 1.8 13.5 4v4c0 3.2-2.4 5.2-5.5 6.2C4.9 13.2 2.5 11.2 2.5 8V4z" /><path d="M8 5v3.5M8 10.6v.4" /></svg>
+                        Report
+                    </button>
                     <button
                         onClick={() => setExportOpen(true)}
                         title="Export signals for a time period (CSV/PDF)"
@@ -2139,6 +2162,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                         gdeltEnabled={groupsOnV.news && gdeltOn}
                         liveSignalsEnabled={groupsOnV.news && liveSignalsOn}
                         protestsEnabled={protestsOn}
+                        userReportsEnabled={userReportsOn}
                         strikesEnabled={groupsOnV.news && strikesOn}
                         frontlineClaimsEnabled={groupsOnV.news && claimsOn}
                         movementsEnabled={groupsOnV.news && movementsOn}

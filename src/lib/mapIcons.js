@@ -18,8 +18,8 @@
  *            info grey; ours gold (assets) and blue (you, the team, routes). Actor and side colours live only on
  *            areas and lines (claims, arrows) and in card text, never on a point marker. No green for severity.
  *   STATE    one rule everywhere: developing = a ring in the same colour; live = plain; past = hollow at 0.45;
- *            upcoming = hollow with a dashed edge; muted (uncorroborated) = 0.6 with a dotted edge; selected = a
- *            white ring
+ *            upcoming = hollow with a dashed edge; muted (uncorroborated) = 0.6 with a dotted edge; user (a user's
+ *            report, unverified: lib/fieldReports.js) = filled with a light dashed edge; selected = a white ring
  *   SIZE     constant on-screen pixels (SIZE), never scaled by zoom or camera distance, never by data
  *            (casualties, port class, a cluster's count). The phone multiplies everything by PHONE_ICON_SCALE.
  *   CLUSTER  one badge (clusterIcon): a dark disc, a ring in the highest priority inside, the count
@@ -38,14 +38,15 @@ export const PRIORITY_LABEL = { flash: "Flash", urgent: "Urgent", alert: "Alert"
 export const OURS = { gold: "#C9A227", blue: "#3B8CFF" }
 export const TRAFFIC = "#C9D4E3"         // a ship or an aircraft nobody flagged
 export const SELECTED = "#FFFFFF"
+export const USER_EDGE = "#F1F3F5"      // the dashed edge of a user's report (unverified)
 /** On-screen pixels. Constant at every zoom. */
 export const SIZE = { event: 24, traffic: 16, infra: 18, pin: { w: 30, h: 36 }, me: 16, team: 12, dot: 12, small: 10, cluster: 30 }
 export const ICON_PX = SIZE.event
 export const CLUSTER_PX = SIZE.cluster
 /** The phone draws every marker a fifth larger than the desktop (owner, 2026-10-17), all of them. */
 export const PHONE_ICON_SCALE = 1.2
-export const STATES = ["live", "developing", "past", "upcoming", "muted"]
-export const STATE_ALPHA = { live: 1, developing: 1, past: 0.45, upcoming: 1, muted: 0.6 }
+export const STATES = ["live", "developing", "past", "upcoming", "muted", "user"]
+export const STATE_ALPHA = { live: 1, developing: 1, past: 0.45, upcoming: 1, muted: 0.6, user: 1 }
 export const KIND_SHAPE = { event: "circle", confirmed: "square", derived: "triangle", news: "diamond" }
 const SS = 2                             // supersample: the SVG's pixel size is 2x its display size
 
@@ -88,6 +89,8 @@ export const GLYPH = {
     crime: g("M3.5 8h15.5v3.6h-7.2l-1.3 2.6H8.3L7 19.5H3.9l1.6-7.9H3.5zM19 9.2h1.5M10.5 11.6v2.6"),
     placard: g("M11 9h10v7H11zM16 16v8M13 24h6", { box: 32 }),
     clash: g("M10 10l12 12M22 10L10 22M16 7v3M16 22v3", { box: 32 }),
+    // a barrier on two legs (a user's roadblock report)
+    roadblock: g("M7 12h18v6H7zM11 12l-3 6M16 12l-3 6M21 12l-3 6M10 18v6M22 18v6", { box: 32 }),
     // strikes & control (globe/strikes.js acts)
     airstrike: g("M12 21c-2.6 0-4.1-2.4-4.1-5.9S9.4 8.7 12 8.7s4.1 3 4.1 6.4S14.6 21 12 21zM9.7 9.1 8.5 4h7l-1.2 5.1M12 4v4.7"),
     missile: g("M19.5 4.5c-3 .2-5.6 1.5-7.6 3.5L7.8 12.1l4.1 4.1 4.1-4.1c2-2 3.3-4.6 3.5-7.6zM7.8 12.1 4.8 11.4 3.5 12.7l3 1.5M11.9 16.2l.7 3-1.3 1.3-1.5-3M6.6 17.4l-2.1 2.1"),
@@ -202,9 +205,10 @@ export function markerIcon({ kind = "event", shape = null, glyph = null, priorit
         const S = SIZE.event
         const hollow = st === "past" || st === "upcoming"
         const fill = hollow ? `fill="${EDGE}" fill-opacity="0.72"` : `fill="${col}"`
-        const edge = hollow ? col : EDGE
-        const dash = st === "upcoming" ? ` stroke-dasharray="2.6 1.8"` : st === "muted" ? ` stroke-dasharray="0.1 2.4" stroke-linecap="round"` : ""
-        const ew = st === "muted" ? 2 : STROKE
+        const edge = hollow ? col : st === "user" ? USER_EDGE : EDGE
+        const dash = st === "upcoming" ? ` stroke-dasharray="2.6 1.8"` : st === "muted" ? ` stroke-dasharray="0.1 2.4" stroke-linecap="round"`
+            : st === "user" ? ` stroke-dasharray="2.2 1.6"` : ""
+        const ew = st === "muted" ? 2 : st === "user" ? 1.8 : STROKE
         let svg = svgOpen(S, S, STATE_ALPHA[st])
         if (st === "developing") svg += `<circle cx="12" cy="12" r="11" fill="none" stroke="${col}" stroke-width="1.8"/>`
         if (selected) svg += `<circle cx="12" cy="12" r="11" fill="none" stroke="${SELECTED}" stroke-width="2"/>`
@@ -218,6 +222,26 @@ export function markerIcon({ kind = "event", shape = null, glyph = null, priorit
 }
 /** Just the data URI of markerIcon(). */
 export const markerUri = (o) => markerIcon(o).uri
+
+// ── user reports (backend/field_reports.py KINDS): a reported event, the kind's glyph, the dashed 'user' edge ──
+/** The kinds a user can report, in the server's order: label, glyph, priority, default expiry in hours. */
+export const REPORT_KINDS = {
+    police: { label: "Police", glyph: "police", priority: "alert", expiryH: 2 },
+    crowd: { label: "Crowd", glyph: "crowd", priority: "alert", expiryH: 3 },
+    clashes: { label: "Clashes", glyph: "clash", priority: "urgent", expiryH: 2 },
+    roadblock: { label: "Roadblock", glyph: "roadblock", priority: "alert", expiryH: 6 },
+    fire: { label: "Fire", glyph: "flame", priority: "urgent", expiryH: 6 },
+    explosion: { label: "Explosion", glyph: "explosion", priority: "urgent", expiryH: 6 },
+    shots: { label: "Shots fired", glyph: "crime", priority: "urgent", expiryH: 2 },
+    other: { label: "Other", glyph: "warning", priority: "alert", expiryH: 6 },
+}
+/** A user report's marker: { uri, w, h, anchor }. `state` defaults to 'user' (the dashed unverified edge). */
+export function reportMarker(kind, { state = "user", selected = false, priority = null } = {}) {
+    const k = REPORT_KINDS[kind] || REPORT_KINDS.other
+    return markerIcon({ kind: "event", glyph: k.glyph, priority: priority || k.priority, state, selected })
+}
+/** The data URI of a user report's marker (the assistant's Confirm card, the map layers, the report form). */
+export const reportIcon = (kind, opts) => reportMarker(kind, opts).uri
 
 // ── ours: the pin ───────────────────────────────────────────────────────────
 const PIN_PATH = "M15 35.2 10.6 28.5H5a3.5 3.5 0 0 1-3.5-3.5V5A3.5 3.5 0 0 1 5 1.5h20A3.5 3.5 0 0 1 28.5 5v20a3.5 3.5 0 0 1-3.5 3.5h-5.6Z"
@@ -373,6 +397,7 @@ export const LEGEND = {
         { key: "past", label: "Past", icon: () => markerIcon({ kind: "event", priority: "urgent", state: "past" }) },
         { key: "upcoming", label: "Upcoming", icon: () => markerIcon({ kind: "event", priority: "urgent", state: "upcoming" }) },
         { key: "muted", label: "Not corroborated", icon: () => markerIcon({ kind: "event", priority: "urgent", state: "muted" }) },
+        { key: "user", label: "A user's report, unverified", icon: () => markerIcon({ kind: "event", glyph: "police", priority: "alert", state: "user" }) },
     ],
 }
 /** The legend as plain rows: [{ section, rows: [{ key, label, uri, w, h }] }]. */

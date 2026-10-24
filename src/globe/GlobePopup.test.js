@@ -11,7 +11,7 @@ describe("GlobePopup INSPECTOR_TYPES", () => {
         // running the full suite during this round's Globe-crash fixes.
         expect([...INSPECTOR_TYPES].sort()).toEqual([
             "aircraft", "airport", "alert", "assessment", "cable", "chokepoint",
-            "country_risk", "eez", "event", "frontline", "fusion", "fusion_member",
+            "country_risk", "eez", "event", "field_report", "frontline", "fusion", "fusion_member",
             "gdelt_event", "geoconfirmed", "heatmap_cell", "infra", "port",
             "pipeline", "sentinel_detection", "surge", "telegram", "thermal_anomaly", "trade_route", "vessel",
             "facility_osm", "warmap_area", "gfw_event", "airspace",

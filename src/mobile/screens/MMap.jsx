@@ -18,6 +18,7 @@ import { useMine, usePoll, arr } from "../useMine.js"
 import API_BASE from "../../apiBase.js"
 import { Icon, Sheet, SignalSheet } from "./common.jsx"
 import MPeek from "./MPeek.jsx"
+import FieldReportComposer from "../FieldReportComposer.jsx"
 import { drawVesselThreat } from "./MVesselThreat.jsx"
 import { myPosition, myTrail, subscribeMyPosition } from "../../location/liveShare.js"
 import { devicePosition, saveHere, connectionPosition } from "../../components/LocationPrompt.jsx"
@@ -779,6 +780,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                         <Icon id={baseKey === "dark" ? "g-sat" : "g-layers"} />
                     </button>
                     <button className="m2-round" aria-label="Whole world" onClick={() => goTheater("global")}><Icon id="g-globe" /></button>
+                    {/* REPORT what you see (owner, 2026-10-24): ../FieldReportComposer.jsx */}
+                    <FieldReportComposer mapRef={map} />
                     {mine.theaters.length > 0 && <button className="m2-round" aria-label="My theaters" onClick={() => setSheet("theaters")}><Icon id="g-tabs" /></button>}
                     {/* BACK TO ME (owner, 2026-10-17): the map centred on where this phone is */}
                     <button className="m2-round m2-me-btn" aria-label="Centre on me" data-testid="m2-recenter" onClick={() => { prog.current = true; nearMe() }}>

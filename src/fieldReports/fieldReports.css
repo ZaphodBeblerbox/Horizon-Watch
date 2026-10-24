@@ -1,0 +1,44 @@
+/* User reports: the form and the marker card, phone and desktop (fieldReports/*.jsx). */
+.fr-form { display: flex; flex-direction: column; gap: 10px; color: var(--txt, #e8ecf2); font-size: 13px; }
+.fr-form h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.fr-label { font-size: 11px; letter-spacing: .02em; color: var(--txt-3, var(--txt3, #8a93a3)); text-transform: uppercase; }
+.fr-kinds { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.fr-kind { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 2px 6px; border: 1px solid var(--line-soft, rgba(255,255,255,.12));
+           background: rgba(255,255,255,.03); color: inherit; font: inherit; font-size: 11.5px; cursor: pointer; border-radius: 10px; min-width: 0; }
+.fr-kind img { width: 28px; height: 28px; }
+.fr-kind[aria-pressed="true"] { border-color: var(--acc-hi, var(--acchi, #7aa7ff)); background: var(--accdim, rgba(122,167,255,.16)); }
+.fr-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.fr-chip { height: 30px; padding: 0 11px; border: 1px solid var(--line-soft, rgba(255,255,255,.14)); background: rgba(255,255,255,.04); color: inherit;
+           font: inherit; font-size: 12.5px; border-radius: 15px; cursor: pointer; }
+.fr-chip[aria-pressed="true"] { border-color: var(--acc-hi, var(--acchi, #7aa7ff)); background: var(--accdim, rgba(122,167,255,.18)); }
+.fr-input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line-soft, rgba(255,255,255,.14)); background: rgba(0,0,0,.22);
+            color: inherit; font: inherit; font-size: 14px; border-radius: 8px; }
+.fr-input.small { width: 70px; padding: 5px 8px; }
+textarea.fr-input { min-height: 56px; resize: vertical; }
+.fr-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fr-where { font-size: 12px; color: var(--txt-2, var(--txt2, #c3c7cf)); }
+.fr-err { color: #ff8a8a; font-size: 12.5px; }
+.fr-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }
+.fr-btn { height: 34px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--acc, #3d6bd8); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.fr-btn.ghost { background: transparent; border: 1px solid var(--line-soft, rgba(255,255,255,.16)); color: inherit; font-weight: 500; }
+.fr-btn:disabled { opacity: .5; cursor: default; }
+.fr-thumbs { display: flex; gap: 6px; flex-wrap: wrap; }
+.fr-thumbs img, .fr-thumbs video { width: 96px; height: 72px; object-fit: cover; border-radius: 6px; background: #000; }
+.fr-card { display: flex; flex-direction: column; gap: 6px; color: var(--txt, #e8ecf2); font-size: 13px; }
+.fr-card-head { display: flex; gap: 10px; align-items: flex-start; }
+.fr-card-head img { width: 28px; height: 28px; flex: none; }
+.fr-card h3 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
+.fr-meta { color: var(--txt-2, var(--txt2, #c3c7cf)); font-size: 12.5px; }
+.fr-note { white-space: pre-wrap; line-height: 1.4; }
+/* desktop: the form floats over the globe */
+.fr-float { position: fixed; z-index: 1200; width: 340px; max-width: calc(100vw - 32px); max-height: calc(100vh - 120px); overflow-y: auto; padding: 14px;
+            background: var(--bg-2, rgba(16,19,25,.96)); border: 1px solid var(--line, rgba(255,255,255,.14)); border-radius: 10px; box-shadow: 0 14px 40px rgba(0,0,0,.45); }
+.fr-menu { position: fixed; z-index: 1200; background: var(--bg-2, rgba(16,19,25,.96)); border: 1px solid var(--line, rgba(255,255,255,.14)); border-radius: 8px;
+           box-shadow: 0 8px 24px rgba(0,0,0,.4); padding: 4px; }
+.fr-menu button { display: block; width: 100%; text-align: left; padding: 7px 12px; border: 0; background: none; color: var(--txt, #e8ecf2); font: inherit; font-size: 13px; cursor: pointer; border-radius: 6px; }
+.fr-menu button:hover { background: rgba(255,255,255,.07); }
+/* phone: a panel over the lower map, the pin stays visible above it */
+.fr-phone { position: fixed; left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); z-index: 905; max-height: 58vh; overflow-y: auto;
+            padding: 12px 14px 14px; border-radius: 22px; background: rgba(16, 19, 25, .9); border: 1px solid var(--gline2, rgba(255,255,255,.14));
+            backdrop-filter: blur(26px) saturate(1.4); -webkit-backdrop-filter: blur(26px) saturate(1.4); box-shadow: 0 14px 40px rgba(0,0,0,.45); }
+.fr-phone .fr-btn { height: 40px; border-radius: 12px; }

@@ -22,6 +22,7 @@ import { safeHouseIcon, placesLabel } from "../evacuation/safeHouseIcon.js"
 import API_BASE from "../apiBase.js"
 import { actIcon, signalIcon, signalPriority, cardText, liveSignalDrawn, mediaSources, representative, ICON_PX } from "../lib/liveSignals.js"
 import { imageryIcon, markerUri, markerIcon, pinIcon, infraIcon, dotIcon, priorityOf, SIZE } from "../lib/mapIcons.js"
+import { listReports, reportFeatures, reportIcon, REFRESH_MS as REPORTS_REFRESH_MS } from "../lib/fieldReports.js"
 import { PROTESTS_PATH, LIVE_REFRESH_MS, getFrame, setMeta, protestFeatures, protestBadge, refreshMs as protestsRefreshMs } from "../lib/protests.js"
 import { myPosition } from "../location/liveShare.js"
 import { getCurrentUser } from "../state/authStore.js"
@@ -1166,6 +1167,7 @@ async function loadTrajectories({ bounds }) {
 
 const G = {
     protests: "Protests",
+    reports: "User reports",
     assets: "Our assets",
     endangered: "Endangered places",
     maritime: "Maritime",
@@ -1191,6 +1193,13 @@ export const PHONE_LAYERS = [
         key: "protests", label: "Protests", group: G.protests, defaultOn: false, kind: "points", minZoom: 0,
         refreshMs: LIVE_REFRESH_MS, legendIcon: protestBadge({ kind: "protest" }),
         load: loadProtests,
+    },
+    // User reports (owner, 2026-10-24; lib/fieldReports.js): what people report seeing, until it expires.
+    // Off like every layer; sending a report turns it on (mobile/FieldReportComposer.jsx).
+    {
+        key: "userReports", label: "User reports", group: G.reports, defaultOn: false, kind: "points", minZoom: 0,
+        refreshMs: REPORTS_REFRESH_MS, legendIcon: reportIcon("police"),
+        load: async ({ bounds } = {}) => cullPoints(reportFeatures(await listReports().catch(() => [])), normBounds(bounds)),
     },
     // Our assets — Situation's first group.
     {

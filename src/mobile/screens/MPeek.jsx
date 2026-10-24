@@ -23,6 +23,7 @@ import { itemStatusLabel, mediaItems } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
 import ReportMedia from "../../components/ReportMedia.jsx"
 import WritePostButton from "../../assistant/WritePostButton.jsx"
+import ReportCard from "../../fieldReports/ReportCard.jsx"
 import { stripEmoji } from "../../lib/liveSignals.js"
 import WebContext from "../../components/WebContext.jsx"
 import { StatusChip } from "../../events/EventDetail.jsx"
@@ -107,6 +108,18 @@ export default function MPeek({ s, onClose, onDetails, onStep, index = null, cou
     // A LIVE SIGNAL'S CARD (owner, 2026-10-22): the act and the place in one plain sentence, one source line
     // with its age, other acts of the same event as short lines, the attached footage as the card's media.
     // A cluster of signals opens as a list. Nothing else: no "footage from", no channel list, no post text.
+    // A USER REPORT (owner, 2026-10-24): who, when, unverified, the expiry, the note and media, End now for its author
+    if (s.kind === "field_report") {
+        return createPortal(
+            <div ref={el} className={`m2-peek ${enter}`} role="dialog" aria-label={title} data-testid="m2-peek">
+                <div className="m2-peek-grip" />
+                <ReportCard r={s} compact onDone={() => { window.dispatchEvent(new CustomEvent("m2:layers", { detail: { userReports: true } })); onClose?.() }} />
+                <div className="m2-peek-acts">
+                    <button className="m2-btn ghost" aria-label="Put away" onClick={() => onClose?.()}>Close</button>
+                    {count > 1 && index != null && <span className="m2-peek-count">{index + 1} / {count}</span>}
+                </div>
+            </div>, host)
+    }
     if (s.kind === "live_signal" || s.kind === "live_cluster") {
         const cl = s.kind === "live_cluster"
         return createPortal(

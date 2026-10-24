@@ -78,6 +78,7 @@ export function protestPriority(it) {
 export function protestState(it) {
     if (it?.kind === "planned" || it?.frame === "upcoming") return "upcoming"
     if (it?.muted) return "muted"
+    if (it?.source_kind === "user") return "user"              // a user's report (backend/field_reports.py): unverified
     if (it?.frame === "today" && !it?.live) return "past"
     return it?.developing ? "developing" : "live"
 }

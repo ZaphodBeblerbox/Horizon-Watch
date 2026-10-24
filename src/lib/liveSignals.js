@@ -63,6 +63,7 @@ const ms = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t
 
 /** Is a signal still on the map at `now`? 60 min after its latest event; a crowd 3 h after its first. */
 export function liveSignalDrawn(s, now = Date.now()) {
+    if (s?.source_kind === "user") return false        // a user's report: drawn by the User reports layer (lib/fieldReports.js)
     const last = ms(s?.event_time)
     if (!Number.isFinite(last)) return false
     const age = (now - last) / 60_000
