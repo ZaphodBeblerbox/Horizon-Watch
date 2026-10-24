@@ -1371,6 +1371,22 @@ EST_CALL_USD = float(os.getenv("LIVE_INCIDENT_EST_CALL_USD", "0.0009") or 0.0009
 QUEUE_MAX_AGE_MIN = 30                # a post that waited this long for the model goes to the rule path
 
 
+FOCUS_EXTRA_PER_DAY = int(os.getenv("LIVE_INCIDENT_FOCUS_EXTRA_PER_DAY", "120") or 120)
+_FOCUS_EXTRA = {"day": None, "used": 0}
+
+
+def _focus_extra_left(now: _dt.datetime) -> int:
+    day = now.strftime("%Y-%m-%d")
+    if _FOCUS_EXTRA["day"] != day:
+        _FOCUS_EXTRA.update(day=day, used=0)
+    return max(0, FOCUS_EXTRA_PER_DAY - _FOCUS_EXTRA["used"])
+
+
+def _focus_extra_take(now: _dt.datetime, n: int) -> None:
+    _focus_extra_left(now)
+    _FOCUS_EXTRA["used"] += n
+
+
 def share_day_cap(now: _dt.datetime | None = None) -> int:
     import calendar
 
@@ -1637,12 +1653,21 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
         waiting = fresh[PER_PASS:]
         fresh = fresh[:PER_PASS]
         if len(fresh) > left:
-            out["capped"] = len(fresh) - left
+            # WHAT SOMEONE FOLLOWS NOW GETS THROUGH (owner, Paris, 2026-10-24): the day's share went on posts from
+            # countries somebody watches and the Paris march waited behind them. A post in a focus area (a
+            # city-scale theater, a user's position) is read past the cap, up to FOCUS_EXTRA_PER_DAY a UTC day.
+            over = fresh[max(left, 0):]
+            extra = [r for r in over if r.get("_focus")][:_focus_extra_left(now)]
+            _focus_extra_take(now, len(extra))
+            over = [r for r in over if r not in extra]
+            out["capped"] = len(over)
+            out["focus_past_cap"] = len(extra)
             _bump("capped", out["capped"])
-            if left <= 0 or STATUS.get("capped", 0) % 50 == 1:
-                print(f"[live-incident] CAP reached ({budget(con, now)}): {out['capped']} posts wait for the next window", flush=True)
-            waiting = fresh[max(left, 0):] + waiting
-            fresh = fresh[:max(left, 0)]
+            if (left <= 0 or STATUS.get("capped", 0) % 50 == 1) and over:
+                print(f"[live-incident] CAP reached ({budget(con, now)}): {out['capped']} posts wait for the next window"
+                      f"{f', {len(extra)} in focus areas read past it' if extra else ''}", flush=True)
+            waiting = over + waiting
+            fresh = fresh[:max(left, 0)] + extra
         # the lowest scores wait for the next pass; one that has waited QUEUE_MAX_AGE_MIN goes to the rule path
         old = iso(now - _dt.timedelta(minutes=QUEUE_MAX_AGE_MIN))
         for r in waiting:
