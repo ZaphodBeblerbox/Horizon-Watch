@@ -229,3 +229,19 @@ def test_the_rule_path_with_the_model_out_reads_movements_too(db, monkeypatch):
     assert r["live_verdict"] == "rule-live" and r["headline"] == "Crowd at Boulevard Voltaire, moving toward Place de la Nation"
     a = ls.atom_of(r)
     assert a and a["act"] == "crowd_movement" and a["direction"]["toward_place"] == "Place de la Nation"
+
+
+def test_backfill_rereads_the_morning_posts_the_model_turned_down(db):
+    """The Centaure posts of 2026-10-24 were rejected before the rule existed: the backfill writes them as the rule
+    would have then (live in their own 45 minutes, so they are in Today), with no model call; idempotent."""
+    _post(10485, CENTAURE_AN, CENTAURE_AN_AT, live_checked=1, live_verdict="not live: no time", live_cost=0.0007)
+    _post(10490, WAR, "2026-10-24T09:30:00+00:00", live_checked=1, live_verdict="not live")
+    later = li.parse_utc(CENTAURE_AN_AT) + dt.timedelta(hours=3)
+    out = li.backfill_presence(now=later)
+    assert out["live"] == 1
+    r = _row(db, 10485)
+    assert r["live_verdict"] == "live" and r["event_time"] == "2026-10-24T09:22:45+00:00"
+    assert r["headline"] == "Police deployed at Assemblée nationale, Paris"
+    assert li.live_fields(r, later)["live"] is False and li.live_fields(r, later)["live_state"] == "past"
+    assert _row(db, 10490)["live_verdict"] != "live"
+    assert li.backfill_presence(now=later)["live"] == 0

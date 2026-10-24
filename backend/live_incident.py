@@ -1476,6 +1476,53 @@ def candidates(con, now: _dt.datetime, limit: int = 400) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def backfill_presence(con=None, now: _dt.datetime | None = None, hours: int = 24) -> dict:
+    """RE-READ THE LAST DAY WITH THE MOVEMENT RULE (owner, Paris, 2026-10-24: "the Centaure posts this morning should
+    still be shown"): posts of the last `hours` the rule did not judge (they came before it, or the model turned them
+    down) are read again by presence_verdict as of one minute after they were posted. One that qualifies is written
+    as the rule would have written it then: live in its own 45 minutes, so it is in Today and the timeline, not Live
+    now. Code only, no model call; idempotent (a presence verdict is never read again)."""
+    own = con is None
+    if own:
+        import telegram_ingest
+        con = telegram_ingest._con()
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    out = {"read": 0, "live": 0}
+    try:
+        con.row_factory = sqlite3.Row
+        rows = [dict(r) for r in con.execute(
+            "SELECT channel, msg_id, channel_title, posted_at, text, role, chat_kind, read_by, lat, lon, country_code, claim, headline,"
+            " place, precision, geocoded_as, live_verdict, live_json FROM telegram_posts WHERE posted_at >= ? AND text IS NOT NULL"
+            " AND COALESCE(role,'') != 'ignore' AND COALESCE(live_verdict,'') != 'live'",
+            (iso(now - _dt.timedelta(hours=hours)),)).fetchall()]
+        con.row_factory = None
+        for r in rows:
+            if is_presence(r):
+                continue
+            p = parse_utc(r["posted_at"])
+            if p is None:
+                continue
+            out["read"] += 1
+            at = p + _dt.timedelta(minutes=1)
+            try:
+                pv = presence_verdict(r["text"], r["posted_at"], at, row=r, country_code=r.get("country_code"))
+            except Exception as e:                                      # noqa: BLE001
+                print(f"[live-incident] error: backfill {r['channel']}/{r['msg_id']}: {type(e).__name__}: {e}", flush=True)
+                continue
+            if pv is None:
+                continue
+            r["_hash"] = text_hash(r["text"])
+            con.execute("UPDATE telegram_posts SET live_hash=? WHERE channel=? AND msg_id=?", (r["_hash"], r["channel"], r["msg_id"]))
+            _write(con, r, pv, None, 0.0, at, "rule:presence")
+            out["live"] += 1
+        con.commit()
+    finally:
+        con.row_factory = None
+        if own:
+            con.close()
+    return out
+
+
 def gate_reason() -> str | None:
     """Why the model is not available to this module, or None when it is.
     HW_OPENAI_PURPOSES in production is an explicit list: a purpose missing
