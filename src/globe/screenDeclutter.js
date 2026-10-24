@@ -20,6 +20,7 @@ import { useCesium } from "resium"
 import { Cartesian3, SceneTransforms } from "cesium"
 import { declutterAll, onNearSide, representative } from "../lib/liveSignals.js"
 import { topPriority } from "../lib/mapIcons.js"
+import { addPulses, globeTracker } from "../lib/newOnMap.js"
 
 /** Who draws a mixed cluster: the first of these among its members. */
 export const ORDER = ["assets", "safeHouses", "liveSignals", "protests", "derivedAlerts", "strikes", "imagerySignals", "findings",
@@ -89,7 +90,11 @@ export function useDeclutter(key, items, enabled = true) {
     const [layout, setLayout] = useState([])
     useEffect(() => {
         const viewer = cesium?.viewer
+        if (!enabled) globeTracker.reset(key)
         if (!enabled || !viewer || viewer.scene?.isDestroyed?.()) { setLayout([]); return undefined }
+        // NEW ON THE MAP PULSES (lib/newOnMap.js, globe/GlobePulseLayer.jsx): every event layer passes here
+        const fresh = globeTracker.observe(key, items)
+        if (fresh.length) addPulses(fresh.map((i) => ({ id: `${key}:${i.id}`, lat: i.lat, lon: i.lon, pri: i.pri, size: i.size })))
         hook(viewer)
         _layers.set(key, { items: Array.isArray(items) ? items : [], set: setLayout })
         later()

@@ -316,6 +316,32 @@ export function dotIcon({ role = "team", live = true, coarse = false, label = nu
     })
 }
 
+// ── new on the map: one ring, briefly (owner, 2026-10-24) ──────────────────
+/**
+ * A new item pulses: one ring in its priority colour, edged dark like every mark, grows from the marker's own
+ * size to PULSE.to times it and fades, PULSE.iterations times over PULSE.ms; then the marker rests at its
+ * constant size. The same on the phone (a CSS animation of this image) and the globe (a billboard scaled by time).
+ */
+export const PULSE = { ms: 2800, iterations: 2, from: 1, to: 2.4 }
+export function pulseRingIcon(priority = "alert") {
+    const p = priorityOf(priority)
+    return cached(`pulse|${p}`, () => {
+        const S = SIZE.event
+        const svg = svgOpen(S, S)
+            + `<circle cx="12" cy="12" r="10.6" fill="none" stroke="${EDGE}" stroke-opacity="0.55" stroke-width="${STROKE + 1.6}"/>`
+            + `<circle cx="12" cy="12" r="10.6" fill="none" stroke="${PRIORITY[p]}" stroke-width="${STROKE + 0.5}"/>`
+            + `</svg>`
+        return { uri: enc(svg), w: S, h: S, anchor: [S / 2, S / 2], kind: "pulse" }
+    })
+}
+/** The ring's scale and opacity at `elapsed` ms (both maps draw from this). null when the pulse is over. */
+export function pulseFrame(elapsed) {
+    if (!(elapsed >= 0) || elapsed >= PULSE.ms) return null
+    const one = PULSE.ms / PULSE.iterations
+    const k = (elapsed % one) / one
+    return { scale: PULSE.from + (PULSE.to - PULSE.from) * k, alpha: 0.95 * (1 - k) }
+}
+
 // ── the one cluster badge ───────────────────────────────────────────────────
 /** A cluster: a dark disc, a ring in the highest priority inside, the count. Constant size whatever the count. */
 export function clusterIcon(n, priority = null) {

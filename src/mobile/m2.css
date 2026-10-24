@@ -458,3 +458,8 @@
 .m2-mood-bar span { display: block; height: 100%; background: var(--txt); border-radius: 2px; }
 .m2-mood-num { text-align: right; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .m2-mood-num small { font-size: 11.5px; color: var(--txt3); font-weight: 500; }
+
+/* NEW ON THE MAP PULSES (owner, 2026-10-24; lib/newOnMap.js, lib/mapIcons.js PULSE): one ring, twice, then gone */
+.m2-pulse { background: none; border: 0; pointer-events: none; }
+.m2-pulse img { display: block; opacity: 0; transform-origin: 50% 50%; animation: m2-pulse-ring 1400ms ease-out 2; }
+@keyframes m2-pulse-ring { from { transform: scale(1); opacity: .95; } to { transform: scale(2.4); opacity: 0; } }

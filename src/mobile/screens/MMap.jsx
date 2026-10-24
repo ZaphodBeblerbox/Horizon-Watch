@@ -36,7 +36,8 @@ import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
 import { closeOpenedSignal, setSignalPinLayer } from "../../lib/signalPin.js"
 import { declutterAll, representative } from "../../lib/liveSignals.js"
-import { trafficIcon, trafficTone, dotIcon, markerIcon, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
+import { trafficIcon, trafficTone, dotIcon, markerIcon, PHONE_ICON_SCALE, PULSE, pulseRingIcon } from "../../lib/mapIcons.js"
+import { createNewTracker } from "../../lib/newOnMap.js"
 import MapLegend from "../../components/MapLegend.jsx"
 import ProtestFrames, { useProtestFrame } from "../../components/ProtestFrames.jsx"
 import { setTheaterScope } from "../theaterScope.js"
@@ -117,6 +118,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const prog = useRef(false)             // a move the app made (not a finger): the card stays
     const drawn = useRef(new Map())        // key → { layer, sig }: marks kept between draws, changed only where changed
     const pts = useRef([])                 // the point signals drawn, for the card's swipe
+    const newTracker = useRef(createNewTracker())   // what is new on the map pulses (lib/newOnMap.js)
+    const pulseG = useRef(null)
     const picked = useRef(null)
     const [detail, setDetail] = useState(null)
     const returning = useRef(false)        // the card coming back out of its sheet: no entrance of its own
@@ -435,6 +438,30 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     points.push({ key, f, l, lat: +f.lat, lon: +f.lon })
                 }
             })
+        }
+        // NEW ON THE MAP PULSES (owner, 2026-10-24; lib/newOnMap.js): an event item this map had not drawn, recent,
+        // arriving after the layer's first picture: one ring (lib/mapIcons.js PULSE), then the marker at rest
+        {
+            const byLayer = new Map()
+            for (const p of points) {
+                const a = byLayer.get(p.l.key) || []
+                a.push({ id: p.key, t: featureTime(p.f), p })
+                byLayer.set(p.l.key, a)
+            }
+            if (!pulseG.current) pulseG.current = L.layerGroup().addTo(m)
+            for (const l of PHONE_LAYERS) {
+                if (!on[l.key]) { newTracker.current.reset(l.key); continue }
+                for (const x of newTracker.current.observe(l.key, byLayer.get(l.key) || [])) {
+                    const { w, h, a } = scaled(x.p.f)
+                    const ring = pulseRingIcon(x.p.f.pri || x.p.f.severity || "alert").uri
+                    const mk = L.marker([x.p.lat, x.p.lon], {
+                        icon: L.divIcon({ className: "m2-pulse", html: `<img alt="" src="${ring}" width="${w}" height="${h}">`, iconSize: [w, h], iconAnchor: a }),
+                        interactive: false, keyboard: false, zIndexOffset: 1500,
+                    }).addTo(pulseG.current)
+                    setTimeout(() => { try { mk.remove() } catch { /* map gone */ } }, PULSE.ms + 100)
+                }
+            }
+            if (typeof window !== "undefined") window.__m2Pulses = pulseG.current.getLayers().length
         }
         // NO TWO MARKERS OVERLAP (owner, 2026-10-22: "three different icons at the Sorbonne, all on top of each
         // other"; 2026-10-23: one typology, no overlapping markers): every point of every layer, in screen pixels at
