@@ -12,6 +12,7 @@ import API_BASE from "../../apiBase.js"
 import { attachDrag, flingMs, swallowClickAfterDrag } from "../gesture.js"
 import { createPortal } from "react-dom"
 import TelegramMedia from "../../components/TelegramMedia.jsx"
+import { footageOf } from "../footage.js"
 import XPost, { xPostId } from "../../components/XPost.jsx"
 import { createPost } from "../../lib/deskApi.js"
 import { whenLabel } from "../../utils/formatTime.js"
@@ -257,8 +258,11 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
             {s.kind === "protest" && <ProtestDetail protest={s} phone />}
             {/* A STREET REPORT: the pictures and videos of every post behind it, each opening the real thing */}
             {(s.kind === "police_action" || s.street_report) && <ReportMedia item={s} phone />}
-            {!(s.kind === "police_action" || s.street_report) && (s.media === "video" || s.thumb_url) && s.channel
-                && <div style={{ margin: "0 -14px 10px" }}><TelegramMedia post={s} maxHeight="46vh" radius="0" /></div>}
+            {/* THE FOOTAGE IN THE SHEET (owner, 2026-10-24): every picture and video the item carries, playable
+                (a post's own, a live signal's attachment and its others: mobile/footage.js) */}
+            {!(s.kind === "police_action" || s.street_report) && footageOf(s).map((m) => (
+                <div key={m.id} data-testid="sheet-footage" style={{ margin: inline ? "0 0 10px" : "0 -14px 10px", borderRadius: inline ? 14 : 0, overflow: "hidden" }}>
+                    <TelegramMedia post={m} maxHeight="46vh" radius="0" /></div>))}
             {s.kind === "strike_event"
                 ? <div style={{ marginBottom: 10 }}><StrikeSourceMedia event={s} /></div>
                 : xs.map((u) => <XPost key={u} url={u} />)}
