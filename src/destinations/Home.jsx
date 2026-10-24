@@ -47,7 +47,8 @@ import OutlookExplain from "../insight/OutlookExplain.jsx"
 import { itemStatusLabel } from "../globe/protests.js"
 import { originalTitle, untranslatedLang } from "../lib/titleLang.js"
 import { DevelopingList, FollowingList } from "../events/EventLists.jsx"
-import EventDialog from "../events/EventDialog.jsx"
+import EventDetail from "../events/EventDetail.jsx"
+import EventInline, { InlineMedia } from "../events/EventInline.jsx"
 export { slotOf }
 
 /* A null resolution overwrites a default; .catch never fires on one. */
@@ -259,15 +260,25 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
     }, [assetCards, split])
     /* A HOME ITEM OPENS ITSELF (owner, 2026-10-23: it opened Assets): what happened (the evolving brief and its
        sources), how it is connected to the user's assets and theaters, and why it is on Home — the event panel
-       (events/EventDialog.jsx), over Home, with "Show on the map" there. */
-    const [evOpen, setEvOpen] = useState(null)
+       (events/EventDetail.jsx), with "Show on the map" there. */
+    // INSIDE HOME, NOT OVER IT (owner, 2026-10-24): the item slides open under its own row and pushes what is
+    // below (events/EventInline.jsx); the same row again, Close or Escape folds it. {key, item}
+    const [evOpen, setEvOpenState] = useState(null)
+    const toggleOpen = (key, item) => setEvOpenState((o) => (o && o.key === key ? null : { key, item }))
     const openUrgent = (u) => {
         const it = u.item || {}
-        setEvOpen({ ...it, ...u.raw, id: u.raw?.id || it.id || u.key, headline: u.title, title: u.title, lat: u.lat ?? it.lat, lon: u.lon ?? it.lon,
+        toggleOpen(`u:${u.key}`, { ...it, ...u.raw, id: u.raw?.id || it.id || u.key, headline: u.title, title: u.title, lat: u.lat ?? it.lat, lon: u.lon ?? it.lon,
                     why: u.why, reason: u.why, sev: u.sev, asset_id: u.assetId || null })
     }
+    const inline = (key) => evOpen && evOpen.key === key && (
+        <EventInline key={key} variant="desk" label={evOpen.item.headline || evOpen.item.title} onClose={() => setEvOpenState(null)}>
+            <InlineMedia item={evOpen.item} />
+            <EventDetail key={evOpen.item.event_id || evOpen.item.id || evOpen.item.title} item={evOpen.item} variant="desk" onShowOnMap={showOnMap}
+                onOpenItem={(r) => setEvOpenState((o) => (o ? { ...o, item: { ...r, headline: r.title } } : o))} />
+        </EventInline>
+    )
     const showOnMap = (it) => {
-        setEvOpen(null)
+        setEvOpenState(null)
         onOpenModule("map")
         if (it?.lat != null) setTimeout(() => window.dispatchEvent(new CustomEvent("akili:fly-to", { detail: { lat: +it.lat, lon: +it.lon, altitude: 60000 } })), 250)
     }
@@ -569,15 +580,15 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                                 <span style={{ fontSize: 10.5, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--txt4)" }}>Developing in your areas</span>
                                 <span style={{ fontSize: 11.5, color: "var(--txt4)" }}>events, ranked by what they mean to you · every 30 s</span>
                             </div>
-                            <DevelopingList variant="desk" onOpen={setEvOpen} />
+                            <DevelopingList variant="desk" onOpen={(ev) => toggleOpen(`d:${ev.id}`, ev)}
+                                openId={evOpen?.key?.startsWith("d:") ? evOpen.key.slice(2) : null} renderOpen={(ev) => inline(`d:${ev.id}`)} />
                         </div>
                         <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 10.5, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--txt4)", marginBottom: 8 }}>Following</div>
-                            <FollowingList variant="desk" onOpen={setEvOpen} />
+                            <FollowingList variant="desk" onOpen={(f) => toggleOpen(`f:${f.id}`, f)}
+                                openId={evOpen?.key?.startsWith("f:") ? evOpen.key.slice(2) : null} renderOpen={(f) => inline(`f:${f.lead_event_id || f.target}`)} />
                         </div>
                     </div>
-                    {evOpen && <EventDialog item={evOpen} onClose={() => setEvOpen(null)} onShowOnMap={showOnMap}
-                        onOpenItem={(r) => setEvOpen({ ...r, headline: r.title })} />}
 
                     {/* ── Most urgent for you ───────────────────────────── */}
                     <div data-screen-label="Most urgent" style={{
@@ -597,7 +608,8 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                         ) : (
                             <div style={{ display: "flex", flexDirection: "column" }}>
                                 {urgent.map((u) => (
-                                    <button key={u.key} onClick={() => openUrgent(u)} style={{
+                                    <div key={u.key} style={{ display: "contents" }}>
+                                    <button onClick={() => openUrgent(u)} aria-expanded={evOpen?.key === `u:${u.key}`} data-testid="home-urgent-row" style={{
                                         display: "grid", gridTemplateColumns: "10px 1fr auto", gap: 10, alignItems: "baseline", textAlign: "left",
                                         padding: "8px 0", border: 0, borderTop: "1px solid var(--gline)", background: "transparent",
                                         color: "var(--txt)", font: "inherit", cursor: "pointer", minWidth: 0,
@@ -615,6 +627,8 @@ export default function Home({ onOpenModule = () => {}, onOpenSearch = () => {},
                                         </span>
                                         <span style={{ fontSize: 11.5, color: "var(--txt4)", whiteSpace: "nowrap" }}>{u.when ? whenLabel(u.when) : ""}</span>
                                     </button>
+                                    {inline(`u:${u.key}`)}
+                                    </div>
                                 ))}
                             </div>
                         )}

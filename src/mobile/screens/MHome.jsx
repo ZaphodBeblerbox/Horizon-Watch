@@ -48,7 +48,13 @@ export default function MHome({ onShowOnMap, onOpen }) {
     // Telegram's located posts, for "For you" (the footage strip reads its own)
     const posts = usePoll("/api/telegram/posts?hours=48", 30_000, (d) => dropStaleDemos(arr(d?.posts)))
     const outlook = usePoll("/api/enrich/outlook", 20 * 60_000)
-    const [open, setOpen] = useState(null)
+    // INSIDE HOME, NOT OVER IT (owner, 2026-10-24): a tapped item slides open under its own row, pushing what is
+    // below; the same row again or Close folds it. {key, s}
+    const [open, setOpenState] = useState(null)
+    const setOpen = (s, key) => setOpenState((o) => (s == null ? null : o && o.key === key ? null : { key, s }))
+    const inline = (key) => open && open.key === key && (
+        <SignalSheet key={key} inline s={open.s} onClose={() => setOpenState(null)} onShowOnMap={onShowOnMap} />
+    )
     const [why, setWhy] = useState(null)               // a line of the outlook, opened on its reasoning
     const slot = slotOf(new Date())
     const split = useMemo(() => mine.split(surface || []), [surface, mine.w]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -150,24 +156,29 @@ export default function MHome({ onShowOnMap, onOpen }) {
                 status and evolving brief; then what you follow. A tap opens the event, never another screen. */}
             <div className="m2-h" style={{ marginTop: 4 }}>Developing in your areas</div>
             <div className="m2-card" style={{ padding: "4px 14px" }} data-testid="m2-developing">
-                <DevelopingList variant="phone" onOpen={(ev) => setOpen({ ...ev, headline: ev.headline, event_id: ev.id })} limit={5} />
+                <DevelopingList variant="phone" onOpen={(ev) => setOpen({ ...ev, headline: ev.headline, event_id: ev.id }, `d:${ev.id}`)} limit={5}
+                    openId={open?.key?.startsWith("d:") ? open.key.slice(2) : null} renderOpen={(ev) => inline(`d:${ev.id}`)} />
             </div>
             <div className="m2-h">Following</div>
             <div className="m2-card" style={{ padding: "4px 14px" }} data-testid="m2-following">
-                <FollowingList variant="phone" onOpen={(f) => setOpen(f)} />
+                <FollowingList variant="phone" onOpen={(f) => setOpen(f, `f:${f.id}`)}
+                    openId={open?.key?.startsWith("f:") ? open.key.slice(2) : null} renderOpen={(f) => inline(`f:${f.lead_event_id || f.target}`)} />
             </div>
 
             <div className="m2-h" style={{ marginTop: 4 }}>{forYou.length ? "For you" : mine.has || here ? "Nothing near you — the most severe worldwide" : "Most severe right now"}</div>
             <ScopeChips theaters={mine.theaters} scope={scopeT ? scope : null} onPick={setTheaterScope} />
             <div className="m2-foryou" data-testid="m2-foryou">
                 {(forYou.length ? forYou : worldwide).map((u) => (
-                    <button key={u.id ?? u.title} className="m2-fy" onClick={() => setOpen({ ...u, _whyMine: u._why || u.reason || null })}>
+                    <div key={u.id ?? u.title} style={{ display: "contents" }}>
+                    <button className="m2-fy" aria-expanded={open?.key === `y:${u.id ?? u.title}`} onClick={() => setOpen({ ...u, _whyMine: u._why || u.reason || null }, `y:${u.id ?? u.title}`)}>
                         <span style={{ minWidth: 0 }}>
                             <b>{untranslatedLang(u) && <span className="m2-lang" data-testid="m2-lang">{untranslatedLang(u)}</span>}{u.headline || u.title}</b>
                             <small>{[u._why || String(u.location || u.place || "").split(",").slice(0, 2).join(","), String(u.source || "").replace(/^news_event$/, "News")].filter(Boolean).join(" · ")}</small>
                         </span>
                         <span className="m2-when"><i className="m2-sev" style={{ background: sevColor(u.severity_tier || u.sev) }} />{ago(u.published_at || u.created_at || u.posted_at)}</span>
                     </button>
+                    {inline(`y:${u.id ?? u.title}`)}
+                    </div>
                 ))}
                 {!forYou.length && !worldwide.length && <div className="m2-empty">{surface === null ? "Loading…" : "Nothing reported right now."}</div>}
                 {!mine.has && !here && (
@@ -189,8 +200,10 @@ export default function MHome({ onShowOnMap, onOpen }) {
                 <header><span className="m2-eyebrow">{slot.happened}</span></header>
                 <div className="m2-card">
                     {happened.length === 0 ? <div className="m2-empty">{surface === null ? "Loading…" : "Quiet in your areas since the last turn."}</div>
-                        : happened.map((s) => <Row key={s.id ?? s.headline} s={s} title={s.headline || s.title} sub={[s.location, s.source].filter(Boolean).join(" · ")}
-                            when={when(s.published_at)} onClick={() => setOpen(s)} />)}
+                        : happened.map((s) => <div key={s.id ?? s.headline} style={{ display: "contents" }}>
+                            <Row s={s} title={s.headline || s.title} sub={[s.location, s.source].filter(Boolean).join(" · ")}
+                                when={when(s.published_at)} onClick={() => setOpen(s, `h:${s.id ?? s.headline}`)} />
+                            {inline(`h:${s.id ?? s.headline}`)}</div>)}
                 </div>
             </section>
 
@@ -210,7 +223,6 @@ export default function MHome({ onShowOnMap, onOpen }) {
                 </div>
             </section>
 
-            {open && <SignalSheet s={open} onClose={() => setOpen(null)} onShowOnMap={onShowOnMap} />}
             {why && (
                 <Sheet onClose={() => setWhy(null)}>
                     <OutlookExplain o={why} onShowPlace={(c) => { setWhy(null); onShowOnMap?.({ lat: c.lat, lon: c.lon, headline: c.headline, title: c.headline, location: c.location, source: c.source, url: c.url }) }} />

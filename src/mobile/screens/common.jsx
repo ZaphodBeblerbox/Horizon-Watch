@@ -28,6 +28,7 @@ import { itemStatusLabel } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
 import { langNote } from "../../lib/titleLang.js"
 import EventDetail from "../../events/EventDetail.jsx"
+import EventInline from "../../events/EventInline.jsx"
 
 // Severity is an ICON's colour (a diamond, a dot), never a word's: the phone's
 // text is monochrome (m2.css v4), so these are fixed values, not the theme's.
@@ -196,7 +197,7 @@ export function attachmentFor(s) {
 
 const URLS = /https?:\/\/[^\s,]+/g
 
-export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, fromPeek = false }) {
+export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, fromPeek = false, inline = false }) {
     const [note, setNote] = useState("")
     const [shared, setShared] = useState(null)
     // MORE THAN THE HEADLINE: an alert's own record is read as the sheet opens
@@ -224,8 +225,9 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
         catch (e) { setShared(e.message || "Could not post") }
     }
     return (
-        <Sheet onClose={onClose} half={half} fromPeek={fromPeek}>
-            <div className="m2-eyebrow" style={{ paddingRight: half ? 36 : 0, display: "flex", alignItems: "center", gap: 7 }}>
+        // inline: the same content opened inside Home, under the tapped row (events/EventInline.jsx, owner 2026-10-24)
+        <SheetOrInline inline={inline} onClose={onClose} half={half} fromPeek={fromPeek} label={title}>
+            <div className="m2-eyebrow" style={{ paddingRight: half || inline ? 64 : 0, display: "flex", alignItems: "center", gap: 7 }}>
                 {(s.severity_tier || s.sev) && <i className="m2-sev" style={{ background: sevColor(s.severity_tier || s.sev), width: 7, height: 7, transform: "rotate(45deg)", display: "inline-block", flex: "none" }} />}
                 {[s.severity_tier || s.sev, itemStatusLabel(s) || (s.event_time ? ageLabel(s) : null) || s.status_label || when(s.posted_at || s.published_at || s.created_at || s.when), s.channel_title || s.source].filter(Boolean).join(" · ")}
             </div>
@@ -287,8 +289,13 @@ export function SignalSheet({ s: given, onClose, onShowOnMap, half = false, from
                 <button className="m2-btn ghost" onClick={share}>Post</button>
                 {shared && <span className="m2-sub">{shared}</span>}
             </div>
-        </Sheet>
+        </SheetOrInline>
     )
+}
+
+function SheetOrInline({ inline, onClose, half, fromPeek, label, children }) {
+    return inline ? <EventInline variant="phone" label={label} onClose={onClose}>{children}</EventInline>
+        : <Sheet onClose={onClose} half={half} fromPeek={fromPeek}>{children}</Sheet>
 }
 
 /** WHICH THEATER (mobile/theaterScope.js): "All" and the user's theaters, one
