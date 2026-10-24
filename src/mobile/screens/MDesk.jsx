@@ -16,16 +16,16 @@ import MMembers from "./MMembers.jsx"
 import { Icon, when, ago } from "./common.jsx"
 import { useMine } from "../useMine.js"
 import { inTheater, setTheaterScope, useTheaterScope } from "../theaterScope.js"
-import { attachDrag, attachPullToRefresh, swallowClickAfterDrag } from "../gesture.js"
+import { attachPullToRefresh } from "../gesture.js"
 import { captureMedia } from "../MediaViewer.jsx"
 import { itemStatusLabel } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { audienceLabel } from "../../desk/Desk.jsx"
 import { dropStaleDemos } from "../../globe/freshness.js"
-import TheaterTabs from "../../desk/TheaterTabs.jsx"
 import PostView from "../../desk/PostView.jsx"
-import { isCardClick, nextTab, scrollMemo, teamPostIn, theaterTabs } from "../../desk/deskFeed.js"
+import { isCardClick, scrollMemo, teamPostIn, theaterTabs } from "../../desk/deskFeed.js"
+import "../../desk/desk.css"
 
 const URG = ["routine", "elevated", "high", "critical"]
 
@@ -309,20 +309,18 @@ export default function MDesk({ active, onShowOnMap }) {
         const el = document.getElementById(`m2-post-${goPost}`)
         if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); setGoPost(null) }
     }, [goPost, posts])
-    // THE THEATRE TABS (owner, 2026-10-24: the desk like X): "All", then your
-    // theatres, over the feed, the one choice of the whole phone
-    // (mobile/theaterScope.js); a swipe on the feed moves to the next or the
-    // previous tab, the content following the finger. Team and General are
-    // the two buttons above.
+    // ONE FIXED BAR (owner, 2026-10-24): General · Team, then "All" and your
+    // theatres (the one theatre choice of the whole phone, mobile/theaterScope.js),
+    // in one row that scrolls sideways, the header's own glass, outside the
+    // scroller: a pull to refresh moves the feed under it, never the bar, and
+    // the spinner shows below it. A sideways swipe on the feed moves between the
+    // bottom tabs (mobile/tabSwipe.js), so the theatres are chosen in the bar.
     const mine = useMine()
     const scope = useTheaterScope()
     const tabs = useMemo(() => theaterTabs(mine.theaters), [mine.theaters])
     const scopeT = mine.theaters.find((t) => String(t.id) === String(scope)) || null
     const keep = useMemo(() => (scopeT ? inTheater(scopeT, mine.countries, mine.iso2Name) : null), [scopeT, mine.countries, mine.iso2Name])
     const tabId = scopeT ? String(scopeT.id) : null
-    const tabsRef = useRef({ tabs, tabId })
-    tabsRef.current = { tabs, tabId }
-    const body = useRef(null)
     const [from, setFrom] = useState(null)
     const tabRef = useRef(tab)
     tabRef.current = tab
@@ -334,37 +332,7 @@ export default function MDesk({ active, onShowOnMap }) {
     const openPost = (p) => { memo.save("list", scroller.current); setOpen(p); if (scroller.current) scroller.current.scrollTop = 0 }
     useEffect(() => { if (!open) memo.restore("list", scroller.current) }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => { if (!active) setOpen(null) }, [active])
-    useEffect(() => {
-        const node = body.current
-        if (!node) return undefined
-        const off = attachDrag(node, {
-            start: (t) => !t.closest?.("input, textarea, video, .m2-hscroll, .m2-chips, [data-nodrag]"),
-            move: ({ dx, axis }) => {
-                if (axis !== "x") return false
-                const { tabs: ts, tabId: cur } = tabsRef.current
-                const edge = nextTab(ts, cur, dx < 0 ? 1 : -1) === cur
-                node.style.transition = ""
-                node.style.transform = `translateX(${edge ? dx * 0.15 : dx * 0.5}px)`
-                node.__dragged = true
-                return true
-            },
-            end: ({ dx, vx, axis, moved }) => {
-                node.style.transition = "transform .3s cubic-bezier(.22,1,.36,1)"
-                node.style.transform = ""
-                if (!moved || axis !== "x") return
-                const go = Math.abs(dx) > 70 || Math.abs(vx) > 0.45
-                if (!go) return
-                const { tabs: ts, tabId: cur } = tabsRef.current
-                const to = nextTab(ts, cur, dx < 0 ? 1 : -1)
-                if (to === cur) return
-                setFrom(dx < 0 ? "r" : "l")
-                setTheaterScope(to)
-            },
-        })
-        const offClick = swallowClickAfterDrag(node)
-        return () => { off(); offClick() }
-    }, [tab, tabId, !!open])       // the body is a new node for each tab and theatre (its key)
-    const pick = (t) => { if (t === tab) return; setFrom(t === "general" ? "r" : "l"); setTab(t) }
+    const pick = (t) => { if (t === tab) return; setFrom(t === "general" ? "l" : "r"); setTab(t); if (scroller.current) scroller.current.scrollTop = 0 }
     const pickTheatre = (id) => {
         const ids = tabs.map((t) => t.id)
         setFrom(ids.indexOf(id) > ids.indexOf(tabId) ? "r" : "l")
@@ -378,36 +346,47 @@ export default function MDesk({ active, onShowOnMap }) {
     const loadRef = useRef(load)
     loadRef.current = load
     useEffect(() => attachPullToRefresh(scroller.current, {
+        ringClass: "m2-ptr-deskbar",
         onRefresh: () => (tabRef.current === "team" ? loadRef.current() : new Promise((r) => { setFresh((n) => n + 1); setTimeout(r, 600) })),
     }), [])
     return (
-        <div ref={scroller} className="m2-scroll m2-scroll-seg" data-screen-label="Phone desk">
-            {open && <PostView post={open} variant="phone" onBack={() => setOpen(null)}
-                               onMap={(it) => { setOpen(null); onShowOnMap?.(it) }} />}
-            <div style={{ display: open ? "none" : "contents" }}>
-            <div className="m2-seg" role="tablist">
-                <button role="tab" aria-selected={tab === "team"} onClick={() => pick("team")}>Team</button>
-                <button role="tab" aria-selected={tab === "general"} onClick={() => pick("general")}>General</button>
-                <span className="m2-seg-mark" aria-hidden style={{ transform: `translateX(${tab === "general" ? 100 : 0}%)` }} />
-            </div>
-            {tab !== "telegram" && tabs.length > 1 && <TheaterTabs tabs={tabs} value={tabId} onChange={pickTheatre} variant="phone" />}
-            <div ref={body} key={`${tab}:${tabId || "all"}`} className="m2-desk-body" style={from ? { animation: `m2-pane-from-${from} .34s cubic-bezier(.22,1,.36,1)` } : undefined}>
-            {tab === "team" ? (<>
-                <DeskMembersBar />
-                <Composer onPosted={load} />
-                {posts === null ? <div className="m2-empty">Loading the desk…</div>
-                    : posts.length === 0 ? <div className="m2-empty">Nothing on the desk yet. What you post goes to your company unless you choose otherwise.</div>
-                    : shownPosts.length === 0 ? <div className="m2-empty">Nothing posted to {scopeT?.name || "this theatre"} yet.</div>
-                    : shownPosts.map((p) => <PostCard key={p.id} p={p} onChanged={load} onOpen={() => openPost({ type: "team", post: p })} />)}
-            </>) : tab === "general" ? (
-                // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
-                <div style={{ display: "contents" }} onClickCapture={captureMedia}>
-                    <GeneralFeed key={fresh} compact keep={keep} kindTabs={false} active={active && !open}
-                                 onOpen={(it) => openPost({ type: "item", it })} onMap={(it) => onShowOnMap?.(it)} />
+        <>
+            {!open && (
+                <div className="m2-deskbar dk-tabs dk-tabs-phone" role="tablist" aria-label="Desk" data-testid="m2-deskbar" data-nodrag="">
+                    {[["general", "General"], ["team", "Team"]].map(([k, l]) => (
+                        <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => pick(k)} data-testid={`m2-desk-${k}`}><span>{l}</span></button>
+                    ))}
+                    {tab !== "telegram" && tabs.length > 1 && <>
+                        <i className="m2-deskbar-sep" aria-hidden />
+                        {tabs.map((t) => (
+                            <button key={t.id ?? "all"} type="button" role="tab" aria-selected={tabId === t.id} className="m2-deskbar-th"
+                                    onClick={() => pickTheatre(t.id)} data-testid="desk-theater-tab"><span>{t.label}</span></button>
+                        ))}
+                    </>}
                 </div>
-            ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
+            )}
+            <div ref={scroller} className={`m2-scroll ${open ? "m2-scroll-seg" : "m2-scroll-deskbar"}`} data-screen-label="Phone desk">
+                {open && <PostView post={open} variant="phone" onBack={() => setOpen(null)}
+                                   onMap={(it) => { setOpen(null); onShowOnMap?.(it) }} />}
+                <div style={{ display: open ? "none" : "contents" }}>
+                <div key={`${tab}:${tabId || "all"}`} className="m2-desk-body" style={from ? { animation: `m2-pane-from-${from} .34s cubic-bezier(.22,1,.36,1)` } : undefined}>
+                {tab === "team" ? (<>
+                    <DeskMembersBar />
+                    <Composer onPosted={load} />
+                    {posts === null ? <div className="m2-empty">Loading the desk…</div>
+                        : posts.length === 0 ? <div className="m2-empty">Nothing on the desk yet. What you post goes to your company unless you choose otherwise.</div>
+                        : shownPosts.length === 0 ? <div className="m2-empty">Nothing posted to {scopeT?.name || "this theatre"} yet.</div>
+                        : shownPosts.map((p) => <PostCard key={p.id} p={p} onChanged={load} onOpen={() => openPost({ type: "team", post: p })} />)}
+                </>) : tab === "general" ? (
+                    // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
+                    <div style={{ display: "contents" }} onClickCapture={captureMedia}>
+                        <GeneralFeed key={fresh} compact keep={keep} kindTabs={false} active={active && !open}
+                                     onOpen={(it) => openPost({ type: "item", it })} onMap={(it) => onShowOnMap?.(it)} />
+                    </div>
+                ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
+                </div>
+                </div>
             </div>
-            </div>
-        </div>
+        </>
     )
 }

@@ -11,6 +11,7 @@
  * breakpoint; same session, same data, same rules for "yours".
  */
 import { useEffect, useRef, useState } from "react"
+import { attachTabSwipe } from "./tabSwipe.js"
 import "./m2.css"
 import PlxIcons from "../plx6/PlxIcons.jsx"
 import MHome from "./screens/MHome.jsx"
@@ -221,6 +222,15 @@ export default function MobileApp() {
     const dir = navIndex(tab) < navIndex(prevTab.current) ? "left" : "right"
     useEffect(() => { prevTab.current = tab; setChromeHidden(false); setChromeForced(false) }, [tab])
     const markAt = menu ? NAV.length - 1 : navIndex(tab)
+    // A SIDEWAYS SWIPE MOVES BETWEEN THE BOTTOM TABS (owner, 2026-10-24, like Instagram; mobile/tabSwipe.js).
+    // The map takes its own pans: the body takes no touches there.
+    const bodyRef = useRef(null)
+    const tabNow = useRef(tab)
+    tabNow.current = tab
+    useEffect(() => attachTabSwipe(bodyRef.current, {
+        nav: NAV, getTab: () => tabNow.current,
+        go: (t) => (t === "more" ? setMenu(true) : go(t)),
+    }), []) // eslint-disable-line react-hooks/exhaustive-deps
     return (
         <div className="m2" data-screen-label="Phone" data-chrome={(chromeHidden || chromeForced) && tab !== "map" ? "hidden" : "shown"} data-dir={dir}>
             <PlxIcons />
@@ -262,7 +272,7 @@ export default function MobileApp() {
                     <Icon id="g-bell" />{arr(notes).length > 0 && <span className="m2-badge">{Math.min(99, arr(notes).length)}</span>}
                 </button>
             </header>}
-            <main className="m2-body" style={{ pointerEvents: tab === "map" ? "none" : "auto" }}>
+            <main ref={bodyRef} className="m2-body" style={{ pointerEvents: tab === "map" ? "none" : "auto" }}>
                 {/* Every screen stays mounted (the map keeps its place; a thread keeps its scroll); only one shows. */}
                 <Pane on={tab === "home"}><MHome onShowOnMap={showOnMap} onOpen={go} /></Pane>
 
