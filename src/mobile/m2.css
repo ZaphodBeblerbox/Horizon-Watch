@@ -463,3 +463,9 @@
 .m2-pulse { background: none; border: 0; pointer-events: none; }
 .m2-pulse img { display: block; opacity: 0; transform-origin: 50% 50%; animation: m2-pulse-ring 1400ms ease-out 2; }
 @keyframes m2-pulse-ring { from { transform: scale(1); opacity: .95; } to { transform: scale(2.4); opacity: 0; } }
+/* A MARKER THAT APPEARS POPS IN (owner, 2026-10-24): as zooming in splits a place into its markers, and when a tapped
+   place opens its ring. The `scale` property, not `transform`: Leaflet positions a marker with its transform. */
+@keyframes m2-pop-in { from { scale: 0.35; opacity: 0 } 70% { scale: 1.08; opacity: 1 } to { scale: 1; opacity: 1 } }
+.leaflet-marker-icon.m2-pop { animation: m2-pop-in 260ms cubic-bezier(.2, .8, .3, 1.2) both; transform-origin: center }
+.leaflet-marker-icon.m2-pop-ring { animation-duration: 320ms }
+@media (prefers-reduced-motion: reduce) { .leaflet-marker-icon.m2-pop { animation: none } }

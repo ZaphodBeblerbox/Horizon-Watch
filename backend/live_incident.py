@@ -1371,6 +1371,22 @@ EST_CALL_USD = float(os.getenv("LIVE_INCIDENT_EST_CALL_USD", "0.0009") or 0.0009
 QUEUE_MAX_AGE_MIN = 30                # a post that waited this long for the model goes to the rule path
 
 
+FOCUS_EXTRA_PER_DAY = int(os.getenv("LIVE_INCIDENT_FOCUS_EXTRA_PER_DAY", "120") or 120)
+_FOCUS_EXTRA = {"day": None, "used": 0}
+
+
+def _focus_extra_left(now: _dt.datetime) -> int:
+    day = now.strftime("%Y-%m-%d")
+    if _FOCUS_EXTRA["day"] != day:
+        _FOCUS_EXTRA.update(day=day, used=0)
+    return max(0, FOCUS_EXTRA_PER_DAY - _FOCUS_EXTRA["used"])
+
+
+def _focus_extra_take(now: _dt.datetime, n: int) -> None:
+    _focus_extra_left(now)
+    _FOCUS_EXTRA["used"] += n
+
+
 def share_day_cap(now: _dt.datetime | None = None) -> int:
     import calendar
 
@@ -1458,6 +1474,53 @@ def candidates(con, now: _dt.datetime, limit: int = 400) -> list[dict]:
     finally:
         con.row_factory = None
     return [dict(r) for r in rows]
+
+
+def backfill_presence(con=None, now: _dt.datetime | None = None, hours: int = 24) -> dict:
+    """RE-READ THE LAST DAY WITH THE MOVEMENT RULE (owner, Paris, 2026-10-24: "the Centaure posts this morning should
+    still be shown"): posts of the last `hours` the rule did not judge (they came before it, or the model turned them
+    down) are read again by presence_verdict as of one minute after they were posted. One that qualifies is written
+    as the rule would have written it then: live in its own 45 minutes, so it is in Today and the timeline, not Live
+    now. Code only, no model call; idempotent (a presence verdict is never read again)."""
+    own = con is None
+    if own:
+        import telegram_ingest
+        con = telegram_ingest._con()
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    out = {"read": 0, "live": 0}
+    try:
+        con.row_factory = sqlite3.Row
+        rows = [dict(r) for r in con.execute(
+            "SELECT channel, msg_id, channel_title, posted_at, text, role, chat_kind, read_by, lat, lon, country_code, claim, headline,"
+            " place, precision, geocoded_as, live_verdict, live_json FROM telegram_posts WHERE posted_at >= ? AND text IS NOT NULL"
+            " AND COALESCE(role,'') != 'ignore' AND COALESCE(live_verdict,'') != 'live'",
+            (iso(now - _dt.timedelta(hours=hours)),)).fetchall()]
+        con.row_factory = None
+        for r in rows:
+            if is_presence(r):
+                continue
+            p = parse_utc(r["posted_at"])
+            if p is None:
+                continue
+            out["read"] += 1
+            at = p + _dt.timedelta(minutes=1)
+            try:
+                pv = presence_verdict(r["text"], r["posted_at"], at, row=r, country_code=r.get("country_code"))
+            except Exception as e:                                      # noqa: BLE001
+                print(f"[live-incident] error: backfill {r['channel']}/{r['msg_id']}: {type(e).__name__}: {e}", flush=True)
+                continue
+            if pv is None:
+                continue
+            r["_hash"] = text_hash(r["text"])
+            con.execute("UPDATE telegram_posts SET live_hash=? WHERE channel=? AND msg_id=?", (r["_hash"], r["channel"], r["msg_id"]))
+            _write(con, r, pv, None, 0.0, at, "rule:presence")
+            out["live"] += 1
+        con.commit()
+    finally:
+        con.row_factory = None
+        if own:
+            con.close()
+    return out
 
 
 def gate_reason() -> str | None:
@@ -1637,12 +1700,21 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
         waiting = fresh[PER_PASS:]
         fresh = fresh[:PER_PASS]
         if len(fresh) > left:
-            out["capped"] = len(fresh) - left
+            # WHAT SOMEONE FOLLOWS NOW GETS THROUGH (owner, Paris, 2026-10-24): the day's share went on posts from
+            # countries somebody watches and the Paris march waited behind them. A post in a focus area (a
+            # city-scale theater, a user's position) is read past the cap, up to FOCUS_EXTRA_PER_DAY a UTC day.
+            over = fresh[max(left, 0):]
+            extra = [r for r in over if r.get("_focus")][:_focus_extra_left(now)]
+            _focus_extra_take(now, len(extra))
+            over = [r for r in over if r not in extra]
+            out["capped"] = len(over)
+            out["focus_past_cap"] = len(extra)
             _bump("capped", out["capped"])
-            if left <= 0 or STATUS.get("capped", 0) % 50 == 1:
-                print(f"[live-incident] CAP reached ({budget(con, now)}): {out['capped']} posts wait for the next window", flush=True)
-            waiting = fresh[max(left, 0):] + waiting
-            fresh = fresh[:max(left, 0)]
+            if (left <= 0 or STATUS.get("capped", 0) % 50 == 1) and over:
+                print(f"[live-incident] CAP reached ({budget(con, now)}): {out['capped']} posts wait for the next window"
+                      f"{f', {len(extra)} in focus areas read past it' if extra else ''}", flush=True)
+            waiting = over + waiting
+            fresh = fresh[:max(left, 0)] + extra
         # the lowest scores wait for the next pass; one that has waited QUEUE_MAX_AGE_MIN goes to the rule path
         old = iso(now - _dt.timedelta(minutes=QUEUE_MAX_AGE_MIN))
         for r in waiting:

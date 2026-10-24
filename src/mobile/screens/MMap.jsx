@@ -36,7 +36,7 @@ import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
 import { closeOpenedSignal, setSignalPinLayer } from "../../lib/signalPin.js"
 import { declutterAll, representative } from "../../lib/liveSignals.js"
-import { trafficIcon, trafficTone, dotIcon, markerIcon, PHONE_ICON_SCALE, PULSE, pulseRingIcon } from "../../lib/mapIcons.js"
+import { trafficIcon, trafficTone, dotIcon, markerIcon, withCount, PHONE_ICON_SCALE, PULSE, pulseRingIcon } from "../../lib/mapIcons.js"
 import { createNewTracker } from "../../lib/newOnMap.js"
 import MapLegend from "../../components/MapLegend.jsx"
 import ProtestFrames, { useProtestFrame } from "../../components/ProtestFrames.jsx"
@@ -122,6 +122,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const pulseG = useRef(null)
     const picked = useRef(null)
     const [detail, setDetail] = useState(null)
+    const [spider, setSpider] = useState(null)   // the place whose markers are popped out in a ring (its group key)
     const returning = useRef(false)        // the card coming back out of its sheet: no entrance of its own
     const base = useRef(null)
     const group = useRef(null)
@@ -189,7 +190,9 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         const labels = map.current.createPane("labels")
         labels.style.zIndex = 350
         labels.style.pointerEvents = "none"
-        map.current.on("zoomend", () => setZoom(map.current.getZoom()))
+        map.current.on("zoomend", () => { setZoom(map.current.getZoom()); setSpider(null) })
+        // a tap on the map folds a popped-out place back
+        map.current.on("click", () => setSpider(null))
         map.current.on("moveend", () => {
             const b = map.current.getBounds()
             setBounds(b)
@@ -465,7 +468,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         }
         // NO TWO MARKERS OVERLAP (owner, 2026-10-22: "three different icons at the Sorbonne, all on top of each
         // other"; 2026-10-23: one typology, no overlapping markers): every point of every layer, in screen pixels at
-        // this zoom; any whose boxes touch become ONE cluster that opens a list; nothing is nudged or fanned out.
+        // this zoom; any whose boxes touch become ONE icon with a count, which a tap pops out in a ring (2026-10-24).
         const z0 = m.getZoom()
         const collide = points
         // a movement's path (the crowd's, the police's: lib/protests.js) under its marker, drawn whether or not the
@@ -489,22 +492,44 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                     const p = g.members[0]._p, { w, h, a } = scaled(p.f)
                     const op = Number.isFinite(p.f.opacity) ? Math.round(p.f.opacity * 10) / 10 : 1
                     want.set(`p:${p.key}`, { sig: `${p.f.iconUri}|${w}|${h}|${p.lat}|${p.lon}|${op}`, make: () => L.marker([p.lat, p.lon], {
-                        icon: L.icon({ iconUrl: p.f.iconUri, iconSize: [w, h], iconAnchor: a }), keyboard: false, opacity: op,
+                        icon: L.icon({ iconUrl: p.f.iconUri, iconSize: [w, h], iconAnchor: a, className: "m2-pop" }), keyboard: false, opacity: op,
                         zIndexOffset: p.f.pri === "flash" ? 500 : 0,
                     }).on("click", tap(p.f, p.l, p.key)) })
                     continue
                 }
-                // ONE ICON: the most important member's own marker at its own place; the card lists the others
+                // ONE ICON PER PLACE, TAP TO SEE ALL (owner, 2026-10-24): the most important member's own marker with
+                // the count in its corner; a tap pops the others out in a ring around it, each on a thin line back to
+                // the place and each opening its own card; a tap on the map (or a zoom) folds them back
                 const top = representative(g.members.map((mm) => ({ pri: mm.pri, t: mm.t, _p: mm._p })))._p
                 const others = g.members.map((mm) => mm._p).filter((p) => p !== top)
                 const list = [top, ...others]
                 const key = `lc:${list.map((p) => p.key).sort().join("|")}`
                 const { w, h, a } = scaled(top.f)
-                const head = `${top.f.title || top.l.label} · ${others.length} more here`
+                if (spider === key) {
+                    const c = m.project([top.lat, top.lon], z0)
+                    const cell = Math.max(...list.map((p) => Math.max(scaled(p.f).w, scaled(p.f).h))) + 10
+                    const R = Math.max(cell * 1.2, (others.length * cell) / (2 * Math.PI))
+                    want.set(`${key}:top`, { sig: `${top.f.iconUri}|${w}|${h}|${top.lat}|${top.lon}`, make: () => L.marker([top.lat, top.lon], {
+                        icon: L.icon({ iconUrl: top.f.iconUri, iconSize: [w, h], iconAnchor: a }), keyboard: false, zIndexOffset: 900,
+                    }).on("click", tap(top.f, top.l, top.key)) })
+                    others.forEach((p, i) => {
+                        const ang = (2 * Math.PI * i) / others.length - Math.PI / 2
+                        const at = m.unproject(L.point(c.x + Math.cos(ang) * R, c.y + Math.sin(ang) * R), z0)
+                        const sz = scaled(p.f)
+                        const pos = `${at.lat.toFixed(6)}|${at.lng.toFixed(6)}`
+                        want.set(`${key}:ld:${p.key}`, { sig: pos, make: () => L.polyline([[top.lat, top.lon], [at.lat, at.lng]],
+                            { color: "#9AA9BC", weight: 1.2, opacity: 0.8, interactive: false }) })
+                        want.set(`${key}:m:${p.key}`, { sig: `${p.f.iconUri}|${pos}`, make: () => L.marker(at, {
+                            icon: L.icon({ iconUrl: p.f.iconUri, iconSize: [sz.w, sz.h], iconAnchor: [sz.w / 2, sz.h / 2], className: "m2-pop m2-pop-ring" }), keyboard: false, zIndexOffset: 900,
+                        }).on("click", tap(p.f, p.l, p.key)) })
+                    })
+                    continue
+                }
+                // the count says how many things share this place (lib/mapIcons.js withCount)
+                const ci = withCount(top.f.iconUri, w, h, a, list.length)
                 want.set(key, { sig: `${top.f.iconUri}|${w}|${h}|${top.lat}|${top.lon}|${list.length}`, make: () => L.marker([top.lat, top.lon], {
-                    icon: L.icon({ iconUrl: top.f.iconUri, iconSize: [w, h], iconAnchor: a }), keyboard: false, zIndexOffset: 300,
-                }).on("click", () => setOpen({ kind: "live_cluster", headline: head, title: head, lat: top.lat, lon: top.lon, _key: key,
-                                               cluster: list.map((p) => ({ title: p.f.title || p.l.label, line: p.f.sub })) })) })
+                    icon: L.icon({ iconUrl: ci.uri, iconSize: [ci.w, ci.h], iconAnchor: ci.anchor, className: "m2-pop" }), keyboard: false, zIndexOffset: 300,
+                }).on("click", (e) => { L.DomEvent.stopPropagation(e); setSpider(key) }) })
             }
         }
         const kept = drawn.current
@@ -521,7 +546,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         }
         // what the card swipes through: every point signal, west to east
         pts.current = points.map((p) => ({ key: p.key, lat: p.lat, lon: p.lon, open: tap(p.f, p.l, p.key) })).sort((x, y) => x.lon - y.lon || y.lat - x.lat)
-    }, [feats, on, floor, liveKey, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [feats, on, floor, liveKey, zoom, spider]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // A ROUTE, ON THIS MAP (owner, 2026-10-17: "don't open a new map"): the
     // route planner's tray publishes its plan; drawn here and framed in the
