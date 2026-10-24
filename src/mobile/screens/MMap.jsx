@@ -36,7 +36,7 @@ import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
 import { closeOpenedSignal } from "../../lib/signalPin.js"
 import { declutterAll, representative } from "../../lib/liveSignals.js"
-import { trafficIcon, trafficTone, dotIcon, markerIcon, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
+import { trafficIcon, trafficTone, dotIcon, markerIcon, withCount, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
 import MapLegend from "../../components/MapLegend.jsx"
 import ProtestFrames, { useProtestFrame } from "../../components/ProtestFrames.jsx"
 import { setTheaterScope } from "../theaterScope.js"
@@ -472,8 +472,11 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
                 const key = `lc:${list.map((p) => p.key).sort().join("|")}`
                 const { w, h, a } = scaled(top.f)
                 const head = `${top.f.title || top.l.label} · ${others.length} more here`
+                // the count says how many things share this place (lib/mapIcons.js withCount): without it a place with
+                // twelve reports read as one and the layers looked half empty
+                const ci = withCount(top.f.iconUri, w, h, a, list.length)
                 want.set(key, { sig: `${top.f.iconUri}|${w}|${h}|${top.lat}|${top.lon}|${list.length}`, make: () => L.marker([top.lat, top.lon], {
-                    icon: L.icon({ iconUrl: top.f.iconUri, iconSize: [w, h], iconAnchor: a }), keyboard: false, zIndexOffset: 300,
+                    icon: L.icon({ iconUrl: ci.uri, iconSize: [ci.w, ci.h], iconAnchor: ci.anchor }), keyboard: false, zIndexOffset: 300,
                 }).on("click", () => setOpen({ kind: "live_cluster", headline: head, title: head, lat: top.lat, lon: top.lon, _key: key,
                                                cluster: list.map((p) => ({ title: p.f.title || p.l.label, line: p.f.sub })) })) })
             }

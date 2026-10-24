@@ -332,6 +332,25 @@ export function clusterIcon(n, priority = null) {
 }
 export const clusterUri = (n, p) => clusterIcon(n, p).uri
 
+/**
+ * One icon for a place where several things happened (owner, 2026-10-24: "we lost half of our layers"): the most
+ * important member's own marker, unchanged in size, with a small count in its top-right corner, so a place with
+ * twelve troop movements no longer reads as one. `w`/`h`/`anchor` are the marker's drawn size; the canvas grows by
+ * the chip and the anchor moves with it, so the marker itself stays exactly where it was.
+ */
+export function withCount(uri, w, h, anchor, n) {
+    const label = n > 99 ? "99+" : String(n)
+    const pad = 8, W = w + pad, H = h + pad
+    return cached(`wc|${uri.length}|${uri.slice(-48)}|${w}|${h}|${label}`, () => {
+        const svg = svgOpen(W, H)
+            + `<image href="${uri}" x="0" y="${pad}" width="${w}" height="${h}"/>`
+            + `<circle cx="${w}" cy="${pad}" r="7.4" fill="${EDGE}" stroke="#F1F3F5" stroke-width="1.2"/>`
+            + `<text x="${w}" y="${pad}" dy="0.36em" text-anchor="middle" font-family="-apple-system,system-ui,Helvetica,Arial,sans-serif" font-size="${label.length > 2 ? 7 : 9}" font-weight="700" fill="#F1F3F5">${label}</text>`
+            + `</svg>`
+        return { uri: enc(svg), w: W, h: H, anchor: [anchor[0], anchor[1] + pad], kind: "counted" }
+    })
+}
+
 /** Decode an icon's SVG (tests, the legend's checks). */
 export function svgOf(uri) {
     const s = String(uri || "")

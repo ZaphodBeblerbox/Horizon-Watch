@@ -1255,6 +1255,10 @@ export const PHONE_LAYERS = [
         refreshMs: LIVE_SIGNALS_REFRESH_MS, legendIcon: actIcon("police_intervention"), load: loadLiveSignals,
     },
     {
+        key: "frontlines", label: "Frontlines", group: G.news, defaultOn: false, kind: "areas", minZoom: 0,
+        legendIcon: areaSwatch(FRONT_STATUS_STYLE.occupied.fill, 0.45, false), load: loadFrontlines,
+    },
+    {
         key: "strikes", label: "Strikes & control", group: G.news, defaultOn: false, kind: "points", minZoom: 0,
         legendIcon: strikeIconUri({ act: "airstrike" }), load: loadStrikes,
     },
@@ -1305,10 +1309,6 @@ export const PHONE_LAYERS = [
     {
         key: "aois", label: "Areas of interest", group: G.context, defaultOn: false, kind: "areas", minZoom: 0,
         legendIcon: areaSwatch(AOI_COLOR, 0.15), load: loadAois,
-    },
-    {
-        key: "frontlines", label: "Frontlines", group: G.context, defaultOn: false, kind: "areas", minZoom: 0,
-        legendIcon: areaSwatch(FRONT_STATUS_STYLE.occupied.fill, 0.45, false), load: loadFrontlines,
     },
 
     // Infrastructure (INFRA_TOGGLES; ports, chokepoints and cables live under Maritime, airfields under Air).
