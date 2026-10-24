@@ -18,7 +18,18 @@ describe("phone map layer registry", () => {
     })
 
     it("every layer defaults off: nothing is on until the user turns it on (owner, 2026-10-18)", () => {
-        for (const l of PHONE_LAYERS) expect(l.defaultOn, l.key).toBe(false)
+        // but the marker of the one signal a notification opened (owner, 2026-10-24): it draws nothing until you open one
+        for (const l of PHONE_LAYERS) expect(l.defaultOn, l.key).toBe(l.key === "openedSignal")
+    })
+
+    it("the signal a notification opened has its own switch, which the map passes to the pin (owner, 2026-10-24)", async () => {
+        const l = PHONE_LAYERS.find((x) => x.key === "openedSignal")
+        expect(l && l.group).toBe("Protests")
+        expect(await l.load({})).toEqual([])
+        const { readFileSync } = await import("node:fs")
+        const src = readFileSync("src/mobile/screens/MMap.jsx", "utf8")
+        expect(src).toMatch(/setSignalPinLayer\(on\.openedSignal !== false\)/)
+        expect(src).toMatch(/closeOpenedSignal\(was\.id, \{ passive: true \}\)/)
     })
 
     it("the phone map's built-in state has ships and aircraft off too", async () => {

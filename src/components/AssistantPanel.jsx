@@ -27,7 +27,7 @@ const PANEL = {
 
 export default function AssistantPanel({ onClose }) {
     return (
-        <aside className="pane-glass plx-as-panel" style={PANEL} data-screen-label="Assistant" aria-label="Assistant" data-testid="assistant-panel">
+        <aside className="pane-glass plx-as-panel" style={PANEL} data-screen-label="Support Droid" aria-label="Support Droid" data-testid="assistant-panel">
             <AssistantThread platform="desktop" onClose={onClose} />
         </aside>
     )

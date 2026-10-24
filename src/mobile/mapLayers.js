@@ -1192,6 +1192,13 @@ export const PHONE_LAYERS = [
         refreshMs: LIVE_REFRESH_MS, legendIcon: protestBadge({ kind: "protest" }),
         load: loadProtests,
     },
+    // THE SIGNAL A NOTIFICATION OPENED ("On the ground now: …", the triangle; lib/signalPin.js, drawn by
+    // mobile/findingsLeaflet.js): its own switch (owner, 2026-10-24), on — it only draws the one signal you opened.
+    // No features of its own to load: MMap passes the switch to setSignalPinLayer.
+    {
+        key: "openedSignal", label: "On the ground, opened", group: G.protests, defaultOn: true, kind: "points", minZoom: 0,
+        legendIcon: markerUri({ kind: "derived", glyph: "fusion", priority: "urgent" }), load: async () => [],
+    },
     // Our assets — Situation's first group.
     {
         key: "assets", label: "Our assets", group: G.assets, defaultOn: false, kind: "points", minZoom: 0,

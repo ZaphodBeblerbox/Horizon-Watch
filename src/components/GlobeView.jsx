@@ -27,6 +27,7 @@ import GlobeCoverageLayer       from "../globe/GlobeCoverageLayer.jsx"
 import GlobeGeoConfirmedLayer    from "../globe/GlobeGeoConfirmedLayer.jsx"
 import GlobeLiveSignalsLayer     from "../globe/GlobeLiveSignalsLayer.jsx"
 import GlobeProtestsLayer        from "../globe/GlobeProtestsLayer.jsx"
+import GlobePulseLayer           from "../globe/GlobePulseLayer.jsx"
 import GlobeImagerySignalsLayer  from "../globe/GlobeImagerySignalsLayer.jsx"
 import GlobeEndangeredPlacesLayer from "../globe/GlobeEndangeredPlacesLayer.jsx"
 import GlobeAoisLayer            from "../globe/GlobeAoisLayer.jsx"
@@ -1251,6 +1252,8 @@ export default function GlobeView({
                 <GlobeGdeltLayer enabled={gdeltEnabled} types={gdeltTypes} limit={1500} />
                 <GlobeLiveSignalsLayer enabled={liveSignalsEnabled} />
                 <GlobeProtestsLayer enabled={protestsEnabled} />
+                {/* a new item pulses briefly (lib/newOnMap.js), whatever layer drew it */}
+                <GlobePulseLayer />
                 <GlobeImagerySignalsLayer enabled={imagerySignalsEnabled} />
                 <GlobeEndangeredPlacesLayer enabled={endangeredEnabled} />
                 {/* Watched areas; red and pulsing where a scan just found something (zone_change.py). */}
