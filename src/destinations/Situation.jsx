@@ -2338,7 +2338,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
             {asCanvas ? null : (
             <div className="pane-glass" data-testid="glass-inspector-pane" data-open={!rightMin} aria-hidden={rightMin || undefined} style={rightPaneStyle}>
                 <div className="plx-rcol-head" role="tablist" aria-label="Right column">
-                    {[["inspector", "Inspector"], ["assistant", "Assistant"]].map(([k, label]) => (
+                    {[["inspector", "Inspector"], ["assistant", "Support Droid"]].map(([k, label]) => (
                         <button key={k} role="tab" aria-selected={rightTab === k} data-testid={`right-tab-${k}`}
                                 className="plx-rcol-tab" onClick={() => setRightTab(k)}>{label}</button>
                     ))}
