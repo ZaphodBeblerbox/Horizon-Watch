@@ -54,19 +54,44 @@ function Facts({ brief }) {
     )
 }
 
-export function BriefBlock({ ev, compact = false }) {
+export function BriefBlock({ ev, compact = false, briefs = null, open = false, onToggle = null }) {
     const b = ev?.brief
     if (!b && !ev?.headline) return null
+    const line = updatedLine(b)
+    const by = b ? (b.by === "model" ? "rewritten by the model, every fact checked against its sources" : "written from the reports") : null
     return (
         <section className="ev-brief" data-testid="ev-brief">
             {b?.what_changed && b.version > 1 && <div className="ev-changed" data-testid="ev-changed">Update: {b.what_changed}</div>}
             {b?.summary && <p className="ev-summary">{b.summary}</p>}
             {!compact && <Facts brief={b} />}
             <div className="ev-meta">
-                {[updatedLine(b), b ? (b.by === "model" ? "rewritten by the model, every fact checked against its sources" : "written from the reports") : null]
-                    .filter(Boolean).join(" · ")}
+                {/* "First brief 14:32 · v1" opens the brief itself, inline: each version's text, what changed and its
+                    sources (owner, 2026-10-24) */}
+                {line && onToggle
+                    ? <button type="button" className="ev-linkish" data-testid="ev-brief-open" aria-expanded={open} onClick={onToggle}>{line}</button>
+                    : line}
+                {by ? `${line ? " · " : ""}${by}` : ""}
             </div>
+            {open && <BriefVersions briefs={arr(briefs).length ? briefs : b ? [b] : []} />}
         </section>
+    )
+}
+
+/** Every version of the brief, newest first: when, how it was written, what changed, its text and facts with sources. */
+export function BriefVersions({ briefs }) {
+    const list = arr(briefs)
+    if (!list.length) return null
+    return (
+        <ol className="ev-versions" data-testid="ev-brief-versions">
+            {list.map((v) => (
+                <li key={v.version}>
+                    <div className="ev-h">{v.version > 1 ? "Update" : "First brief"} · v{v.version} · {String(v.created_at || "").replace("T", " ").slice(0, 16)} UTC · {v.by === "model" ? "model, checked" : "from the reports"}</div>
+                    {v.what_changed && v.version > 1 && <div className="ev-changed">{v.what_changed}</div>}
+                    {v.summary && <p className="ev-summary">{v.summary}</p>}
+                    <Facts brief={v} />
+                </li>
+            ))}
+        </ol>
     )
 }
 
@@ -111,7 +136,7 @@ export function mergeTimelines(a, b) {
         .filter((e) => { const k = `${e.kind}|${e.text}|${String(e.at || "").slice(0, 16)}`; if (seen.has(k)) return false; seen.add(k); return true })
 }
 
-function Timeline({ entries }) {
+function Timeline({ entries, onBrief = null }) {
     const rows = arr(entries).map(timelineLine).filter(Boolean)
     if (!rows.length) return null
     return (
@@ -121,7 +146,11 @@ function Timeline({ entries }) {
                 {rows.slice(0, 30).map((r, i) => (
                     <li key={i} className={`ev-tl-${r.kind}`}>
                         <time>{r.time}</time>
-                        <span><b>{r.text}</b>{r.sub && <small>{r.sub}</small>}</span>
+                        {/* a brief in the timeline ("First brief", "Brief rewritten") opens the brief's versions */}
+                        {r.kind === "brief" && onBrief
+                            ? <button type="button" className="ev-linkish" data-testid="ev-tl-brief" onClick={onBrief} style={{ textAlign: "left" }}>
+                                <b>{r.text}</b>{r.sub && <small>{r.sub}</small>}</button>
+                            : <span><b>{r.text}</b>{r.sub && <small>{r.sub}</small>}</span>}
                     </li>
                 ))}
             </ol>
@@ -158,6 +187,7 @@ export default function EventDetail({ item, variant = "desk", embedded = false, 
     const [assets, setAssets] = useState([])
     const [followTl, setFollowTl] = useState(null)
     const [muted, setMuted] = useState(false)
+    const [briefsOpen, setBriefsOpen] = useState(false)
     const lat = Number(item?.lat ?? ev?.lat), lon = Number(item?.lon ?? ev?.lon)
     useEffect(() => { myAssets().then(setAssets) }, [])
     useEffect(() => {
@@ -212,7 +242,7 @@ export default function EventDetail({ item, variant = "desk", embedded = false, 
                     {conn.length > 1 && <div className="ev-sub">Also {conn.slice(1, 4).map((c) => `${Math.round(c.km * 10) / 10} km from ${c.me ? "where you are" : c.name}`).join(", ")}</div>}
                 </section>
             )}
-            <BriefBlock ev={evForBrief} />
+            <BriefBlock ev={evForBrief} briefs={ev?.briefs} open={briefsOpen} onToggle={() => setBriefsOpen((o) => !o)} />
             <div className="ev-meta" data-testid="ev-times">
                 {[firstSeenLine(v), lastUpdateLine(v), (v.corroboration || item?.event?.corroboration)?.line].filter(Boolean).join(" · ")}
             </div>
@@ -233,7 +263,7 @@ export default function EventDetail({ item, variant = "desk", embedded = false, 
                     </div>
                 </section>
             )}
-            <Timeline entries={mergeTimelines(ev?.timeline, followTl)} />
+            <Timeline entries={mergeTimelines(ev?.timeline, followTl)} onBrief={() => { setBriefsOpen(true); document.querySelector("[data-testid=ev-brief-open]")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" }) }} />
             <Around data={around} onOpenItem={onOpenItem} />
         </div>
     )
