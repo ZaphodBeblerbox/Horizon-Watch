@@ -119,10 +119,15 @@ def atom_of(row: dict) -> dict | None:
     name = v.get("name") or (r.get("place") or "").split(",")[0] or row.get("place") or ""
     if is_generic_place(name):
         return None
-    quote = (a.get("model") or {}).get("evidence_quote_act") or r.get("quote")
+    pres = a.get("presence") if isinstance(a.get("presence"), dict) else None
+    if pres and pres.get("act") in li.ACTS and act != "troops_sighted":
+        act = pres["act"]                         # the movement rule's act (a deployment is police, not troops)
+    quote = (pres or {}).get("quote") or (a.get("model") or {}).get("evidence_quote_act") or r.get("quote")
     text = row.get("text") or ""
     first_hand = bool(v.get("first_hand")) or bool(row.get("first_hand")) or bool(
         re.search(r"\b(?:je vois|on est (?:a|sur|devant|au)|sous mes yeux|i can see|we are (?:at|on|in)|je suis (?:a|sur|devant))\b", li.fold(text).replace("’", "'")))
+    if pres:
+        first_hand = not pres.get("relayed")      # "via @…", an agency, a correspondent: relayed, whatever the channel's habit
     return {"channel": row["channel"], "msg_id": row["msg_id"], "topic_id": row.get("topic_id"),
             "channel_title": strip_emoji(row.get("channel_title") or row["channel"]), "posted_at": row.get("posted_at"),
             "event_time": ev, "act": act, "quote": quote, "name": strip_emoji(name), "context": [strip_emoji(c) for c in (v.get("context") or [])],
@@ -130,7 +135,10 @@ def atom_of(row: dict) -> dict | None:
             "certainty": (a.get("model") or {}).get("certainty"), "direction": a.get("direction_resolved") or v.get("direction"),
             "media": row.get("media") or "none", "thumb": row.get("thumb"), "read_by": row.get("read_by"),
             "summary_en": row.get("summary_en"), "precision": row.get("precision"),
-            "country_code": row.get("country_code")}
+            "country_code": row.get("country_code"),
+            # made live by the movement rule (live_incident.presence_verdict): live for PRESENCE_WINDOW_MIN, and
+            # "relayed, unverified" when nobody says they see it
+            "presence": bool(pres), "relayed": bool(pres and pres.get("relayed")) and not first_hand}
 
 
 # ── the build (pure) ────────────────────────────────────────────────────────
@@ -205,7 +213,9 @@ def build(atoms: list[dict], media_by_atom: dict | None = None, now: _dt.datetim
         if age_last < -li.SKEW_S / 60:
             continue
         crowd = primary_act == "crowd_movement"
-        is_live = not (age_last > LIVE_WINDOW_MIN or (not crowd and (now - primary["event_time"]).total_seconds() / 60 > LIVE_WINDOW_MIN)
+        # a report made live by the movement rule alone (no clock in it) stays live PRESENCE_WINDOW_MIN
+        win = li.PRESENCE_WINDOW_MIN if all(a.get("presence") for a in grp) else LIVE_WINDOW_MIN
+        is_live = not (age_last > win or (not crowd and (now - primary["event_time"]).total_seconds() / 60 > win)
                        or (crowd and age_first > CROWD_MAX_MIN))
         if live_only and not is_live:
             continue
@@ -218,6 +228,9 @@ def build(atoms: list[dict], media_by_atom: dict | None = None, now: _dt.datetim
             media += media_by_atom.get((a["channel"], a["msg_id"]), [])
         level = "corroborated" if n_best >= 2 else ("eyewitness" if hand else ("footage" if media else "unverified"))
         line = source_line(level if level != "footage" else "unverified", n_best, bool(media))
+        relayed = level in ("unverified", "footage") and all(a.get("relayed") for a in grp)
+        if relayed:
+            line = "Relayed, with footage, unverified" if media else "Relayed, unverified"
         muted = primary_act in li.HIGH_IMPACT and level == "unverified"
         title = li.card_headline(primary_act, primary.get("quote"), primary["name"], primary["context"], primary.get("direction"))
         extra = []
@@ -252,7 +265,7 @@ def build(atoms: list[dict], media_by_atom: dict | None = None, now: _dt.datetim
                           "text": a.get("summary_en") or a["text"], "translated": bool(a.get("summary_en")),
                           "url": _post_url(a["channel"], a["msg_id"])}
                          for a in sorted(grp, key=lambda x: x["event_time"], reverse=True)][:5],
-            "corroboration": {"level": level, "n_sources": n_best, "first_hand": hand, "with_media": bool(media),
+            "corroboration": {"level": level, "n_sources": n_best, "first_hand": hand, "with_media": bool(media), "relayed": relayed,
                               "line": line},
             "muted": muted, "high_impact": primary_act in li.HIGH_IMPACT,
             "media": media[0] if media else None, "all_media": media[:4],
