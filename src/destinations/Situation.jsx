@@ -73,7 +73,7 @@ import FlowsPanel from "../components/FlowsPanel.jsx"
 import { whenLabel } from "../utils/formatTime.js"
 import { hm } from "../utils/clock.js"
 import EndangeredCountryChips from "../components/EndangeredCountryChips.jsx"
-import { closeOpenedSignal } from "../lib/signalPin.js"
+import { closeOpenedSignal, setSignalPinLayer, signalPinLayerOn } from "../lib/signalPin.js"
 import { markerUri } from "../lib/mapIcons.js"
 import MapLegend from "../components/MapLegend.jsx"
 import AssistantThread from "../assistant/AssistantThread.jsx"
@@ -431,6 +431,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // at all"): its own switch at the top of the panel, NOT under a group — a switch under News was greyed out and
     // disabled until News was on, and every group starts off. Off by default like every layer (globe/GlobeProtestsLayer.jsx).
     const [protestsOn, setProtestsOn] = useState(false)
+    // THE SIGNAL A NOTIFICATION OPENED ("On the ground now: …", the yellow triangle; lib/signalPin.js): its own
+    // switch (owner, 2026-10-24), on by default — it only ever draws the one signal you opened
+    const [openedSignalOn, setOpenedSignalOn] = useState(() => signalPinLayerOn())
+    useEffect(() => { setSignalPinLayer(openedSignalOn) }, [openedSignalOn])
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
@@ -502,6 +506,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         gdelt: [gdeltOn, setGdeltOn],
         liveSignals: [liveSignalsOn, setLiveSignalsOn],
         protests: [protestsOn, setProtestsOn],
+        openedSignal: [openedSignalOn, setOpenedSignalOn],
         strikes: [strikesOn, setStrikesOn],
         frontlineClaims: [claimsOn, setClaimsOn],
         movements: [movementsOn, setMovementsOn],
@@ -1512,6 +1517,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             onToggle={() => setProtestsOn((v) => !v)} />
                     </div>
                     {protestsOn && <ProtestFrames variant="desktop" />}
+                    <div data-testid="opened-signal-row">
+                        <SubLayerRow
+                            label="On the ground, opened"
+                            hint="The signal a notification opened (“On the ground now: …”), marked where it happened with the triangle, until you close it"
+                            on={openedSignalOn} parentOn={true}
+                            onToggle={() => setOpenedSignalOn((v) => !v)} />
+                    </div>
                 </LayerGroup>
 
                 <LayerGroup id="our-assets" title="Our assets" activeCount={(assetsOn ? 1 : 0) + (teamOn ? 1 : 0) + (safeHousesOn ? 1 : 0)}>

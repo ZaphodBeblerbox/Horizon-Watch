@@ -167,7 +167,9 @@ function useSignalPin(viewer) {
                     position: Cartesian3.fromDegrees(p.lon, p.lat),
                     billboard: { image: FUSION_MARK().uri, width: FUSION_MARK().w, height: FUSION_MARK().h,
                                  heightReference: HeightReference.CLAMP_TO_GROUND,
-                                 disableDepthTestDistance: MARKER_DEPTH_TEST_M },
+                                 disableDepthTestDistance: MARKER_DEPTH_TEST_M,
+                                 // in front of the signal's own marker at the same point (it was drawn under it)
+                                 eyeOffset: new Cartesian3(0, 0, -50) },
                     properties: { signalPin: p },
                 })
             }

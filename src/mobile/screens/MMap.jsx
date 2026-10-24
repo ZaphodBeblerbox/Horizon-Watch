@@ -34,7 +34,7 @@ import { getSettings, subscribeSettings, updateSetting } from "../../state/setti
 import { deleteTheater } from "../../lib/theatersApi.js"
 import TrackPhoto from "../../components/TrackPhoto.jsx"
 import { attachFindings } from "../findingsLeaflet.js"
-import { closeOpenedSignal } from "../../lib/signalPin.js"
+import { closeOpenedSignal, setSignalPinLayer } from "../../lib/signalPin.js"
 import { declutterAll, representative } from "../../lib/liveSignals.js"
 import { trafficIcon, trafficTone, dotIcon, markerIcon, PHONE_ICON_SCALE } from "../../lib/mapIcons.js"
 import MapLegend from "../../components/MapLegend.jsx"
@@ -149,7 +149,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
     const [on, setOn] = useState(() => ({ ...builtIn(), ...(savedView()?.layers || readLocalLayers() || {}) }))
     const touched = useRef(false)
     useEffect(() => { if (touched.current) writeLocalLayers(on) }, [on])
-    const nothingShown = !Object.values(on).some((v) => v === true)
+    const nothingShown = !Object.entries(on).some(([k, v]) => v === true && k !== "openedSignal")
     const [savedAt, setSavedAt] = useState(null)
     // OTHER SCREENS TURN LAYERS ON (the route tray's "Demonstrations on the
     // map"): {key: bool} by event, and what is on is said back
@@ -159,6 +159,8 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         return () => window.removeEventListener("m2:layers", h)
     }, [])
     useEffect(() => { window.__m2LayersOn = on; window.dispatchEvent(new CustomEvent("m2:layers-on", { detail: on })) }, [on])
+    // the triangle of the signal a notification opened has its own switch in Filters (lib/signalPin.js)
+    useEffect(() => { setSignalPinLayer(on.openedSignal !== false) }, [on.openedSignal])
     const [feats, setFeats] = useState({})        // layer key → its features in view
     const [bounds, setBounds] = useState(null)
     const [ships, setShips] = useState([])
@@ -561,7 +563,7 @@ export default function MMap({ active, focus, onOpen, alerts = 0, chrome = true 
         if (open) { hadOpen.current = open; return }
         const was = hadOpen.current
         hadOpen.current = null
-        if (was && !was._peekOnly) closeOpenedSignal(was.id)
+        if (was && !was._peekOnly) closeOpenedSignal(was.id, { passive: true })
     }, [open])
     // THE DETAILS: an alert's own record, fetched as the card opens into them
     const openDetail = (x) => {
