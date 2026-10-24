@@ -9,7 +9,7 @@
 .dk-tabs::-webkit-scrollbar { display: none; }
 .dk-tabs > button { flex: 0 0 auto; min-width: 72px; height: 46px; padding: 0 16px; border: 0; background: transparent; color: var(--txt3);
   font: inherit; font-size: 14.5px; font-weight: 500; cursor: pointer; display: grid; place-items: center; transition: color .18s ease, background .18s ease; }
-.dk-tabs > button:hover { background: rgba(255, 255, 255, .04); color: var(--txt2); }
+@media (hover: hover) { .dk-tabs > button:hover { background: rgba(255, 255, 255, .04); color: var(--txt2); } }
 .dk-tabs > button > span { position: relative; height: 46px; display: inline-flex; align-items: center; white-space: nowrap; }
 .dk-tabs > button[aria-selected="true"] { color: var(--txt); font-weight: 650; }
 .dk-tabs > button[aria-selected="true"] > span::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 4px; border-radius: 2px;
@@ -21,7 +21,7 @@
 
 /* a feed card opens its full view */
 .dk-openable { cursor: pointer; transition: background .15s ease; }
-.dk-openable:hover { background: rgba(255, 255, 255, .025); }
+@media (hover: hover) { .dk-openable:hover { background: rgba(255, 255, 255, .025); } }
 
 /* ── a post's full view ── */
 .dk-post { display: flex; flex-direction: column; gap: 12px; color: var(--txt); min-width: 0; animation: dk-post-in .26s cubic-bezier(.22, 1, .36, 1); }
