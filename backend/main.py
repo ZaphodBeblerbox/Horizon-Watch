@@ -13977,9 +13977,15 @@ async def _live_incident_loop():
     _pool = _TPE(max_workers=1, thread_name_prefix="live-incident")
     await asyncio.sleep(90)
     import live_incident as _li
+    _backfilled = False
     while True:
         try:
             if not HEAVY_FEEDS_PAUSED and _tg.configured() and _tg.logged_in():
+                if not _backfilled:
+                    # once per start: the last day re-read by the movement rule (code only, no model)
+                    _bf = await asyncio.get_running_loop().run_in_executor(_pool, _li.backfill_presence)
+                    print(f"[live-incident] backfill {_bf}", flush=True)
+                    _backfilled = True
                 out = await asyncio.get_running_loop().run_in_executor(_pool, _li.run_once)
                 if out.get("live") or out.get("failed") or out.get("rejected"):
                     print(f"[live-incident] {out}", flush=True)

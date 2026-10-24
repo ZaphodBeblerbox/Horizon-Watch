@@ -458,12 +458,19 @@ def _hits_in(t: str) -> tuple:
 _AFTER_OF = re.compile(r"\b(?:de|du|des)\s+(?:la\s+|l')?$|\bd'$|\bde l'$|\bl'$")
 _OWN_WORD = re.compile(r"\b(?:place|pl\.?|square|esplanade|rond-point|metro|station|gare|bd|boulevard|avenue|av|rue|quai|pont|"
                        r"parvis|porte|carrefour)\s+(?:de |du |des |d')?(?:la |l')?$")
+_ALIAS_OWN_WORD = re.compile(r"(?:place|palais|hotel|rue|boulevard|bd|avenue|quai|pont|porte|gare|parvis|esplanade|"
+                             r"jardins?|parc|square|carrefour|rond-point|metro|station|"
+                             r"plaza|calle|avenida)\b")
 _OF_THE_STATE = re.compile(r"^[\s,]*(?:d'|de |du |des )(?:haiti|france|guinee|congo|cote|tunisie|italie|etat|l'etat)")
 
 
 def _part_of_another_name(t: str, m, alias_len: int = 0) -> bool:
     body_at = max(0, m.end() - alias_len) if alias_len else m.start()     # where the alias itself starts, past any "à"/"de"
     before = t[max(0, body_at - 24):body_at]
+    # an alias that carries its own kind word ("palais de l'elysee", "place de la republique") is the place itself,
+    # whatever precedes it ("aux abords du palais de l'Élysée", owner 2026-10-24)
+    if _ALIAS_OWN_WORD.match(t[body_at:m.end()]):
+        return False
     if _AFTER_OF.search(before) and not _OWN_WORD.search(before):
         return True
     after = t[m.end():m.end() + 14]
