@@ -150,6 +150,33 @@ export function representative(members) {
     return [...(members || [])].sort((a, b) => rk(a) - rk(b) || tm(b) - tm(a))[0] || null
 }
 
+/**
+ * WHAT IS AT THE SAME PLACE (owner, 2026-10-24: "rings only where a lot of things happen in exactly the same location;
+ * if something happened 100 m away it is its own icon"): items within `m` metres of another, chained, form one place.
+ * items: [{ lat, lon, … }] -> [[item, …], …] (every item in exactly one place). Pure.
+ */
+export const SAME_PLACE_M = 30
+export function samePlace(items, m = SAME_PLACE_M) {
+    const n = items.length
+    const parent = items.map((_, i) => i)
+    const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i] } return i }
+    const dLat = m / 111_320
+    const idx = items.map((_, i) => i).sort((a, b) => items[a].lat - items[b].lat)
+    for (let ii = 0; ii < n; ii++) {
+        const a = items[idx[ii]]
+        const kx = 111_320 * Math.cos((a.lat * Math.PI) / 180)
+        for (let jj = ii + 1; jj < n; jj++) {
+            const b = items[idx[jj]]
+            if (b.lat - a.lat > dLat) break
+            const dx = (b.lon - a.lon) * kx, dy = (b.lat - a.lat) * 111_320
+            if (dx * dx + dy * dy <= m * m) parent[find(idx[ii])] = find(idx[jj])
+        }
+    }
+    const groups = new Map()
+    items.forEach((it, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(it) })
+    return [...groups.values()]
+}
+
 /** Declutter to a fixed point: a cluster is bigger than a marker and may touch a neighbour, so merge again until none touch. */
 export function declutterAll(items, gap = 2) {
     let cur = items.map((it) => ({ ...it, members: [it] }))

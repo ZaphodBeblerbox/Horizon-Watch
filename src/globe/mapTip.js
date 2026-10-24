@@ -37,6 +37,7 @@ const listeners = new Set()
  */
 export function showTip(content, x, y) {
     if (content == null) return hideTip()
+    if (suppressed) return undefined
     tip = { content, x, y }
     listeners.forEach((fn) => fn(tip))
 }
@@ -49,6 +50,18 @@ export function hideTip() {
 }
 
 export function getTip() { return tip }
+
+// WHILE THE INSPECTOR SHOWS SOMETHING, NO HOVER CARD (owner, 2026-10-24: the tooltip stayed over the map
+// after an item opened in the Inspector). The screen that owns the Inspector says when it shows an item;
+// every layer's showTip is then a no-op, and what was up is hidden.
+let suppressed = false
+
+export function setTipSuppressed(on) {
+    suppressed = !!on
+    if (suppressed) hideTip()
+}
+
+export function tipSuppressed() { return suppressed }
 
 export function subscribeTip(fn) {
     listeners.add(fn)

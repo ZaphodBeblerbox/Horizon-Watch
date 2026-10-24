@@ -49,11 +49,11 @@ import { dropStaleDemos } from "../globe/freshness.js"
 import { useInboxUnread, badgeText } from "../notify/inbox.js"
 
 const NAV = [["home", "Home", "g-home"], ["map", "Map", "g-globe"], ["desk", "Desk", "g-feed"], ["messages", "Messages", "g-comment"], ["more", "More", "g-tabs"]]
-const MORE = [["assistant", "Assistant", "g-orb"], ["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
+const MORE = [["assistant", "Support Droid", "g-orb"], ["assets", "Assets", "g-asset"], ["alerts", "Alerts", "g-bell"], ["conflicts", "Conflicts", "g-flame"], ["mood", "Mood", "g-trend"],
               ["reports", "Reports", "g-report"], ["general", "General", "g-feed"], ["profile", "Profile", "g-user"], ["settings", "Settings", "g-gear"]]
 const TITLES = { home: null, map: "Map", desk: "Desk", messages: "Messages", assets: "Assets", alerts: "Alerts", conflicts: "Conflicts", mood: "Mood on Telegram",
                  reports: "Situation reports", general: "General", profile: "Profile", admin: "Admin", settings: "Settings",
-                 assistant: "Assistant" }
+                 assistant: "Support Droid" }
 
 export default function MobileApp() {
     const [tab, setTab] = useState("home")
@@ -253,7 +253,7 @@ export default function MobileApp() {
             {tab !== "map" && <header className="m2-top">
                 {TITLES[tab] ? <span className="m2-title">{TITLES[tab]}</span>
                     : <span className="m2-brand" style={{ flex: 1, display: "flex" }} aria-label="Parallax"><span style={{ width: 124, height: 19, display: "block" }}><PlxWordmark /></span></span>}
-                {tab !== "assistant" && <button className="m2-iconbtn" aria-label="Assistant" data-testid="m2-assistant" onClick={() => go("assistant")}>
+                {tab !== "assistant" && <button className="m2-iconbtn" aria-label="Support Droid" data-testid="m2-assistant" onClick={() => go("assistant")}>
                     <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="#7aa7ff" strokeWidth="1.3" aria-hidden>
                         <path d="M8 1.8l1.5 3.9 3.9 1.5-3.9 1.5L8 12.6 6.5 8.7 2.6 7.2l3.9-1.5z" /><path d="M13 11.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" />
                     </svg></button>}
@@ -288,7 +288,7 @@ export default function MobileApp() {
                     backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", color: "var(--txt)", font: "500 13px var(--font)",
                 }}>
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#7aa7ff" strokeWidth="1.5" aria-hidden><path d="M10 3L5 8l5 5" /></svg>
-                    Back to the assistant
+                    Back to the droid
                 </button>
             )}
             <nav className="m2-nav">

@@ -21,12 +21,18 @@
  * offset from the cursor, so it sits beside the subject rather than over it.
  */
 import { useEffect, useState } from "react"
-import { subscribeTip, getTip, tipPosition } from "../globe/mapTip.js"
+import { subscribeTip, getTip, tipPosition, hideTip } from "../globe/mapTip.js"
 
 export default function MapTip() {
     const [tip, setTip] = useState(getTip)
 
     useEffect(() => subscribeTip(setTip), [])
+    // a click anywhere puts the card away: what was clicked opens in the Inspector (owner, 2026-10-24)
+    useEffect(() => {
+        const down = () => hideTip()
+        window.addEventListener("pointerdown", down, true)
+        return () => window.removeEventListener("pointerdown", down, true)
+    }, [])
 
     if (!tip) return null
     const { left, top } = tipPosition(tip.x, tip.y)

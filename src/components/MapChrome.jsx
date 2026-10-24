@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react"
 import { subscribeCameraState, getCameraState } from "../globe/cameraState.js"
 import { subscribeScale, getScale } from "../globe/mapReadout.js"
 import { openReportForm } from "../lib/fieldReports.js"
+import { flyToMe } from "../lib/locateMe.js"
 
 // The spec's own world preset — the same figures §10's projection segment
 // uses for "world", so Home and the World projection agree rather than
@@ -150,14 +151,10 @@ export default function MapChrome({ onFit = null, basemap = null }) {
                 {scale?.zoomLabel || "—"}
             </span>
             {navBtn("nav-out", "i-zoom-out", "Zoom out", () => fire("akili:zoom-out"))}
-            {navBtn("nav-home", "i-recentre", "Home view", () =>
-                fire("akili:set-camera", { lat: HOME.lat, lon: HOME.lon, height: HOME.height, heading: 0, pitch: -Math.PI / 2, roll: 0 }))}
-            {navBtn("nav-fit", "i-target", "Fit to visible signals", () => {
-                // Only offered when the host screen can actually compute an
-                // extent from what it is showing. A Fit button that silently
-                // does nothing is worse than one that is not there.
-                if (onFit) onFit()
-            })}
+            {/* ONE locate button (owner, 2026-10-24): "Home view" flew out of the globe and "Fit" did nothing
+                (no host passed onFit). It flies to where you are, at a city zoom (lib/locateMe.js). */}
+            {navBtn("nav-me", "i-recentre", "My location", () => { flyToMe() })}
+            {onFit && navBtn("nav-fit", "i-target", "Fit to visible signals", () => onFit())}
             {/* Report what you see, at the view's centre (globe/GlobeFieldReportsLayer.jsx; right-click: at a point) */}
             <button className="mapbtn" title="Report what you see (or right-click the map)" aria-label="Report what you see"
                     data-testid="map-report-btn" onClick={() => openReportForm()}>

@@ -285,8 +285,8 @@ export default function PlxTabBar({
 
             {onAssistant && (
                 <button
-                    onClick={onAssistant} title="Assistant — ask about a place, set up what you watch"
-                    aria-label="Assistant" aria-pressed={assistantOpen} data-testid="assistant-button"
+                    onClick={onAssistant} title="Support Droid — ask about a place, set up what you watch"
+                    aria-label="Support Droid" aria-pressed={assistantOpen} data-testid="assistant-button"
                     style={{
                         display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36,
                         border: 0, background: assistantOpen ? ON : OFF, color: "var(--txt2)", cursor: "pointer", borderRadius: 0,

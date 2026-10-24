@@ -38,6 +38,7 @@ import MapAnnobar from "../components/MapAnnobar.jsx"
 import MapChrome from "../components/MapChrome.jsx"
 import MapMeta from "../components/MapMeta.jsx"
 import MapTip from "../components/MapTip.jsx"
+import { setTipSuppressed } from "../globe/mapTip.js"
 import { LAYER_GROUPS, CONTEXT_TOGGLES, SEVERITY_FLOORS, TIME_WINDOWS, nothingOn } from "../components/layerRailConfig.js"
 import { defaultOnNow as endangeredDefaultOn } from "../globe/endangeredPlaces.js"
 
@@ -72,7 +73,7 @@ import FlowsPanel from "../components/FlowsPanel.jsx"
 import { whenLabel } from "../utils/formatTime.js"
 import { hm } from "../utils/clock.js"
 import EndangeredCountryChips from "../components/EndangeredCountryChips.jsx"
-import { closeOpenedSignal } from "../lib/signalPin.js"
+import { closeOpenedSignal, setSignalPinLayer, signalPinLayerOn } from "../lib/signalPin.js"
 import { markerUri } from "../lib/mapIcons.js"
 import MapLegend from "../components/MapLegend.jsx"
 import AssistantThread from "../assistant/AssistantThread.jsx"
@@ -435,6 +436,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     // deleting a report turns it on, so what you just did is on the map
     const [userReportsOn, setUserReportsOn] = useState(false)
     useEffect(() => subscribeReports(() => setUserReportsOn(true)), [])
+    // THE SIGNAL A NOTIFICATION OPENED ("On the ground now: …", the yellow triangle; lib/signalPin.js): its own
+    // switch (owner, 2026-10-24), on by default — it only ever draws the one signal you opened
+    const [openedSignalOn, setOpenedSignalOn] = useState(() => signalPinLayerOn())
+    useEffect(() => { setSignalPinLayer(openedSignalOn) }, [openedSignalOn])
     // Strikes, bombings, assaults and ground taken (GlobeStrikesLayer): on —
     // the owner wants an air campaign visible. Acts and window: strikes.js.
     const [strikesOn, setStrikesOn] = useState(true)
@@ -507,6 +512,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
         liveSignals: [liveSignalsOn, setLiveSignalsOn],
         protests: [protestsOn, setProtestsOn],
         userReports: [userReportsOn, setUserReportsOn],
+        openedSignal: [openedSignalOn, setOpenedSignalOn],
         strikes: [strikesOn, setStrikesOn],
         frontlineClaims: [claimsOn, setClaimsOn],
         movements: [movementsOn, setMovementsOn],
@@ -877,6 +883,10 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
     const rightTab = useRightTab()
     const [assistantMounted, setAssistantMounted] = useState(rightTab === "assistant")
     useEffect(() => { if (rightTab === "assistant") setAssistantMounted(true) }, [rightTab])
+    // the map's hover card is hidden while the Inspector shows an item (owner, 2026-10-24)
+    const inspectorShowing = !asCanvas && !rightMin && rightTab === "inspector" && !!(inspectorPopup || selected)
+    useEffect(() => { setTipSuppressed(inspectorShowing) }, [inspectorShowing])
+    useEffect(() => () => setTipSuppressed(false), [])
     useEffect(() => { if (selected) setRightTab("inspector") }, [selected])
     // ONE WINDOW ON THE RIGHT (ui/sideWindows.js): a spoken answer takes the
     // inspector's place; opening the inspector folds the answer away.
@@ -1513,6 +1523,13 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             onToggle={() => setProtestsOn((v) => !v)} />
                     </div>
                     {protestsOn && <ProtestFrames variant="desktop" />}
+                    <div data-testid="opened-signal-row">
+                        <SubLayerRow
+                            label="On the ground, opened"
+                            hint="The signal a notification opened (“On the ground now: …”), marked where it happened with the triangle, until you close it"
+                            on={openedSignalOn} parentOn={true}
+                            onToggle={() => setOpenedSignalOn((v) => !v)} />
+                    </div>
                 </LayerGroup>
 
                 <LayerGroup id="user-reports" title="User reports" activeCount={userReportsOn ? 1 : 0}>
@@ -2338,7 +2355,7 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
             {asCanvas ? null : (
             <div className="pane-glass" data-testid="glass-inspector-pane" data-open={!rightMin} aria-hidden={rightMin || undefined} style={rightPaneStyle}>
                 <div className="plx-rcol-head" role="tablist" aria-label="Right column">
-                    {[["inspector", "Inspector"], ["assistant", "Assistant"]].map(([k, label]) => (
+                    {[["inspector", "Inspector"], ["assistant", "Support Droid"]].map(([k, label]) => (
                         <button key={k} role="tab" aria-selected={rightTab === k} data-testid={`right-tab-${k}`}
                                 className="plx-rcol-tab" onClick={() => setRightTab(k)}>{label}</button>
                     ))}

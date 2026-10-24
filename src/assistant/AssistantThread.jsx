@@ -170,7 +170,7 @@ function History({ s, onPick, onBack }) {
     )
 }
 
-export default function AssistantThread({ platform = "desktop", title = "Assistant", onClose, autoFocus = true, hidden = false }) {
+export default function AssistantThread({ platform = "desktop", title = "Support Droid", onClose, autoFocus = true, hidden = false }) {
     const s = useAssistant()
     const text = s.draft
     const setText = setAssistantDraft
