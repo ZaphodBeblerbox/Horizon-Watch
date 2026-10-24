@@ -50,6 +50,13 @@ export const listReplies = (id) => req(`/api/desk/posts/${enc(id)}/replies`)
 
 export const postedTheaters = () => req("/api/desk/theaters")
 
+/* Comments under a General item's full view (a Telegram post, a GeoConfirmed
+   event, an alert), kept by its id; read by the author's company. */
+export const listItemComments = (key) => req(`/api/desk/item-comments?key=${enc(key)}`)
+
+export const addItemComment = (key, body) =>
+    req("/api/desk/item-comments", { method: "POST", body: JSON.stringify({ key, body }) })
+
 export const deskFileUrl = (postId) => `${API_BASE}/api/desk/files/${enc(postId)}`
 
 /* ── who is on the company desk, and how far I have read (2026-10-19) ──

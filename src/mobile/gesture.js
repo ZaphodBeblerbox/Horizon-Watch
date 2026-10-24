@@ -89,10 +89,10 @@ export function swallowClickAfterDrag(node) {
  * (Home: thrown down far enough, the screen slides away to the map) by
  * returning true.
  */
-export function attachPullToRefresh(node, { onRefresh, threshold = 70, onPull = null }) {
+export function attachPullToRefresh(node, { onRefresh, threshold = 70, onPull = null, ringClass = "" }) {
     if (!node) return () => {}
     const ring = document.createElement("div")
-    ring.className = "m2-ptr"
+    ring.className = ringClass ? `m2-ptr ${ringClass}` : "m2-ptr"     // ringClass: a screen with a fixed bar shows it below the bar
     ring.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="44 100"/></svg>'
     const host = node.parentElement || node
     host.appendChild(ring)

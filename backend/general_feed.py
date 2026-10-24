@@ -404,3 +404,23 @@ def _source_label(d: dict) -> str:
     if d.get("kind") == "geoconfirmed":
         return "GeoConfirmed"
     return str(d.get("alert_type") or d.get("source") or "Alert")
+
+
+# ONE READ SERVES EVERY READER (2026-10-24, the Desk "loads slowly"). A page is the same for everybody; only the
+# profile filter after it is per user, and that filter reads up to six wide pages (profile_filter.paged) for a
+# narrow profile, each a clustering pass: ~3 s of CPU for one request measured alone, 22-72 s on the busy local
+# process, and again on every 20 s poll of every open Desk. Pages are kept briefly per (cursor, size, kinds) in a
+# SharedCache (single flight, stale while revalidate); each caller gets its own copies of the cards, since the
+# filter may annotate them.
+_PAGES = None
+PAGE_TTL_S = 15
+PAGE_MAX_STALE_S = 90
+
+
+def cached_feed(db_path: str, before: str | None = None, limit: int = 40, kinds: tuple = KINDS) -> dict:
+    global _PAGES
+    if _PAGES is None:
+        from shared_cache import SharedCache
+        _PAGES = SharedCache("general-pages", ttl=PAGE_TTL_S, max_stale=PAGE_MAX_STALE_S, max_entries=96)
+    res = _PAGES.get((db_path, before or "", int(limit), tuple(kinds)), lambda: feed(db_path, before, limit, kinds))
+    return {**res, "items": [dict(e) for e in res.get("items") or []]}

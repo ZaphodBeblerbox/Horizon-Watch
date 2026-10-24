@@ -6,15 +6,15 @@
  * can be read together, which is the point: checking a claim against what
  * it cites should not mean switching windows and losing the map.
  *
- * Only X and Telegram posts are shown in-frame, through their official
- * embed endpoints; anything else never reaches this panel (the caller
- * opens a tab). Nothing here leads out of Parallax (owner, 2026-10-10): the
+ * Every source (a Telegram or X post, a news page, a web finding) is read
+ * here as our own post card (SourcePostCard.jsx, owner 2026-10-24), never
+ * the platform's embed; "Open original" is a small secondary link and the
  * post's link can be copied. On a phone it is a full-screen sheet; next to
  * a spoken answer it takes the side (ui/sideWindows.js).
  */
 import { useEffect, useRef, useState } from "react"
-import { embedFor, hostOf } from "../inspector/sourceEmbed.js"
-import { getRenderedTheme, subscribeRenderedTheme } from "../state/themeStore.js"
+import { hostOf } from "../inspector/sourceEmbed.js"
+import SourcePostCard from "./SourcePostCard.jsx"
 import { claimSide, onSideClaim } from "../ui/sideWindows.js"
 
 export default function SourceViewer() {
@@ -25,8 +25,6 @@ export default function SourceViewer() {
     const setUrl = (u, c = null) => { setUrlState(u); setCard(u || c ? c : null) }
     const urlRef = useRef(null)
     urlRef.current = url || card
-    const [theme, setTheme] = useState(getRenderedTheme)
-    useEffect(() => subscribeRenderedTheme(setTheme), [])
     useEffect(() => {
         const open = (e) => setUrl(e.detail?.url || null, e.detail?.card || null)
         // ESCAPE CLOSES THE TOP THING ONLY. The inspector also closes on
@@ -49,8 +47,9 @@ export default function SourceViewer() {
 
     useEffect(() => onSideClaim("source", (by) => { if (by === "answer") setUrl(null) }), [])
     useEffect(() => { if (url || card) claimSide("source") }, [url, card])
-    const embed = url ? embedFor(url, { dark: theme === "dark" }) : null
-    const shown = !!(embed || card)
+    // EVERY SOURCE AS OUR OWN CARD (owner, 2026-10-24): a Telegram or X post, a news page, a web finding;
+    // never the platform's embed (SourcePostCard.jsx)
+    const shown = !!(url || card)
 
     /* WHERE IT GOES. Beside the inspector when the window has room for the
        map, the inspector and the source; on a narrow window it takes the
@@ -71,7 +70,7 @@ export default function SourceViewer() {
     }, [shown, docked, width]) // eslint-disable-line react-hooks/exhaustive-deps
 
     if (!shown) return null
-    const label = embed ? embed.label : (card.source || hostOf(url) || "Source")
+    const label = card?.source || hostOf(url) || "Source"
 
     return (
         <aside role="dialog" aria-label={`Source: ${label}`} data-testid="source-viewer" style={{
@@ -102,37 +101,7 @@ export default function SourceViewer() {
                     color: "var(--txt-3, var(--txt3))", cursor: "pointer", font: "inherit",
                 }}>✕</button>
             </header>
-            {!embed && <SourceCard card={card} url={url} />}
-            {embed && <iframe
-                key={embed.src}
-                title={embed.label}
-                src={embed.src}
-                // The embed needs scripts and its own origin to render; it
-                // gets nothing else — no top navigation, no forms, no popups
-                // except a link the reader clicks.
-                sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-                referrerPolicy="no-referrer"
-                loading="lazy"
-                style={{ flex: 1, width: "100%", border: 0, background: "#fff" }}
-            />}
+            <SourcePostCard key={url || card?.title} url={url} given={card} phone={phone} />
         </aside>
-    )
-}
-
-/** A source that cannot be framed, read here: what it says, from whom, when. The original is a secondary link. */
-function SourceCard({ card, url }) {
-    const at = card?.when || card?.published_at   // the web agent cites published_at (WebContext.jsx)
-    const when = at ? new Date(String(at).replace(" ", "T")) : null
-    return (
-        <div data-testid="source-card" style={{ flex: 1, overflowY: "auto", padding: "14px 14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
-            {card?.title && <div style={{ font: "600 15px/1.35 var(--font)", color: "var(--txt)" }}>{card.title}</div>}
-            <div style={{ font: "400 11.5px var(--font)", color: "var(--txt-3, var(--txt3))" }}>
-                {[card?.source || hostOf(url), when && !Number.isNaN(+when) ? when.toLocaleString() : null, card?.place].filter(Boolean).join(" · ")}
-            </div>
-            {card?.summary && <div style={{ font: "400 13px/1.55 var(--font)", color: "var(--txt-2, var(--txt2))", whiteSpace: "pre-wrap" }}>{card.summary}</div>}
-            {card?.note && <div style={{ font: "400 11.5px/1.5 var(--font)", color: "var(--txt-3, var(--txt3))" }}>{card.note}</div>}
-            {url && <a href={url} target="_blank" rel="noreferrer noopener" style={{ marginTop: 4, font: "500 12px var(--font)", color: "var(--txt-3, var(--txt3))", textDecoration: "underline", textUnderlineOffset: 3 }}>
-                Open original</a>}
-        </div>
     )
 }

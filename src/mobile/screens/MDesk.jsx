@@ -13,16 +13,19 @@ import API_BASE from "../../apiBase.js"
 import { addDeskMembers, createPost, listDeskMembers, listPosts, listReplies, markDeskRead, removeDeskMember, toggleAck, uploadDeskFile } from "../../lib/deskApi.js"
 import { getInboxUnread, refreshInboxUnread, setViewingDesk, takeOpenDeskPost } from "../../notify/inbox.js"
 import MMembers from "./MMembers.jsx"
-import { Icon, ScopeChips, when, ago } from "./common.jsx"
+import { Icon, when, ago } from "./common.jsx"
 import { useMine } from "../useMine.js"
 import { inTheater, setTheaterScope, useTheaterScope } from "../theaterScope.js"
-import { attachDrag, attachPullToRefresh, swallowClickAfterDrag } from "../gesture.js"
+import { attachPullToRefresh } from "../gesture.js"
 import { captureMedia } from "../MediaViewer.jsx"
 import { itemStatusLabel } from "../../globe/protests.js"
 import { ageLabel } from "../../lib/liveIncident.js"
 import { getCurrentUser } from "../../state/authStore.js"
 import { audienceLabel } from "../../desk/Desk.jsx"
 import { dropStaleDemos } from "../../globe/freshness.js"
+import PostView from "../../desk/PostView.jsx"
+import { isCardClick, scrollMemo, teamPostIn, theaterTabs } from "../../desk/deskFeed.js"
+import "../../desk/desk.css"
 
 const URG = ["routine", "elevated", "high", "critical"]
 
@@ -97,18 +100,20 @@ function Face({ who, size = 40 }) {
 /* ONE POST, AS A FEED READS IT: the face in its own column, name, handle
    and time on one line, the words, the attachment, then the actions —
    comment, seen, and where it was posted to. */
-function PostCard({ p, onChanged }) {
+function PostCard({ p, onChanged, onOpen }) {
     const [acked, setAcked] = useState(!!p.acked)
     const [acks, setAcks] = useState(p.acks || 0)
     const [replies, setReplies] = useState(null)
-    const open = async () => setReplies(replies ? null : await repliesOf(p.id))
+    // a tap on the post opens its full view; the comment button there too, like X
+    const open = async () => (onOpen ? onOpen() : setReplies(replies ? null : await repliesOf(p.id)))
     const ack = async () => {
         setAcked(!acked); setAcks(acks + (acked ? -1 : 1))
         try { await toggleAck(p.id) } catch { setAcked(acked); setAcks(acks) }
     }
     const who = p.author || {}
     return (
-        <article className="m2-post" data-testid="m2-post" id={`m2-post-${p.id}`}>
+        <article className={`m2-post${onOpen ? " dk-openable" : ""}`} data-testid="m2-post" id={`m2-post-${p.id}`}
+                 onClick={onOpen ? (e) => { if (isCardClick(e) && !p.deleted) onOpen() } : undefined}>
             <Face who={who} />
             <div style={{ minWidth: 0 }}>
                 <div className="m2-post-head">
@@ -304,71 +309,84 @@ export default function MDesk({ active, onShowOnMap }) {
         const el = document.getElementById(`m2-post-${goPost}`)
         if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); setGoPost(null) }
     }, [goPost, posts])
-    // TEAM ⇄ GENERAL BY A SWIPE, the content following the finger and the
-    // next arriving from the side it was pulled from
-    const body = useRef(null)
+    // ONE FIXED BAR (owner, 2026-10-24): General · Team, then "All" and your
+    // theatres (the one theatre choice of the whole phone, mobile/theaterScope.js),
+    // in one row that scrolls sideways, the header's own glass, outside the
+    // scroller: a pull to refresh moves the feed under it, never the bar, and
+    // the spinner shows below it. A sideways swipe on the feed moves between the
+    // bottom tabs (mobile/tabSwipe.js), so the theatres are chosen in the bar.
+    const mine = useMine()
+    const scope = useTheaterScope()
+    const tabs = useMemo(() => theaterTabs(mine.theaters), [mine.theaters])
+    const scopeT = mine.theaters.find((t) => String(t.id) === String(scope)) || null
+    const keep = useMemo(() => (scopeT ? inTheater(scopeT, mine.countries, mine.iso2Name) : null), [scopeT, mine.countries, mine.iso2Name])
+    const tabId = scopeT ? String(scopeT.id) : null
     const [from, setFrom] = useState(null)
     const tabRef = useRef(tab)
     tabRef.current = tab
-    useEffect(() => {
-        const node = body.current
-        if (!node) return undefined
-        const off = attachDrag(node, {
-            start: (t) => !t.closest?.("input, textarea, video, .m2-hscroll, .m2-chips, [data-nodrag]"),
-            move: ({ dx, axis }) => {
-                if (axis !== "x") return false
-                const edge = (tabRef.current === "team" && dx > 0) || (tabRef.current === "general" && dx < 0)
-                node.style.transition = ""
-                node.style.transform = `translateX(${edge ? dx * 0.15 : dx * 0.5}px)`
-                node.__dragged = true
-                return true
-            },
-            end: ({ dx, vx, axis, moved }) => {
-                node.style.transition = "transform .3s cubic-bezier(.22,1,.36,1)"
-                node.style.transform = ""
-                if (!moved || axis !== "x") return
-                const go = Math.abs(dx) > 70 || Math.abs(vx) > 0.45
-                if (go && dx < 0 && tabRef.current === "team") { setFrom("r"); setTab("general") }
-                else if (go && dx > 0 && tabRef.current === "general") { setFrom("l"); setTab("team") }
-            },
-        })
-        const offClick = swallowClickAfterDrag(node)
-        return () => { off(); offClick() }
-    }, [tab])                      // the body is a new node for each tab (its key)
-    const pick = (t) => { if (t === tab) return; setFrom(t === "general" ? "r" : "l"); setTab(t) }
-    // GENERAL, IN THE THEATER YOU ARE LOOKING AT (mobile/theaterScope.js)
-    const mine = useMine()
-    const scope = useTheaterScope()
-    const scopeT = mine.theaters.find((t) => t.id === scope) || null
-    const keep = useMemo(() => (scopeT ? inTheater(scopeT, mine.countries, mine.iso2Name) : null), [scopeT, mine.countries, mine.iso2Name])
+    // A POST OPENS IN THE DESK'S PANE (desk/PostView.jsx); the list stays
+    // mounted under it, and Back returns to the same scroll position.
+    const scroller = useRef(null)
+    const [open, setOpen] = useState(null)
+    const memo = useRef(scrollMemo()).current
+    const openPost = (p) => { memo.save("list", scroller.current); setOpen(p); if (scroller.current) scroller.current.scrollTop = 0 }
+    useEffect(() => { if (!open) memo.restore("list", scroller.current) }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { if (!active) setOpen(null) }, [active])
+    const pick = (t) => { if (t === tab) return; setFrom(t === "general" ? "l" : "r"); setTab(t); if (scroller.current) scroller.current.scrollTop = 0 }
+    const pickTheatre = (id) => {
+        const ids = tabs.map((t) => t.id)
+        setFrom(ids.indexOf(id) > ids.indexOf(tabId) ? "r" : "l")
+        setTheaterScope(id)
+        if (scroller.current) scroller.current.scrollTop = 0
+    }
+    const shownPosts = (posts || []).filter((p) => teamPostIn(p, scopeT, keep))
     // PULL DOWN TO SEE THE NEWEST (owner: "like on Twitter"): the team's
     // posts fetched again, or the General feed started afresh
-    const scroller = useRef(null)
     const [fresh, setFresh] = useState(0)
     const loadRef = useRef(load)
     loadRef.current = load
     useEffect(() => attachPullToRefresh(scroller.current, {
+        ringClass: "m2-ptr-deskbar",
         onRefresh: () => (tabRef.current === "team" ? loadRef.current() : new Promise((r) => { setFresh((n) => n + 1); setTimeout(r, 600) })),
     }), [])
     return (
-        <div ref={scroller} className="m2-scroll m2-scroll-seg" data-screen-label="Phone desk">
-            <div className="m2-seg" role="tablist">
-                <button role="tab" aria-selected={tab === "team"} onClick={() => pick("team")}>Team</button>
-                <button role="tab" aria-selected={tab === "general"} onClick={() => pick("general")}>General</button>
-                <span className="m2-seg-mark" aria-hidden style={{ transform: `translateX(${tab === "general" ? 100 : 0}%)` }} />
+        <>
+            {!open && (
+                <div className="m2-deskbar dk-tabs dk-tabs-phone" role="tablist" aria-label="Desk" data-testid="m2-deskbar" data-nodrag="">
+                    {[["general", "General"], ["team", "Team"]].map(([k, l]) => (
+                        <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => pick(k)} data-testid={`m2-desk-${k}`}><span>{l}</span></button>
+                    ))}
+                    {tab !== "telegram" && tabs.length > 1 && <>
+                        <i className="m2-deskbar-sep" aria-hidden />
+                        {tabs.map((t) => (
+                            <button key={t.id ?? "all"} type="button" role="tab" aria-selected={tabId === t.id} className="m2-deskbar-th"
+                                    onClick={() => pickTheatre(t.id)} data-testid="desk-theater-tab"><span>{t.label}</span></button>
+                        ))}
+                    </>}
+                </div>
+            )}
+            <div ref={scroller} className={`m2-scroll ${open ? "m2-scroll-seg" : "m2-scroll-deskbar"}`} data-screen-label="Phone desk">
+                {open && <PostView post={open} variant="phone" onBack={() => setOpen(null)}
+                                   onMap={(it) => { setOpen(null); onShowOnMap?.(it) }} />}
+                <div style={{ display: open ? "none" : "contents" }}>
+                <div key={`${tab}:${tabId || "all"}`} className="m2-desk-body" style={from ? { animation: `m2-pane-from-${from} .34s cubic-bezier(.22,1,.36,1)` } : undefined}>
+                {tab === "team" ? (<>
+                    <DeskMembersBar />
+                    <Composer onPosted={load} />
+                    {posts === null ? <div className="m2-empty">Loading the desk…</div>
+                        : posts.length === 0 ? <div className="m2-empty">Nothing on the desk yet. What you post goes to your company unless you choose otherwise.</div>
+                        : shownPosts.length === 0 ? <div className="m2-empty">Nothing posted to {scopeT?.name || "this theatre"} yet.</div>
+                        : shownPosts.map((p) => <PostCard key={p.id} p={p} onChanged={load} onOpen={() => openPost({ type: "team", post: p })} />)}
+                </>) : tab === "general" ? (
+                    // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
+                    <div style={{ display: "contents" }} onClickCapture={captureMedia}>
+                        <GeneralFeed key={fresh} compact keep={keep} kindTabs={false} active={active && !open}
+                                     onOpen={(it) => openPost({ type: "item", it })} onMap={(it) => onShowOnMap?.(it)} />
+                    </div>
+                ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
+                </div>
+                </div>
             </div>
-            <div ref={body} key={tab} className="m2-desk-body" style={from ? { animation: `m2-pane-from-${from} .34s cubic-bezier(.22,1,.36,1)` } : undefined}>
-            {tab === "team" ? (<>
-                <DeskMembersBar />
-                <Composer onPosted={load} />
-                {posts === null ? <div className="m2-empty">Loading the desk…</div>
-                    : posts.length === 0 ? <div className="m2-empty">Nothing on the desk yet. What you post goes to your company unless you choose otherwise.</div>
-                    : posts.map((p) => <PostCard key={p.id} p={p} onChanged={load} />)}
-            </>) : tab === "general" ? (
-                // what is generally happening: signals, verified events, Telegram (general/GeneralFeed.jsx)
-                <div style={{ display: "contents" }} onClickCapture={captureMedia}><ScopeChips theaters={mine.theaters} scope={scopeT ? scope : null} onPick={setTheaterScope} /><GeneralFeed key={fresh} compact keep={keep} onMap={(it) => onShowOnMap?.(it)} /></div>
-            ) : <TelegramFeed active={active && tab === "telegram"} onShowOnMap={onShowOnMap} />}
-            </div>
-        </div>
+        </>
     )
 }

@@ -29,10 +29,10 @@ function usePolled(load, deps = [], every = 30_000) {
     return data
 }
 
-export function EventRow({ ev, onOpen }) {
+export function EventRow({ ev, onOpen, open = false }) {
     const line = ev.brief?.summary && ev.brief.summary !== ev.headline ? ev.brief.summary : (ev.corroboration?.line || "")
     return (
-        <button type="button" className="evl-row" data-testid="evl-row" onClick={() => onOpen?.(ev)}>
+        <button type="button" className="evl-row" data-testid="evl-row" aria-expanded={open} onClick={() => onOpen?.(ev)}>
             <span className="evl-head">
                 <StatusChip status={ev.status} />
                 <PriorityChip item={ev} />
@@ -48,7 +48,8 @@ export function EventRow({ ev, onOpen }) {
     )
 }
 
-export function DevelopingList({ variant = "desk", onOpen, limit = 6, data: given = null }) {
+/* openId + renderOpen(item): the open item slides open under its own row, inside the list (Home, owner 2026-10-24). */
+export function DevelopingList({ variant = "desk", onOpen, limit = 6, data: given = null, openId = null, renderOpen = null }) {
     const polled = usePolled(() => (given ? Promise.resolve(given) : getEvents("?hours=12&limit=30")), [given])
     const data = given || polled
     const items = rankEvents(arr(data?.items)).slice(0, limit)
@@ -62,12 +63,17 @@ export function DevelopingList({ variant = "desk", onOpen, limit = 6, data: give
             ) : null}
             {data === null && <div className="ev-empty">Loading…</div>}
             {data && !items.length && <div className="ev-empty">{data.note || "Nothing developing in your areas."}</div>}
-            {items.map((ev) => <EventRow key={ev.id} ev={ev} onOpen={onOpen} />)}
+            {items.map((ev) => (
+                <div key={ev.id} style={{ display: "contents" }}>
+                    <EventRow ev={ev} onOpen={onOpen} open={openId === ev.id} />
+                    {openId === ev.id && renderOpen?.(ev)}
+                </div>
+            ))}
         </div>
     )
 }
 
-export function FollowingList({ variant = "desk", onOpen, data: given = null }) {
+export function FollowingList({ variant = "desk", onOpen, data: given = null, openId = null, renderOpen = null }) {
     const polled = usePolled(() => (given ? Promise.resolve(given) : getFollows()), [given])
     const data = given || polled
     const items = arr(data?.items)
@@ -77,7 +83,8 @@ export function FollowingList({ variant = "desk", onOpen, data: given = null }) 
     return (
         <div className={`evl evl-${variant}`} data-testid="following">
             {items.map((f) => (
-                <div key={f.target} className="evl-row" style={{ cursor: "default" }} data-testid="following-row">
+                <div key={f.target} style={{ display: "contents" }}>
+                <div className="evl-row" style={{ cursor: "default" }} data-testid="following-row" aria-expanded={openId === (f.lead_event_id || f.target)}>
                     <span className="evl-head">
                         <StatusChip status={f.status} />
                         {f.n_movements > 0 && <span className="evl-counts">{f.n_movements} {f.n_movements === 1 ? "track" : "tracks"} moving</span>}
@@ -92,6 +99,8 @@ export function FollowingList({ variant = "desk", onOpen, data: given = null }) 
                         <span className="evl-when">{agoLabel(f.last_update) || ""}</span>
                         <button type="button" className="evl-x" onClick={() => unfollow(f.target)} data-testid="unfollow">Unfollow</button>
                     </span>
+                </div>
+                {openId === (f.lead_event_id || f.target) && renderOpen?.(f)}
                 </div>
             ))}
         </div>

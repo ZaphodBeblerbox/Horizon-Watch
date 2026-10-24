@@ -1,0 +1,90 @@
+/* desk.css — the Desk read like X (owner, 2026-10-24): the theatre tab bar, a post's full view, its small map and its
+   comments. Our own design: the desktop's glass and hairlines (desktopV4.css) and the phone's m2 tokens; both define
+   --txt*, --gline*, --glass2. The system sans everywhere; no accent bars. */
+
+/* ── the theatre tabs: All, then each theatre; the chosen one underlined ── */
+.dk-tabs { display: flex; gap: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; border-bottom: 1px solid var(--gline);
+  position: sticky; top: 0; z-index: 5; background: var(--bar, rgba(12, 14, 19, .8));
+  backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); }
+.dk-tabs::-webkit-scrollbar { display: none; }
+.dk-tabs > button { flex: 0 0 auto; min-width: 72px; height: 46px; padding: 0 16px; border: 0; background: transparent; color: var(--txt3);
+  font: inherit; font-size: 14.5px; font-weight: 500; cursor: pointer; display: grid; place-items: center; transition: color .18s ease, background .18s ease; }
+@media (hover: hover) { .dk-tabs > button:hover { background: rgba(255, 255, 255, .04); color: var(--txt2); } }
+.dk-tabs > button > span { position: relative; height: 46px; display: inline-flex; align-items: center; white-space: nowrap; }
+.dk-tabs > button[aria-selected="true"] { color: var(--txt); font-weight: 650; }
+.dk-tabs > button[aria-selected="true"] > span::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 4px; border-radius: 2px;
+  background: var(--acc, #3d7bf0); animation: dk-tab-in .22s cubic-bezier(.22, 1, .36, 1); }
+@keyframes dk-tab-in { from { transform: scaleX(.4); opacity: 0; } }
+.dk-tabs-phone { margin: 0 -14px 6px; padding: 0 6px; top: 0; }
+.dk-tabs-phone > button { height: 44px; font-size: 15px; }
+.dk-tabs-phone > button > span { height: 44px; }
+
+/* a feed card opens its full view */
+.dk-openable { cursor: pointer; transition: background .15s ease; }
+@media (hover: hover) { .dk-openable:hover { background: rgba(255, 255, 255, .025); } }
+
+/* ── a post's full view ── */
+.dk-post { display: flex; flex-direction: column; gap: 12px; color: var(--txt); min-width: 0; animation: dk-post-in .26s cubic-bezier(.22, 1, .36, 1); }
+@keyframes dk-post-in { from { opacity: 0; transform: translateX(14px); } }
+@media (prefers-reduced-motion: reduce) { .dk-post, .dk-tabs > button[aria-selected="true"] > span::after { animation: none; } }
+.dk-post-bar { display: flex; align-items: center; gap: 14px; height: 48px; position: sticky; top: 0; z-index: 4; margin: 0 -4px;
+  background: var(--bar, rgba(12, 14, 19, .8)); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+.dk-post-bar b { font-size: 17px; font-weight: 650; }
+.dk-back { width: 36px; height: 36px; border-radius: 18px; border: 0; background: transparent; color: var(--txt); display: grid; place-items: center; cursor: pointer; }
+.dk-back:hover { background: rgba(255, 255, 255, .07); }
+.dk-post-author { display: flex; gap: 12px; align-items: center; }
+.dk-post-name { font-weight: 650; font-size: 15.5px; overflow-wrap: anywhere; }
+.dk-post-headline { margin: 0; font-size: 19px; line-height: 1.35; font-weight: 600; overflow-wrap: anywhere; }
+.dk-post-text { margin: 0; font-size: 16px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--txt); }
+.dk-post-en { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--gline); border-radius: 12px; background: var(--glass2); }
+.dk-post-en .dk-post-text { font-size: 15px; color: var(--txt2); }
+.dk-post-time { font-size: 13.5px; color: var(--txt3); padding-bottom: 10px; border-bottom: 1px solid var(--gline); }
+.dk-post-media { border-radius: 12px; overflow: hidden; }
+.dk-post-acts { display: flex; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--gline); }
+.dk-act { height: 32px; padding: 0 14px; border-radius: 16px; border: 1px solid var(--gline2); background: transparent; color: var(--txt2);
+  font: inherit; font-size: 13px; cursor: pointer; }
+.dk-act:hover { color: var(--txt); border-color: var(--txt3); }
+.dk-act.on { color: var(--txt); background: var(--glass2); border-color: var(--txt3); }
+.dk-act:disabled { opacity: .5; }
+.dk-h { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--txt3); }
+.dk-muted { color: var(--txt3); font-size: 13px; }
+.dk-btn { height: 34px; padding: 0 16px; border-radius: 17px; border: 0; background: var(--acc, #3d7bf0); color: #fff; font: inherit; font-size: 13.5px;
+  font-weight: 600; cursor: pointer; }
+.dk-btn:disabled { opacity: .45; cursor: default; }
+
+/* the small map of where it happened */
+.dk-map { border: 1px solid var(--gline); border-radius: 12px; overflow: hidden; }
+.dk-map figcaption { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 13px; color: var(--txt2); }
+.dk-map figcaption span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-map figcaption button { border: 0; background: none; color: var(--acc-hi, var(--acchi, #8fb4e8)); font: inherit; font-size: 13px; cursor: pointer; padding: 0; }
+
+/* comments */
+.dk-comments { display: flex; flex-direction: column; gap: 10px; padding-bottom: 30px; }
+.dk-compose { display: flex; gap: 8px; align-items: flex-end; }
+.dk-compose textarea { flex: 1; min-height: 38px; max-height: 160px; resize: vertical; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--gline2);
+  background: var(--glass2); color: var(--txt); font: inherit; font-size: 14.5px; outline: none; }
+.dk-comment { display: grid; grid-template-columns: 30px 1fr; gap: 10px; padding: 10px 0; border-top: 1px solid var(--gline); }
+.dk-comment-head { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; }
+.dk-comment-head span { color: var(--txt3); font-size: 12px; }
+.dk-comment-body { font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 2px; }
+
+/* the list's still in place of a video until the post is in view */
+.dk-still { position: relative; display: block; width: 100%; background: #000; border: 0; padding: 0; cursor: pointer; }
+.dk-still img { display: block; width: 100%; object-fit: cover; }
+.dk-still i { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 26px; background: rgba(0, 0, 0, .55);
+  display: grid; place-items: center; color: #fff; font-style: normal; font-size: 20px; }
+
+/* ── the phone Desk's one fixed bar (owner, 2026-10-24): General · Team · theatres, under the header, in the
+   header's own glass, outside the scroller so a pull to refresh moves only the feed; the spinner below it ── */
+.m2-deskbar.dk-tabs { position: absolute; left: 0; right: 0; top: var(--m2-top-h, 56px); z-index: 5; margin: 0; padding: 0 6px;
+  background: rgba(10, 13, 18, .58); backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  transition: top .38s var(--m2-ease, ease); }
+.m2[data-chrome="hidden"] .m2-deskbar.dk-tabs { top: env(safe-area-inset-top, 0px); }
+.m2-deskbar > button { min-width: 0; padding: 0 14px; }
+.m2-deskbar-th { font-size: 14px !important; }
+.m2-deskbar-sep { flex: none; width: 1px; margin: 13px 4px; background: var(--gline2); }
+.m2-pane .m2-scroll-deskbar { padding-top: calc(var(--m2-top-h, 56px) + 44px + 10px); }
+.m2-ptr.m2-ptr-deskbar { top: calc(var(--m2-top-h, 56px) + 50px); }
+.m2[data-chrome="hidden"] .m2-ptr.m2-ptr-deskbar { top: calc(env(safe-area-inset-top, 0px) + 50px); }
+/* the panes take vertical pans; a sideways swipe moves between the bottom tabs (mobile/tabSwipe.js) */
+.m2-body > .m2-pane { touch-action: pan-y pinch-zoom; }

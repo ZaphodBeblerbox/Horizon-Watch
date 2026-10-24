@@ -489,6 +489,9 @@ app.include_router(_strikes_router.router)
 # Observations published to the desk — see routers/desk.py.
 from routers import desk as _desk_router
 app.include_router(_desk_router.router)
+# A cited source read as our own post card, its summary on click — see source_card.py.
+from routers import sources as _sources_router
+app.include_router(_sources_router.router)
 # The spoken sentence the rule parser could not place — see routers/voice_ai.py.
 from routers import voice_ai as _voice_ai_router
 app.include_router(_voice_ai_router.router)
@@ -12519,7 +12522,7 @@ def api_general(request: Request, before: str = "", limit: int = Query(40, ge=5,
     import general_feed as _gf
     want = tuple(k for k in kinds.split(",") if k in _gf.KINDS) or _gf.KINDS
     import profile_filter as _pf
-    return _pf.paged(_get_current_user(request), lambda b, n: _gf.feed(_akili_db_path(), b, n, want), before or None, limit, "items")
+    return _pf.paged(_get_current_user(request), lambda b, n: _gf.cached_feed(_akili_db_path(), b, n, want), before or None, limit, "items")
 
 
 @app.get("/api/telegram/live")
