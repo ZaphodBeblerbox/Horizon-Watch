@@ -42,3 +42,8 @@ textarea.fr-input { min-height: 56px; resize: vertical; }
             padding: 12px 14px 14px; border-radius: 22px; background: rgba(16, 19, 25, .9); border: 1px solid var(--gline2, rgba(255,255,255,.14));
             backdrop-filter: blur(26px) saturate(1.4); -webkit-backdrop-filter: blur(26px) saturate(1.4); box-shadow: 0 14px 40px rgba(0,0,0,.45); }
 .fr-phone .fr-btn { height: 40px; border-radius: 12px; }
+.fr-phone .fr-kind { padding: 6px 2px 5px; font-size: 11px; }
+.fr-phone .fr-kind img { width: 24px; height: 24px; }
+.fr-phone .fr-acts { position: sticky; bottom: -14px; margin: 0 -14px -14px; padding: 8px 14px 12px; background: rgba(16, 19, 25, .96); }
+/* the phone's accent is light: a filled button there is light with dark words */
+.m2 .fr-btn:not(.ghost) { background: var(--txt, #f1f3f5); color: #0b0e13; }

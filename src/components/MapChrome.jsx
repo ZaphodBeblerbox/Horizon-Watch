@@ -19,6 +19,7 @@
 import { useEffect, useRef, useState } from "react"
 import { subscribeCameraState, getCameraState } from "../globe/cameraState.js"
 import { subscribeScale, getScale } from "../globe/mapReadout.js"
+import { openReportForm } from "../lib/fieldReports.js"
 
 // The spec's own world preset — the same figures §10's projection segment
 // uses for "world", so Home and the World projection agree rather than
@@ -157,6 +158,13 @@ export default function MapChrome({ onFit = null, basemap = null }) {
                 // does nothing is worse than one that is not there.
                 if (onFit) onFit()
             })}
+            {/* Report what you see, at the view's centre (globe/GlobeFieldReportsLayer.jsx; right-click: at a point) */}
+            <button className="mapbtn" title="Report what you see (or right-click the map)" aria-label="Report what you see"
+                    data-testid="map-report-btn" onClick={() => openReportForm()}>
+                <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+                    <path d="M8 1.8 13.5 4v4c0 3.2-2.4 5.2-5.5 6.2C4.9 13.2 2.5 11.2 2.5 8V4z" /><path d="M8 5v3.5M8 10.6v.4" />
+                </svg>
+            </button>
             {basemap && (
                 <button
                     ref={bmBtn}

@@ -12,6 +12,17 @@ import { reportMarker } from "../lib/fieldReports.js"
 import { PHONE_ICON_SCALE } from "../lib/mapIcons.js"
 import { myPosition } from "../location/liveShare.js"
 
+const VISIBLE_Y = 0.22                 // the share of the map's height where the pin stands, above the form
+
+/** Move the map so `p` stands above the form, not under it. */
+function showAbove(m, p) {
+    if (!m) return
+    const sz = m.getSize()
+    const z = Math.max(m.getZoom(), 13)
+    const pt = m.project([p.lat, p.lon], z).add([0, sz.y * (0.5 - VISIBLE_Y)])
+    m.setView(m.unproject(pt, z), z, { animate: false })
+}
+
 export default function FieldReportComposer({ mapRef }) {
     const [open, setOpen] = useState(false)
     const [kind, setKind] = useState(null)
@@ -22,8 +33,10 @@ export default function FieldReportComposer({ mapRef }) {
     const start = () => {
         const m = mapRef?.current
         const me = myPosition()
-        const c = m?.getCenter?.()
-        // your location when it is in view, else the map's centre
+        // the form covers the lower map: the pin starts in the middle of what stays visible above it
+        const sz = m?.getSize?.()
+        const c = sz ? m.containerPointToLatLng([sz.x / 2, sz.y * VISIBLE_Y]) : null
+        // your location when it is in view, else that point
         const inView = me && m?.getBounds?.()?.contains?.([me.lat, me.lon])
         setAt(inView ? { lat: me.lat, lon: me.lon } : c ? { lat: c.lat, lon: L.Util.wrapNum(c.lng, [-180, 180], true) } : null)
         setKind(null); setPlace(""); setOpen(true)
@@ -72,7 +85,7 @@ export default function FieldReportComposer({ mapRef }) {
                 <div className="fr-phone" role="dialog" aria-label="Report what you see" data-testid="m2-report-sheet">
                     <ReportForm variant="phone" kind={kind} onKind={setKind} at={at} place={place} onPlace={setPlace}
                                 moveHint="drag the pin or tap the map"
-                                onUseMyLocation={() => { const p = myPosition(); if (p) { setAt({ lat: p.lat, lon: p.lon }); mapRef?.current?.panTo([p.lat, p.lon]) } }}
+                                onUseMyLocation={() => { const p = myPosition(); if (p) { setAt({ lat: p.lat, lon: p.lon }); showAbove(mapRef?.current, p) } }}
                                 onClose={close}
                                 onSent={() => { close(); window.dispatchEvent(new CustomEvent("m2:layers", { detail: { userReports: true } })) }} />
                 </div>, host)}

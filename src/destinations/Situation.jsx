@@ -77,7 +77,7 @@ import { markerUri } from "../lib/mapIcons.js"
 import MapLegend from "../components/MapLegend.jsx"
 import AssistantThread from "../assistant/AssistantThread.jsx"
 import { useRightTab, setRightTab } from "../assistant/assistantDock.js"
-import { subscribeReports, openReportForm } from "../lib/fieldReports.js"
+import { subscribeReports } from "../lib/fieldReports.js"
 
 const API = API_BASE
 // How often the surface pool, fusions and health are re-read. This
@@ -2091,13 +2091,6 @@ export default function Situation({ onOpenDossier, asCanvas = false }) {
                             <circle cx="8" cy="8.75" r="2.6" />
                             <path d="M5.5 4l1-1.6h3L10.5 4" />
                         </svg>
-                    </button>
-                    {/* Report what you see, at the view's centre (globe/GlobeFieldReportsLayer.jsx; right-click: at a point) */}
-                    <button onClick={() => openReportForm()} title="Report what you see (or right-click the map)" data-testid="map-report-btn"
-                        style={{ flex: "none", whiteSpace: "nowrap", height: 24, padding: "0 8px", display: "flex", alignItems: "center", gap: 4,
-                                 background: "none", border: "1px solid var(--line-soft)", borderRadius: 3, cursor: "pointer", color: "var(--txt-3)", font: "500 11px var(--font)" }}>
-                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M8 1.8 13.5 4v4c0 3.2-2.4 5.2-5.5 6.2C4.9 13.2 2.5 11.2 2.5 8V4z" /><path d="M8 5v3.5M8 10.6v.4" /></svg>
-                        Report
                     </button>
                     <button
                         onClick={() => setExportOpen(true)}
