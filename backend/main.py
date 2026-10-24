@@ -514,6 +514,9 @@ app.include_router(_detection_feedback_router.router)
 # Claimed control changes, troop movements, drone/missile trajectories — routers/frontline_claims.py.
 from routers import frontline_claims as _frontline_claims_router
 app.include_router(_frontline_claims_router.router)
+# User reports: what somebody sees on the ground, until it expires — routers/field_reports.py.
+from routers import field_reports as _field_reports_router
+app.include_router(_field_reports_router.router)
 
 # ── Optional fastapi-cache2 response caching ──────────────────────────────────
 try:
