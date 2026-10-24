@@ -20,6 +20,8 @@ import SourceLink from "../components/SourceLink.jsx"
 import { agoLabel } from "../utils/formatTime.js"
 import { ageLabel } from "../lib/liveIncident.js"
 import { dropStaleDemos } from "../globe/freshness.js"
+import { isCardClick } from "../desk/deskFeed.js"
+import "../desk/desk.css"
 
 const SEV = { critical: "#E5484D", high: "#F5A524", significant: "#F5A524", elevated: "#F5A524", moderate: "#8FB4E8" }
 // "signal" is the backend's kind for our own alerts
@@ -64,25 +66,46 @@ function sourceName(it) {
     return key ? SOURCE_NAME[key] : it.source ? String(it.source).replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : "Signal"
 }
 
-export function GeneralItem({ it, onMap, onShare, compact = false }) {
+export function GeneralItem({ it, onMap, onShare, onOpen, compact = false }) {
     // ONLY THE POST IN VIEW PLAYS (owner, 2026-10-10): the video starts when
     // most of it is on screen and stops when it scrolls away.
     const media = useRef(null)
+    const card = useRef(null)
     const [inView, setInView] = useState(false)
+    // A STILL UNTIL IT IS SEEN (2026-10-24, the Desk "loads slowly"): every
+    // video in a page asked our server for its file at once (preload), and
+    // the server fetches each from Telegram; every X post fetched itself.
+    // Now a video is its still until the post first comes into view, and an
+    // X post is fetched only when the card nears the screen.
+    const [seen, setSeen] = useState(false)
+    const [near, setNear] = useState(false)
     useEffect(() => {
         const el = media.current
         if (!el || typeof IntersectionObserver === "undefined") return undefined
-        const io = new IntersectionObserver(([e]) => setInView(e.isIntersecting && e.intersectionRatio >= 0.6), { threshold: [0, 0.6, 1] })
+        const io = new IntersectionObserver(([e]) => {
+            const on = e.isIntersecting && e.intersectionRatio >= 0.6
+            setInView(on)
+            if (on) setSeen(true)
+        }, { threshold: [0, 0.6, 1] })
         io.observe(el)
         return () => io.disconnect()
     }, [])
+    useEffect(() => {
+        const el = card.current
+        if (!el || !it.x_url || typeof IntersectionObserver === "undefined") return undefined
+        const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { setNear(true); io.disconnect() } }, { rootMargin: "300px" })
+        io.observe(el)
+        return () => io.disconnect()
+    }, [it.x_url])
     const place = String(it.place || "").split(",").slice(0, 2).join(",")
     const kindLabel = it.kind === "geoconfirmed" ? "verified" : it.kind === "telegram" ? (it.role === "official" ? "official" : "Telegram") : (it.severity || "alert")
     const [openAlso, setOpenAlso] = useState(false)
     const also = Array.isArray(it.also) ? it.also : []
     return (
-        <article data-testid="general-item" className="plx-gi" style={{ display: "grid", gridTemplateColumns: "40px minmax(0,1fr)", gap: 12, padding: compact ? "12px 0" : "14px 4px",
-                                                                      borderBottom: "1px solid var(--gline)" }}>
+        <article ref={card} data-testid="general-item" className={`plx-gi${onOpen ? " dk-openable" : ""}`}
+                 onClick={onOpen ? (e) => { if (isCardClick(e)) onOpen(it) } : undefined}
+                 style={{ display: "grid", gridTemplateColumns: "40px minmax(0,1fr)", gap: 12, padding: compact ? "12px 0" : "14px 4px",
+                          borderBottom: "1px solid var(--gline)" }}>
             <Avatar it={it} />
             <div style={{ minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0, fontSize: 14 }}>
@@ -102,10 +125,17 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
                                           display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.text}</div>}
                 {it.kind === "telegram" && (it.media === "video" || it.media === "photo") && (
                     <div ref={media} style={{ marginTop: 10, borderRadius: 14, overflow: "hidden", border: "1px solid var(--gline)" }}>
-                        <TelegramMedia post={{ ...it, id: it.id }} maxHeight={compact ? "300px" : "420px"} radius="0" active={inView} />
+                        {it.media === "video" && !seen && it.thumb_url && !it.graphic
+                            ? <button type="button" className="dk-still" data-noopen="" aria-label="Play" onClick={() => setSeen(true)}>
+                                <img src={/^https?:/.test(it.thumb_url) ? it.thumb_url : `${API_BASE}${it.thumb_url}`} alt="" loading="lazy" style={{ maxHeight: compact ? 300 : 420 }} /><i>▶</i>
+                              </button>
+                            : <TelegramMedia post={{ ...it, id: it.id }} maxHeight={compact ? "300px" : "420px"} radius="0" active={inView} />}
                     </div>
                 )}
-                {it.x_url && <div ref={it.media === "video" ? undefined : media} style={{ marginTop: 10 }}><XPost url={it.x_url} active={inView} /></div>}
+                {it.x_url && <div ref={it.media === "video" ? undefined : media} style={{ marginTop: 10 }}>
+                    {near ? <XPost url={it.x_url} active={inView} />
+                        : <div style={{ minHeight: 120, border: "1px solid var(--gline)", borderRadius: 14, display: "grid", placeItems: "center", color: "var(--txt3)", fontSize: 13 }}>Loading the post from X…</div>}
+                </div>}
                 {also.length > 0 && (
                     <div data-testid="general-also" style={{ marginTop: 8 }}>
                         <button onClick={() => setOpenAlso((o) => !o)} aria-expanded={openAlso}
@@ -138,8 +168,16 @@ export function GeneralItem({ it, onMap, onShare, compact = false }) {
 const ACT = { border: 0, background: "none", padding: 0, minHeight: 30, color: "var(--txt3)", font: "inherit", fontSize: 13, cursor: "pointer",
               display: "inline-flex", alignItems: "center", lineHeight: 1 }
 
-export default function GeneralFeed({ onMap, onShare, compact = false, keep = null }) {
+const LAST = new Map()                              // kinds -> the last first page read, for this session
+
+/* onOpen(it): a card opens its full view (desk/PostView.jsx). kindTabs: the
+   Alerts / GeoConfirmed / Telegram chips; the Desk has its theatre tabs
+   instead (owner, 2026-10-24). active: false while off screen or behind a
+   full view: no polling, nothing inserted under a remembered position. */
+export default function GeneralFeed({ onMap, onShare, onOpen, compact = false, keep = null, kindTabs = true, active = true }) {
     const [kind, setKind] = useState("all")
+    const activeRef = useRef(active)
+    activeRef.current = active
     const [items, setItems] = useState(null)
     const [next, setNext] = useState(null)
     const [fresh, setFresh] = useState([])           // arrived since, offered at the top
@@ -150,10 +188,18 @@ export default function GeneralFeed({ onMap, onShare, compact = false, keep = nu
     const get = (before) => fetch(`${API_BASE}/api/general?limit=30&kinds=${kinds}${before ? `&before=${encodeURIComponent(before)}` : ""}`, { credentials: "include" })
         .then((r) => (r.ok ? r.json() : { items: [], next: null }))
 
+    // WHAT WAS LAST READ SHOWS AT ONCE (2026-10-24): coming back to the Desk
+    // shows the page it had while the newest is fetched, not "Reading…".
     useEffect(() => {
         let live = true
-        setItems(null); setFresh([])
-        get().then((d) => { if (live) { setItems(dropStaleDemos(d.items || [])); setNext(d.next) } }).catch(() => live && setItems([]))
+        const had = LAST.get(kinds)
+        setItems(had ? had.items : null); setNext(had ? had.next : null); setFresh([])
+        get().then((d) => {
+            if (!live) return
+            const page = dropStaleDemos(d.items || [])
+            LAST.set(kinds, { items: page, next: d.next })
+            setItems(page); setNext(d.next)
+        }).catch(() => live && setItems((cur) => cur || []))
         return () => { live = false }
     }, [kinds]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -176,7 +222,7 @@ export default function GeneralFeed({ onMap, onShare, compact = false, keep = nu
             return (window.scrollY || 0) < 120
         }
         const check = () => {
-            if (document.visibilityState === "hidden") return
+            if (document.visibilityState === "hidden" || !activeRef.current) return
             get().then((d) => {
                 const have = shownIds([...(itemsRef.current || []), ...freshRef.current])
                 const nw = (d.items || []).filter((x) => !have.has(x.id))
@@ -217,16 +263,27 @@ export default function GeneralFeed({ onMap, onShare, compact = false, keep = nu
         return () => { io.disconnect(); window.removeEventListener("scroll", onScroll, { capture: true }) }
     }, [more])
 
+    // A THEATRE THAT KEEPS LITTLE OF A PAGE reads on by itself (a few pages at
+    // most): a short list cannot be scrolled, so the sentinel never would.
+    const shown = items ? (keep ? items.filter(keep) : items) : null
+    const autoReads = useRef(0)
+    useEffect(() => { autoReads.current = 0 }, [keep, kinds])
+    useEffect(() => {
+        if (!active || !shown || shown.length >= 8 || !next || loading || autoReads.current >= 4) return
+        autoReads.current += 1
+        more()
+    }, [shown?.length, next, loading, active]) // eslint-disable-line react-hooks/exhaustive-deps
+
     return (
         <div data-testid="general-feed" ref={root}>
-            <div role="tablist" style={{ display: "flex", gap: 6, padding: compact ? "0 0 6px" : "4px 0 8px", flexWrap: "wrap" }}>
+            {kindTabs && <div role="tablist" style={{ display: "flex", gap: 6, padding: compact ? "0 0 6px" : "4px 0 8px", flexWrap: "wrap" }}>
                 {FILTERS.map(([k, l]) => (
                     <button key={k} role="tab" aria-selected={kind === k} onClick={() => setKind(k)}
                             style={{ height: 30, padding: "0 13px", borderRadius: 15, border: `1px solid ${kind === k ? "var(--acchi)" : "var(--gline2)"}`,
                                      background: kind === k ? "var(--accdim)" : "transparent", color: kind === k ? "var(--txt)" : "var(--txt2)",
                                      font: "inherit", fontSize: 13, cursor: "pointer", transition: "background .18s ease, border-color .18s ease" }}>{l}</button>
                 ))}
-            </div>
+            </div>}
             {fresh.length > 0 && (
                 <button onClick={() => { setItems((cur) => [...fresh, ...(cur || [])]); setFresh([]) }}
                         style={{ display: "block", margin: "6px auto 2px", height: 32, padding: "0 16px", borderRadius: 16, border: 0, background: "var(--acc, #3d7bf0)",
@@ -235,8 +292,8 @@ export default function GeneralFeed({ onMap, onShare, compact = false, keep = nu
                 </button>
             )}
             {items === null ? <div style={{ padding: "20px 0", color: "var(--txt3)", fontSize: 13 }}>Reading what is happening…</div>
-                : !items.length ? <div style={{ padding: "20px 0", color: "var(--txt3)", fontSize: 13 }}>Nothing in this window.</div>
-                : (keep ? items.filter(keep) : items).map((it) => <GeneralItem key={it.id} it={it} onMap={onMap} onShare={onShare} compact={compact} />)}
+                : !shown.length ? <div style={{ padding: "20px 0", color: "var(--txt3)", fontSize: 13 }}>{items.length && keep ? (loading ? "Reading further back…" : "Nothing in this theatre in what has been read.") : "Nothing in this window."}</div>
+                : shown.map((it) => <GeneralItem key={it.id} it={it} onMap={onMap} onShare={onShare} onOpen={onOpen} compact={compact} />)}
             <div ref={sentinel} style={{ height: 1 }} />
             {loading && <div style={{ padding: 14, textAlign: "center", color: "var(--txt4)", fontSize: 12.5 }}>Loading more…</div>}
         </div>

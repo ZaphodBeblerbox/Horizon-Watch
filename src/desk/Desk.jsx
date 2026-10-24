@@ -20,10 +20,15 @@
 import { openSignal } from "../notify/openSignal.js"
 import GeneralFeed from "../general/GeneralFeed.jsx"
 import { attachmentFor } from "../mobile/screens/common.jsx"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import TheaterTabs from "./TheaterTabs.jsx"
+import PostView from "./PostView.jsx"
+import { isCardClick, scrollMemo, teamPostIn, theaterTabs } from "./deskFeed.js"
+import { useMine } from "../mobile/useMine.js"
+import { inTheater } from "../mobile/theaterScope.js"
 import {
     listPosts, createPost, deletePost, toggleAck, whoAcked, listReplies,
-    postedTheaters, uploadDeskFile, deskFileUrl, markDeskRead,
+    uploadDeskFile, deskFileUrl, markDeskRead,
 } from "../lib/deskApi.js"
 import { getCurrentUser } from "../state/authStore.js"
 import { getActiveTheater, URGENCY } from "../state/filing.js"
@@ -86,39 +91,54 @@ function Chip({ on, children, onClick, tint, count }) {
 export default function Desk({ active = true } = {}) {
     const me = getCurrentUser()
     const [posts, setPosts] = useState(null)
-    const [theaters, setTheaters] = useState([])
-    const [theater, setTheater] = useState(null)
     const [urg, setUrg] = useState(() => new Set())
     const [card, setCard] = useState(null)
     const [busy, setBusy] = useState(null)
 
+    // THE THEATRE TABS (owner, 2026-10-24: the desk like X): "All", then the
+    // user's theatres, over the feed; they replace the theater chips. A team
+    // post is in a theatre by the name it was posted to or by its place; a
+    // General item by its place or country (mobile/theaterScope.inTheater).
+    const mine = useMine()
+    const tabs = useMemo(() => theaterTabs(mine.theaters), [mine.theaters])
+    const [tab, setTab] = useState(null)
+    const tabT = mine.theaters.find((t) => String(t.id) === tab) || null
+    const inside = useMemo(() => (tabT ? inTheater(tabT, mine.countries, mine.iso2Name) : null), [tabT, mine.countries, mine.iso2Name])
+
+    // A POST OPENS IN THE FEED'S COLUMN (desk/PostView.jsx); the list stays
+    // mounted under it and Back returns to the same scroll position.
+    const [open, setOpen] = useState(null)
+    const mainRef = useRef(null)
+    const memo = useRef(scrollMemo()).current
+    const openPost = (p) => { memo.save("list", mainRef.current); setOpen(p); if (mainRef.current) mainRef.current.scrollTop = 0 }
+    const back = () => setOpen(null)
+    useEffect(() => { if (!open) memo.restore("list", mainRef.current) }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (!open) return undefined
+        const k = (e) => { if (e.key === "Escape") { e.stopImmediatePropagation(); e.preventDefault(); back() } }
+        window.addEventListener("keydown", k, true)
+        return () => window.removeEventListener("keydown", k, true)
+    }, [open])
+
     const load = useCallback(async () => {
         try {
-            const d = await listPosts({ theater, urgency: [...urg] })
+            const d = await listPosts({ urgency: [...urg] })
             setPosts(d.posts || [])
         } catch (e) {
             setPosts([])
             toast(e.message || "Could not load the desk", { icon: "i-alert" })
         }
-    }, [theater, urg])
+    }, [urg])
 
     useEffect(() => { load() }, [load])
 
-    /* The theater chips are refreshed when the NUMBER of posts changes, not
-       whenever `posts` does. The poll replaces the array every thirty
-       seconds whether or not anything arrived, and a dependency on the
-       array's identity therefore fetched the chip counts forever on a
-       quiet desk. */
-    const postCount = posts?.length ?? -1
-    useEffect(() => {
-        postedTheaters().then(setTheaters).catch(() => setTheaters([]))
-    }, [postCount])
-
     // A desk is read while other people are writing to it. Slower than the
     // chat's poll because nobody expects a feed to be live to the second,
-    // and it stops dead when the tab is hidden.
+    // and it stops dead when the tab is hidden or the Desk is off screen.
+    const activeRef = useRef(active)
+    activeRef.current = active
     useEffect(() => {
-        const t = setInterval(() => { if (!document.hidden) load() }, 30000)
+        const t = setInterval(() => { if (!document.hidden && activeRef.current) load() }, 30000)
         return () => clearInterval(t)
     }, [load])
 
@@ -181,7 +201,7 @@ export default function Desk({ active = true } = {}) {
         const take = () => {
             const ask = takeOpenDeskPost()
             if (!ask) return
-            setView("team"); setTheater(null); setUrg(new Set()); setCarries(null); setAuthor(null)
+            setView("team"); setTab(null); setOpen(null); setUrg(new Set()); setCarries(null); setAuthor(null)
             setGoPost(ask.id); load()
         }
         take()
@@ -197,12 +217,12 @@ export default function Desk({ active = true } = {}) {
     const [author, setAuthor] = useState(null)         // filter by who wrote it
     const shown = (posts || []).filter((p) =>
         (!carries || (carries === "text" ? !p.attachment : p.attachment?.kind === carries)) &&
-        (!author || p.author_user_id === author))
+        (!author || p.author_user_id === author) && teamPostIn(p, tabT, inside))
 
     // BOOLEAN, NOT A COUNT. `urg.size` is 0 when nothing is selected, and
     // {0 && <x/>} renders the zero — a stray "0" sat beside the urgency
     // chips on every unfiltered view.
-    const filtered = !!theater || urg.size > 0 || !!carries || !!author
+    const filtered = !!tabT || urg.size > 0 || !!carries || !!author
 
     // The right column: who is writing, and what the desk has confirmed most.
     const week = Date.now() - 7 * 864e5
@@ -250,32 +270,36 @@ export default function Desk({ active = true } = {}) {
                             {URGENCY.map((u) => <Chip key={u} on={urg.has(u)} tint={SEV[u]} onClick={() => toggleUrg(u)}>{u}</Chip>)}
                         </div>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <span style={EYE}>Theater</span>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                            {theaters.map((t) => (
-                                <Chip key={t.name} on={theater === t.name} count={t.count} onClick={() => setTheater(theater === t.name ? null : t.name)}>{t.name}</Chip>
-                            ))}
-                            {!theaters.length && <span style={{ fontSize: 12, color: "var(--txt3)" }}>nothing posted to a theater yet</span>}
-                        </div>
-                    </div>
                     {filtered && (
-                        <button onClick={() => { setTheater(null); setUrg(new Set()); setCarries(null); setAuthor(null) }} style={{ ...BTN, alignSelf: "flex-start" }}>Show everything</button>
+                        <button onClick={() => { setTab(null); setUrg(new Set()); setCarries(null); setAuthor(null) }} style={{ ...BTN, alignSelf: "flex-start" }}>Show everything</button>
                     )}
                 </aside>
 
-                {/* MIDDLE: the feed */}
-                <main style={{ minWidth: 0, overflow: "auto" }}>
+                {/* MIDDLE: the theatre tabs over the feed; a post opens here, in place of the list */}
+                <main ref={mainRef} style={{ minWidth: 0, overflow: "auto" }}>
+                    {open && (
+                        <div style={{ maxWidth: 680, margin: "0 auto", padding: "0 20px 60px" }}>
+                            <PostView post={open} variant="desk" onBack={back}
+                                onMap={(it) => openSignal({ ...it, inspect: false })}
+                                onShare={(it) => { setOpen(null); setPrefill({ attachment: attachmentFor(it), body: "" }); setView("team") }} />
+                        </div>
+                    )}
+                    <div style={{ display: open ? "none" : "block" }}>
+                    <div style={{ maxWidth: view === "general" ? 680 : 760, margin: "0 auto", padding: "0 20px" }}>
+                        <TheaterTabs tabs={tabs} value={tab} onChange={(id) => { setTab(id); if (mainRef.current) mainRef.current.scrollTop = 0 }} />
+                    </div>
                     {view === "general" ? (
-                        <div key="general" style={{ maxWidth: 680, margin: "0 auto", padding: "14px 20px 60px", animation: "plx-fade-in .25s ease" }}>
+                        <div key="general" style={{ maxWidth: 680, margin: "0 auto", padding: "8px 20px 60px", animation: "plx-fade-in .25s ease" }}>
                             <GeneralFeed
+                                kindTabs={false} keep={inside} active={active && !open}
+                                onOpen={(it) => openPost({ type: "item", it })}
                                 // the same router as a notification (a vessel of concern
                                 // opens on the vessel; anything else flies there)
                                 onMap={(it) => openSignal({ ...it, inspect: false })}
                                 onShare={(it) => { setPrefill({ attachment: attachmentFor(it), body: "" }); setView("team") }} />
                         </div>
                     ) : (
-                    <div key="team" style={{ maxWidth: 760, margin: "0 auto", padding: "18px 20px 60px", animation: "plx-fade-in .25s ease" }}>
+                    <div key="team" style={{ maxWidth: 760, margin: "0 auto", padding: "14px 20px 60px", animation: "plx-fade-in .25s ease" }}>
                         <Composer onPublish={publish} prefill={prefill} onPrefillUsed={() => { setPrefill(null); window.__plxDeskShare = null }} />
                         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 0" }}>
                             <span style={EYE}>{filtered ? `${shown.length} matching` : "Latest"}</span>
@@ -298,11 +322,12 @@ export default function Desk({ active = true } = {}) {
                                 key={p.id} post={p} meId={me?.id} busy={busy === p.id}
                                 canDelete={p.author_user_id === me?.id || me?.is_super_admin}
                                 onAck={() => ack(p)} onDelete={() => remove(p)}
-                                onPerson={setCard}
+                                onPerson={setCard} onOpen={() => openPost({ type: "team", post: p })}
                             />
                         ))}
                     </div>
                     )}
+                    </div>
                 </main>
 
                 {/* RIGHT: who is on the desk, who is writing, and what was confirmed */}
@@ -495,7 +520,7 @@ function Composer({ onPublish, prefill = null, onPrefillUsed = () => {} }) {
 
 /* ── one post ────────────────────────────────────────────────────────── */
 
-function Post({ post, meId, busy, canDelete, onAck, onDelete, onPerson }) {
+function Post({ post, meId, busy, canDelete, onAck, onDelete, onPerson, onOpen }) {
     const [replies, setReplies] = useState(null)
     const [open, setOpen] = useState(false)
     const [draft, setDraft] = useState("")
@@ -522,7 +547,8 @@ function Post({ post, meId, busy, canDelete, onAck, onDelete, onPerson }) {
     const att = post.attachment
 
     return (
-        <article id={`desk-post-${post.id}`} style={{
+        <article id={`desk-post-${post.id}`} className={onOpen && !open ? "dk-openable" : undefined} data-testid="desk-post"
+                 onClick={onOpen && !open ? (e) => { if (isCardClick(e) && !post.deleted) onOpen() } : undefined} style={{
             borderBottom: "1px solid var(--gline)", padding: "16px 4px 12px",
         }}>
             <div style={{ display: "flex", gap: 10 }}>
