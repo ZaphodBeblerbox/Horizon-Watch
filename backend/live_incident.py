@@ -112,8 +112,15 @@ WHAT A SIGNAL IS (the owner's whole vocabulary, 2026-10-22; event_type is exactl
 - missile_launch: a missile or drone seen launched from a place.
 - missile_impact: a missile or drone that landed at a place.
 - crowd_movement: a protest, rally or march that is ON THE GROUND NOW at a place (set `direction` when the text says where it moves).
+  A crowd moving told in the present tense ("le cortège remonte le boulevard X", "les manifestants se dirigent vers Y")
+  is happening now even with no clock: event_time = published_at, evidence_quote_time = the verb.
 - troops_sighted: troops, armed forces or military vehicles seen at a place.
-- police_intervention: police acting at a place: tear gas, a charge, LBD or rubber bullets, a kettle, an eviction under way.
+- police_intervention: police acting at a place: tear gas, a charge, LBD or rubber bullets, a kettle, an eviction under way;
+  AND police or gendarmerie deployed, positioned, moving, cordoning or dispersing at a named place ("un blindé de la
+  gendarmerie est déployé devant l'Assemblée nationale", "les CRS remontent le boulevard X"). Such a deployment or
+  movement told in the present tense or the immediate past is happening now even with no clock and even when relayed
+  ("via @..."): event_time = published_at, evidence_quote_time = the verb that says it ("est déployé").
+  The gendarmerie's armoured vehicles (Centaure, VBRG) are police, not troops.
 POLICE IS NOT THE MILITARY: police_intervention is law enforcement in a civil or protest setting (police, gendarmerie, CRS,
 BAC, BRAV-M, riot police, Polizei, carabinieri, Guardia Civil). Army, troops, soldiers, armoured vehicles, columns, brigades,
 artillery, ZSU/VSU, Russian or Ukrainian forces, the IDF, any war front: troops_sighted (or strike), never police_intervention.
@@ -428,6 +435,240 @@ def rule_live(text: str | None, posted_at: str | None, now: _dt.datetime | None 
     """(live, why): rule_decide's verdict, kept for callers that want the pair."""
     d = rule_decide(text, posted_at, now)
     return d["ok"], d["why"]
+
+
+# ── movement and position at a named place: the police and the crowd (owner, 2026-10-24) ──
+# WHY. Paris, Saturday 2026-10-24: "FLASH - Un blindé CENTAURE de la gendarmerie est déployé devant l'Assemblée
+# nationale, à Paris. (via @CLPRESSFR)" and the same at the Élysée, "Police are moving to change the route of
+# demonstrations inside Paris" were all judged not live: the text gives no clock and no "now" (the model's rule
+# 1: "if the event time cannot be established, is_live = false"), a deployment was not in the vocabulary
+# (police_intervention was tear gas, a charge, a kettle), "blindé" read as troops, and the rule path asks for a
+# present-tense cue ("FLASH" is not one, the emoji are stripped first). A police deployment, position or
+# movement at a named place, or a crowd moving, said in the present or the immediate past in a post of the last
+# PRESENCE_WINDOW_MIN, is a live police (or crowd) item: its time is the post's, its place one the text names,
+# and when nobody says they see it, it is "relayed, unverified". Everything else keeps the strict gate.
+PRESENCE_WINDOW_MIN = 45
+# what the model says the text is that a movement rule must not override: a view, a summary of past days, a
+# story of another day, a siren (an announcement is read by the rule itself: _LATER_CUES)
+PRESENCE_VETO = {"opinion", "recap", "past_story", "air_raid"}
+
+_POLICE_SUBJ = re.compile(
+    r"\b(?:police|policiers?|policieres?|gendarm\w*|crs|bac|brav-?m|forces de l'ordre|fdo|flics?|keufs?|"
+    r"riot police|cops|polizei|polizisten|carabinieri|guardia civil|mossos|policia\w*|antidisturbios|"
+    r"camions? de crs|fourgons?(?: de (?:police|crs|gendarmerie))?|canons? a eau|water cannons?|"
+    r"centaures?|vbrg)\b")
+_POLICE_MOVE = re.compile(
+    r"\b(?:deploy\w*|deploi\w*|se deploi\w*|positionn\w*|en position|prenn?ent position|prend position|stationn\w*|"
+    r"postes?|postees?|masses?|massees?|se massent|arriv(?:e|ent|ee|ees|es|ant)|sont arrives|est arrive|debarqu\w*|"
+    r"se dirig\w*|remont\w*|descend(?:ent)?|avanc(?:e|ent)|progress(?:e|ent)|encercl\w*|boucl\w*|bouclage|"
+    r"barr(?:ent|e|ant)|barrage|cordons?|bloqu(?:e|ent|ant)|dispers\w*|quadrill\w*|evacu(?:e|ent)|repouss\w*|"
+    r"en route|en renfort|renforts?|"
+    r"deployed|stationed|positioned|massing|massed|moving(?: in| to| toward| towards)?|move in|heading|"
+    r"arriving|arrived|cordon(?:ed)?(?: off)?|sealed off|sealing off|blocking|blocked|dispers(?:ed|ing|e)|pushing back|"
+    r"lining up|lined up)\b")
+_CROWD_SUBJ = re.compile(
+    r"\b(?:le cortege|un cortege|les corteges|cortege|manifestants?|manifestantes|la manif|la foule|une foule|"
+    r"des milliers|des centaines|les gilets jaunes|protesters?|demonstrators|marchers|the march|the crowd|crowds?|"
+    r"la marcha)\b")
+_CROWD_MOVE = re.compile(
+    r"\b(?:remont(?:e|ent)|descend(?:ent)?|se dirig(?:e|ent)|avanc(?:e|ent)|progress(?:e|ent)|march(?:e|ent)|defil(?:e|ent)|"
+    r"arriv(?:e|ent)|est arrive|sont arrives|bifurqu(?:e|ent)|quitt(?:e|ent)|rejoi(?:nt|gnent)|pass(?:e|ent) (?:par|devant|sur)|"
+    r"travers(?:e|ent)|bloqu(?:e|ent)|occup(?:e|ent)|envahi(?:t|ssent)|convergent|converge|"
+    r"sont (?:presents?|rassembles|masses|reunis|bloques|nombreux)|se rassemblent|"
+    r"(?:is|are) (?:moving|marching|heading|gathering|gathered|blocking|at)|marching|heading (?:to|toward|towards)|"
+    r"reached|march(?:es)? (?:to|toward|towards|on))\b")
+# the act is to come, or someone says it will be: never live
+_LATER_CUES = re.compile(
+    r"\b(?:demain|tomorrow|apres-demain|seront|sera|vont etre|va etre|vont (?:se|etre)|devraient|devrait|pourraient|pourrait|"
+    r"doivent|doit etre|prevue?s?|prevoit|annonce\w*|appel(?:le|lent)? a|rendez-vous|rdv|partira|partiront|defilera|"
+    r"se rassemblera|will be|will|would|could|to be deployed|plans? to|planned|expected to|scheduled|"
+    r"manana|seran)\b")
+_TOWARD = re.compile(r"\b(?:vers|en direction d[eu']|direction|toward|towards|heading to|to reach|jusqu'a|hacia)\s*(?:la |le |les |l')?")
+_NEAR_OF = re.compile(r"\b(?:aux abords|pres|autour|non loin|a proximite|en face|a cote|aux alentours|le long)\s+(?:de|du|des|d')\s*(?:la |l')?")
+_RELAY = re.compile(r"\(via @|\bvia @|\(afp\)|\(reuters\)|\bselon\b|\baccording to\b|\bcorrespondent\b|\bcorrespondant\b")
+_FIRST_HAND = re.compile(r"\b(?:je vois|on voit|on est (?:a|sur|devant|au)|sous mes yeux|i can see|we are (?:at|on|in)|"
+                         r"je suis (?:a|sur|devant))\b")
+
+
+def _near(a: re.Match, b: re.Match) -> bool:
+    """The actor and the verb in one clause: the verb up to 90 characters after the actor, or 40 before it."""
+    return (0 <= b.start() - a.end() <= 90) or (0 <= a.start() - b.end() <= 40)
+
+
+def presence_decide(text: str | None, posted_at: str | None, now: _dt.datetime | None = None,
+                    country_code: str | None = None) -> dict:
+    """{ok, act, quote, why, relayed, toward}: is this a police deployment, position or movement — or a crowd
+    moving — said now or just now, in a post of the last PRESENCE_WINDOW_MIN? Pure; the place is found by
+    presence_place. Police words in war reporting are never police (force_context)."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    out = {"ok": False, "act": None, "quote": None, "why": None, "relayed": True, "toward": None}
+    p = parse_utc(posted_at)
+    if p is None:
+        out["why"] = "no post time"
+        return out
+    age = (now - p).total_seconds() / 60
+    if age > PRESENCE_WINDOW_MIN:
+        out["why"] = f"post is {int(age)} min old (movement window {PRESENCE_WINDOW_MIN})"
+        return out
+    if age < -SKEW_S / 60:
+        out["why"] = "post time is in the future"
+        return out
+    from textclean import strip_emoji
+    body = strip_emoji(text)
+    t = _f(body)
+    oc = opinion_cue(body)
+    if oc:
+        out["why"] = f"opinion, not a report ('{oc}')"
+        return out
+    pc = past_cue(body)
+    if pc:
+        out["why"] = f"the text points to an earlier time ('{pc}')"
+        return out
+    sc = story_cue(body)
+    if sc:
+        out["why"] = f"a story from another time ('{sc}')"
+        return out
+    lc = _LATER_CUES.search(t)
+    if lc:
+        out["why"] = f"announced or to come, not happening ('{lc.group(0)}')"
+        return out
+    import force_context
+    act = quote = None
+    for subj, move, a in ((_POLICE_SUBJ, _POLICE_MOVE, "police_intervention"), (_CROWD_SUBJ, _CROWD_MOVE, "crowd_movement")):
+        for s in subj.finditer(t):
+            m = next((m for m in move.finditer(t) if _near(s, m)), None)
+            if m:
+                lo, hi = min(s.start(), m.start()), max(s.end(), m.end())
+                act, quote = a, t[lo:hi]
+                break
+        if act:
+            break
+    if not act:
+        out["why"] = "no police or crowd movement named by words"
+        return out
+    if act == "police_intervention" and force_context.is_military(body, country_code):
+        out["why"] = "forces moving in war reporting: troops, not police (force_context)"
+        return out
+    if act == "crowd_movement" and force_context.is_military(body, country_code) \
+            and not force_context.PROTEST.search(force_context.fold(body)):
+        out["why"] = "war reporting, not a crowd"
+        return out
+    first_hand = bool(_FIRST_HAND.search(t)) and not _RELAY.search(t)
+    out.update(ok=True, act=act, quote=quote, relayed=not first_hand,
+               why="movement or position at a place, said now, in a recent post")
+    if act == "crowd_movement":
+        tm = _TOWARD.search(t)
+        out["toward"] = tm.start() if tm else None
+    return out
+
+
+def presence_place(text: str | None, *, raw: dict | None = None, row: dict | None = None, geocode=None,
+                   budget: list | None = None, exclude: set | None = None) -> tuple[dict | None, dict]:
+    """(pin, info) for a movement item: the place the TEXT names, in this order — the local gazetteer (street
+    reports' squares, streets and sites, fixed points); the model's location when it is copied from the text and
+    pins at its stated level; the post's own pin (the classify pass) when its name is in the text. pin is
+    {lat, lon, name, level, display_name, country_code, context}; None when no place the text names is found."""
+    import street_reports as sr
+    from textclean import is_generic_place
+    t = (text or "").replace("’", "'")
+    info: dict = {}
+    pin = None
+    g = sr.place_in(_NEAR_OF.sub("devant ", sr.fold(t)), exclude=exclude)
+    if g:
+        lvl = {"square": "venue", "site": "venue", "street": "street", "district": "neighborhood"}.get(g["kind"], "venue")
+        pin = {"lat": g["lat"], "lon": g["lon"], "name": g["name"], "level": lvl, "display_name": f"{g['name']}, {g['city']}",
+               "country_code": g["country"], "context": [g["city"]] if in_text(g["city"], t) else [], "gazetteer": g["id"]}
+        info["by"] = "gazetteer"
+    loc = raw.get("location") if isinstance(raw, dict) else None
+    if pin is None and isinstance(loc, dict) and loc.get("name_as_written") and in_text(loc["name_as_written"], text):
+        name, level = loc["name_as_written"], loc.get("level")
+        ctx = [c for c in (loc.get("context_as_written") or []) if isinstance(c, str) and in_text(c, text)]
+        if level in PIN_LEVELS and not is_generic_place(name):
+            try:
+                hit, why, ginfo = resolve_place(name, level, ctx, text, geocode=geocode, budget=budget,
+                                                geocoder_name=loc.get("name_for_geocoder"))
+            except Exception as e:                                       # noqa: BLE001
+                hit, why, ginfo = None, f"{type(e).__name__}: {e}", {}
+            info["geocode"] = ginfo
+            if hit is not None:
+                pin = {"lat": hit["lat"], "lon": hit["lon"], "name": name, "level": ginfo.get("fallback_level") or level,
+                       "display_name": hit.get("display_name") or name, "country_code": hit.get("country_code"),
+                       "context": ctx, "type": hit.get("type")}
+                info["by"] = "model location"
+            else:
+                info["model_location"] = why
+    if pin is None and row and row.get("lat") is not None and row.get("lon") is not None:
+        prec = (row.get("precision") or "").lower()
+        level = {"site": "venue", "street": "street", "district": "neighborhood", "city": "city", "town": "city",
+                 "village": "city"}.get(prec)
+        names = [str(x or "").split(",")[0].strip() for x in (row.get("geocoded_as"), row.get("place"))]
+        name = next((n for n in names if len(n) >= 3 and in_text(n, t)), None)
+        if level and name and not is_generic_place(name):
+            pin = {"lat": float(row["lat"]), "lon": float(row["lon"]), "name": name, "level": level,
+                   "display_name": row.get("geocoded_as") or name, "country_code": row.get("country_code"), "context": []}
+            info["by"] = "post pin"
+    if pin is None:
+        info["why"] = "no place the text names could be pinned"
+    return pin, info
+
+
+def presence_toward(text: str | None, start: int | None) -> dict | None:
+    """Where a crowd is heading: the gazetteer place named right after "vers", "en direction de", "toward"
+    (`start` is where that word begins in the folded text), as {id, name, lat, lon, as_written}."""
+    if start is None:
+        return None
+    import street_reports as sr
+    from textclean import strip_emoji
+    t = _f(strip_emoji(text))
+    m = _TOWARD.match(t, start)
+    if not m:
+        return None
+    seg = t[start:m.end() + 60]
+    hits = sorted([h for h in sr._hits(seg) if h[1] <= (m.end() - start) + 4], key=lambda h: -h[2])
+    if not hits:
+        return None
+    p = hits[0][0]
+    return {"id": p["id"], "name": p["name"], "lat": p["lat"], "lon": p["lon"],
+            "as_written": re.split(r"[,.;!?\n]", seg)[0].strip()}
+
+
+def _war_pin(text: str | None, pin: dict) -> bool:
+    """A movement pinned in a war theatre is the front's, never the police's or a protest's."""
+    import force_context
+    cc = (pin.get("country_code") or "").lower()
+    return cc in force_context.WAR_THEATRES and not force_context.PROTEST.search(force_context.fold(text))
+
+
+def presence_verdict(text: str, posted_at: str, now: _dt.datetime | None = None, *, raw: dict | None = None,
+                     row: dict | None = None, geocode=None, budget: list | None = None,
+                     country_code: str | None = None) -> dict | None:
+    """decide()'s shape for a movement item (verdict 'live', its time the post's), or None when the text is not
+    one or names no place that can be pinned."""
+    pd = presence_decide(text, posted_at, now, country_code)
+    if not pd["ok"]:
+        return None
+    tw = presence_toward(text, pd["toward"]) if pd["act"] == "crowd_movement" else None
+    pin, info = presence_place(text, raw=raw, row=row, geocode=geocode, budget=budget, exclude={tw["id"]} if tw else None)
+    if pin is None or _war_pin(text, pin):
+        return None
+    direction = None
+    if tw and pin.get("gazetteer") != tw["id"] and 0.03 < _km(pin, tw) <= NEAR_CONTEXT_KM:
+        # where it is and where it goes: the item's path (protests.from_signal: bearing and the place it heads to)
+        direction = {"as_written": tw["as_written"], "toward_place": tw["name"], "lat": tw["lat"], "lon": tw["lon"]}
+    elif tw and pin.get("gazetteer") == tw["id"]:
+        # only where it goes is named: pinned there, said as a heading ("Crowd heading to Place de la Bastille")
+        direction = {"as_written": tw["as_written"], "toward_place": tw["name"], "heading_only": True}
+    ev = iso(parse_utc(posted_at))
+    v = {"ok": True, "reasons": [], "event_time": ev, "level": pin["level"], "name": pin["name"],
+         "context": pin.get("context") or [], "geocoder_name": None, "act": pd["act"], "first_hand": not pd["relayed"],
+         "direction": direction, "reject_class": None}
+    audit = {"model": raw, "verify": v,
+             "presence": {"act": pd["act"], "quote": pd["quote"], "relayed": pd["relayed"], "place_by": info.get("by"),
+                          "window_min": PRESENCE_WINDOW_MIN},
+             "geocode": info.get("geocode"), "direction_resolved": direction}
+    return {"ok": True, "pin": pin, "audit": audit, "verdict": "live", "event_time": ev, "why": None,
+            "event_type": pd["act"], "act": pd["act"], "certainty": "unverified", "name": pin["name"], "level": pin["level"],
+            "first_hand": not pd["relayed"], "direction": direction, "quote": pd["quote"]}
 
 
 # ── prefilter (cost control) ────────────────────────────────────────────────
@@ -942,20 +1183,52 @@ LIVE_COLUMNS = {"live_checked": "INTEGER", "live_at": "TEXT", "live_json": "TEXT
 
 
 def decide(raw: dict | None, text: str, published_at: str, now: _dt.datetime | None = None, *,
-           geocode=None, budget: list | None = None) -> dict:
+           geocode=None, budget: list | None = None, row: dict | None = None) -> dict:
     """The whole decision for one model answer: {verdict, ok, pin (hit or
     None), level, event_time, event_type, certainty, name, why, audit}. Pure
-    but for the geocoder passed in."""
+    but for the geocoder passed in. A police deployment, position or movement
+    (or a crowd moving) at a place the text names, in a post of the last
+    PRESENCE_WINDOW_MIN, is live even when the model found no clock in it
+    (presence_verdict); `row` lends the post's own pin when the text names it."""
     v = verify(raw, text, published_at, now)
     audit = {"model": raw, "verify": {k: v[k] for k in ("ok", "reasons", "event_time", "level", "name", "context", "geocoder_name",
                                                          "act", "first_hand", "direction", "reject_class")}}
     out = {"ok": False, "pin": None, "audit": audit, "verdict": None, "event_time": None, "why": None,
            "event_type": v["event_type"], "act": v["act"], "certainty": v["certainty"], "name": v["name"],
            "level": v["level"], "first_hand": v["first_hand"], "direction": None}
+    rc = (raw or {}).get("reject_class") if isinstance(raw, dict) else None
+
+    def _presence():
+        if rc in PRESENCE_VETO:
+            return None
+        cc = (row or {}).get("country_code") if row else None
+        try:
+            pv = presence_verdict(text, published_at, now, raw=raw, row=row, geocode=geocode, budget=budget, country_code=cc)
+        except Exception as e:                                         # noqa: BLE001
+            print(f"[live-incident] error: presence: {type(e).__name__}: {e}", flush=True)
+            return None
+        if pv is not None:
+            pv["audit"]["model_rejected"] = "; ".join(v["reasons"])[:300] or None
+            pv["certainty"] = "unverified"
+        return pv
+
     if not v["ok"]:
+        pv = _presence()
+        if pv is not None:
+            return pv
         out["why"] = "; ".join(v["reasons"])[:300]
         out["verdict"] = "rejected: " + out["why"]
         return out
+    # the gendarmerie's armour, a cordon, police moving: the model may call it troops; the code reads police
+    # (force_context: no military words once the gendarmerie's own vehicles are read as the gendarmerie)
+    if v["act"] == "troops_sighted":
+        pd = presence_decide(text, published_at, now)
+        if pd["ok"] and pd["act"] == "police_intervention":
+            out["act"] = out["event_type"] = "police_intervention"
+            audit["verify"]["act"] = "police_intervention"
+            audit["presence"] = {"act": "police_intervention", "quote": pd["quote"], "relayed": pd["relayed"],
+                                 "place_by": "model location", "window_min": PRESENCE_WINDOW_MIN, "from_act": "troops_sighted"}
+            out["quote"] = pd["quote"]
     out["ok"] = True
     out["event_time"] = v["event_time"]
     hit, why, info = resolve_place(v["name"], v["level"], v["context"], text, geocode=geocode, budget=budget,
@@ -964,6 +1237,9 @@ def decide(raw: dict | None, text: str, published_at: str, now: _dt.datetime | N
     if info.get("fallback_level"):
         out["level"] = info["fallback_level"]
     if hit is None:
+        pv = _presence()
+        if pv is not None:
+            return pv
         # the incident is live and its place is stated, but cannot be pinned
         # with confidence: live, unplaced — and rejected where ambiguous
         amb = info.get("ambiguity_note")
@@ -1004,7 +1280,13 @@ _POLICE_KINDS = [(re.compile(r"lacrymo|tear ?gas|gaze|gazent|مسيل للدمو
                  (re.compile(r"\blbd\b|flashball|rubber bullet|balles? en caoutchouc", re.I), "Rubber bullets"),
                  (re.compile(r"nasse|kettl|encercl", re.I), "Kettle"),
                  (re.compile(r"canons? a eau|water cannon", re.I), "Water cannon"),
-                 (re.compile(r"charge", re.I), "Police charge")]
+                 (re.compile(r"charge", re.I), "Police charge"),
+                 # movement and position (presence_decide, 2026-10-24)
+                 (re.compile(r"dispers", re.I), "Police dispersal"),
+                 (re.compile(r"cordon|barr(?:ent|e|ant|age)|boucl|bloqu|sealed|sealing|blocking|blocked", re.I), "Police cordon"),
+                 (re.compile(r"deploy|deploi|position|stationn|poste|masse|massing|massed|renfort", re.I), "Police deployed"),
+                 (re.compile(r"moving|move in|heading|se dirig|remont|descend|avanc|progress|arriv|en route|debarqu", re.I),
+                  "Police moving")]
 
 
 def act_label(act: str | None, quote: str | None = None) -> str:
@@ -1027,7 +1309,10 @@ def card_headline(act: str | None, quote: str | None, name: str | None, context=
     head = f"{act_label(act, quote)} at {where}" if where else act_label(act, quote)
     to = (direction or {}).get("toward_place") if isinstance(direction, dict) else None
     if act == "crowd_movement" and to:
-        head = f"Crowd at {where}, moving toward {strip_emoji(to)}" if where else f"Crowd moving toward {strip_emoji(to)}"
+        if (direction or {}).get("heading_only") or not where or fold(strip_emoji(to)) == fold(place):
+            head = f"Crowd heading to {strip_emoji(to)}"
+        else:
+            head = f"Crowd at {where}, moving toward {strip_emoji(to)}"
     return head
 
 
@@ -1042,7 +1327,13 @@ def is_live_now(row: dict, now: _dt.datetime | None = None) -> bool:
     if ev is None:
         return False
     now = now or _dt.datetime.now(_dt.timezone.utc)
-    return -SKEW_S <= (now - ev).total_seconds() <= LIVE_WINDOW_MIN * 60
+    win = PRESENCE_WINDOW_MIN if is_presence(row) else LIVE_WINDOW_MIN
+    return -SKEW_S <= (now - ev).total_seconds() <= win * 60
+
+
+def is_presence(row: dict) -> bool:
+    """Was this post made live by the movement rule (presence_verdict)? Its live window is PRESENCE_WINDOW_MIN."""
+    return '"presence": {' in str((row or {}).get("live_json") or "")
 
 
 def live_fields(row, now: _dt.datetime | None = None) -> dict:
@@ -1143,7 +1434,7 @@ def _write(con, row: dict, d: dict, raw: dict | None, cost: float, now: _dt.date
                      "lat": pin["lat"], "lon": pin["lon"],
                      "geocoded_as": (pin.get("display_name") or "")[:300], "unpublished_reason": None,
                      # the card's words, short and plain (owner, 2026-10-22): no emoji, no 'report', no channel
-                     "headline": card_headline(d["act"], (raw or {}).get("evidence_quote_act"), d["name"],
+                     "headline": card_headline(d["act"], d.get("quote") or (raw or {}).get("evidence_quote_act"), d["name"],
                                                (d["audit"].get("verify") or {}).get("context"), d.get("direction"))[:200]})
     elif d["ok"]:
         sets["unpublished_reason"] = f"live, not pinned: {d['why']}"[:300]
@@ -1161,7 +1452,7 @@ def candidates(con, now: _dt.datetime, limit: int = 400) -> list[dict]:
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(
-            "SELECT channel, msg_id, channel_title, posted_at, text, role, chat_kind, read_by, lat, lon, country_code, claim, headline,"
+            "SELECT channel, msg_id, channel_title, posted_at, text, role, chat_kind, read_by, lat, lon, country_code, claim, headline, place, precision, geocoded_as,"
             " live_verdict FROM telegram_posts WHERE live_checked IS NULL AND posted_at >= ? AND text IS NOT NULL"
             " AND COALESCE(role,'') != 'ignore' ORDER BY posted_at DESC LIMIT ?", (since, limit)).fetchall()
     finally:
@@ -1227,6 +1518,25 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
         rows = candidates(con, now)
         todo, seen_hash = [], {}
         for r in rows:
+            # POLICE AND CROWDS MOVING (owner, 2026-10-24, Paris): a deployment, a position or a movement at a place
+            # the gazetteer or the post's own pin knows, said now in a post of the last PRESENCE_WINDOW_MIN, is
+            # decided by the code alone: no model call, no watch gate, no queue to wait in
+            try:
+                pv = presence_verdict(r["text"], r["posted_at"], now, row=r, country_code=r.get("country_code"))
+            except Exception as e:                                      # noqa: BLE001
+                print(f"[live-incident] error: presence {r['channel']}/{r['msg_id']}: {type(e).__name__}: {e}", flush=True)
+                pv = None
+            if pv is not None:
+                r["_hash"] = text_hash(r["text"])
+                con.execute("UPDATE telegram_posts SET live_hash=? WHERE channel=? AND msg_id=?", (r["_hash"], r["channel"], r["msg_id"]))
+                _write(con, r, pv, None, 0.0, now, "rule:presence")
+                out["live"] += 1
+                out["presence"] = out.get("presence", 0) + 1
+                _bump("live")
+                _bump("presence")
+                with _STATUS_LOCK:
+                    STATUS["last_live"] = {"post": f"{r['channel']}/{r['msg_id']}", "place": pv["name"], "at": iso(now)}
+                continue
             ok, drone = prefilter(r["text"])
             if not ok:
                 out["skipped"] += 1
@@ -1392,7 +1702,7 @@ def run_once(con=None, now: _dt.datetime | None = None, *, extract_fn=None, geoc
 
 
 def _apply(con, r: dict, raw: dict, cost: float, now: _dt.datetime, geocode, geo_budget: list, out: dict) -> None:
-    d = decide(raw, r["text"], r["posted_at"], now, geocode=geocode, budget=geo_budget)
+    d = decide(raw, r["text"], r["posted_at"], now, geocode=geocode, budget=geo_budget, row=r)
     con.execute("UPDATE telegram_posts SET live_hash=? WHERE channel=? AND msg_id=?", (r["_hash"], r["channel"], r["msg_id"]))
     _write(con, r, d, raw, cost, now, MODEL)
     _bump("extracted")

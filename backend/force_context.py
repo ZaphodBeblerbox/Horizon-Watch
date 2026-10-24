@@ -63,11 +63,23 @@ PROTEST = re.compile(
     r"|протест\w*|мітинг\w*|митинг\w*|متظاهر\w*|مظاهر\w*|ဆန္ဒပြ")
 
 
+# The gendarmerie's own armour is law enforcement, not the army (owner, 2026-10-24: "Un blindé CENTAURE de la
+# gendarmerie est déployé devant l'Assemblée nationale" was read as troops because of "blindé"). Read as the
+# word "gendarmerie" before the military words are looked for; outside a war theatre only.
+GENDARMERIE_ARMOUR = re.compile(
+    r"\b(?:vehicules? )?blindes? (?:\w+ ){0,3}(?:de la |de |des |du )(?:gendarmerie|gendarmes|crs|police)\b|"
+    r"\b(?:vehicules? )?blindes? (?:centaure|vbrg|vxb)\w*|\bcentaures?\b(?= .{0,30}gendarm)|\bvbrg\b|\bvxb-?\d*\b|"
+    r"\barmou?red (?:\w+ ){0,2}(?:vehicles? )?(?:of|from) the (?:gendarmerie|police)\b|"
+    r"\b(?:gendarmerie|police) (?:armou?red (?:vehicles?|cars?)|blindes?)\b")
+
+
 def is_military(text: str | None, country_code: str | None = None) -> bool:
     """War reporting about armed forces: military words, or a war theatre
     with no protest words. Police words in a war theatre's text do not make
     it civil ("police" in Kupyansk is still the front)."""
     t = fold(text)
+    if (country_code or "").lower() not in WAR_THEATRES:
+        t = GENDARMERIE_ARMOUR.sub(" gendarmerie ", t)
     if MILITARY.search(t):
         # "la police et l'armée" at a protest: protest words and police words
         # outside a war theatre keep it civil, with the military named too
