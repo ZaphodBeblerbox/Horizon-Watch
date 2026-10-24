@@ -1,22 +1,20 @@
 /**
  * SourceLink.jsx — "the original post", opened inside Parallax.
  *
- * A Telegram or X post opens in the in-app source reader (SourceViewer,
- * through the platforms' own embeds) — never another page (owner,
- * 2026-10-10). Only a source that cannot be shown in a frame (a news site)
- * opens a tab, and says so with ↗.
+ * Every source (a Telegram or X post, a news article, a web finding) opens in
+ * the in-app source viewer as our own post card (SourceViewer ->
+ * SourcePostCard, owner 2026-10-24), never another page and never the
+ * platform's embed. The viewer carries "Open original" as a small link.
  */
-import { embedFor, openSource } from "../inspector/sourceEmbed.js"
+import { openSource } from "../inspector/sourceEmbed.js"
 
-export default function SourceLink({ url, children = "original", style = {}, className }) {
+export default function SourceLink({ url, children = "original", style = {}, className, card = null }) {
     if (!url) return null
-    if (embedFor(url)) {
-        return (
-            <button type="button" className={className} onClick={(e) => { e.preventDefault(); e.stopPropagation(); openSource(url) }}
-                    style={{ border: 0, background: "none", padding: 0, cursor: "pointer", font: "inherit", color: "var(--acc-hi, var(--acchi))", ...style }}>
-                {children}
-            </button>
-        )
-    }
-    return <a className={className} href={url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--acc-hi, var(--acchi))", ...style }}>{children} ↗</a>
+    return (
+        // a link (it can be copied), whose click opens our card instead of leaving
+        <a href={url} className={className} data-testid="source-link" onClick={(e) => { e.preventDefault(); e.stopPropagation(); openSource(url, card) }}
+           style={{ cursor: "pointer", color: "var(--acc-hi, var(--acchi))", ...style }}>
+            {children}
+        </a>
+    )
 }

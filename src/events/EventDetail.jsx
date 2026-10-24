@@ -18,9 +18,12 @@ import { useEffect, useMemo, useState } from "react"
 import { follow, getAround, getEvent, getFollows, getTimeline, muteEvent, myAssets, onFollowsChanged, unfollow, unmuteEvent } from "./eventApi.js"
 import { assetConnection, eventIdOf, firstSeenLine, followTargetOf, homeReasons, lastUpdateLine, priorityOf, statusChip, timelineLine, updatedLine } from "./eventLogic.js"
 import { setAttention } from "../state/attention.js"
+import { openSource } from "../inspector/sourceEmbed.js"
 import "./events.css"
 
 const arr = (v) => (Array.isArray(v) ? v : [])
+// A SOURCE OPENS INSIDE PARALLAX as our own post card (components/SourcePostCard.jsx, owner 2026-10-24), never a tab
+const inApp = (url, card) => (e) => { e.preventDefault(); e.stopPropagation(); openSource(url, card) }
 
 export function StatusChip({ status }) {
     const s = statusChip(status)
@@ -43,7 +46,7 @@ function Facts({ brief }) {
                 <li key={i}>
                     <span>{f.text}</span>
                     {arr(f.sources).map((s, j) => s.url
-                        ? <a key={j} className="ev-cite" href={s.url} target="_blank" rel="noreferrer">{s.label}</a>
+                        ? <a key={j} className="ev-cite" href={s.url} onClick={inApp(s.url, { source: s.label })}>{s.label}</a>
                         : <span key={j} className="ev-cite">{s.label}</span>)}
                 </li>
             ))}
@@ -137,7 +140,7 @@ function Around({ data, onOpenItem }) {
                 <button type="button" key={`${r.domain}:${r.id}`} className="ev-row" onClick={() => onOpenItem?.(r)}>
                     <span className="ev-dom">{r.domain_label}</span>
                     <span className="ev-row-main"><b>{r.title}</b><small>{[r.why, r.source].filter(Boolean).join(" · ")}</small></span>
-                    {r.url && <a className="ev-cite" href={r.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>source</a>}
+                    {r.url && <a className="ev-cite" href={r.url} onClick={inApp(r.url, { title: r.title, source: r.source })}>source</a>}
                 </button>
             ))}
         </section>
@@ -225,7 +228,7 @@ export default function EventDetail({ item, variant = "desk", embedded = false, 
                     <div className="ev-h">Sources <small>{ev.members_count} {ev.members_count === 1 ? "report" : "reports"}</small></div>
                     <div className="ev-srcs">
                         {ev.sources.map((s) => s.url
-                            ? <a key={s.ref} className="ev-cite" href={s.url} target="_blank" rel="noreferrer">{s.label} · {s.act ? s.act.replace(/_/g, " ") : s.kind}</a>
+                            ? <a key={s.ref} className="ev-cite" href={s.url} onClick={inApp(s.url, { source: s.label })}>{s.label} · {s.act ? s.act.replace(/_/g, " ") : s.kind}</a>
                             : <span key={s.ref} className="ev-cite">{s.label}</span>)}
                     </div>
                 </section>

@@ -151,7 +151,8 @@ export function forecastHint(data) {
 function SourceRow({ label, url, embed = true }) {
     // embed=false for a Telegram pin: its media already plays in the panel,
     // and Telegram's own (light) embed is exactly what it replaces.
-    const inPlace = embed && !!embedFor(url)
+    // every source opens inside Parallax as our own post card (SourcePostCard.jsx, owner 2026-10-24)
+    const inPlace = /^https?:/i.test(String(url || "")) || (embed && !!embedFor(url))
     const btn = {
         height: 24, padding: "0 9px", font: "500 11.5px var(--font)", cursor: "pointer",
         border: "1px solid var(--gline2, var(--line))", background: "transparent",
@@ -172,7 +173,7 @@ function SourceRow({ label, url, embed = true }) {
             </div>
             {/* the post opens inside Parallax; only a site that cannot be framed opens a tab */}
             {inPlace
-                ? <button style={btn} onClick={() => openSource(url)}>Open original post</button>
+                ? <button style={btn} onClick={() => openSource(url, { source: label })}>Open</button>
                 : <a style={{ ...btn, border: 0, padding: 0 }} href={url} target="_blank" rel="noopener noreferrer" title={url}>Open ↗</a>}
         </div>
     )
@@ -779,7 +780,7 @@ export default function InspectorPanel({
                                 </div>
                                 {countryDetail.news.map((n, i) => (
                                     <div key={i} style={{ padding: "4px 0" }}>
-                                        <a href={n.url} target="_blank" rel="noopener noreferrer"
+                                        <a href={n.url} onClick={(e) => { e.preventDefault(); openSource(n.url, { title: n.title, source: n.source }) }}
                                            style={{ font: "400 11px var(--font)", color: "var(--text-primary)",
                                                     textDecoration: "none" }}>
                                             {n.title}
